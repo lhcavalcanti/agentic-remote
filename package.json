@@ -2,6 +2,7 @@
   "name": "agentic-remote",
   "private": true,
   "version": "0.4.0",
+  "packageManager": "pnpm@10.34.5",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c cyan,magenta \"pnpm dev:server\" \"pnpm dev:web\"",

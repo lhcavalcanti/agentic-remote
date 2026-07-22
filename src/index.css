@@ -320,11 +320,17 @@ button {
   min-width: 0;
   min-height: 0;
   height: 100%;
+  grid-template-areas:
+    "header"
+    "banner"
+    "timeline"
+    "composer";
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
 
 .conversation-header {
+  grid-area: header;
   display: flex;
   height: 64px;
   align-items: center;
@@ -361,6 +367,7 @@ button {
 }
 
 .error-banner {
+  grid-area: banner;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -386,6 +393,7 @@ button {
 }
 
 .timeline {
+  grid-area: timeline;
   min-height: 0;
   padding: 34px max(24px, calc((100% - 780px) / 2)) 22px;
   overflow-x: hidden;
@@ -668,6 +676,7 @@ button {
 }
 
 .composer-area {
+  grid-area: composer;
   position: relative;
   z-index: 2;
   padding: 8px max(18px, calc((100% - 800px) / 2)) max(10px, env(safe-area-inset-bottom));

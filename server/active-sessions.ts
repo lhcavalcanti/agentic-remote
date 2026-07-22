@@ -101,7 +101,10 @@ async function processStillMatches(
       .trim()
     return commandLine.match(sessionPattern)?.[1] === sessionId
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (error as NodeJS.ErrnoException).code === 'ESRCH'
+    ) {
       return false
     }
     throw error

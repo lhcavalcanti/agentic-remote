@@ -1,11 +1,11 @@
 {
   "name": "agentic-remote",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c cyan,magenta \"pnpm dev:server\" \"pnpm dev:web\"",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "AGENTIC_REMOTE_HUB_USER=agentic AGENTIC_REMOTE_HUB_PASSWORD=development tsx watch server/index.ts",
     "dev:web": "vite",
     "start": "NODE_ENV=production tsx server/index.ts",
     "build": "tsc -b && vite build",
@@ -25,6 +25,7 @@
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "ws": "^8.21.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

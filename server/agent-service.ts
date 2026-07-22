@@ -5,10 +5,13 @@ import { EventEmitter } from 'node:events'
 import {
   CopilotClient,
   RuntimeConnection,
-  type CopilotSession,
+  type AssistantMessageEvent,
   type PermissionRequest,
   type PermissionRequestResult,
+  type ResumeSessionConfig,
+  type SessionConfig,
   type SessionEvent,
+  type SessionMetadata,
 } from '@github/copilot-sdk'
 import type {
   ChatMessage,
@@ -25,6 +28,30 @@ interface ActivePrompt {
 interface PendingSdkPermission {
   sessionId: string
   resolve: (result: PermissionRequestResult) => void
+}
+
+export interface CopilotSessionLike {
+  sessionId: string
+  on(handler: (event: SessionEvent) => void): () => void
+  sendAndWait(
+    content: string,
+    timeout?: number,
+  ): Promise<AssistantMessageEvent | undefined>
+  getEvents(): Promise<SessionEvent[]>
+  abort(): Promise<void>
+  disconnect(): Promise<void>
+}
+
+export interface CopilotClientLike {
+  start(): Promise<void>
+  stop(): Promise<Error[]>
+  createSession(config: SessionConfig): Promise<CopilotSessionLike>
+  resumeSession(
+    sessionId: string,
+    config: ResumeSessionConfig,
+  ): Promise<CopilotSessionLike>
+  listSessions(): Promise<SessionMetadata[]>
+  deleteSession(sessionId: string): Promise<void>
 }
 
 export interface AgentServiceEvents {
@@ -61,6 +88,17 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   return messages
 }
 
+function isMissingSessionError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  const message = error.message.toLowerCase()
+  return (
+    message.includes('session') &&
+    (message.includes('not found') || message.includes('does not exist'))
+  )
+}
+
 function permissionTitle(request: PermissionRequest): string {
   switch (request.kind) {
     case 'shell':
@@ -87,17 +125,21 @@ function permissionTitle(request: PermissionRequest): string {
 }
 
 export class AgentService extends EventEmitter<AgentServiceEvents> {
-  private readonly client: CopilotClient
-  private readonly sessions = new Map<string, CopilotSession>()
+  private readonly client: CopilotClientLike
+  private readonly sessions = new Map<string, CopilotSessionLike>()
   private readonly hydratedSessions = new Set<string>()
-  private readonly loadingSessions = new Map<string, Promise<CopilotSession>>()
+  private readonly loadingSessions = new Map<
+    string,
+    Promise<CopilotSessionLike>
+  >()
   private readonly hydratingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly activePrompts = new Map<string, ActivePrompt>()
+  private readonly deletingSessions = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
 
   constructor(
     readonly store: SessionStore,
-    client = new CopilotClient({
+    client: CopilotClientLike = new CopilotClient({
       connection: RuntimeConnection.forStdio({
         path: process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot',
       }),
@@ -231,6 +273,48 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await session.abort()
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    const stored = this.store.get(sessionId)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+
+    this.deletingSessions.add(sessionId)
+    try {
+      const active = this.sessions.get(sessionId)
+      if (active) {
+        if (this.activePrompts.has(sessionId)) {
+          this.activePrompts.delete(sessionId)
+          await active.abort()
+        }
+        await active.disconnect()
+        this.sessions.delete(sessionId)
+      }
+      for (const [requestId, permission] of this.permissions) {
+        if (permission.sessionId === sessionId) {
+          permission.resolve({ kind: 'user-not-available' })
+          this.permissions.delete(requestId)
+        }
+      }
+
+      try {
+        await this.client.deleteSession(sessionId)
+      } catch (error) {
+        if (!isMissingSessionError(error)) {
+          throw error
+        }
+      }
+      await this.store.remove(sessionId)
+      this.hydratedSessions.delete(sessionId)
+      this.loadingSessions.delete(sessionId)
+      this.hydratingSessions.delete(sessionId)
+      this.activePrompts.delete(sessionId)
+      this.emit('event', { type: 'session.removed', sessionId })
+    } finally {
+      this.deletingSessions.delete(sessionId)
+    }
+  }
+
   async replyPermission(
     sessionId: string,
     requestId: string,
@@ -257,7 +341,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return updated
   }
 
-  private async ensureLoaded(sessionId: string): Promise<CopilotSession> {
+  private async ensureLoaded(sessionId: string): Promise<CopilotSessionLike> {
     const active = this.sessions.get(sessionId)
     if (active) {
       return active
@@ -275,7 +359,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  private async resumeSession(sessionId: string): Promise<CopilotSession> {
+  private async resumeSession(sessionId: string): Promise<CopilotSessionLike> {
     const stored = this.store.get(sessionId)
     if (!stored) {
       throw new Error('Session not found')
@@ -323,7 +407,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
   }
 
-  private attachSession(session: CopilotSession): void {
+  private attachSession(session: CopilotSessionLike): void {
     session.on((event) => {
       this.handleSessionEvent(session.sessionId, event)
     })
@@ -359,6 +443,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     if (event.type === 'tool.execution_start') {
+      if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        return
+      }
       void this.store
         .update(sessionId, (stored) => {
           stored.activity =
@@ -370,13 +457,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async runPrompt(
-    sdkSession: CopilotSession,
+    sdkSession: CopilotSessionLike,
     content: string,
     assistantMessageId: string,
   ): Promise<void> {
     const sessionId = sdkSession.sessionId
     try {
       const response = await sdkSession.sendAndWait(content, 60 * 60 * 1000)
+      if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        return
+      }
       if (response?.data.content) {
         this.store.setMessageContent(
           sessionId,
@@ -391,6 +481,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       this.publish(updated)
     } catch (error) {
+      if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       const updated = await this.store.update(sessionId, (session) => {
         const assistant = session.messages.find(
@@ -416,6 +509,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     request: PermissionRequest,
   ): Promise<PermissionRequestResult> {
+    if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      return Promise.resolve({ kind: 'user-not-available' })
+    }
     const requestId = randomUUID()
     const permission: PendingPermission = {
       requestId,

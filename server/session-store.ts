@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ChatMessage, SessionDetail, SessionStatus } from '../shared/contracts.js'
+import { resolveDataDirectory } from './paths.js'
 
 export interface DiscoveredSession {
   id: string
@@ -25,9 +26,7 @@ export class SessionStore {
   private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(
-    directory =
-      process.env.AGENTIC_REMOTE_DATA_DIR?.trim() ||
-      path.join(process.env.HOME || process.cwd(), '.agentic-remote'),
+    directory = resolveDataDirectory(),
   ) {
     this.directory = directory
     this.statePath = path.join(directory, 'state.json')

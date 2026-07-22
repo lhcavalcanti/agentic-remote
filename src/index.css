@@ -131,6 +131,17 @@ button {
   background: var(--panel-raised);
 }
 
+.icon-button--danger:hover {
+  color: var(--danger);
+  border-color: rgba(239, 129, 111, 0.3);
+  background: rgba(239, 129, 111, 0.08);
+}
+
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .sidebar__close,
 .mobile-menu {
   display: none;
@@ -150,6 +161,57 @@ button {
   font-size: 13px;
   font-weight: 680;
   cursor: pointer;
+}
+
+.sidebar-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  margin: 4px 14px 12px;
+}
+
+.sidebar-actions .new-session-button {
+  margin: 0;
+}
+
+.manage-computers-button {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  place-items: center;
+  color: var(--muted-strong);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--panel-raised);
+  cursor: pointer;
+}
+
+.manage-computers-button:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.computer-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 18px;
+  padding: 0 10px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #121310;
+}
+
+.computer-filter select {
+  width: 100%;
+  height: 38px;
+  color: var(--muted-strong);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 12px;
 }
 
 .new-session-button:hover,
@@ -703,6 +765,77 @@ button {
   color: var(--muted-strong);
   font-size: 11px;
   font-weight: 600;
+}
+
+.field + .field {
+  margin-top: 14px;
+}
+
+.dialog-input,
+.dialog-select {
+  width: 100%;
+  height: 46px;
+  padding: 0 12px;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  outline: 0;
+  background: #121310;
+  font-size: 13px;
+}
+
+.dialog-input:focus,
+.dialog-select:focus {
+  border-color: #59634c;
+}
+
+.computer-list {
+  display: flex;
+  max-height: 210px;
+  margin-bottom: 20px;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+}
+
+.computer-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-raised);
+}
+
+.computer-row > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.computer-row strong,
+.computer-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.computer-row strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.computer-row small {
+  font-size: 10px;
+}
+
+.computer-form {
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
 }
 
 .path-input {

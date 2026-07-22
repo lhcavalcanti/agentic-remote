@@ -1,9 +1,8 @@
 # Agentic Remote
 
-A focused, mobile-first web interface for local GitHub Copilot CLI sessions.
-Agentic Remote keeps the first version intentionally small: choose a folder,
-discover existing sessions, start or resume a session in any folder, read the
-conversation, send messages, stop a turn, and answer permission prompts.
+A focused, mobile-first hub for GitHub Copilot CLI sessions across multiple
+computers. Each computer owns its Copilot process, files, and history; one hub
+serves the UI and routes commands to paired nodes.
 
 ## Why this architecture
 
@@ -12,11 +11,16 @@ conversation, send messages, stop a turn, and answer permission prompts.
   one local Node.js process.
 - **`@github/copilot-sdk`** is GitHub's supported Node SDK. It provides
   structured session events, so the UI does not scrape terminal escape codes.
+- **Hub/node roles** keep execution on the computer that owns each session. The
+  hub stores paired node addresses and tokens, but never copies repositories.
 - Session metadata and rendered messages are stored in
   `~/.agentic-remote/state.json` with user-only permissions.
 
-The server binds to `127.0.0.1` by default. Remote access and authentication are
-deliberately outside the initial scope.
+The server binds to `127.0.0.1` by default. Pairing and browser authentication
+support a trusted LAN; internet exposure remains outside the current scope.
+
+See [Multi-computer architecture](docs/architecture.md) for ownership,
+authentication, routing, and failure semantics.
 
 ## Requirements
 
@@ -38,7 +42,7 @@ pnpm dev
 ```
 
 Open <http://127.0.0.1:4317>. Vite proxies API and WebSocket traffic to the
-Fastify server on port `4318`.
+Fastify server on port `4318` and supplies local development credentials.
 
 ## Production
 
@@ -51,21 +55,43 @@ Open <http://127.0.0.1:4318>.
 
 ## User service
 
-Run the management command directly from a fresh clone:
+Run the management command directly from a fresh clone. On the computer that
+will serve the UI:
 
 ```bash
-./bin/agentic-remote setup
+./bin/agentic-remote setup --role hub --name development
 ```
 
 For LAN access:
 
 ```bash
-./bin/agentic-remote setup --host 10.0.0.181 --port 4317
+./bin/agentic-remote setup \
+  --role hub \
+  --name development \
+  --host 10.0.0.181 \
+  --port 4317
+```
+
+On another computer:
+
+```bash
+./bin/agentic-remote setup \
+  --role node \
+  --name homelab-prod \
+  --host 10.0.0.233 \
+  --port 4317
+
+agentic-remote pair-info
 ```
 
 Setup installs dependencies, creates the production build, installs an enabled
 systemd user service, attempts to enable boot-time user lingering, and links the
 command to `~/.local/bin/agentic-remote`.
+
+Use the URL and token from `pair-info` in the hub's **Computers** dialog. Pairing
+tokens grant control of Copilot sessions on that node and are stored with mode
+`0600`. The current transport is intended for a trusted LAN; use an encrypted
+network layer before exposing a node outside it.
 
 After setup:
 
@@ -75,6 +101,8 @@ agentic-remote stop
 agentic-remote restart
 agentic-remote status
 agentic-remote logs
+agentic-remote pair-info
+agentic-remote access-info
 agentic-remote update
 agentic-remote uninstall
 ```
@@ -82,6 +110,8 @@ agentic-remote uninstall
 The service restarts after failures. With systemd user lingering enabled, it
 also starts during boot without waiting for an interactive login. `uninstall`
 removes the service but preserves conversation data in `~/.agentic-remote`.
+`update` also migrates older service environments and backfills missing role
+and browser-authentication settings.
 
 ## Configuration
 
@@ -91,6 +121,10 @@ removes the service but preserves conversation data in `~/.agentic-remote`.
 | `PORT` | `4318` | HTTP port |
 | `COPILOT_BIN` | `/usr/local/bin/copilot` | Copilot CLI executable |
 | `AGENTIC_REMOTE_DATA_DIR` | `~/.agentic-remote` | Local application state |
+| `AGENTIC_REMOTE_ROLE` | `hub` | Run the UI hub or a headless node |
+| `AGENTIC_REMOTE_NODE_NAME` | hostname | Friendly computer name |
+| `AGENTIC_REMOTE_HUB_USER` | `agentic` | Browser HTTP Basic username |
+| `AGENTIC_REMOTE_HUB_PASSWORD` | generated | Browser HTTP Basic password |
 
 ## Checks
 

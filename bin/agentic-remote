@@ -17,8 +17,12 @@ usage() {
 Usage: agentic-remote <command> [options]
 
 Commands:
-  setup [--host ADDRESS] [--port PORT]
+  setup [--host ADDRESS] [--port PORT] [--role hub|node] [--name NAME]
       Install dependencies, build the app, install and start the user service.
+  pair-info
+      Print this node's URL, identity, and pairing token.
+  access-info
+      Print the hub URL and browser login credentials.
   start
       Start the service.
   stop
@@ -65,6 +69,15 @@ validate_port() {
   ((10#$1 >= 1 && 10#$1 <= 65535)) || die "port must be between 1 and 65535"
 }
 
+validate_role() {
+  [[ "$1" == "hub" || "$1" == "node" ]] || die "role must be hub or node"
+}
+
+validate_name() {
+  [[ -n "$1" && "$1" != *$'\r'* && "$1" != *$'\n'* ]] ||
+    die "name must be a single non-empty line"
+}
+
 systemd_quote() {
   local value="$1"
   value="${value//\\/\\\\}"
@@ -85,6 +98,7 @@ write_service() {
   cat >"$temporary" <<EOF
 [Unit]
 Description=Agentic Remote
+Wants=network-online.target
 After=network-online.target
 
 [Service]
@@ -126,7 +140,7 @@ enable_linger() {
 }
 
 setup_service() {
-  local host="" port=""
+  local host="" port="" role="" name="" hub_user="" hub_password="" data_directory=""
   while (($# > 0)); do
     case "$1" in
       --host)
@@ -137,6 +151,16 @@ setup_service() {
       --port)
         (($# >= 2)) || die "--port requires a value"
         port="$2"
+        shift 2
+        ;;
+      --role)
+        (($# >= 2)) || die "--role requires a value"
+        role="$2"
+        shift 2
+        ;;
+      --name)
+        (($# >= 2)) || die "--name requires a value"
+        name="$2"
         shift 2
         ;;
       *)
@@ -153,10 +177,21 @@ setup_service() {
 
   host="${host:-$(config_value HOST)}"
   port="${port:-$(config_value PORT)}"
+  role="${role:-$(config_value AGENTIC_REMOTE_ROLE)}"
+  name="${name:-$(config_value AGENTIC_REMOTE_NODE_NAME)}"
+  hub_user="$(config_value AGENTIC_REMOTE_HUB_USER)"
+  hub_password="$(config_value AGENTIC_REMOTE_HUB_PASSWORD)"
+  data_directory="$(config_value AGENTIC_REMOTE_DATA_DIR)"
   host="${host:-127.0.0.1}"
   port="${port:-4317}"
+  role="${role:-hub}"
+  name="${name:-$(hostname)}"
+  hub_user="${hub_user:-agentic}"
+  hub_password="${hub_password:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("base64url"))')}"
   validate_host "$host"
   validate_port "$port"
+  validate_role "$role"
+  validate_name "$name"
 
   printf 'Installing dependencies...\n'
   pnpm --dir "$REPO_ROOT" install --frozen-lockfile
@@ -166,7 +201,16 @@ setup_service() {
   mkdir -p "$SYSTEMD_DIR" "$CONFIG_DIR" "$(dirname "$COMMAND_LINK")"
   local environment_tmp
   environment_tmp="$(mktemp "$CONFIG_DIR/.environment.XXXXXX")"
-  printf 'HOST=%s\nPORT=%s\n' "$host" "$port" >"$environment_tmp"
+  printf '%s\n' \
+    "HOST=$host" \
+    "PORT=$port" \
+    "AGENTIC_REMOTE_ROLE=$role" \
+    "AGENTIC_REMOTE_NODE_NAME=$name" \
+    "AGENTIC_REMOTE_HUB_USER=$hub_user" \
+    "AGENTIC_REMOTE_HUB_PASSWORD=$hub_password" >"$environment_tmp"
+  if [[ -n "$data_directory" ]]; then
+    printf 'AGENTIC_REMOTE_DATA_DIR=%s\n' "$data_directory" >>"$environment_tmp"
+  fi
   install -m 0600 "$environment_tmp" "$ENV_FILE"
   rm -f -- "$environment_tmp"
 
@@ -177,18 +221,53 @@ setup_service() {
   systemctl --user restart "$SERVICE_NAME"
   enable_linger
 
-  printf 'Agentic Remote is running at http://%s:%s/\n' "$host" "$port"
+  if [[ "$role" == "hub" ]]; then
+    printf 'Agentic Remote hub is running at http://%s:%s/\n' "$host" "$port"
+    printf 'Run agentic-remote access-info for browser credentials.\n'
+  else
+    printf 'Agentic Remote node is running at http://%s:%s/\n' "$host" "$port"
+    printf 'Run agentic-remote pair-info to register it with a hub.\n'
+  fi
+}
+
+pair_info() {
+  require_command node
+  local host port identity_file
+  host="$(config_value HOST)"
+  port="$(config_value PORT)"
+  local data_directory
+  data_directory="$(config_value AGENTIC_REMOTE_DATA_DIR)"
+  identity_file="${data_directory:-$HOME/.agentic-remote}/node.json"
+  [[ -f "$identity_file" ]] || die "node identity not found; run setup first"
+  node -e '
+    const fs = require("node:fs");
+    const [file, host, port] = process.argv.slice(1);
+    const identity = JSON.parse(fs.readFileSync(file, "utf8"));
+    console.log(`Computer: ${identity.name}`);
+    console.log(`Node ID:  ${identity.id}`);
+    console.log(`URL:      http://${host}:${port}`);
+    console.log(`Token:    ${identity.token}`);
+  ' "$identity_file" "${host:-127.0.0.1}" "${port:-4317}"
+}
+
+access_info() {
+  local host port role user password
+  host="$(config_value HOST)"
+  port="$(config_value PORT)"
+  role="$(config_value AGENTIC_REMOTE_ROLE)"
+  user="$(config_value AGENTIC_REMOTE_HUB_USER)"
+  password="$(config_value AGENTIC_REMOTE_HUB_PASSWORD)"
+  [[ "${role:-hub}" == "hub" ]] || die "this service is configured as a node"
+  [[ -n "$password" ]] || die "hub credentials not found; run setup first"
+  printf 'URL:      http://%s:%s/\n' "${host:-127.0.0.1}" "${port:-4317}"
+  printf 'User:     %s\n' "${user:-agentic}"
+  printf 'Password: %s\n' "$password"
 }
 
 update_service() {
   require_command git
-  require_command pnpm
   git -C "$REPO_ROOT" pull --ff-only
-  pnpm --dir "$REPO_ROOT" install --frozen-lockfile
-  pnpm --dir "$REPO_ROOT" build
-  write_service
-  systemctl --user daemon-reload
-  systemctl --user restart "$SERVICE_NAME"
+  setup_service
 }
 
 uninstall_service() {
@@ -221,6 +300,14 @@ case "$command" in
   logs)
     (($# == 0)) || die "logs does not accept options"
     exec journalctl --user --unit "$SERVICE_NAME" --follow
+    ;;
+  pair-info)
+    (($# == 0)) || die "pair-info does not accept options"
+    pair_info
+    ;;
+  access-info)
+    (($# == 0)) || die "access-info does not accept options"
+    access_info
     ;;
   update)
     (($# == 0)) || die "update does not accept options"

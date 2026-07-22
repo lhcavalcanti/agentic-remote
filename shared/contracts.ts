@@ -37,10 +37,36 @@ export interface SessionDetail extends SessionSummary {
   pendingPermission?: PendingPermission
 }
 
+export interface ComputerSummary {
+  id: string
+  name: string
+  isLocal: boolean
+  online: boolean
+  baseUrl?: string
+}
+
+export interface ManagedSession extends SessionDetail {
+  computerId: string
+  computerName: string
+}
+
+export interface NodeInfo {
+  id: string
+  name: string
+  version: string
+}
+
 export type ServerEvent =
   | { type: 'session.upserted'; session: SessionDetail }
   | { type: 'session.removed'; sessionId: string }
   | { type: 'error'; sessionId?: string; message: string }
+
+export type HubEvent =
+  | { type: 'session.upserted'; session: ManagedSession }
+  | { type: 'session.removed'; computerId: string; sessionId: string }
+  | { type: 'computer.updated'; computer: ComputerSummary }
+  | { type: 'computer.removed'; computerId: string }
+  | { type: 'error'; computerId?: string; sessionId?: string; message: string }
 
 export interface CreateSessionInput {
   cwd: string
@@ -52,4 +78,10 @@ export interface SendMessageInput {
 
 export interface PermissionReplyInput {
   optionId: string
+}
+
+export interface AddComputerInput {
+  baseUrl: string
+  token: string
+  name?: string
 }

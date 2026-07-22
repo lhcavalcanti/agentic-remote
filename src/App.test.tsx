@@ -1,24 +1,34 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SessionDetail } from '../shared/contracts'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import App from './App'
-import { getSession, listSessions } from './api'
+import { deleteSession, getSession, listComputers, listSessions } from './api'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
+  listComputers: vi.fn(),
   getSession: vi.fn(),
+  addComputer: vi.fn(),
+  removeComputer: vi.fn(),
   createSession: vi.fn(),
   sendMessage: vi.fn(),
   cancelSession: vi.fn(),
+  deleteSession: vi.fn(),
   replyPermission: vi.fn(),
 }))
 
 class MockWebSocket {
+  static instances: MockWebSocket[] = []
+  onopen: (() => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
   onclose: (() => void) | null = null
+
+  constructor() {
+    MockWebSocket.instances.push(this)
+  }
 
   close() {}
 }
@@ -28,8 +38,17 @@ Object.defineProperty(globalThis, 'WebSocket', {
   value: MockWebSocket,
 })
 
-const session: SessionDetail = {
+const computer: ComputerSummary = {
+  id: 'computer-1',
+  name: 'development',
+  isLocal: true,
+  online: true,
+}
+
+const session: ManagedSession = {
   id: 'session-1',
+  computerId: computer.id,
+  computerName: computer.name,
   cwd: '/home/lcavalcanti/src/project',
   title: 'Project chat',
   updatedAt: '2026-07-22T00:00:00.000Z',
@@ -52,9 +71,18 @@ const session: SessionDetail = {
 
 describe('App', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(deleteSession).mockResolvedValue()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     Element.prototype.scrollTo = vi.fn()
+    MockWebSocket.instances = []
+  })
+
+  afterEach(() => {
+    cleanup()
   })
 
   it('renders a readable session and markdown response', async () => {
@@ -75,6 +103,32 @@ describe('App', () => {
     expect(
       screen.getByRole('heading', { name: 'Choose a folder' }),
     ).toBeInTheDocument()
-    expect(screen.getByLabelText('Absolute folder path')).toHaveValue('')
+    expect(
+      screen.getByLabelText('Absolute folder path on that computer'),
+    ).toHaveValue('')
+  })
+
+  it('closes the owning Copilot session after confirmation', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+
+    await waitFor(() => {
+      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1')
+    })
+    expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+  })
+
+  it('resynchronizes sessions when the event stream reconnects', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    MockWebSocket.instances[0]?.onopen?.()
+
+    await waitFor(() => {
+      expect(listSessions).toHaveBeenCalledTimes(2)
+      expect(listComputers).toHaveBeenCalledTimes(2)
+    })
   })
 })

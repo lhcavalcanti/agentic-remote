@@ -2,14 +2,19 @@ import { buildApp } from './app.js'
 
 const host = process.env.HOST?.trim() || '127.0.0.1'
 const port = Number.parseInt(process.env.PORT || '4318', 10)
+const role = process.env.AGENTIC_REMOTE_ROLE?.trim() || 'hub'
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error(`Invalid PORT: ${process.env.PORT}`)
 }
+if (role !== 'hub' && role !== 'node') {
+  throw new Error(`Invalid AGENTIC_REMOTE_ROLE: ${role}`)
+}
 
 const { app, service } = await buildApp({
   logger: true,
-  serveStatic: process.env.NODE_ENV === 'production',
+  role,
+  serveStatic: role === 'hub' && process.env.NODE_ENV === 'production',
 })
 
 await service.start()

@@ -43,6 +43,14 @@ function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string 
   return `${session.computerId}:${session.id}`
 }
 
+function computerTone(computerId: string): number {
+  let hash = 0
+  for (const character of computerId) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0
+  }
+  return hash % 6
+}
+
 function sortSessions(sessions: ManagedSession[]): ManagedSession[] {
   return [...sessions].sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
@@ -856,7 +864,9 @@ function App() {
           {visibleSessions.map((session) => (
             <button
               aria-current={sessionKey(session) === selectedKey ? 'page' : undefined}
-              className={`session-item ${
+              className={`session-item session-item--tone-${computerTone(
+                session.computerId,
+              )} ${
                 sessionKey(session) === selectedKey ? 'session-item--active' : ''
               }`}
               key={sessionKey(session)}

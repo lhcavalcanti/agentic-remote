@@ -116,6 +116,9 @@ describe('App', () => {
     expect(screen.getByText('Hello agent')).toBeInTheDocument()
     expect(screen.getByText('Ready.').tagName).toBe('STRONG')
     expect(screen.getByLabelText('Message')).toBeInTheDocument()
+    expect(document.querySelector('.session-item')?.className).toMatch(
+      /session-item--tone-\d/,
+    )
   })
 
   it('opens the folder-first new session dialog', async () => {

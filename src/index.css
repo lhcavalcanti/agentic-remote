@@ -246,6 +246,8 @@ button {
 }
 
 .session-item {
+  --computer-accent: #788075;
+  --computer-tint: rgba(120, 128, 117, 0.06);
   display: grid;
   width: 100%;
   grid-template-columns: 8px minmax(0, 1fr);
@@ -254,6 +256,7 @@ button {
   padding: 11px 10px;
   color: var(--muted-strong);
   border: 1px solid transparent;
+  border-left: 2px solid var(--computer-accent);
   border-radius: 11px;
   background: transparent;
   text-align: left;
@@ -261,13 +264,46 @@ button {
 }
 
 .session-item:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--computer-tint);
 }
 
 .session-item--active {
   color: var(--text);
   border-color: var(--border);
-  background: var(--panel-raised);
+  border-left-color: var(--computer-accent);
+  background:
+    linear-gradient(var(--computer-tint), var(--computer-tint)),
+    var(--panel-raised);
+}
+
+.session-item--tone-0 {
+  --computer-accent: #6ea8fe;
+  --computer-tint: rgba(110, 168, 254, 0.08);
+}
+
+.session-item--tone-1 {
+  --computer-accent: #9b8afb;
+  --computer-tint: rgba(155, 138, 251, 0.08);
+}
+
+.session-item--tone-2 {
+  --computer-accent: #e7a45f;
+  --computer-tint: rgba(231, 164, 95, 0.08);
+}
+
+.session-item--tone-3 {
+  --computer-accent: #55bfa7;
+  --computer-tint: rgba(85, 191, 167, 0.08);
+}
+
+.session-item--tone-4 {
+  --computer-accent: #db7fa8;
+  --computer-tint: rgba(219, 127, 168, 0.08);
+}
+
+.session-item--tone-5 {
+  --computer-accent: #c9b85f;
+  --computer-tint: rgba(201, 184, 95, 0.08);
 }
 
 .status-dot {

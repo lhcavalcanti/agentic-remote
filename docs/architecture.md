@@ -31,21 +31,13 @@ rendered-history cache, and emits a removal event.
 
 ## Transport and authentication
 
-The browser communicates only with the hub:
+The browser communicates only with the hub. Hub pages and REST routes rely on
+the trusted LAN or an upstream access layer such as Cloudflare Access. Node REST
+and WebSocket routes retain a separate random pairing token.
 
-```text
-Browser --Basic auth--> Hub --Bearer token--> Node
-```
-
-- Hub pages and REST routes require HTTP Basic authentication. A successful
-  login issues an HTTP-only, same-site session cookie used by browser REST and
-  WebSocket requests.
-- Node REST and WebSocket routes require a separate random bearer token.
-- Pairing credentials are generated locally and displayed only by explicit
-  management commands.
-
-HTTP transport is intended for a trusted LAN. An encrypted overlay or TLS is
-required before exposing either role outside that network.
+Pairing credentials are generated locally and displayed only by explicit
+management commands. Use Cloudflare Access, an encrypted overlay, or TLS before
+exposing the hub outside the trusted network.
 
 ## Routing
 

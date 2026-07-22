@@ -1,12 +1,12 @@
 {
   "name": "agentic-remote",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "packageManager": "pnpm@10.34.5",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c cyan,magenta \"pnpm dev:server\" \"pnpm dev:web\"",
-    "dev:server": "AGENTIC_REMOTE_HUB_USER=agentic AGENTIC_REMOTE_HUB_PASSWORD=development tsx watch server/index.ts",
+    "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite",
     "start": "NODE_ENV=production tsx server/index.ts",
     "build": "tsc -b && vite build",

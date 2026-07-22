@@ -55,6 +55,13 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.sessions
   }
 
+  async listHistory(): Promise<SessionDetail[]> {
+    const response = await this.request<{ sessions: SessionDetail[] }>(
+      '/node-api/history',
+    )
+    return response.sessions
+  }
+
   async getSession(sessionId: string): Promise<SessionDetail> {
     const response = await this.request<{ session: SessionDetail }>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}`,
@@ -68,6 +75,17 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       {
         method: 'POST',
         body: JSON.stringify(input),
+      },
+    )
+    return response.session
+  }
+
+  async activateSession(sessionId: string): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/open`,
+      {
+        method: 'POST',
+        body: '{}',
       },
     )
     return response.session

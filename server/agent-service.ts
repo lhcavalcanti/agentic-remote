@@ -20,6 +20,10 @@ import type {
   SessionDetail,
 } from '../shared/contracts.js'
 import { SessionStore } from './session-store.js'
+import {
+  findActiveCopilotSessions,
+  stopActiveCopilotSession,
+} from './active-sessions.js'
 
 interface ActivePrompt {
   assistantMessageId: string
@@ -135,7 +139,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly hydratingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly activePrompts = new Map<string, ActivePrompt>()
   private readonly deletingSessions = new Set<string>()
+  private readonly deletedSessionIds = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
+  private discoveryTimer?: NodeJS.Timeout
+  private discoveryInFlight?: Promise<void>
 
   constructor(
     readonly store: SessionStore,
@@ -146,6 +153,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       logLevel: 'error',
       useLoggedInUser: true,
     }),
+    private readonly activeSessionFinder = findActiveCopilotSessions,
+    private readonly activeSessionStopper = stopActiveCopilotSession,
   ) {
     super()
     this.client = client
@@ -155,9 +164,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.store.initialize()
     await this.client.start()
     await this.discoverSessions()
+    this.discoveryTimer = setInterval(() => {
+      void this.refreshDiscovery()
+    }, 10_000)
+    this.discoveryTimer.unref()
   }
 
   async stop(): Promise<void> {
+    if (this.discoveryTimer) {
+      clearInterval(this.discoveryTimer)
+      this.discoveryTimer = undefined
+    }
     for (const permission of this.permissions.values()) {
       permission.resolve({ kind: 'user-not-available' })
     }
@@ -169,6 +186,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listSessions(): SessionDetail[] {
+    return this.store
+      .list()
+      .filter((session) => session.isOpen)
+      .map((session) => ({
+        ...session,
+        messages: [],
+      }))
+  }
+
+  listHistory(): SessionDetail[] {
     return this.store.list().map((session) => ({
       ...session,
       messages: [],
@@ -201,6 +228,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  async activateSession(id: string): Promise<SessionDetail> {
+    const session = await this.openSession(id)
+    const opened = await this.store.setOpen(id, true)
+    this.publish(opened)
+    return {
+      ...opened,
+      messages: session.messages,
+    }
+  }
+
   async createSession(inputPath: string): Promise<SessionDetail> {
     const cwd = await this.validateDirectory(inputPath)
     const sdkSession = await this.client.createSession({
@@ -220,6 +257,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       title: path.basename(cwd) || 'New session',
       updatedAt: now,
       status: 'idle',
+      isOpen: true,
       messages: [],
     })
     this.publish(session)
@@ -280,7 +318,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     this.deletingSessions.add(sessionId)
+    this.deletedSessionIds.add(sessionId)
+    let completed = false
     try {
+      await this.activeSessionStopper(sessionId)
       const active = this.sessions.get(sessionId)
       if (active) {
         if (this.activePrompts.has(sessionId)) {
@@ -309,9 +350,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.loadingSessions.delete(sessionId)
       this.hydratingSessions.delete(sessionId)
       this.activePrompts.delete(sessionId)
+      completed = true
       this.emit('event', { type: 'session.removed', sessionId })
     } finally {
       this.deletingSessions.delete(sessionId)
+      if (!completed) {
+        this.deletedSessionIds.delete(sessionId)
+      }
     }
   }
 
@@ -388,23 +433,65 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async discoverSessions(): Promise<void> {
-    const sessions = await this.client.listSessions()
+    const [sessions, activeSessions] = await Promise.all([
+      this.client.listSessions(),
+      this.activeSessionFinder(),
+    ])
+    const indexedIds = new Set(sessions.map((session) => session.sessionId))
+    const storedIds = new Set(this.store.list().map((session) => session.id))
     await this.store.syncDiscovered(
-      sessions.flatMap((session) => {
-        const cwd = session.context?.workingDirectory?.trim()
-        if (!cwd) {
-          return []
-        }
-        return [
-          {
-            id: session.sessionId,
-            cwd,
-            title: session.summary?.trim() || path.basename(cwd) || 'Untitled session',
-            updatedAt: session.modifiedTime.toISOString(),
-          },
-        ]
-      }),
+      [
+        ...sessions.flatMap((session) => {
+          if (this.deletedSessionIds.has(session.sessionId)) {
+            return []
+          }
+          const cwd = session.context?.workingDirectory?.trim()
+          if (!cwd) {
+            return []
+          }
+          return [
+            {
+              id: session.sessionId,
+              cwd,
+              title:
+                session.summary?.trim() ||
+                path.basename(cwd) ||
+                'Untitled session',
+              updatedAt: session.modifiedTime.toISOString(),
+            },
+          ]
+        }),
+        ...activeSessions
+          .filter(
+            (session) =>
+              !this.deletedSessionIds.has(session.id) &&
+              !indexedIds.has(session.id) && !storedIds.has(session.id),
+          )
+          .map((session) => ({
+            ...session,
+            title: path.basename(session.cwd) || session.title,
+          })),
+      ],
     )
+    await this.store.syncOpen([
+      ...activeSessions.map((session) => session.id),
+      ...this.sessions.keys(),
+    ])
+  }
+
+  refreshDiscovery(): Promise<void> {
+    if (this.discoveryInFlight) {
+      return this.discoveryInFlight
+    }
+    const refresh = this.discoverSessions()
+      .catch((error: unknown) => {
+        this.publishError('', error)
+      })
+      .finally(() => {
+        this.discoveryInFlight = undefined
+      })
+    this.discoveryInFlight = refresh
+    return refresh
   }
 
   private attachSession(session: CopilotSessionLike): void {

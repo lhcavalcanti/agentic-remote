@@ -71,6 +71,11 @@ export async function listSessions(): Promise<ManagedSession[]> {
   return response.sessions
 }
 
+export async function listHistory(): Promise<ManagedSession[]> {
+  const response = await request<{ sessions: ManagedSession[] }>('/api/history')
+  return response.sessions
+}
+
 export async function getSession(
   computerId: string,
   sessionId: string,
@@ -90,6 +95,20 @@ export async function createSession(
     {
       method: 'POST',
       body: JSON.stringify(input),
+    },
+  )
+  return response.session
+}
+
+export async function activateSession(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/open`,
+    {
+      method: 'POST',
+      body: '{}',
     },
   )
   return response.session

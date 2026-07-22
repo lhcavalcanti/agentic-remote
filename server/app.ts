@@ -8,7 +8,6 @@ import { AgentService } from './agent-service.js'
 import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
-import { createHubAuthHook } from './hub-auth.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
 import { resolveDataDirectory } from './paths.js'
@@ -43,15 +42,6 @@ export async function buildApp(
   await identity.initialize()
 
   await app.register(fastifyWebsocket)
-  if (role === 'hub') {
-    app.addHook(
-      'onRequest',
-      createHubAuthHook(
-        process.env.AGENTIC_REMOTE_HUB_USER?.trim() || 'agentic',
-        process.env.AGENTIC_REMOTE_HUB_PASSWORD?.trim() || identity.token,
-      ),
-    )
-  }
   await registerNodeRoutes(app, service, identity)
 
   let manager: ComputerManager | undefined

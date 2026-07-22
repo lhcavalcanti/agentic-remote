@@ -5,15 +5,24 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import App from './App'
-import { deleteSession, getSession, listComputers, listSessions } from './api'
+import {
+  activateSession,
+  deleteSession,
+  getSession,
+  listComputers,
+  listHistory,
+  listSessions,
+} from './api'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
   listComputers: vi.fn(),
+  listHistory: vi.fn(),
   getSession: vi.fn(),
   addComputer: vi.fn(),
   removeComputer: vi.fn(),
   createSession: vi.fn(),
+  activateSession: vi.fn(),
   sendMessage: vi.fn(),
   cancelSession: vi.fn(),
   deleteSession: vi.fn(),
@@ -53,6 +62,7 @@ const session: ManagedSession = {
   title: 'Project chat',
   updatedAt: '2026-07-22T00:00:00.000Z',
   status: 'idle',
+  isOpen: true,
   messages: [
     {
       id: 'message-1',
@@ -69,15 +79,29 @@ const session: ManagedSession = {
   ],
 }
 
+const historicalSession: ManagedSession = {
+  ...session,
+  id: 'historical-session',
+  title: 'Previous project chat',
+  isOpen: false,
+  messages: [],
+}
+
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(listComputers).mockResolvedValue([computer])
+    vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
     vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(activateSession).mockResolvedValue({
+      ...historicalSession,
+      isOpen: true,
+    })
     vi.mocked(deleteSession).mockResolvedValue()
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     Element.prototype.scrollTo = vi.fn()
+    Element.prototype.scrollIntoView = vi.fn()
     MockWebSocket.instances = []
   })
 
@@ -106,6 +130,26 @@ describe('App', () => {
     expect(
       screen.getByLabelText('Absolute folder path on that computer'),
     ).toHaveValue('')
+  })
+
+  it('opens a historical session from the new-session dialog', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('tab', { name: 'Open previous' }))
+
+    await screen.findByRole('heading', { name: 'Open previous session' })
+    fireEvent.change(screen.getByLabelText('Previous session'), {
+      target: { value: 'computer-1:historical-session' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Open session' }))
+
+    await waitFor(() => {
+      expect(activateSession).toHaveBeenCalledWith(
+        'computer-1',
+        'historical-session',
+      )
+    })
   })
 
   it('closes the owning Copilot session after confirmation', async () => {

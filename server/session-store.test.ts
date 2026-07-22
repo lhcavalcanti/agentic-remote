@@ -159,4 +159,24 @@ describe('SessionStore', () => {
       messages: [],
     })
   })
+
+  it('keeps only currently active sessions open', async () => {
+    const { store } = await createStore()
+    for (const id of ['running', 'stopped']) {
+      await store.create({
+        id,
+        cwd: `/tmp/${id}`,
+        title: id,
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      })
+    }
+
+    await store.syncOpen(['running'])
+
+    expect(store.get('running')?.isOpen).toBe(true)
+    expect(store.get('stopped')?.isOpen).toBe(false)
+  })
 })

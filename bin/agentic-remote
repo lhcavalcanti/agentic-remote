@@ -21,8 +21,6 @@ Commands:
       Install dependencies, build the app, install and start the user service.
   pair-info
       Print this node's URL, identity, and pairing token.
-  access-info
-      Print the hub URL and browser login credentials.
   start
       Start the service.
   stop
@@ -140,7 +138,7 @@ enable_linger() {
 }
 
 setup_service() {
-  local host="" port="" role="" name="" hub_user="" hub_password="" data_directory=""
+  local host="" port="" role="" name="" data_directory=""
   while (($# > 0)); do
     case "$1" in
       --host)
@@ -179,15 +177,11 @@ setup_service() {
   port="${port:-$(config_value PORT)}"
   role="${role:-$(config_value AGENTIC_REMOTE_ROLE)}"
   name="${name:-$(config_value AGENTIC_REMOTE_NODE_NAME)}"
-  hub_user="$(config_value AGENTIC_REMOTE_HUB_USER)"
-  hub_password="$(config_value AGENTIC_REMOTE_HUB_PASSWORD)"
   data_directory="$(config_value AGENTIC_REMOTE_DATA_DIR)"
   host="${host:-127.0.0.1}"
   port="${port:-4317}"
   role="${role:-hub}"
   name="${name:-$(hostname)}"
-  hub_user="${hub_user:-agentic}"
-  hub_password="${hub_password:-$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("base64url"))')}"
   validate_host "$host"
   validate_port "$port"
   validate_role "$role"
@@ -205,9 +199,7 @@ setup_service() {
     "HOST=$host" \
     "PORT=$port" \
     "AGENTIC_REMOTE_ROLE=$role" \
-    "AGENTIC_REMOTE_NODE_NAME=$name" \
-    "AGENTIC_REMOTE_HUB_USER=$hub_user" \
-    "AGENTIC_REMOTE_HUB_PASSWORD=$hub_password" >"$environment_tmp"
+    "AGENTIC_REMOTE_NODE_NAME=$name" >"$environment_tmp"
   if [[ -n "$data_directory" ]]; then
     printf 'AGENTIC_REMOTE_DATA_DIR=%s\n' "$data_directory" >>"$environment_tmp"
   fi
@@ -223,7 +215,6 @@ setup_service() {
 
   if [[ "$role" == "hub" ]]; then
     printf 'Agentic Remote hub is running at http://%s:%s/\n' "$host" "$port"
-    printf 'Run agentic-remote access-info for browser credentials.\n'
   else
     printf 'Agentic Remote node is running at http://%s:%s/\n' "$host" "$port"
     printf 'Run agentic-remote pair-info to register it with a hub.\n'
@@ -248,20 +239,6 @@ pair_info() {
     console.log(`URL:      http://${host}:${port}`);
     console.log(`Token:    ${identity.token}`);
   ' "$identity_file" "${host:-127.0.0.1}" "${port:-4317}"
-}
-
-access_info() {
-  local host port role user password
-  host="$(config_value HOST)"
-  port="$(config_value PORT)"
-  role="$(config_value AGENTIC_REMOTE_ROLE)"
-  user="$(config_value AGENTIC_REMOTE_HUB_USER)"
-  password="$(config_value AGENTIC_REMOTE_HUB_PASSWORD)"
-  [[ "${role:-hub}" == "hub" ]] || die "this service is configured as a node"
-  [[ -n "$password" ]] || die "hub credentials not found; run setup first"
-  printf 'URL:      http://%s:%s/\n' "${host:-127.0.0.1}" "${port:-4317}"
-  printf 'User:     %s\n' "${user:-agentic}"
-  printf 'Password: %s\n' "$password"
 }
 
 update_service() {
@@ -304,10 +281,6 @@ case "$command" in
   pair-info)
     (($# == 0)) || die "pair-info does not accept options"
     pair_info
-    ;;
-  access-info)
-    (($# == 0)) || die "access-info does not accept options"
-    access_info
     ;;
   update)
     (($# == 0)) || die "update does not accept options"

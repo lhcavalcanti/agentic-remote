@@ -44,6 +44,7 @@ class DeferredSession implements CopilotSessionLike {
 
 class FakeCopilotClient implements CopilotClientLike {
   readonly session = new DeferredSession()
+  nextSessionList?: Promise<SessionMetadata[]>
 
   async start() {}
   async stop(): Promise<Error[]> {
@@ -59,7 +60,7 @@ class FakeCopilotClient implements CopilotClientLike {
     return this.session
   }
   async listSessions(): Promise<SessionMetadata[]> {
-    return []
+    return this.nextSessionList ?? []
   }
   async deleteSession() {}
 }
@@ -80,7 +81,12 @@ describe('AgentService deletion', () => {
     directories.push(directory)
     const client = new FakeCopilotClient()
     const store = new SessionStore(path.join(directory, 'state'))
-    const service = new AgentService(store, client)
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
     await service.start()
 
     await service.createSession(directory)
@@ -88,6 +94,42 @@ describe('AgentService deletion', () => {
     await service.deleteSession(client.session.sessionId)
     client.session.resolvePrompt()
     await new Promise((resolve) => setImmediate(resolve))
+
+    expect(store.get(client.session.sessionId)).toBeUndefined()
+    await service.stop()
+  })
+
+  it('does not resurrect a deletion from an in-flight discovery snapshot', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    await service.createSession(directory)
+
+    let releaseSnapshot: (sessions: SessionMetadata[]) => void = () => undefined
+    client.nextSessionList = new Promise((resolve) => {
+      releaseSnapshot = resolve
+    })
+    const refresh = service.refreshDiscovery()
+    await service.deleteSession(client.session.sessionId)
+    releaseSnapshot([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Stale deleted session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    await refresh
 
     expect(store.get(client.session.sessionId)).toBeUndefined()
     await service.stop()

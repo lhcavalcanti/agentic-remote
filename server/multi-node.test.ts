@@ -13,15 +13,26 @@ import type { SessionService } from './session-service.js'
 class FakeSessionService extends EventEmitter implements SessionService {
   private readonly sessions = new Map<string, SessionDetail>()
 
-  constructor(session: SessionDetail) {
+  constructor(...sessions: SessionDetail[]) {
     super()
-    this.sessions.set(session.id, structuredClone(session))
+    for (const session of sessions) {
+      this.sessions.set(session.id, structuredClone(session))
+    }
   }
 
   async start() {}
   async stop() {}
 
   listSessions(): SessionDetail[] {
+    return [...this.sessions.values()]
+      .filter((session) => session.isOpen)
+      .map((session) => ({
+        ...structuredClone(session),
+        messages: [],
+      }))
+  }
+
+  listHistory(): SessionDetail[] {
     return [...this.sessions.values()].map((session) => ({
       ...structuredClone(session),
       messages: [],
@@ -41,6 +52,15 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return session
   }
 
+  async activateSession(id: string): Promise<SessionDetail> {
+    const session = this.sessions.get(id)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.isOpen = true
+    return structuredClone(session)
+  }
+
   async createSession(cwd: string): Promise<SessionDetail> {
     const session: SessionDetail = {
       id: randomUUID(),
@@ -48,6 +68,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
       title: 'New session',
       updatedAt: new Date().toISOString(),
       status: 'idle',
+      isOpen: true,
       messages: [],
     }
     this.sessions.set(session.id, session)
@@ -66,6 +87,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
       content,
       createdAt: new Date().toISOString(),
     })
+
     session.updatedAt = new Date().toISOString()
     this.emitEvent({ type: 'session.upserted', session: structuredClone(session) })
     return structuredClone(session)
@@ -93,13 +115,14 @@ class FakeSessionService extends EventEmitter implements SessionService {
   }
 }
 
-function session(id: string, title: string): SessionDetail {
+function session(id: string, title: string, isOpen = true): SessionDetail {
   return {
     id,
     cwd: `/srv/${id}`,
     title,
     updatedAt: '2026-07-22T00:00:00.000Z',
     status: 'idle',
+    isOpen,
     messages: [
       {
         id: `${id}-message`,
@@ -151,7 +174,10 @@ afterEach(async () => {
 
 describe('multi-node hub', () => {
   it('registers, aggregates, routes, and deletes remote sessions', async () => {
-    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
+    const remoteService = new FakeSessionService(
+      session('remote-session', 'Remote'),
+      session('historical-session', 'Historical', false),
+    )
     const remote = await buildApp({
       dataDirectory: await temporaryDirectory('agentic-remote-node'),
       logger: false,
@@ -173,18 +199,9 @@ describe('multi-node hub', () => {
     await localService.start()
     await hub.app.listen({ host: '127.0.0.1', port: 0 })
     const hubAddress = hub.app.server.address() as AddressInfo
-    const hubAuthorization = `Basic ${Buffer.from(
-      `agentic:${hub.identity.token}`,
-    ).toString('base64')}`
     let hubSocket: WebSocket | undefined
 
     try {
-      const unauthorizedHub = await hub.app.inject({
-        method: 'GET',
-        url: '/api/computers',
-      })
-      expect(unauthorizedHub.statusCode).toBe(401)
-
       const unauthorized = await remote.app.inject({
         method: 'GET',
         url: '/node-api/info',
@@ -194,7 +211,6 @@ describe('multi-node hub', () => {
       const registered = await hub.app.inject({
         method: 'POST',
         url: '/api/computers',
-        headers: { authorization: hubAuthorization },
         payload: {
           baseUrl: remoteUrl,
           token: remote.identity.token,
@@ -202,17 +218,11 @@ describe('multi-node hub', () => {
         },
       })
       expect(registered.statusCode).toBe(201)
-      const setCookie = registered.headers['set-cookie']
-      const hubCookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(
-        ';',
-      )[0]
-      expect(hubCookie).toMatch(/^agentic_remote_auth=/)
       const remoteComputerId = registered.json().computer.id as string
       for (let attempt = 0; attempt < 20; attempt += 1) {
         const status = await hub.app.inject({
           method: 'GET',
           url: '/api/computers',
-          headers: { authorization: hubAuthorization },
         })
         const online = status
           .json()
@@ -227,7 +237,6 @@ describe('multi-node hub', () => {
 
       hubSocket = new WebSocket(
         `ws://127.0.0.1:${hubAddress.port}/api/events`,
-        { headers: { cookie: hubCookie } },
       )
       await new Promise<void>((resolve, reject) => {
         hubSocket?.once('open', resolve)
@@ -237,14 +246,12 @@ describe('multi-node hub', () => {
       const computers = await hub.app.inject({
         method: 'GET',
         url: '/api/computers',
-        headers: { authorization: hubAuthorization },
       })
       expect(computers.json().computers).toHaveLength(2)
 
       const sessions = await hub.app.inject({
         method: 'GET',
         url: '/api/sessions',
-        headers: { authorization: hubAuthorization },
       })
       expect(
         sessions
@@ -255,11 +262,33 @@ describe('multi-node hub', () => {
       const detail = await hub.app.inject({
         method: 'GET',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session`,
-        headers: { authorization: hubAuthorization },
       })
       expect(detail.json().session).toMatchObject({
         computerName: 'homelab-prod',
         messages: [{ content: 'Remote history' }],
+      })
+
+      const history = await hub.app.inject({
+        method: 'GET',
+        url: '/api/history',
+      })
+      expect(history.json().sessions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'historical-session',
+            computerName: 'homelab-prod',
+            isOpen: false,
+          }),
+        ]),
+      )
+      const opened = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/historical-session/open`,
+        payload: {},
+      })
+      expect(opened.json().session).toMatchObject({
+        id: 'historical-session',
+        isOpen: true,
       })
 
       const upserted = waitForEvent(
@@ -272,10 +301,9 @@ describe('multi-node hub', () => {
       const sent = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session/messages`,
-        headers: { authorization: hubAuthorization },
         payload: { content: 'hello remote' },
       })
-      expect(sent.statusCode).toBe(202)
+      expect(sent.statusCode, sent.body).toBe(202)
       expect(sent.json().session.messages.at(-1)).toMatchObject({
         role: 'user',
         content: 'hello remote',
@@ -295,7 +323,6 @@ describe('multi-node hub', () => {
       const deleted = await hub.app.inject({
         method: 'DELETE',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session`,
-        headers: { authorization: hubAuthorization },
       })
       expect(deleted.statusCode, deleted.body).toBe(204)
       expect(remoteService.getSession('remote-session')).toBeUndefined()

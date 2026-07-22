@@ -4,6 +4,7 @@ import {
   ArrowUp,
   Bot,
   Folder,
+  History,
   Menu,
   MessageSquare,
   MonitorCog,
@@ -24,12 +25,14 @@ import type {
   PendingPermission,
 } from '../shared/contracts'
 import {
+  activateSession,
   addComputer,
   cancelSession,
   createSession,
   deleteSession,
   getSession,
   listComputers,
+  listHistory,
   listSessions,
   removeComputer,
   replyPermission,
@@ -129,6 +132,10 @@ function NewSessionDialog({
 }) {
   const [computerId, setComputerId] = useState('')
   const [cwd, setCwd] = useState('')
+  const [mode, setMode] = useState<'new' | 'previous'>('new')
+  const [history, setHistory] = useState<ManagedSession[]>([])
+  const [historyKey, setHistoryKey] = useState('')
+  const [loadingHistory, setLoadingHistory] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
   const available = useMemo(
@@ -139,7 +146,16 @@ function NewSessionDialog({
   useEffect(() => {
     if (open) {
       setComputerId(defaultComputerId || available[0]?.id || '')
+      setMode('new')
+      setHistoryKey('')
       setError(undefined)
+      setLoadingHistory(true)
+      void listHistory()
+        .then(setHistory)
+        .catch((caught: unknown) => {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        })
+        .finally(() => setLoadingHistory(false))
     }
   }, [open, defaultComputerId, available])
 
@@ -152,8 +168,18 @@ function NewSessionDialog({
     setSubmitting(true)
     setError(undefined)
     try {
-      onCreated(await createSession(computerId, { cwd }))
-      setCwd('')
+      if (mode === 'new') {
+        onCreated(await createSession(computerId, { cwd }))
+        setCwd('')
+      } else {
+        const previous = history.find(
+          (session) => sessionKey(session) === historyKey,
+        )
+        if (!previous) {
+          throw new Error('Choose a previous session')
+        }
+        onCreated(await activateSession(previous.computerId, previous.id))
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -161,14 +187,49 @@ function NewSessionDialog({
     }
   }
 
+  const previousSessions = history.filter(
+    (session) => session.computerId === computerId && !session.isOpen,
+  )
+
   return (
-    <DialogFrame eyebrow="New conversation" onClose={onClose} title="Choose a folder">
+    <DialogFrame
+      eyebrow="Conversation"
+      onClose={onClose}
+      title={mode === 'new' ? 'Choose a folder' : 'Open previous session'}
+    >
       <form onSubmit={submit}>
+        <div className="dialog-tabs" role="tablist" aria-label="Session type">
+          <button
+            aria-selected={mode === 'new'}
+            className={mode === 'new' ? 'dialog-tab dialog-tab--active' : 'dialog-tab'}
+            onClick={() => setMode('new')}
+            role="tab"
+            type="button"
+          >
+            <Plus size={15} />
+            New session
+          </button>
+          <button
+            aria-selected={mode === 'previous'}
+            className={
+              mode === 'previous' ? 'dialog-tab dialog-tab--active' : 'dialog-tab'
+            }
+            onClick={() => setMode('previous')}
+            role="tab"
+            type="button"
+          >
+            <History size={15} />
+            Open previous
+          </button>
+        </div>
         <label className="field">
           <span>Computer</span>
           <select
             className="dialog-select"
-            onChange={(event) => setComputerId(event.target.value)}
+            onChange={(event) => {
+              setComputerId(event.target.value)
+              setHistoryKey('')
+            }}
             value={computerId}
           >
             {available.map((computer) => (
@@ -178,26 +239,61 @@ function NewSessionDialog({
             ))}
           </select>
         </label>
-        <label className="field">
-          <span>Absolute folder path on that computer</span>
-          <div className="path-input">
-            <Folder aria-hidden="true" size={18} />
-            <input
-              autoFocus
-              onChange={(event) => setCwd(event.target.value)}
-              placeholder="/home/you/src/project"
-              spellCheck={false}
-              value={cwd}
-            />
-          </div>
-        </label>
+        {mode === 'new' ? (
+          <label className="field">
+            <span>Absolute folder path on that computer</span>
+            <div className="path-input">
+              <Folder aria-hidden="true" size={18} />
+              <input
+                autoFocus
+                onChange={(event) => setCwd(event.target.value)}
+                placeholder="/home/you/src/project"
+                spellCheck={false}
+                value={cwd}
+              />
+            </div>
+          </label>
+        ) : (
+          <label className="field">
+            <span>Previous session</span>
+            <select
+              className="dialog-select history-select"
+              disabled={loadingHistory || previousSessions.length === 0}
+              onChange={(event) => setHistoryKey(event.target.value)}
+              value={historyKey}
+            >
+              <option value="">
+                {loadingHistory
+                  ? 'Loading sessions…'
+                  : previousSessions.length === 0
+                    ? 'No closed sessions on this computer'
+                    : 'Choose a session'}
+              </option>
+              {previousSessions.map((session) => (
+                <option key={sessionKey(session)} value={sessionKey(session)}>
+                  {session.title} — {shortPath(session.cwd)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {error ? <p className="form-error">{error}</p> : null}
         <button
           className="primary-button dialog__submit"
-          disabled={submitting || !computerId || !cwd.trim()}
+          disabled={
+            submitting ||
+            !computerId ||
+            (mode === 'new' ? !cwd.trim() : !historyKey)
+          }
           type="submit"
         >
-          {submitting ? 'Creating…' : 'Create session'}
+          {submitting
+            ? mode === 'new'
+              ? 'Creating…'
+              : 'Opening…'
+            : mode === 'new'
+              ? 'Create session'
+              : 'Open session'}
         </button>
       </form>
     </DialogFrame>
@@ -394,6 +490,7 @@ function App() {
   const [computersOpen, setComputersOpen] = useState(false)
   const [error, setError] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
 
   const visibleSessions = useMemo(
@@ -596,10 +693,10 @@ function App() {
 
   const latestContent = selected?.messages.at(-1)?.content
   useEffect(() => {
-    timelineRef.current?.scrollTo({
-      top: timelineRef.current.scrollHeight,
-      behavior: 'smooth',
+    const frame = window.requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ block: 'end' })
     })
+    return () => window.cancelAnimationFrame(frame)
   }, [selectedKey, selected?.messages.length, latestContent])
 
   function selectSession(session: ManagedSession) {
@@ -897,6 +994,7 @@ function App() {
               {selected.activity}
             </div>
           ) : null}
+          <div aria-hidden="true" className="timeline-bottom" ref={bottomRef} />
         </div>
 
         {selected ? (

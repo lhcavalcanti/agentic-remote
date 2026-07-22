@@ -50,6 +50,7 @@ export class SessionStore {
     }
 
     for (const session of Object.values(this.state.sessions)) {
+      session.isOpen = false
       if (session.status !== 'idle') {
         session.status = 'idle'
         session.activity = undefined
@@ -87,11 +88,13 @@ export class SessionStore {
         if (discovered.updatedAt > existing.updatedAt) {
           existing.updatedAt = discovered.updatedAt
         }
+        existing.isOpen ??= false
         continue
       }
       this.state.sessions[discovered.id] = {
         ...discovered,
         status: 'idle',
+        isOpen: false,
         messages: [],
       }
     }
@@ -104,6 +107,20 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.messages = messages
+    })
+  }
+
+  async syncOpen(sessionIds: string[]): Promise<void> {
+    const active = new Set(sessionIds)
+    for (const session of Object.values(this.state.sessions)) {
+      session.isOpen = active.has(session.id)
+    }
+    await this.persist()
+  }
+
+  async setOpen(sessionId: string, isOpen: boolean): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.isOpen = isOpen
     })
   }
 

@@ -4,8 +4,10 @@ export interface SessionService {
   start(): Promise<void>
   stop(): Promise<void>
   listSessions(): SessionDetail[]
+  listHistory(): SessionDetail[]
   getSession(id: string): SessionDetail | undefined
   openSession(id: string): Promise<SessionDetail>
+  activateSession(id: string): Promise<SessionDetail>
   createSession(cwd: string): Promise<SessionDetail>
   sendMessage(sessionId: string, content: string): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>

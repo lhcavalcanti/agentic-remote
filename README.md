@@ -4,6 +4,9 @@ A focused, mobile-first hub for GitHub Copilot CLI sessions across multiple
 computers. Each computer owns its Copilot process, files, and history; one hub
 serves the UI and routes commands to paired nodes.
 
+The sidebar contains only currently open sessions. Use **New session → Open
+previous** to browse persisted history by computer and resume a closed session.
+
 ## Why this architecture
 
 - **React + Vite** produces a small production bundle and fast responsive UI.
@@ -16,8 +19,8 @@ serves the UI and routes commands to paired nodes.
 - Session metadata and rendered messages are stored in
   `~/.agentic-remote/state.json` with user-only permissions.
 
-The server binds to `127.0.0.1` by default. Pairing and browser authentication
-support a trusted LAN; internet exposure remains outside the current scope.
+The server binds to `127.0.0.1` by default. Direct access is intended for a
+trusted LAN; use an upstream layer such as Cloudflare Access externally.
 
 See [Multi-computer architecture](docs/architecture.md) for ownership,
 authentication, routing, and failure semantics.
@@ -42,7 +45,7 @@ pnpm dev
 ```
 
 Open <http://127.0.0.1:4317>. Vite proxies API and WebSocket traffic to the
-Fastify server on port `4318` and supplies local development credentials.
+Fastify server on port `4318`.
 
 ## Production
 
@@ -102,7 +105,6 @@ agentic-remote restart
 agentic-remote status
 agentic-remote logs
 agentic-remote pair-info
-agentic-remote access-info
 agentic-remote update
 agentic-remote uninstall
 ```
@@ -111,7 +113,7 @@ The service restarts after failures. With systemd user lingering enabled, it
 also starts during boot without waiting for an interactive login. `uninstall`
 removes the service but preserves conversation data in `~/.agentic-remote`.
 `update` also migrates older service environments and backfills missing role
-and browser-authentication settings.
+settings.
 
 ## Configuration
 
@@ -123,8 +125,6 @@ and browser-authentication settings.
 | `AGENTIC_REMOTE_DATA_DIR` | `~/.agentic-remote` | Local application state |
 | `AGENTIC_REMOTE_ROLE` | `hub` | Run the UI hub or a headless node |
 | `AGENTIC_REMOTE_NODE_NAME` | hostname | Friendly computer name |
-| `AGENTIC_REMOTE_HUB_USER` | `agentic` | Browser HTTP Basic username |
-| `AGENTIC_REMOTE_HUB_PASSWORD` | generated | Browser HTTP Basic password |
 
 ## Checks
 

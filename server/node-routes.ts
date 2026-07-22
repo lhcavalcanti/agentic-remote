@@ -46,6 +46,10 @@ export async function registerNodeRoutes(
         sessions: service.listSessions(),
       }))
 
+      node.get('/history', async () => ({
+        sessions: service.listHistory(),
+      }))
+
       node.get<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId',
         async (request) => ({
@@ -59,6 +63,13 @@ export async function registerNodeRoutes(
           .code(201)
           .send({ session: await service.createSession(input.cwd) })
       })
+
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/open',
+        async (request) => ({
+          session: await service.activateSession(request.params.sessionId),
+        }),
+      )
 
       node.post<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/messages',

@@ -29,6 +29,7 @@ export interface SessionSummary {
   title: string
   updatedAt: string
   status: SessionStatus
+  isOpen?: boolean
   activity?: string
 }
 

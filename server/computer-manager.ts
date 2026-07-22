@@ -143,6 +143,26 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     )
   }
 
+  async listHistory(): Promise<ManagedSession[]> {
+    const local = this.localService
+      .listHistory()
+      .map((session) => managedSession(session, this.localComputer()))
+    const remote = await Promise.all(
+      this.registry.list().map(async (computer) => {
+        try {
+          return (await this.requireClient(computer.id).listHistory()).map(
+            (session) => managedSession(session, computer),
+          )
+        } catch {
+          return []
+        }
+      }),
+    )
+    return [...local, ...remote.flat()].sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    )
+  }
+
   async getSession(computerId: string, sessionId: string): Promise<ManagedSession> {
     const computer = this.requireComputer(computerId)
     const session =
@@ -161,6 +181,18 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       computerId === this.identity.info.id
         ? await this.localService.createSession(input.cwd)
         : await this.requireClient(computerId).createSession(input)
+    return managedSession(session, computer)
+  }
+
+  async activateSession(
+    computerId: string,
+    sessionId: string,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.activateSession(sessionId)
+        : await this.requireClient(computerId).activateSession(sessionId)
     return managedSession(session, computer)
   }
 

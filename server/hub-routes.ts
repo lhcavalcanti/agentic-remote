@@ -54,6 +54,10 @@ export async function registerHubRoutes(
     sessions: await manager.listSessions(),
   }))
 
+  app.get('/api/history', async () => ({
+    sessions: await manager.listHistory(),
+  }))
+
   app.get<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId',
     async (request) => ({
@@ -72,6 +76,16 @@ export async function registerHubRoutes(
         session: await manager.createSession(request.params.computerId, input),
       })
     },
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/open',
+    async (request) => ({
+      session: await manager.activateSession(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
   )
 
   app.post<{ Params: SessionParams }>(

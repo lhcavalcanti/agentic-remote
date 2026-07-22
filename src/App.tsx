@@ -25,6 +25,7 @@ import type {
 import {
   cancelSession,
   createSession,
+  getSession,
   listSessions,
   replyPermission,
   sendMessage,
@@ -202,6 +203,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [permissionBusy, setPermissionBusy] = useState(false)
+  const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [error, setError] = useState<string>()
@@ -236,6 +238,33 @@ function App() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    if (!selectedId) {
+      return
+    }
+    let active = true
+    setLoadingTranscript(true)
+    void getSession(selectedId)
+      .then((session) => {
+        if (active) {
+          setSessions((current) => upsertSession(current, session))
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingTranscript(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [selectedId])
 
   useEffect(() => {
     let socket: WebSocket | undefined
@@ -442,6 +471,14 @@ function App() {
         <div className="timeline" ref={timelineRef}>
           {!selected ? (
             <EmptyConversation onCreate={() => setNewSessionOpen(true)} />
+          ) : loadingTranscript && selected.messages.length === 0 ? (
+            <div className="empty-chat">
+              <span className="typing-indicator" aria-label="Loading conversation">
+                <i />
+                <i />
+                <i />
+              </span>
+            </div>
           ) : selected.messages.length === 0 ? (
             <div className="empty-chat">
               <span className="empty-chat__icon">

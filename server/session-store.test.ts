@@ -94,7 +94,6 @@ describe('SessionStore', () => {
         },
       ],
     })
-
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
 
@@ -102,6 +101,62 @@ describe('SessionStore', () => {
       status: 'idle',
       activity: undefined,
       messages: [{ streaming: false }],
+    })
+  })
+
+  it('discovers sessions without replacing locally stored history', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'existing',
+      cwd: '/tmp/old-project',
+      title: 'Old title',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Keep me',
+          createdAt: '2026-07-21T00:00:00.000Z',
+        },
+      ],
+    })
+    await store.create({
+      id: 'stale',
+      cwd: '/tmp/deleted-project',
+      title: 'Deleted elsewhere',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+
+    await store.syncDiscovered([
+      {
+        id: 'existing',
+        cwd: '/tmp/project',
+        title: 'Updated title',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+      },
+      {
+        id: 'discovered',
+        cwd: '/tmp/another-project',
+        title: 'Discovered session',
+        updatedAt: '2026-07-22T01:00:00.000Z',
+      },
+    ])
+
+    expect(store.get('existing')).toMatchObject({
+      cwd: '/tmp/project',
+      title: 'Updated title',
+      messages: [{ content: 'Keep me' }],
+    })
+    expect(store.get('discovered')).toMatchObject({
+      title: 'Discovered session',
+      messages: [],
+    })
+    expect(store.get('stale')).toMatchObject({
+      title: 'Deleted elsewhere',
+      messages: [],
     })
   })
 })

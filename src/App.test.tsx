@@ -5,10 +5,11 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionDetail } from '../shared/contracts'
 import App from './App'
-import { listSessions } from './api'
+import { getSession, listSessions } from './api'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
+  getSession: vi.fn(),
   createSession: vi.fn(),
   sendMessage: vi.fn(),
   cancelSession: vi.fn(),
@@ -52,6 +53,7 @@ const session: SessionDetail = {
 describe('App', () => {
   beforeEach(() => {
     vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
     Element.prototype.scrollTo = vi.fn()
   })
 

@@ -30,6 +30,13 @@ export async function listSessions(): Promise<SessionDetail[]> {
   return response.sessions
 }
 
+export async function getSession(sessionId: string): Promise<SessionDetail> {
+  const response = await request<{ session: SessionDetail }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+  )
+  return response.session
+}
+
 export async function createSession(
   input: CreateSessionInput,
 ): Promise<SessionDetail> {

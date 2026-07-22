@@ -2,6 +2,13 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ChatMessage, SessionDetail, SessionStatus } from '../shared/contracts.js'
 
+export interface DiscoveredSession {
+  id: string
+  cwd: string
+  title: string
+  updatedAt: string
+}
+
 interface StoredState {
   version: 1
   sessions: Record<string, SessionDetail>
@@ -70,6 +77,40 @@ export class SessionStore {
     this.state.sessions[session.id] = cloneSession(session)
     await this.persist()
     return cloneSession(session)
+  }
+
+  async syncDiscovered(sessions: DiscoveredSession[]): Promise<void> {
+    for (const discovered of sessions) {
+      const existing = this.state.sessions[discovered.id]
+      if (existing) {
+        existing.cwd = discovered.cwd
+        existing.title = discovered.title || existing.title
+        if (discovered.updatedAt > existing.updatedAt) {
+          existing.updatedAt = discovered.updatedAt
+        }
+        continue
+      }
+      this.state.sessions[discovered.id] = {
+        ...discovered,
+        status: 'idle',
+        messages: [],
+      }
+    }
+    await this.persist()
+  }
+
+  async replaceMessages(
+    sessionId: string,
+    messages: ChatMessage[],
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.messages = messages
+    })
+  }
+
+  async remove(sessionId: string): Promise<void> {
+    delete this.state.sessions[sessionId]
+    await this.persist()
   }
 
   async addMessage(sessionId: string, message: ChatMessage): Promise<SessionDetail> {

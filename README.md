@@ -2,8 +2,8 @@
 
 A focused, mobile-first web interface for local GitHub Copilot CLI sessions.
 Agentic Remote keeps the first version intentionally small: choose a folder,
-start or resume a session, read the conversation, send messages, stop a turn,
-and answer permission prompts.
+discover existing sessions, start or resume a session in any folder, read the
+conversation, send messages, stop a turn, and answer permission prompts.
 
 ## Why this architecture
 
@@ -48,6 +48,27 @@ pnpm start
 ```
 
 Open <http://127.0.0.1:4318>.
+
+## User service
+
+The repository includes a systemd user-service template. Install it with:
+
+```bash
+mkdir -p ~/.config/systemd/user ~/.config/agentic-remote
+cp deploy/agentic-remote.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now agentic-remote
+```
+
+To change the bind address or port, create
+`~/.config/agentic-remote/environment`:
+
+```text
+HOST=10.0.0.181
+PORT=4317
+```
+
+The service restarts after failures and starts with the user's systemd session.
 
 ## Configuration
 

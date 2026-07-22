@@ -11,6 +11,7 @@ import {
   type SessionEvent,
 } from '@github/copilot-sdk'
 import type {
+  ChatMessage,
   PendingPermission,
   ServerEvent,
   SessionDetail,
@@ -28,6 +29,36 @@ interface PendingSdkPermission {
 
 export interface AgentServiceEvents {
   event: [event: ServerEvent]
+}
+
+export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
+  const messages: ChatMessage[] = []
+  for (const event of events) {
+    if (event.type === 'user.message') {
+      const content = event.data.content.trim()
+      if (content) {
+        messages.push({
+          id: event.id,
+          role: 'user',
+          content,
+          createdAt: event.timestamp,
+        })
+      }
+      continue
+    }
+    if (event.type === 'assistant.message' && !event.agentId) {
+      const content = event.data.content.trim()
+      if (content) {
+        messages.push({
+          id: event.data.messageId || event.id,
+          role: 'assistant',
+          content,
+          createdAt: event.timestamp,
+        })
+      }
+    }
+  }
+  return messages
 }
 
 function permissionTitle(request: PermissionRequest): string {
@@ -58,6 +89,9 @@ function permissionTitle(request: PermissionRequest): string {
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly client: CopilotClient
   private readonly sessions = new Map<string, CopilotSession>()
+  private readonly hydratedSessions = new Set<string>()
+  private readonly loadingSessions = new Map<string, Promise<CopilotSession>>()
+  private readonly hydratingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly activePrompts = new Map<string, ActivePrompt>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
 
@@ -78,6 +112,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async start(): Promise<void> {
     await this.store.initialize()
     await this.client.start()
+    await this.discoverSessions()
   }
 
   async stop(): Promise<void> {
@@ -92,11 +127,36 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listSessions(): SessionDetail[] {
-    return this.store.list()
+    return this.store.list().map((session) => ({
+      ...session,
+      messages: [],
+    }))
   }
 
   getSession(id: string): SessionDetail | undefined {
     return this.store.get(id)
+  }
+
+  async openSession(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (this.hydratedSessions.has(id)) {
+      return stored
+    }
+
+    const inFlight = this.hydratingSessions.get(id)
+    if (inFlight) {
+      return inFlight
+    }
+    const hydration = this.hydrateSession(id)
+    this.hydratingSessions.set(id, hydration)
+    try {
+      return await hydration
+    } finally {
+      this.hydratingSessions.delete(id)
+    }
   }
 
   async createSession(inputPath: string): Promise<SessionDetail> {
@@ -109,6 +169,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
     this.attachSession(sdkSession)
     this.sessions.set(sdkSession.sessionId, sdkSession)
+    this.hydratedSessions.add(sdkSession.sessionId)
 
     const now = new Date().toISOString()
     const session = await this.store.create({
@@ -201,6 +262,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (active) {
       return active
     }
+    const inFlight = this.loadingSessions.get(sessionId)
+    if (inFlight) {
+      return inFlight
+    }
+    const loading = this.resumeSession(sessionId)
+    this.loadingSessions.set(sessionId, loading)
+    try {
+      return await loading
+    } finally {
+      this.loadingSessions.delete(sessionId)
+    }
+  }
+
+  private async resumeSession(sessionId: string): Promise<CopilotSession> {
     const stored = this.store.get(sessionId)
     if (!stored) {
       throw new Error('Session not found')
@@ -215,6 +290,37 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.attachSession(sdkSession)
     this.sessions.set(sessionId, sdkSession)
     return sdkSession
+  }
+
+  private async hydrateSession(sessionId: string): Promise<SessionDetail> {
+    const session = await this.ensureLoaded(sessionId)
+    const hydrated = await this.store.replaceMessages(
+      sessionId,
+      messagesFromHistory(await session.getEvents()),
+    )
+    this.hydratedSessions.add(sessionId)
+    this.publish(hydrated)
+    return hydrated
+  }
+
+  private async discoverSessions(): Promise<void> {
+    const sessions = await this.client.listSessions()
+    await this.store.syncDiscovered(
+      sessions.flatMap((session) => {
+        const cwd = session.context?.workingDirectory?.trim()
+        if (!cwd) {
+          return []
+        }
+        return [
+          {
+            id: session.sessionId,
+            cwd,
+            title: session.summary?.trim() || path.basename(cwd) || 'Untitled session',
+            updatedAt: session.modifiedTime.toISOString(),
+          },
+        ]
+      }),
+    )
   }
 
   private attachSession(session: CopilotSession): void {

@@ -44,10 +44,10 @@ export async function buildApp(
   app.get<{ Params: { sessionId: string } }>(
     '/api/sessions/:sessionId',
     async (request, reply) => {
-      const session = service.getSession(request.params.sessionId)
-      if (!session) {
+      if (!service.getSession(request.params.sessionId)) {
         return reply.code(404).send({ error: 'Session not found' })
       }
+      const session = await service.openSession(request.params.sessionId)
       return { session }
     },
   )

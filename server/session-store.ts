@@ -110,6 +110,21 @@ export class SessionStore {
     })
   }
 
+  async replaceTranscript(
+    sessionId: string,
+    messages: ChatMessage[],
+    status: SessionStatus,
+    activity?: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.messages = messages
+      session.status = status
+      session.activity = activity
+      session.updatedAt =
+        messages.at(-1)?.createdAt || session.updatedAt
+    })
+  }
+
   async syncOpen(sessionIds: string[]): Promise<void> {
     const active = new Set(sessionIds)
     for (const session of Object.values(this.state.sessions)) {

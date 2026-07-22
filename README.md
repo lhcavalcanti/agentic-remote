@@ -6,6 +6,9 @@ serves the UI and routes commands to paired nodes.
 
 The sidebar contains only currently open sessions. Use **New session → Open
 previous** to browse persisted history by computer and resume a closed session.
+Computer groups and sessions can be reordered by dragging their handles; order
+is retained in the browser. Open transcripts synchronize from Copilot's event
+logs so terminal- and UI-originated messages stay consistent.
 
 ## Why this architecture
 

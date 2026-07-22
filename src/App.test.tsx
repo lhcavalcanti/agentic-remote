@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import App from './App'
@@ -72,6 +79,13 @@ const session: ManagedSession = {
     },
     {
       id: 'message-2',
+      role: 'activity',
+      content: 'Bash',
+      createdAt: '2026-07-22T00:00:00.500Z',
+      activityStatus: 'completed',
+    },
+    {
+      id: 'message-3',
       role: 'assistant',
       content: '**Ready.**',
       createdAt: '2026-07-22T00:00:01.000Z',
@@ -90,6 +104,7 @@ const historicalSession: ManagedSession = {
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
@@ -114,11 +129,14 @@ describe('App', () => {
 
     expect((await screen.findAllByText('Project chat')).length).toBeGreaterThan(0)
     expect(screen.getByText('Hello agent')).toBeInTheDocument()
+    expect(screen.getByText('Bash')).toBeInTheDocument()
     expect(screen.getByText('Ready.').tagName).toBe('STRONG')
     expect(screen.getByLabelText('Message')).toBeInTheDocument()
     expect(document.querySelector('.session-item')?.className).toMatch(
       /session-item--tone-\d/,
     )
+    expect(screen.getByLabelText('Reorder development')).toBeInTheDocument()
+    expect(screen.getByLabelText('Reorder Project chat')).toBeInTheDocument()
   })
 
   it('opens the folder-first new session dialog', async () => {
@@ -177,5 +195,37 @@ describe('App', () => {
       expect(listSessions).toHaveBeenCalledTimes(2)
       expect(listComputers).toHaveBeenCalledTimes(2)
     })
+  })
+
+  it('does not persist unchanged ordering on transcript updates', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    setItem.mockClear()
+
+    act(() => {
+      for (let index = 0; index < 20; index += 1) {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.upserted',
+            session: {
+              ...session,
+              updatedAt: `2026-07-22T00:00:${String(index).padStart(2, '0')}.000Z`,
+              messages: [
+                ...session.messages,
+                {
+                  id: `stream-${index}`,
+                  role: 'assistant',
+                  content: `chunk ${index}`,
+                  createdAt: `2026-07-22T00:00:${String(index).padStart(2, '0')}.000Z`,
+                },
+              ],
+            },
+          }),
+        } as MessageEvent)
+      }
+    })
+
+    expect(setItem).not.toHaveBeenCalled()
   })
 })

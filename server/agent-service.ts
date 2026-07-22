@@ -18,12 +18,14 @@ import type {
   PendingPermission,
   ServerEvent,
   SessionDetail,
+  SessionStatus,
 } from '../shared/contracts.js'
 import { SessionStore } from './session-store.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
 } from './active-sessions.js'
+import { readSessionEvents, sessionEventLogVersion } from './event-log.js'
 
 interface ActivePrompt {
   assistantMessageId: string
@@ -64,10 +66,36 @@ export interface AgentServiceEvents {
 
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
+  type ToolGroup = {
+    messageIndex: number
+    names: Set<string>
+    active: Set<string>
+    failed: boolean
+  }
+  const tools = new Map<string, ToolGroup>()
+  let currentToolGroup: ToolGroup | undefined
+
+  const updateToolGroup = (group: ToolGroup) => {
+    const message = messages[group.messageIndex]
+    if (!message) {
+      return
+    }
+    const names = [...group.names]
+    message.content =
+      names.length === 1
+        ? `Tool · ${names[0]}`
+        : `Tools · ${names.slice(0, 3).join(', ')}${
+            names.length > 3 ? ` +${names.length - 3}` : ''
+          }`
+    message.activityStatus =
+      group.active.size > 0 ? 'running' : group.failed ? 'failed' : 'completed'
+  }
+
   for (const event of events) {
     if (event.type === 'user.message') {
       const content = event.data.content.trim()
       if (content) {
+        currentToolGroup = undefined
         messages.push({
           id: event.id,
           role: 'user',
@@ -80,6 +108,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     if (event.type === 'assistant.message' && !event.agentId) {
       const content = event.data.content.trim()
       if (content) {
+        currentToolGroup = undefined
         messages.push({
           id: event.data.messageId || event.id,
           role: 'assistant',
@@ -87,9 +116,77 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
           createdAt: event.timestamp,
         })
       }
+      continue
+    }
+    if (event.type === 'tool.execution_start' && !event.agentId) {
+      const toolCallId = event.data.toolCallId
+      if (!currentToolGroup) {
+        currentToolGroup = {
+          messageIndex: messages.length,
+          names: new Set(),
+          active: new Set(),
+          failed: false,
+        }
+        messages.push({
+          id: `tools:${event.id}`,
+          role: 'activity',
+          content: '',
+          createdAt: event.timestamp,
+          activityStatus: 'running',
+        })
+      }
+      currentToolGroup.names.add(readableToolName(event.data.toolName))
+      currentToolGroup.active.add(toolCallId)
+      tools.set(toolCallId, currentToolGroup)
+      messages[currentToolGroup.messageIndex].createdAt = event.timestamp
+      updateToolGroup(currentToolGroup)
+      continue
+    }
+    if (event.type === 'tool.execution_complete' && !event.agentId) {
+      const group = tools.get(event.data.toolCallId)
+      if (group) {
+        group.active.delete(event.data.toolCallId)
+        group.failed ||= !event.data.success
+        messages[group.messageIndex].createdAt = event.timestamp
+        updateToolGroup(group)
+      }
     }
   }
   return messages
+}
+
+function readableToolName(value: string): string {
+  return value
+    .replace(/^github-mcp-server-/, 'GitHub · ')
+    .replaceAll('_', ' ')
+    .replaceAll('-', ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+function statusFromEvents(events: SessionEvent[]): SessionStatus {
+  let status: SessionStatus = 'idle'
+  for (const event of events) {
+    switch (event.type) {
+      case 'assistant.turn_start':
+        status = 'running'
+        break
+      case 'permission.requested':
+        status = 'waiting'
+        break
+      case 'permission.completed':
+        status = 'running'
+        break
+      case 'session.error':
+        status = 'error'
+        break
+      case 'assistant.turn_end':
+      case 'session.idle':
+      case 'abort':
+        status = 'idle'
+        break
+    }
+  }
+  return status
 }
 
 function isMissingSessionError(error: unknown): boolean {
@@ -148,6 +245,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private discoveryTimer?: NodeJS.Timeout
   private discoveryInFlight?: Promise<void>
+  private transcriptTimer?: NodeJS.Timeout
+  private transcriptInFlight?: Promise<void>
+  private externalSessionIds = new Set<string>()
+  private readonly eventLogFingerprints = new Map<string, string>()
+  private readonly eventLogVersions = new Map<string, string>()
+  private readonly liveTranscriptWatermarks = new Map<string, string>()
 
   constructor(
     readonly store: SessionStore,
@@ -160,6 +263,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }),
     private readonly activeSessionFinder = findActiveCopilotSessions,
     private readonly activeSessionStopper = stopActiveCopilotSession,
+    private readonly sessionEventReader = readSessionEvents,
+    private readonly sessionEventVersion = sessionEventLogVersion,
   ) {
     super()
     this.client = client
@@ -169,16 +274,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.store.initialize()
     await this.client.start()
     await this.discoverSessions()
+    await this.refreshTranscripts()
     this.discoveryTimer = setInterval(() => {
       void this.refreshDiscovery()
     }, 10_000)
     this.discoveryTimer.unref()
+    this.transcriptTimer = setInterval(() => {
+      void this.refreshTranscripts()
+    }, 750)
+    this.transcriptTimer.unref()
   }
 
   async stop(): Promise<void> {
     if (this.discoveryTimer) {
       clearInterval(this.discoveryTimer)
       this.discoveryTimer = undefined
+    }
+    if (this.transcriptTimer) {
+      clearInterval(this.transcriptTimer)
+      this.transcriptTimer = undefined
     }
     for (const permission of this.permissions.values()) {
       permission.resolve({ kind: 'user-not-available' })
@@ -443,6 +557,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activeSessionFinder(),
     ])
     const storedIds = new Set(this.store.list().map((session) => session.id))
+    this.externalSessionIds = new Set(
+      activeSessions.map((session) => session.id),
+    )
     const indexedSessions = sessions.flatMap((session) => {
       if (this.deletedSessionIds.has(session.sessionId)) {
         return []
@@ -500,6 +617,83 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return refresh
   }
 
+  refreshTranscripts(): Promise<void> {
+    if (this.transcriptInFlight) {
+      return this.transcriptInFlight
+    }
+    const refresh = this.syncTranscripts()
+      .catch((error: unknown) => {
+        this.publishError('', error)
+      })
+      .finally(() => {
+        this.transcriptInFlight = undefined
+      })
+    this.transcriptInFlight = refresh
+    return refresh
+  }
+
+  private async syncTranscripts(): Promise<void> {
+    const sessionIds = new Set([
+      ...this.externalSessionIds,
+      ...this.sessions.keys(),
+    ])
+    await Promise.all(
+      [...sessionIds].map(async (sessionId) => {
+        if (
+          this.activePrompts.has(sessionId) ||
+          this.deletedSessionIds.has(sessionId) ||
+          !this.store.get(sessionId)
+        ) {
+          return
+        }
+        const version = await this.sessionEventVersion(sessionId)
+        if (!version || this.eventLogVersions.get(sessionId) === version) {
+          return
+        }
+        const events = await this.sessionEventReader(sessionId)
+        const fingerprint = `${events.length}:${events.at(-1)?.id || ''}`
+        if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
+          return
+        }
+        const messages = messagesFromHistory(events)
+        const watermark = this.liveTranscriptWatermarks.get(sessionId)
+        const lastEventTimestamp = events.at(-1)?.timestamp
+        if (
+          watermark &&
+          (!lastEventTimestamp ||
+            Date.parse(lastEventTimestamp) < Date.parse(watermark))
+        ) {
+          this.eventLogVersions.set(sessionId, version)
+          return
+        }
+        const status = statusFromEvents(events)
+        const lastMessage = messages.at(-1)
+        const activity =
+          lastMessage?.role === 'activity' &&
+          lastMessage.activityStatus === 'running'
+            ? lastMessage.content
+            : undefined
+        if (
+          this.activePrompts.has(sessionId) ||
+          this.deletedSessionIds.has(sessionId) ||
+          !this.store.get(sessionId)
+        ) {
+          return
+        }
+        const updated = await this.store.replaceTranscript(
+          sessionId,
+          messages,
+          status,
+          activity,
+        )
+        this.eventLogFingerprints.set(sessionId, fingerprint)
+        this.eventLogVersions.set(sessionId, version)
+        this.liveTranscriptWatermarks.delete(sessionId)
+        this.publish(updated)
+      }),
+    )
+  }
+
   private attachSession(session: CopilotSessionLike): void {
     session.on((event) => {
       this.handleSessionEvent(session.sessionId, event)
@@ -525,6 +719,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     if (event.type === 'assistant.message' && !event.agentId && activePrompt) {
+      this.liveTranscriptWatermarks.set(sessionId, event.timestamp)
       this.publish(
         this.store.setMessageContent(
           sessionId,
@@ -557,6 +752,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const sessionId = sdkSession.sessionId
     try {
       const response = await sdkSession.sendAndWait(content, 60 * 60 * 1000)
+      if (response?.timestamp) {
+        this.liveTranscriptWatermarks.set(sessionId, response.timestamp)
+      }
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }

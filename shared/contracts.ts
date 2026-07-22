@@ -1,6 +1,6 @@
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 
-export type MessageRole = 'user' | 'assistant'
+export type MessageRole = 'user' | 'assistant' | 'activity'
 
 export interface ChatMessage {
   id: string
@@ -8,6 +8,7 @@ export interface ChatMessage {
   content: string
   createdAt: string
   streaming?: boolean
+  activityStatus?: 'running' | 'completed' | 'failed'
 }
 
 export interface PermissionOption {

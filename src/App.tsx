@@ -1,10 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import type { DragEndEvent } from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import {
   ArrowUp,
   Bot,
+  CheckCircle2,
   Folder,
+  GripVertical,
   History,
+  LoaderCircle,
   Menu,
   MessageSquare,
   MonitorCog,
@@ -14,6 +35,7 @@ import {
   Trash2,
   Wifi,
   WifiOff,
+  XCircle,
   X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -49,6 +71,15 @@ function computerTone(computerId: string): number {
     hash = (hash * 31 + character.charCodeAt(0)) >>> 0
   }
   return hash % 6
+}
+
+function readStoredOrder<T>(key: string, fallback: T): T {
+  try {
+    const value = localStorage.getItem(key)
+    return value ? (JSON.parse(value) as T) : fallback
+  } catch {
+    return fallback
+  }
 }
 
 function sortSessions(sessions: ManagedSession[]): ManagedSession[] {
@@ -466,6 +497,29 @@ function PermissionCard({
   )
 }
 
+function ActivityMessage({
+  content,
+  status,
+}: {
+  content: string
+  status?: 'running' | 'completed' | 'failed'
+}) {
+  const icon =
+    status === 'failed' ? (
+      <XCircle size={14} />
+    ) : status === 'completed' ? (
+      <CheckCircle2 size={14} />
+    ) : (
+      <LoaderCircle className="activity-message__spinner" size={14} />
+    )
+  return (
+    <div className={`activity-message activity-message--${status || 'running'}`}>
+      {icon}
+      <span>{content}</span>
+    </div>
+  )
+}
+
 function EmptyConversation({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="empty-state">
@@ -479,6 +533,128 @@ function EmptyConversation({ onCreate }: { onCreate: () => void }) {
         New session
       </button>
     </div>
+  )
+}
+
+function SortableSessionItem({
+  session,
+  selected,
+  onSelect,
+}: {
+  session: ManagedSession
+  selected: boolean
+  onSelect: () => void
+}) {
+  const sortableId = `session:${sessionKey(session)}`
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: sortableId })
+  return (
+    <button
+      aria-current={selected ? 'page' : undefined}
+      className={`session-item session-item--tone-${computerTone(
+        session.computerId,
+      )} ${selected ? 'session-item--active' : ''} ${
+        isDragging ? 'sortable-dragging' : ''
+      }`}
+      onClick={onSelect}
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+      type="button"
+    >
+      <span
+        aria-label={`Reorder ${session.title}`}
+        className="drag-handle"
+        onClick={(event) => event.stopPropagation()}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={13} />
+      </span>
+      <span className={`status-dot status-dot--${session.status}`} />
+      <span className="session-item__text">
+        <strong>{session.title}</strong>
+        <small>{shortPath(session.cwd)}</small>
+      </span>
+    </button>
+  )
+}
+
+function SortableComputerGroup({
+  computer,
+  sessions,
+  selectedKey,
+  showComputerHandle,
+  onSelectSession,
+}: {
+  computer: ComputerSummary
+  sessions: ManagedSession[]
+  selectedKey?: string
+  showComputerHandle: boolean
+  onSelectSession: (session: ManagedSession) => void
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `computer:${computer.id}` })
+  return (
+    <section
+      className={`computer-session-group computer-session-group--tone-${computerTone(
+        computer.id,
+      )} ${isDragging ? 'sortable-dragging' : ''}`}
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+    >
+      <header className="computer-session-group__header">
+        {showComputerHandle ? (
+          <span
+            aria-label={`Reorder ${computer.name}`}
+            className="drag-handle"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical size={14} />
+          </span>
+        ) : null}
+        <span
+          className={`computer-session-group__status ${
+            computer.online ? 'computer-session-group__status--online' : ''
+          }`}
+        />
+        <strong>{computer.name}</strong>
+        <small>{sessions.length}</small>
+      </header>
+      <SortableContext
+        items={sessions.map((session) => `session:${sessionKey(session)}`)}
+        strategy={verticalListSortingStrategy}
+      >
+        <div className="computer-session-group__sessions">
+          {sessions.map((session) => (
+            <SortableSessionItem
+              key={sessionKey(session)}
+              onSelect={() => onSelectSession(session)}
+              selected={sessionKey(session) === selectedKey}
+              session={session}
+            />
+          ))}
+        </div>
+      </SortableContext>
+    </section>
   )
 }
 
@@ -497,6 +673,12 @@ function App() {
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [computersOpen, setComputersOpen] = useState(false)
   const [error, setError] = useState<string>()
+  const [computerOrder, setComputerOrder] = useState<string[]>(() =>
+    readStoredOrder('agentic-remote:computer-order', []),
+  )
+  const [sessionOrder, setSessionOrder] = useState<Record<string, string[]>>(
+    () => readStoredOrder('agentic-remote:session-order', {}),
+  )
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
@@ -508,6 +690,38 @@ function App() {
         : sessions.filter((session) => session.computerId === computerFilter),
     [computerFilter, sessions],
   )
+  const orderedComputers = useMemo(() => {
+    const rank = new Map(computerOrder.map((id, index) => [id, index]))
+    return computers
+      .filter(
+        (computer) =>
+          computerFilter === 'all' || computer.id === computerFilter,
+      )
+      .sort(
+        (left, right) =>
+          (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+      )
+  }, [computerFilter, computerOrder, computers])
+  const sessionsByComputer = useMemo(() => {
+    const grouped = new Map<string, ManagedSession[]>()
+    for (const computer of orderedComputers) {
+      const rank = new Map(
+        (sessionOrder[computer.id] || []).map((key, index) => [key, index]),
+      )
+      grouped.set(
+        computer.id,
+        visibleSessions
+          .filter((session) => session.computerId === computer.id)
+          .sort(
+            (left, right) =>
+              (rank.get(sessionKey(left)) ?? Number.MAX_SAFE_INTEGER) -
+              (rank.get(sessionKey(right)) ?? Number.MAX_SAFE_INTEGER),
+          ),
+      )
+    }
+    return grouped
+  }, [orderedComputers, sessionOrder, visibleSessions])
   const selected = useMemo(
     () => sessions.find((session) => sessionKey(session) === selectedKey),
     [selectedKey, sessions],
@@ -523,6 +737,73 @@ function App() {
       ? computerFilter
       : computers.find((computer) => computer.isLocal)?.id) ||
     computers.find((computer) => computer.online)?.id
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 180, tolerance: 8 },
+    }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  useEffect(() => {
+    setComputerOrder((current) => {
+      const ids = computers.map((computer) => computer.id)
+      const next = [
+        ...current.filter((id) => ids.includes(id)),
+        ...ids.filter((id) => !current.includes(id)),
+      ]
+      return next.length === current.length &&
+        next.every((id, index) => id === current[index])
+        ? current
+        : next
+    })
+  }, [computers])
+
+  useEffect(() => {
+    setSessionOrder((current) => {
+      const next = { ...current }
+      let changed = false
+      const computerIds = new Set(computers.map((computer) => computer.id))
+      for (const computerId of Object.keys(next)) {
+        if (!computerIds.has(computerId)) {
+          delete next[computerId]
+          changed = true
+        }
+      }
+      for (const computer of computers) {
+        const keys = sessions
+          .filter((session) => session.computerId === computer.id)
+          .map(sessionKey)
+        const existing = next[computer.id] || []
+        const nextOrder = [
+          ...existing.filter((key) => keys.includes(key)),
+          ...keys.filter((key) => !existing.includes(key)),
+        ]
+        if (
+          nextOrder.length !== existing.length ||
+          nextOrder.some((key, index) => key !== existing[index])
+        ) {
+          next[computer.id] = nextOrder
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+  }, [computers, sessions])
+
+  useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:computer-order',
+      JSON.stringify(computerOrder),
+    )
+  }, [computerOrder])
+
+  useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:session-order',
+      JSON.stringify(sessionOrder),
+    )
+  }, [sessionOrder])
 
   useEffect(() => {
     let active = true
@@ -799,6 +1080,54 @@ function App() {
     }
   }
 
+  function handleDragEnd(event: DragEndEvent) {
+    const activeId = String(event.active.id)
+    const overId = event.over ? String(event.over.id) : ''
+    if (!overId || activeId === overId) {
+      return
+    }
+    if (activeId.startsWith('computer:') && overId.startsWith('computer:')) {
+      const activeComputer = activeId.slice('computer:'.length)
+      const overComputer = overId.slice('computer:'.length)
+      setComputerOrder((current) => {
+        const from = current.indexOf(activeComputer)
+        const to = current.indexOf(overComputer)
+        return from >= 0 && to >= 0 ? arrayMove(current, from, to) : current
+      })
+      return
+    }
+    if (!activeId.startsWith('session:') || !overId.startsWith('session:')) {
+      return
+    }
+    const activeKey = activeId.slice('session:'.length)
+    const overKey = overId.slice('session:'.length)
+    const activeSession = sessions.find(
+      (session) => sessionKey(session) === activeKey,
+    )
+    const overSession = sessions.find(
+      (session) => sessionKey(session) === overKey,
+    )
+    if (
+      !activeSession ||
+      !overSession ||
+      activeSession.computerId !== overSession.computerId
+    ) {
+      return
+    }
+    setSessionOrder((current) => {
+      const order = current[activeSession.computerId] || []
+      const from = order.indexOf(activeKey)
+      const to = order.indexOf(overKey)
+      if (from < 0 || to < 0) {
+        return current
+      }
+      return {
+        ...current,
+        [activeSession.computerId]: arrayMove(order, from, to),
+      }
+    })
+  }
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
@@ -861,27 +1190,31 @@ function App() {
           {!loading && visibleSessions.length === 0 ? (
             <p className="sidebar-message">No sessions here.</p>
           ) : null}
-          {visibleSessions.map((session) => (
-            <button
-              aria-current={sessionKey(session) === selectedKey ? 'page' : undefined}
-              className={`session-item session-item--tone-${computerTone(
-                session.computerId,
-              )} ${
-                sessionKey(session) === selectedKey ? 'session-item--active' : ''
-              }`}
-              key={sessionKey(session)}
-              onClick={() => selectSession(session)}
-              type="button"
+          <DndContext
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+            sensors={sensors}
+          >
+            <SortableContext
+              items={orderedComputers.map(
+                (computer) => `computer:${computer.id}`,
+              )}
+              strategy={verticalListSortingStrategy}
             >
-              <span className={`status-dot status-dot--${session.status}`} />
-              <span className="session-item__text">
-                <strong>{session.title}</strong>
-                <small>
-                  {session.computerName} · {shortPath(session.cwd)}
-                </small>
-              </span>
-            </button>
-          ))}
+              <div className="computer-session-groups">
+                {orderedComputers.map((computer) => (
+                  <SortableComputerGroup
+                    computer={computer}
+                    key={computer.id}
+                    onSelectSession={selectSession}
+                    selectedKey={selectedKey}
+                    sessions={sessionsByComputer.get(computer.id) || []}
+                    showComputerHandle={computerFilter === 'all'}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         </nav>
       </aside>
 
@@ -967,26 +1300,32 @@ function App() {
           ) : (
             <div className="message-stack">
               {selected.messages.map((message) => (
-                <article
-                  className={`message message--${message.role}`}
-                  key={message.id}
-                >
-                  <div className="message__label">
-                    {message.role === 'user' ? 'You' : 'Agent'}
-                  </div>
-                  <div className="message__content">
-                    {message.content ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {message.content}
-                      </ReactMarkdown>
-                    ) : (
-                      <span className="typing-indicator">
-                        <i />
-                        <i />
-                        <i />
-                      </span>
-                    )}
-                  </div>
+                <article className={`message message--${message.role}`} key={message.id}>
+                  {message.role === 'activity' ? (
+                    <ActivityMessage
+                      content={message.content}
+                      status={message.activityStatus}
+                    />
+                  ) : (
+                    <>
+                      <div className="message__label">
+                        {message.role === 'user' ? 'You' : 'Agent'}
+                      </div>
+                      <div className="message__content">
+                        {message.content ? (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {message.content}
+                          </ReactMarkdown>
+                        ) : (
+                          <span className="typing-indicator">
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </article>
               ))}
             </div>

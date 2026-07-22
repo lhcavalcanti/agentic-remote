@@ -51,24 +51,37 @@ Open <http://127.0.0.1:4318>.
 
 ## User service
 
-The repository includes a systemd user-service template. Install it with:
+Run the management command directly from a fresh clone:
 
 ```bash
-mkdir -p ~/.config/systemd/user ~/.config/agentic-remote
-cp deploy/agentic-remote.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now agentic-remote
+./bin/agentic-remote setup
 ```
 
-To change the bind address or port, create
-`~/.config/agentic-remote/environment`:
+For LAN access:
 
-```text
-HOST=10.0.0.181
-PORT=4317
+```bash
+./bin/agentic-remote setup --host 10.0.0.181 --port 4317
 ```
 
-The service restarts after failures and starts with the user's systemd session.
+Setup installs dependencies, creates the production build, installs an enabled
+systemd user service, attempts to enable boot-time user lingering, and links the
+command to `~/.local/bin/agentic-remote`.
+
+After setup:
+
+```bash
+agentic-remote start
+agentic-remote stop
+agentic-remote restart
+agentic-remote status
+agentic-remote logs
+agentic-remote update
+agentic-remote uninstall
+```
+
+The service restarts after failures. With systemd user lingering enabled, it
+also starts during boot without waiting for an interactive login. `uninstall`
+removes the service but preserves conversation data in `~/.agentic-remote`.
 
 ## Configuration
 

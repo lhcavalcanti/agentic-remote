@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
+readonly REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+readonly SERVICE_NAME="agentic-remote.service"
+readonly SYSTEMD_DIR="$HOME/.config/systemd/user"
+readonly SERVICE_FILE="$SYSTEMD_DIR/$SERVICE_NAME"
+readonly CONFIG_DIR="$HOME/.config/agentic-remote"
+readonly ENV_FILE="$CONFIG_DIR/environment"
+readonly COMMAND_LINK="$HOME/.local/bin/agentic-remote"
+
+usage() {
+  cat <<'EOF'
+Usage: agentic-remote <command> [options]
+
+Commands:
+  setup [--host ADDRESS] [--port PORT]
+      Install dependencies, build the app, install and start the user service.
+  start
+      Start the service.
+  stop
+      Stop the service.
+  restart
+      Restart the service.
+  status
+      Show service status.
+  logs
+      Follow service logs.
+  update
+      Pull the current branch, install dependencies, build, and restart.
+  uninstall
+      Stop and remove the service. Application data is preserved.
+  help
+      Show this help.
+EOF
+}
+
+die() {
+  printf 'agentic-remote: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+config_value() {
+  local key="$1"
+  if [[ ! -f "$ENV_FILE" ]]; then
+    return
+  fi
+  sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1
+}
+
+validate_host() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] ||
+    die "host must be an IPv4 address or hostname"
+}
+
+validate_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] || die "port must be a number"
+  ((10#$1 >= 1 && 10#$1 <= 65535)) || die "port must be between 1 and 65535"
+}
+
+systemd_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+write_service() {
+  local pnpm_bin node_bin copilot_bin runtime_path temporary
+  [[ "$REPO_ROOT" != *[[:space:]]* ]] ||
+    die "repository paths containing whitespace are not supported by systemd setup"
+  pnpm_bin="$(command -v pnpm)"
+  node_bin="$(command -v node)"
+  copilot_bin="$(command -v copilot)"
+  runtime_path="$(dirname "$node_bin"):$(dirname "$pnpm_bin"):$(dirname "$copilot_bin"):/usr/local/bin:/usr/bin:/bin"
+  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote.service.XXXXXX")"
+
+  cat >"$temporary" <<EOF
+[Unit]
+Description=Agentic Remote
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$REPO_ROOT
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=4317
+Environment=$(systemd_quote "PATH=$runtime_path")
+Environment=$(systemd_quote "COPILOT_BIN=$copilot_bin")
+EnvironmentFile=-$ENV_FILE
+ExecStart=$(systemd_quote "$pnpm_bin") start
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target
+EOF
+
+  install -m 0644 "$temporary" "$SERVICE_FILE"
+  rm -f -- "$temporary"
+}
+
+enable_linger() {
+  local linger
+  linger="$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)"
+  if [[ "$linger" == "yes" ]]; then
+    return
+  fi
+  if ! loginctl enable-linger "$USER" 2>/dev/null; then
+    printf '%s\n' \
+      "Warning: boot startup requires an administrator to run:" \
+      "  sudo loginctl enable-linger $USER" >&2
+  fi
+}
+
+setup_service() {
+  local host="" port=""
+  while (($# > 0)); do
+    case "$1" in
+      --host)
+        (($# >= 2)) || die "--host requires a value"
+        host="$2"
+        shift 2
+        ;;
+      --port)
+        (($# >= 2)) || die "--port requires a value"
+        port="$2"
+        shift 2
+        ;;
+      *)
+        die "unknown setup option: $1"
+        ;;
+    esac
+  done
+
+  require_command node
+  require_command pnpm
+  require_command copilot
+  require_command systemctl
+  require_command loginctl
+
+  host="${host:-$(config_value HOST)}"
+  port="${port:-$(config_value PORT)}"
+  host="${host:-127.0.0.1}"
+  port="${port:-4317}"
+  validate_host "$host"
+  validate_port "$port"
+
+  printf 'Installing dependencies...\n'
+  pnpm --dir "$REPO_ROOT" install --frozen-lockfile
+  printf 'Building production app...\n'
+  pnpm --dir "$REPO_ROOT" build
+
+  mkdir -p "$SYSTEMD_DIR" "$CONFIG_DIR" "$(dirname "$COMMAND_LINK")"
+  local environment_tmp
+  environment_tmp="$(mktemp "$CONFIG_DIR/.environment.XXXXXX")"
+  printf 'HOST=%s\nPORT=%s\n' "$host" "$port" >"$environment_tmp"
+  install -m 0600 "$environment_tmp" "$ENV_FILE"
+  rm -f -- "$environment_tmp"
+
+  write_service
+  ln -sfn "$REPO_ROOT/bin/agentic-remote" "$COMMAND_LINK"
+  systemctl --user daemon-reload
+  systemctl --user enable "$SERVICE_NAME"
+  systemctl --user restart "$SERVICE_NAME"
+  enable_linger
+
+  printf 'Agentic Remote is running at http://%s:%s/\n' "$host" "$port"
+}
+
+update_service() {
+  require_command git
+  require_command pnpm
+  git -C "$REPO_ROOT" pull --ff-only
+  pnpm --dir "$REPO_ROOT" install --frozen-lockfile
+  pnpm --dir "$REPO_ROOT" build
+  write_service
+  systemctl --user daemon-reload
+  systemctl --user restart "$SERVICE_NAME"
+}
+
+uninstall_service() {
+  systemctl --user disable --now "$SERVICE_NAME" 2>/dev/null || true
+  rm -f -- "$SERVICE_FILE"
+  systemctl --user daemon-reload
+  if [[ -L "$COMMAND_LINK" && "$(readlink -f "$COMMAND_LINK")" == "$REPO_ROOT/bin/agentic-remote" ]]; then
+    rm -f -- "$COMMAND_LINK"
+  fi
+  printf 'Agentic Remote service removed. Data in %s was preserved.\n' "$HOME/.agentic-remote"
+}
+
+command="${1:-help}"
+if (($# > 0)); then
+  shift
+fi
+
+case "$command" in
+  setup)
+    setup_service "$@"
+    ;;
+  start | stop | restart)
+    (($# == 0)) || die "$command does not accept options"
+    systemctl --user "$command" "$SERVICE_NAME"
+    ;;
+  status)
+    (($# == 0)) || die "status does not accept options"
+    systemctl --user --no-pager --full status "$SERVICE_NAME"
+    ;;
+  logs)
+    (($# == 0)) || die "logs does not accept options"
+    exec journalctl --user --unit "$SERVICE_NAME" --follow
+    ;;
+  update)
+    (($# == 0)) || die "update does not accept options"
+    update_service
+    ;;
+  uninstall)
+    (($# == 0)) || die "uninstall does not accept options"
+    uninstall_service
+    ;;
+  help | --help | -h)
+    usage
+    ;;
+  *)
+    die "unknown command: $command"
+    ;;
+esac

@@ -175,4 +175,33 @@ describe('AgentService deletion', () => {
     ])
     await service.stop()
   })
+
+  it('keeps discovered session titles concise', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: '12345678-abcd-abcd-abcd-123456789abc',
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Explore Nightscout Documentation\n\nLong handoff content',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+
+    expect(service.listHistory()[0]?.title).toBe(
+      'Explore Nightscout Documentation',
+    )
+    await service.stop()
+  })
 })

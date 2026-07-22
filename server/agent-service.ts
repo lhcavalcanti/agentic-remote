@@ -103,6 +103,11 @@ function isMissingSessionError(error: unknown): boolean {
   )
 }
 
+function normalizedTitle(value: string | undefined, fallback: string): string {
+  const firstLine = value?.trim().split(/\r?\n/, 1)[0]?.trim() || fallback
+  return firstLine.length > 72 ? `${firstLine.slice(0, 72)}…` : firstLine
+}
+
 function permissionTitle(request: PermissionRequest): string {
   switch (request.kind) {
     case 'shell':
@@ -450,8 +455,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         {
           id: session.sessionId,
           cwd,
-          title:
-            session.summary?.trim() || path.basename(cwd) || 'Untitled session',
+          title: normalizedTitle(
+            session.summary,
+            path.basename(cwd) || 'Untitled session',
+          ),
           updatedAt: session.modifiedTime.toISOString(),
         },
       ]

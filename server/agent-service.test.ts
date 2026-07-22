@@ -134,4 +134,45 @@ describe('AgentService deletion', () => {
     expect(store.get(client.session.sessionId)).toBeUndefined()
     await service.stop()
   })
+
+  it('uses process metadata when an indexed session has no usable context', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const sessionId = '87654321-4321-4321-4321-cba987654321'
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Corrupted indexed session',
+        isRemote: false,
+      },
+    ])
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      client,
+      async () => [
+        {
+          id: sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+    )
+
+    await service.start()
+
+    expect(service.listSessions()).toEqual([
+      expect.objectContaining({
+        id: sessionId,
+        cwd: directory,
+        isOpen: true,
+      }),
+    ])
+    await service.stop()
+  })
 })

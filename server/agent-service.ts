@@ -437,30 +437,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.client.listSessions(),
       this.activeSessionFinder(),
     ])
-    const indexedIds = new Set(sessions.map((session) => session.sessionId))
     const storedIds = new Set(this.store.list().map((session) => session.id))
+    const indexedSessions = sessions.flatMap((session) => {
+      if (this.deletedSessionIds.has(session.sessionId)) {
+        return []
+      }
+      const cwd = session.context?.workingDirectory?.trim()
+      if (!cwd) {
+        return []
+      }
+      return [
+        {
+          id: session.sessionId,
+          cwd,
+          title:
+            session.summary?.trim() || path.basename(cwd) || 'Untitled session',
+          updatedAt: session.modifiedTime.toISOString(),
+        },
+      ]
+    })
+    const indexedIds = new Set(indexedSessions.map((session) => session.id))
     await this.store.syncDiscovered(
       [
-        ...sessions.flatMap((session) => {
-          if (this.deletedSessionIds.has(session.sessionId)) {
-            return []
-          }
-          const cwd = session.context?.workingDirectory?.trim()
-          if (!cwd) {
-            return []
-          }
-          return [
-            {
-              id: session.sessionId,
-              cwd,
-              title:
-                session.summary?.trim() ||
-                path.basename(cwd) ||
-                'Untitled session',
-              updatedAt: session.modifiedTime.toISOString(),
-            },
-          ]
-        }),
+        ...indexedSessions,
         ...activeSessions
           .filter(
             (session) =>

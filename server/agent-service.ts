@@ -6,6 +6,7 @@ import {
   CopilotClient,
   RuntimeConnection,
   type AssistantMessageEvent,
+  type CopilotSession,
   type PermissionRequest,
   type PermissionRequestResult,
   type ResumeSessionConfig,
@@ -19,6 +20,7 @@ import type {
   ServerEvent,
   SessionDetail,
   SessionStatus,
+  SlashCommand,
 } from '../shared/contracts.js'
 import { SessionStore } from './session-store.js'
 import {
@@ -46,6 +48,12 @@ export interface CopilotSessionLike {
   getEvents(): Promise<SessionEvent[]>
   abort(): Promise<void>
   disconnect(): Promise<void>
+  rpc: {
+    commands: Pick<
+      CopilotSession['rpc']['commands'],
+      'list' | 'invoke' | 'enqueue'
+    >
+  }
 }
 
 export interface CopilotClientLike {
@@ -93,7 +101,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
 
   for (const event of events) {
     if (event.type === 'user.message') {
-      const content = event.data.content.trim()
+      const content = visibleUserContent(event.data.content)
       if (content) {
         currentToolGroup = undefined
         messages.push({
@@ -155,12 +163,32 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   return messages
 }
 
+function visibleUserContent(content: string): string {
+  const direct = content.trim()
+  if (direct) {
+    return direct.startsWith('<skill-context') ||
+      direct.startsWith('<system_reminder')
+      ? ''
+      : direct
+  }
+  return ''
+}
+
 function readableToolName(value: string): string {
   return value
     .replace(/^github-mcp-server-/, 'GitHub · ')
     .replaceAll('_', ' ')
     .replaceAll('-', ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+const ansiSequence = new RegExp(
+  `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
+  'g',
+)
+
+function stripAnsi(value: string): string {
+  return value.replace(ansiSequence, '')
 }
 
 function statusFromEvents(events: SessionEvent[]): SessionStatus {
@@ -240,6 +268,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   >()
   private readonly hydratingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly activePrompts = new Map<string, ActivePrompt>()
+  private readonly drainingSessions = new Set<string>()
+  private readonly promptQueues = new Map<string, string[]>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
@@ -383,15 +413,39 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return session
   }
 
-  async sendMessage(sessionId: string, rawContent: string): Promise<SessionDetail> {
+  async sendMessage(
+    sessionId: string,
+    rawContent: string,
+    enqueue = false,
+  ): Promise<SessionDetail> {
     const content = rawContent.trim()
     if (!content) {
       throw new Error('Message cannot be empty')
     }
-    if (this.activePrompts.has(sessionId)) {
-      throw new Error('This session is already responding')
+    if (
+      this.activePrompts.has(sessionId) ||
+      this.drainingSessions.has(sessionId)
+    ) {
+      if (!enqueue) {
+        throw new Error('This session is already responding')
+      }
+      const queue = this.promptQueues.get(sessionId) || []
+      queue.push(content)
+      this.promptQueues.set(sessionId, queue)
+      const queued = await this.store.update(sessionId, (session) => {
+        session.queuedCount = queue.length
+      })
+      this.publish(queued)
+      return queued
     }
 
+    return this.startMessage(sessionId, content)
+  }
+
+  private async startMessage(
+    sessionId: string,
+    content: string,
+  ): Promise<SessionDetail> {
     const sdkSession = await this.ensureLoaded(sessionId)
     const createdAt = new Date().toISOString()
     await this.store.addMessage(sessionId, {
@@ -420,6 +474,106 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     void this.runPrompt(sdkSession, content, assistantMessageId)
     return updated
+  }
+
+  async listCommands(sessionId: string): Promise<SlashCommand[]> {
+    const session = await this.ensureLoaded(sessionId)
+    const result = await session.rpc.commands.list({
+      includeBuiltins: true,
+      includeSkills: true,
+      includeClientCommands: true,
+    })
+    return result.commands.map((command) => ({
+      name: command.name,
+      aliases: command.aliases,
+      description: command.description,
+      inputHint: command.input?.hint,
+      inputRequired: command.input?.required,
+      allowDuringAgentExecution: command.allowDuringAgentExecution,
+    }))
+  }
+
+  async executeCommand(
+    sessionId: string,
+    rawCommand: string,
+    enqueue = false,
+  ): Promise<SessionDetail> {
+    const command = rawCommand.trim()
+    if (!command.startsWith('/')) {
+      throw new Error('Slash command must start with /')
+    }
+    const [name, ...parts] = command.slice(1).split(/\s+/)
+    if (!name) {
+      throw new Error('Slash command name is required')
+    }
+    const session = await this.ensureLoaded(sessionId)
+    const available = await session.rpc.commands.list({
+      includeBuiltins: true,
+      includeSkills: true,
+      includeClientCommands: true,
+    })
+    const commandInfo = available.commands.find(
+      (candidate) =>
+        candidate.name.toLowerCase() === name.toLowerCase() ||
+        candidate.aliases?.some(
+          (alias) => alias.toLowerCase() === name.toLowerCase(),
+        ),
+    )
+    const busy =
+      this.activePrompts.has(sessionId) ||
+      this.drainingSessions.has(sessionId)
+    if (
+      !enqueue &&
+      busy &&
+      !commandInfo?.allowDuringAgentExecution
+    ) {
+      throw new Error(`/${name} must be queued while the agent is running`)
+    }
+    if (enqueue) {
+      const result = await session.rpc.commands.enqueue({ command })
+      if (!result.queued) {
+        throw new Error('This session does not support command queueing')
+      }
+    } else {
+      const result = await session.rpc.commands.invoke({
+        name,
+        input: parts.join(' '),
+      })
+      if (result.kind === 'agent-prompt') {
+        const notice = await this.store.addMessage(sessionId, {
+          id: randomUUID(),
+          role: 'notice',
+          content: result.notice || command,
+          createdAt: new Date().toISOString(),
+        })
+        this.publish(notice)
+        return this.sendMessage(sessionId, result.prompt, busy)
+      }
+      const content =
+        result.kind === 'text'
+          ? stripAnsi(result.text)
+          : result.kind === 'completed'
+            ? result.message || command
+            : `${result.title}\n\n${result.options
+                .map((option) => `- /${name} ${option.name} — ${option.description}`)
+                .join('\n')}`
+      const notice = await this.store.addMessage(sessionId, {
+        id: randomUUID(),
+        role: 'notice',
+        content,
+        createdAt: new Date().toISOString(),
+      })
+      this.publish(notice)
+      return notice
+    }
+    const notice = await this.store.addMessage(sessionId, {
+      id: randomUUID(),
+      role: 'notice',
+      content: enqueue ? `Queued ${command}` : command,
+      createdAt: new Date().toISOString(),
+    })
+    this.publish(notice)
+    return notice
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -469,6 +623,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.loadingSessions.delete(sessionId)
       this.hydratingSessions.delete(sessionId)
       this.activePrompts.delete(sessionId)
+      this.drainingSessions.delete(sessionId)
+      this.promptQueues.delete(sessionId)
       completed = true
       this.emit('event', { type: 'session.removed', sessionId })
     } finally {
@@ -655,7 +811,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
           return
         }
-        const messages = messagesFromHistory(events)
+        const stored = this.store.get(sessionId)
+        const messages = [
+          ...messagesFromHistory(events),
+          ...(stored?.messages.filter((message) => message.role === 'notice') ||
+            []),
+        ].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
         const watermark = this.liveTranscriptWatermarks.get(sessionId)
         const lastEventTimestamp = events.at(-1)?.timestamp
         if (
@@ -792,7 +953,42 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(updated)
       this.emit('event', { type: 'error', sessionId, message })
     } finally {
+      this.drainingSessions.add(sessionId)
       this.activePrompts.delete(sessionId)
+      try {
+        if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
+          const queue = this.promptQueues.get(sessionId) || []
+          const next = queue.shift()
+          if (queue.length === 0) {
+            this.promptQueues.delete(sessionId)
+          }
+          const queued = await this.store.update(sessionId, (session) => {
+            session.queuedCount = queue.length
+          })
+          this.publish(queued)
+          if (next) {
+            try {
+              await this.startMessage(sessionId, next)
+            } catch (error) {
+              const pending = this.promptQueues.get(sessionId) || []
+              pending.unshift(next)
+              this.promptQueues.set(sessionId, pending)
+              const restored = await this.store.update(
+                sessionId,
+                (session) => {
+                  session.queuedCount = pending.length
+                },
+              )
+              this.publish(restored)
+              this.publishError(sessionId, error)
+            }
+          }
+        }
+      } catch (error) {
+        this.publishError(sessionId, error)
+      } finally {
+        this.drainingSessions.delete(sessionId)
+      }
     }
   }
 

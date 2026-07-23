@@ -2,11 +2,13 @@ import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import type {
   CreateSessionInput,
+  ExecuteCommandInput,
   NodeInfo,
   PermissionReplyInput,
   SendMessageInput,
   ServerEvent,
   SessionDetail,
+  SlashCommand,
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 
@@ -69,6 +71,13 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.session
   }
 
+  async listCommands(sessionId: string): Promise<SlashCommand[]> {
+    const response = await this.request<{ commands: SlashCommand[] }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/commands`,
+    )
+    return response.commands
+  }
+
   async createSession(input: CreateSessionInput): Promise<SessionDetail> {
     const response = await this.request<{ session: SessionDetail }>(
       '/node-api/sessions',
@@ -97,6 +106,20 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   ): Promise<SessionDetail> {
     const response = await this.request<{ session: SessionDetail }>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/messages`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    )
+    return response.session
+  }
+
+  async executeCommand(
+    sessionId: string,
+    input: ExecuteCommandInput,
+  ): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/commands`,
       {
         method: 'POST',
         body: JSON.stringify(input),

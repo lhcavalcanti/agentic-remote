@@ -22,10 +22,12 @@ import {
   ArrowUp,
   Bot,
   CheckCircle2,
+  Command,
   Folder,
   GripVertical,
   History,
   LoaderCircle,
+  ListPlus,
   Menu,
   MessageSquare,
   MonitorCog,
@@ -45,6 +47,7 @@ import type {
   HubEvent,
   ManagedSession,
   PendingPermission,
+  SlashCommand,
 } from '../shared/contracts'
 import {
   activateSession,
@@ -52,8 +55,10 @@ import {
   cancelSession,
   createSession,
   deleteSession,
+  executeCommand,
   getSession,
   listComputers,
+  listCommands,
   listHistory,
   listSessions,
   removeComputer,
@@ -664,6 +669,8 @@ function App() {
   const [computerFilter, setComputerFilter] = useState('all')
   const [selectedKey, setSelectedKey] = useState<string>()
   const [composer, setComposer] = useState('')
+  const [commands, setCommands] = useState<SlashCommand[]>([])
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [permissionBusy, setPermissionBusy] = useState(false)
@@ -729,6 +736,26 @@ function App() {
   selectedRef.current = selected
   const selectedComputerId = selected?.computerId
   const selectedSessionId = selected?.id
+  const commandQuery = composer.startsWith('/')
+    ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
+    : ''
+  const commandSuggestions = useMemo(
+    () =>
+      composer.startsWith('/')
+        ? commands
+            .filter(
+              (command) =>
+                command.name.toLowerCase().startsWith(commandQuery) ||
+                command.aliases?.some((alias) =>
+                  alias.toLowerCase().startsWith(commandQuery),
+                ),
+            )
+            .slice(0, 8)
+        : [],
+    [commandQuery, commands, composer],
+  )
+  const showCommandMenu =
+    commandSuggestions.length > 0 && !composer.slice(1).includes(' ')
   const defaultComputerId =
     (computerFilter !== 'all' &&
     computers.some(
@@ -836,6 +863,7 @@ function App() {
 
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
+      setCommands([])
       return
     }
     let active = true
@@ -860,6 +888,32 @@ function App() {
       active = false
     }
   }, [selectedComputerId, selectedSessionId])
+
+  useEffect(() => {
+    if (!selectedComputerId || !selectedSessionId) {
+      setCommands([])
+      return
+    }
+    let active = true
+    void listCommands(selectedComputerId, selectedSessionId)
+      .then((availableCommands) => {
+        if (active) {
+          setCommands(availableCommands)
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setCommands([])
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [selectedComputerId, selectedSessionId])
+
+  useEffect(() => {
+    setSelectedCommandIndex(0)
+  }, [commandQuery])
 
   useEffect(() => {
     if (
@@ -1002,18 +1056,39 @@ function App() {
     setSidebarOpen(false)
   }
 
-  async function submitMessage() {
+  async function submitMessage(enqueue = false) {
     const content = composer.trim()
-    if (!selected || !content || sending || selected.status === 'running') {
+    if (!selected || !content || sending) {
       return
     }
+    const isCommand = content.startsWith('/')
+    const commandName = isCommand
+      ? content.slice(1).split(/\s+/, 1)[0].toLowerCase()
+      : ''
+    const command = commands.find(
+      (candidate) =>
+        candidate.name.toLowerCase() === commandName ||
+        candidate.aliases?.some(
+          (alias) => alias.toLowerCase() === commandName,
+        ),
+    )
+    const shouldEnqueue =
+      enqueue ||
+      (selected.status === 'running' &&
+        (!isCommand || !command?.allowDuringAgentExecution))
     setSending(true)
     setError(undefined)
     setComposer('')
     try {
-      const updated = await sendMessage(selected.computerId, selected.id, {
-        content,
-      })
+      const updated = isCommand
+        ? await executeCommand(selected.computerId, selected.id, {
+            command: content,
+            enqueue: shouldEnqueue,
+          })
+        : await sendMessage(selected.computerId, selected.id, {
+            content,
+            enqueue: shouldEnqueue,
+          })
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
       setComposer(content)
@@ -1023,10 +1098,51 @@ function App() {
     }
   }
 
+  function selectCommand(command: SlashCommand) {
+    setComposer(`/${command.name}${command.inputHint ? ' ' : ''}`)
+    setSelectedCommandIndex(0)
+  }
+
   function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    if (event.nativeEvent.isComposing) {
+      return
+    }
+    if (event.key === 'ArrowDown' && showCommandMenu) {
       event.preventDefault()
-      void submitMessage()
+      setSelectedCommandIndex(
+        (current) => (current + 1) % commandSuggestions.length,
+      )
+      return
+    }
+    if (event.key === 'ArrowUp' && showCommandMenu) {
+      event.preventDefault()
+      setSelectedCommandIndex(
+        (current) =>
+          (current - 1 + commandSuggestions.length) %
+          commandSuggestions.length,
+      )
+      return
+    }
+    const selectedSuggestion =
+      commandSuggestions[
+        Math.min(selectedCommandIndex, commandSuggestions.length - 1)
+      ]
+    const exactCommand =
+      selectedSuggestion && composer === `/${selectedSuggestion.name}`
+    if (
+      (event.key === 'Tab' ||
+        (event.key === 'Enter' &&
+          (!exactCommand || Boolean(selectedSuggestion?.inputHint)))) &&
+      selectedSuggestion &&
+      !composer.slice(1).includes(' ')
+    ) {
+      event.preventDefault()
+      selectCommand(selectedSuggestion)
+      return
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      void submitMessage(event.metaKey || event.ctrlKey)
     }
   }
 
@@ -1309,7 +1425,11 @@ function App() {
                   ) : (
                     <>
                       <div className="message__label">
-                        {message.role === 'user' ? 'You' : 'Agent'}
+                        {message.role === 'user'
+                          ? 'You'
+                          : message.role === 'notice'
+                            ? 'Command'
+                            : 'Agent'}
                       </div>
                       <div className="message__content">
                         {message.content ? (
@@ -1348,7 +1468,36 @@ function App() {
 
         {selected ? (
           <footer className="composer-area">
-            <div className="composer">
+            {showCommandMenu ? (
+              <div className="command-menu" role="listbox" aria-label="Commands">
+                {commandSuggestions.map((command, index) => (
+                  <button
+                    aria-selected={index === selectedCommandIndex}
+                    className={`command-menu__item ${
+                      index === selectedCommandIndex
+                        ? 'command-menu__item--selected'
+                        : ''
+                    }`}
+                    key={command.name}
+                    onClick={() => selectCommand(command)}
+                    role="option"
+                    type="button"
+                  >
+                    <Command size={14} />
+                    <span>
+                      <strong>/{command.name}</strong>
+                      <small>{command.description}</small>
+                    </span>
+                    {command.inputHint ? <em>{command.inputHint}</em> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div
+              className={`composer ${
+                selected.status === 'running' ? 'composer--running' : ''
+              }`}
+            >
               <textarea
                 aria-label="Message"
                 disabled={sending}
@@ -1359,16 +1508,27 @@ function App() {
                 value={composer}
               />
               {selected.status === 'running' ? (
-                <button
-                  aria-label="Stop response"
-                  className="send-button send-button--stop"
-                  onClick={() =>
-                    void cancelSession(selected.computerId, selected.id)
-                  }
-                  type="button"
-                >
-                  <Square fill="currentColor" size={15} />
-                </button>
+                <>
+                  <button
+                    aria-label="Queue message"
+                    className="send-button send-button--queue"
+                    disabled={!composer.trim() || sending}
+                    onClick={() => void submitMessage(true)}
+                    type="button"
+                  >
+                    <ListPlus size={17} />
+                  </button>
+                  <button
+                    aria-label="Stop response"
+                    className="send-button send-button--stop"
+                    onClick={() =>
+                      void cancelSession(selected.computerId, selected.id)
+                    }
+                    type="button"
+                  >
+                    <Square fill="currentColor" size={15} />
+                  </button>
+                </>
               ) : (
                 <button
                   aria-label="Send message"
@@ -1381,7 +1541,12 @@ function App() {
                 </button>
               )}
             </div>
-            <p className="composer-hint">Ctrl or ⌘ + Enter to send</p>
+            <p className="composer-hint">
+              Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue
+              {selected.queuedCount
+                ? ` · ${selected.queuedCount} queued`
+                : ''}
+            </p>
           </footer>
         ) : null}
       </main>

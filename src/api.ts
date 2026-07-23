@@ -2,9 +2,11 @@ import type {
   AddComputerInput,
   ComputerSummary,
   CreateSessionInput,
+  ExecuteCommandInput,
   ManagedSession,
   PermissionReplyInput,
   SendMessageInput,
+  SlashCommand,
 } from '../shared/contracts'
 
 async function responseError(response: Response): Promise<Error> {
@@ -86,6 +88,16 @@ export async function getSession(
   return response.session
 }
 
+export async function listCommands(
+  computerId: string,
+  sessionId: string,
+): Promise<SlashCommand[]> {
+  const response = await request<{ commands: SlashCommand[] }>(
+    `${sessionPath(computerId, sessionId)}/commands`,
+  )
+  return response.commands
+}
+
 export async function createSession(
   computerId: string,
   input: CreateSessionInput,
@@ -121,6 +133,21 @@ export async function sendMessage(
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     `${sessionPath(computerId, sessionId)}/messages`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  )
+  return response.session
+}
+
+export async function executeCommand(
+  computerId: string,
+  sessionId: string,
+  input: ExecuteCommandInput,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/commands`,
     {
       method: 'POST',
       body: JSON.stringify(input),

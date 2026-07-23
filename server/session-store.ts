@@ -51,6 +51,7 @@ export class SessionStore {
 
     for (const session of Object.values(this.state.sessions)) {
       session.isOpen = false
+      session.queuedCount = 0
       if (session.status !== 'idle') {
         session.status = 'idle'
         session.activity = undefined

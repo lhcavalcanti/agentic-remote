@@ -15,10 +15,16 @@ const createSessionSchema = z.object({
 
 const sendMessageSchema = z.object({
   content: z.string().trim().min(1).max(200_000),
+  enqueue: z.boolean().optional(),
 })
 
 const permissionReplySchema = z.object({
   optionId: z.string().trim().min(1).max(500),
+})
+
+const executeCommandSchema = z.object({
+  command: z.string().trim().startsWith('/').max(10_000),
+  enqueue: z.boolean().optional(),
 })
 
 interface SessionParams {
@@ -68,6 +74,16 @@ export async function registerHubRoutes(
     }),
   )
 
+  app.get<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/commands',
+    async (request) => ({
+      commands: await manager.listCommands(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
+  )
+
   app.post<{ Params: { computerId: string } }>(
     '/api/computers/:computerId/sessions',
     async (request, reply) => {
@@ -86,6 +102,20 @@ export async function registerHubRoutes(
         request.params.sessionId,
       ),
     }),
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/commands',
+    async (request) => {
+      const input = executeCommandSchema.parse(request.body)
+      return {
+        session: await manager.executeCommand(
+          request.params.computerId,
+          request.params.sessionId,
+          input,
+        ),
+      }
+    },
   )
 
   app.post<{ Params: SessionParams }>(

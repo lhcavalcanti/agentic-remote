@@ -634,6 +634,14 @@ button {
   margin: -18px 0;
 }
 
+.message--notice {
+  padding: 9px 12px;
+  color: var(--muted-strong);
+  border: 1px dashed var(--border-strong);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
 .activity-message {
   display: inline-flex;
   max-width: 100%;
@@ -855,6 +863,63 @@ button {
   background: var(--bg);
 }
 
+.command-menu {
+  position: absolute;
+  right: max(18px, calc((100% - 800px) / 2));
+  bottom: calc(100% - 8px);
+  left: max(18px, calc((100% - 800px) / 2));
+  z-index: 5;
+  max-height: min(340px, 48dvh);
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+  background: var(--panel);
+  box-shadow: 0 -18px 45px rgba(0, 0, 0, 0.38);
+  overflow-y: auto;
+}
+
+.command-menu__item {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px;
+  color: var(--muted);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-menu__item--selected,
+.command-menu__item:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.command-menu__item > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.command-menu__item strong {
+  font-size: 12px;
+}
+
+.command-menu__item small,
+.command-menu__item em {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 40px;
@@ -865,6 +930,10 @@ button {
   border-radius: 16px;
   background: var(--panel-raised);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
+.composer--running {
+  grid-template-columns: minmax(0, 1fr) 40px 40px;
 }
 
 .composer:focus-within {
@@ -912,6 +981,12 @@ button {
 .send-button--stop {
   color: var(--text);
   background: #383c34;
+}
+
+.send-button--queue {
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  background: var(--panel-soft);
 }
 
 .composer-hint {
@@ -1177,6 +1252,11 @@ button {
 
   .composer-area {
     padding: 8px 10px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .command-menu {
+    right: 10px;
+    left: 10px;
   }
 
   .composer {

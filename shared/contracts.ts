@@ -1,6 +1,6 @@
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 
-export type MessageRole = 'user' | 'assistant' | 'activity'
+export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 
 export interface ChatMessage {
   id: string
@@ -31,6 +31,7 @@ export interface SessionSummary {
   updatedAt: string
   status: SessionStatus
   isOpen?: boolean
+  queuedCount?: number
   activity?: string
 }
 
@@ -76,6 +77,7 @@ export interface CreateSessionInput {
 
 export interface SendMessageInput {
   content: string
+  enqueue?: boolean
 }
 
 export interface PermissionReplyInput {
@@ -86,4 +88,18 @@ export interface AddComputerInput {
   baseUrl: string
   token: string
   name?: string
+}
+
+export interface SlashCommand {
+  name: string
+  aliases?: string[]
+  description: string
+  inputHint?: string
+  inputRequired?: boolean
+  allowDuringAgentExecution: boolean
+}
+
+export interface ExecuteCommandInput {
+  command: string
+  enqueue?: boolean
 }

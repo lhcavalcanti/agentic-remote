@@ -10,6 +10,14 @@ Computer groups and sessions can be reordered by dragging their handles; order
 is retained in the browser. Open transcripts synchronize from Copilot's event
 logs so terminal- and UI-originated messages stay consistent.
 
+Composer controls follow Copilot CLI conventions:
+
+- **Enter** sends
+- **Shift+Enter** inserts a newline
+- **Ctrl/Cmd+Enter** queues behind the active turn
+- Typing `/` opens autocomplete populated from the session's real Copilot
+  command list
+
 ## Why this architecture
 
 - **React + Vite** produces a small production bundle and fast responsive UI.

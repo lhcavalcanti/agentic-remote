@@ -6,7 +6,12 @@ import path from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
-import type { HubEvent, ServerEvent, SessionDetail } from '../shared/contracts.js'
+import type {
+  HubEvent,
+  ServerEvent,
+  SessionDetail,
+  SlashCommand,
+} from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import type { SessionService } from './session-service.js'
 
@@ -90,6 +95,34 @@ class FakeSessionService extends EventEmitter implements SessionService {
 
     session.updatedAt = new Date().toISOString()
     this.emitEvent({ type: 'session.upserted', session: structuredClone(session) })
+    return structuredClone(session)
+  }
+
+  async listCommands(): Promise<SlashCommand[]> {
+    return [
+      {
+        name: 'model',
+        description: 'Select model',
+        inputHint: 'model',
+        allowDuringAgentExecution: false,
+      },
+    ]
+  }
+
+  async executeCommand(
+    sessionId: string,
+    command: string,
+  ): Promise<SessionDetail> {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.messages.push({
+      id: randomUUID(),
+      role: 'notice',
+      content: command,
+      createdAt: new Date().toISOString(),
+    })
     return structuredClone(session)
   }
 
@@ -289,6 +322,23 @@ describe('multi-node hub', () => {
       expect(opened.json().session).toMatchObject({
         id: 'historical-session',
         isOpen: true,
+      })
+
+      const commands = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/commands`,
+      })
+      expect(commands.json().commands).toEqual([
+        expect.objectContaining({ name: 'model' }),
+      ])
+      const command = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/commands`,
+        payload: { command: '/model gpt-5.6-sol' },
+      })
+      expect(command.json().session.messages.at(-1)).toMatchObject({
+        role: 'notice',
+        content: '/model gpt-5.6-sol',
       })
 
       const upserted = waitForEvent(

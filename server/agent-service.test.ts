@@ -13,25 +13,72 @@ import {
   AgentService,
   type CopilotClientLike,
   type CopilotSessionLike,
+  messagesFromHistory,
 } from './agent-service.js'
 import { SessionStore } from './session-store.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId = 'active-session'
-  private resolveResponse?: (value: AssistantMessageEvent | undefined) => void
+  readonly sentPrompts: string[] = []
+  readonly invokedCommands: string[] = []
+  private readonly responseResolvers: Array<
+    (value: AssistantMessageEvent | undefined) => void
+  > = []
+  readonly rpc = {
+    commands: {
+      list: async () => ({
+        commands: [
+          {
+            name: 'model',
+            description: 'Select model',
+            kind: 'builtin' as const,
+            allowDuringAgentExecution: false,
+          },
+          {
+            name: 'usage',
+            description: 'Show usage',
+            kind: 'builtin' as const,
+            allowDuringAgentExecution: true,
+          },
+          {
+            name: 'plan',
+            description: 'Create a plan',
+            kind: 'builtin' as const,
+            allowDuringAgentExecution: true,
+          },
+        ],
+      }),
+      invoke: async ({ name }: { name: string }) => {
+        this.invokedCommands.push(name)
+        if (name === 'plan') {
+          return {
+            kind: 'agent-prompt' as const,
+            prompt: 'Create the requested plan',
+            displayPrompt: '/plan',
+          }
+        }
+        return {
+          kind: 'text' as const,
+          text: 'command output',
+        }
+      },
+      enqueue: async () => ({ queued: true }),
+    },
+  }
 
   on(_handler: (event: SessionEvent) => void): () => void {
     return () => undefined
   }
 
-  sendAndWait(): Promise<AssistantMessageEvent | undefined> {
+  sendAndWait(content: string): Promise<AssistantMessageEvent | undefined> {
+    this.sentPrompts.push(content)
     return new Promise((resolve) => {
-      this.resolveResponse = resolve
+      this.responseResolvers.push(resolve)
     })
   }
 
   resolvePrompt(response?: AssistantMessageEvent): void {
-    this.resolveResponse?.(response)
+    this.responseResolvers.shift()?.(response)
   }
 
   async getEvents(): Promise<SessionEvent[]> {
@@ -76,6 +123,41 @@ afterEach(async () => {
 })
 
 describe('AgentService deletion', () => {
+  it('extracts visible prompts while hiding injected context messages', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"user.message",
+        "id":"user-1",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{
+          "content":"",
+          "transformedContent":"<current_datetime>now</current_datetime>\\n\\nVisible prompt\\n\\n<system_reminder>hidden</system_reminder>"
+        }
+      },
+      {
+        "type":"user.message",
+        "id":"user-2",
+        "parentId":"user-1",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "content":"<skill-context name=\\"internal\\">hidden</skill-context>"
+        }
+      },
+      {
+        "type":"user.message",
+        "id":"user-3",
+        "parentId":"user-2",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{"content":"Visible prompt"}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({ role: 'user', content: 'Visible prompt' }),
+    ])
+  })
+
   it('ignores a prompt completion after its session was deleted', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -336,6 +418,99 @@ describe('AgentService deletion', () => {
       role: 'assistant',
       content: 'final answer',
     })
+    await service.stop()
+  })
+
+  it('processes queued prompts in FIFO order', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    await service.createSession(directory)
+    await service.sendMessage(client.session.sessionId, 'first')
+    const queued = await service.sendMessage(
+      client.session.sessionId,
+      'second',
+      true,
+    )
+    expect(queued.queuedCount).toBe(1)
+
+    client.session.resolvePrompt()
+    await Promise.resolve()
+    await service.sendMessage(client.session.sessionId, 'third', true)
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (client.session.sentPrompts.length === 2) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+
+    expect(client.session.sentPrompts).toEqual(['first', 'second'])
+    expect(store.get(client.session.sessionId)?.queuedCount).toBe(1)
+    client.session.resolvePrompt()
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (client.session.sentPrompts.length === 3) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(client.session.sentPrompts).toEqual(['first', 'second', 'third'])
+    expect(store.get(client.session.sessionId)?.queuedCount).toBe(0)
+    client.session.resolvePrompt()
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (store.get(client.session.sessionId)?.status === 'idle') {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    await service.stop()
+  })
+
+  it('runs safe commands immediately and requires unsafe commands to queue', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    await service.createSession(directory)
+    await service.sendMessage(client.session.sessionId, 'working')
+
+    await expect(
+      service.executeCommand(client.session.sessionId, '/model gpt-5.6-sol'),
+    ).rejects.toThrow('must be queued')
+    await service.executeCommand(client.session.sessionId, '/usage')
+    const planned = await service.executeCommand(
+      client.session.sessionId,
+      '/plan next',
+    )
+    expect(planned.queuedCount).toBe(1)
+    expect(client.session.invokedCommands).toEqual(['usage', 'plan'])
+
+    client.session.resolvePrompt()
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (client.session.sentPrompts.length === 2) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(client.session.sentPrompts).toEqual([
+      'working',
+      'Create the requested plan',
+    ])
+    client.session.resolvePrompt()
+    await new Promise((resolve) => setTimeout(resolve, 10))
     await service.stop()
   })
 })

@@ -11,10 +11,16 @@ const createSessionSchema = z.object({
 
 const sendMessageSchema = z.object({
   content: z.string().trim().min(1).max(200_000),
+  enqueue: z.boolean().optional(),
 })
 
 const permissionReplySchema = z.object({
   optionId: z.string().trim().min(1).max(500),
+})
+
+const executeCommandSchema = z.object({
+  command: z.string().trim().startsWith('/').max(10_000),
+  enqueue: z.boolean().optional(),
 })
 
 function tokenMatches(actual: string | undefined, expected: string): boolean {
@@ -51,6 +57,13 @@ export async function registerNodeRoutes(
       }))
 
       node.get<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/commands',
+        async (request) => ({
+          commands: await service.listCommands(request.params.sessionId),
+        }),
+      )
+
+      node.get<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId',
         async (request) => ({
           session: await service.openSession(request.params.sessionId),
@@ -79,8 +92,23 @@ export async function registerNodeRoutes(
             session: await service.sendMessage(
               request.params.sessionId,
               input.content,
+              input.enqueue,
             ),
           })
+        },
+      )
+
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/commands',
+        async (request) => {
+          const input = executeCommandSchema.parse(request.body)
+          return {
+            session: await service.executeCommand(
+              request.params.sessionId,
+              input.command,
+              input.enqueue,
+            ),
+          }
         },
       )
 

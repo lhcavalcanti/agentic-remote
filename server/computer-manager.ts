@@ -3,12 +3,14 @@ import type {
   AddComputerInput,
   ComputerSummary,
   CreateSessionInput,
+  ExecuteCommandInput,
   HubEvent,
   ManagedSession,
   PermissionReplyInput,
   SendMessageInput,
   ServerEvent,
   SessionDetail,
+  SlashCommand,
 } from '../shared/contracts.js'
 import {
   ComputerRegistry,
@@ -172,6 +174,15 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return managedSession(session, computer)
   }
 
+  async listCommands(
+    computerId: string,
+    sessionId: string,
+  ): Promise<SlashCommand[]> {
+    return computerId === this.identity.info.id
+      ? this.localService.listCommands(sessionId)
+      : this.requireClient(computerId).listCommands(sessionId)
+  }
+
   async createSession(
     computerId: string,
     input: CreateSessionInput,
@@ -204,8 +215,29 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     const computer = this.requireComputer(computerId)
     const session =
       computerId === this.identity.info.id
-        ? await this.localService.sendMessage(sessionId, input.content)
+        ? await this.localService.sendMessage(
+            sessionId,
+            input.content,
+            input.enqueue,
+          )
         : await this.requireClient(computerId).sendMessage(sessionId, input)
+    return managedSession(session, computer)
+  }
+
+  async executeCommand(
+    computerId: string,
+    sessionId: string,
+    input: ExecuteCommandInput,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.executeCommand(
+            sessionId,
+            input.command,
+            input.enqueue,
+          )
+        : await this.requireClient(computerId).executeCommand(sessionId, input)
     return managedSession(session, computer)
   }
 

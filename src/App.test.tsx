@@ -15,10 +15,13 @@ import App from './App'
 import {
   activateSession,
   deleteSession,
+  executeCommand,
   getSession,
+  listCommands,
   listComputers,
   listHistory,
   listSessions,
+  sendMessage,
 } from './api'
 
 vi.mock('./api', () => ({
@@ -26,11 +29,13 @@ vi.mock('./api', () => ({
   listComputers: vi.fn(),
   listHistory: vi.fn(),
   getSession: vi.fn(),
+  listCommands: vi.fn(),
   addComputer: vi.fn(),
   removeComputer: vi.fn(),
   createSession: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
+  executeCommand: vi.fn(),
   cancelSession: vi.fn(),
   deleteSession: vi.fn(),
   replyPermission: vi.fn(),
@@ -109,6 +114,21 @@ describe('App', () => {
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
     vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listCommands).mockResolvedValue([
+      {
+        name: 'model',
+        description: 'Select model',
+        inputHint: 'model',
+        allowDuringAgentExecution: false,
+      },
+      {
+        name: 'usage',
+        description: 'Show usage',
+        allowDuringAgentExecution: true,
+      },
+    ])
+    vi.mocked(sendMessage).mockResolvedValue(session)
+    vi.mocked(executeCommand).mockResolvedValue(session)
     vi.mocked(activateSession).mockResolvedValue({
       ...historicalSession,
       isOpen: true,
@@ -201,6 +221,8 @@ describe('App', () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
     render(<App />)
     await screen.findAllByText('Project chat')
+    await waitFor(() => expect(getSession).toHaveBeenCalled())
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
     setItem.mockClear()
 
     act(() => {
@@ -227,5 +249,100 @@ describe('App', () => {
     })
 
     expect(setItem).not.toHaveBeenCalled()
+  })
+
+  it('supports send, newline, and queue keyboard controls', async () => {
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    fireEvent.change(textarea, { target: { value: 'send now' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        content: 'send now',
+        enqueue: false,
+      })
+    })
+
+    vi.mocked(sendMessage).mockClear()
+    fireEvent.change(textarea, { target: { value: 'keep editing' } })
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
+    expect(sendMessage).not.toHaveBeenCalled()
+
+    fireEvent.change(textarea, { target: { value: 'queue this' } })
+    fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        content: 'queue this',
+        enqueue: true,
+      })
+    })
+  })
+
+  it('autocompletes and executes session slash commands', async () => {
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(listCommands).toHaveBeenCalled())
+
+    fireEvent.change(textarea, { target: { value: '/mo' } })
+    expect(await screen.findByText('/model')).toBeInTheDocument()
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(textarea).toHaveValue('/model ')
+
+    fireEvent.change(textarea, { target: { value: '/model gpt-5.6-sol' } })
+    expect(fireEvent.keyDown(textarea, { key: 'ArrowDown' })).toBe(true)
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => {
+      expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
+        command: '/model gpt-5.6-sol',
+        enqueue: false,
+      })
+    })
+
+    vi.mocked(executeCommand).mockClear()
+    fireEvent.change(textarea, { target: { value: '/usage' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => {
+      expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
+        command: '/usage',
+        enqueue: false,
+      })
+    })
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, status: 'running' },
+        }),
+      } as MessageEvent)
+    })
+    vi.mocked(executeCommand).mockClear()
+    fireEvent.change(textarea, { target: { value: '/usage' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => {
+      expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
+        command: '/usage',
+        enqueue: false,
+      })
+    })
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, status: 'running' },
+        }),
+      } as MessageEvent)
+    })
+    vi.mocked(executeCommand).mockClear()
+    fireEvent.change(textarea, { target: { value: '/model gpt-5.6-sol' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => {
+      expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
+        command: '/model gpt-5.6-sol',
+        enqueue: true,
+      })
+    })
   })
 })

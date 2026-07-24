@@ -100,6 +100,8 @@ class DeferredSession implements CopilotSessionLike {
 class FakeCopilotClient implements CopilotClientLike {
   readonly session = new DeferredSession()
   nextSessionList?: Promise<SessionMetadata[]>
+  resumeError?: Error
+  readonly createdConfigs: SessionConfig[] = []
   readonly rpc = {
     commands: {
       list: async () => this.session.rpc.commands.list(),
@@ -110,13 +112,17 @@ class FakeCopilotClient implements CopilotClientLike {
   async stop(): Promise<Error[]> {
     return []
   }
-  async createSession(_config: SessionConfig): Promise<CopilotSessionLike> {
+  async createSession(config: SessionConfig): Promise<CopilotSessionLike> {
+    this.createdConfigs.push(config)
     return this.session
   }
   async resumeSession(
     _sessionId: string,
     _config: ResumeSessionConfig,
   ): Promise<CopilotSessionLike> {
+    if (this.resumeError) {
+      throw this.resumeError
+    }
     return this.session
   }
   async listSessions(): Promise<SessionMetadata[]> {
@@ -223,6 +229,44 @@ describe('AgentService deletion', () => {
       }),
     ])
     await restartedService.stop()
+  })
+
+  it('recreates an empty managed session when Copilot cannot resume it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    const sessionId = '12345678-aaaa-bbbb-cccc-123456789abc'
+    await store.create(
+      {
+        id: sessionId,
+        cwd: directory,
+        title: 'Empty session',
+        updatedAt: '2026-07-24T20:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true },
+    )
+    const client = new FakeCopilotClient()
+    client.resumeError = new Error(`Session not found: ${sessionId}`)
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    const activated = await service.activateSession(sessionId)
+
+    expect(activated.id).toBe(sessionId)
+    expect(client.createdConfigs.at(-1)).toMatchObject({
+      sessionId,
+      workingDirectory: directory,
+    })
+    await service.stop()
   })
 
   it('does not resurrect a deletion from an in-flight discovery snapshot', async () => {

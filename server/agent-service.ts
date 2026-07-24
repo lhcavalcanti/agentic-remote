@@ -811,13 +811,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored) {
       throw new Error('Session not found')
     }
-    const sdkSession = await this.client.resumeSession(sessionId, {
-      workingDirectory: stored.cwd,
-      streaming: true,
-      onPermissionRequest: (request, invocation) =>
-        this.requestPermission(invocation.sessionId, request),
-      suppressResumeEvent: true,
-    })
+    let sdkSession: CopilotSessionLike
+    try {
+      sdkSession = await this.client.resumeSession(sessionId, {
+        workingDirectory: stored.cwd,
+        streaming: true,
+        onPermissionRequest: (request, invocation) =>
+          this.requestPermission(invocation.sessionId, request),
+        suppressResumeEvent: true,
+      })
+    } catch (error) {
+      if (stored.messages.length > 0 || !isMissingSessionError(error)) {
+        throw error
+      }
+      sdkSession = await this.client.createSession({
+        sessionId,
+        workingDirectory: stored.cwd,
+        streaming: true,
+        onPermissionRequest: (request, invocation) =>
+          this.requestPermission(invocation.sessionId, request),
+      })
+    }
     this.attachSession(sdkSession)
     this.sessions.set(sessionId, sdkSession)
     return sdkSession

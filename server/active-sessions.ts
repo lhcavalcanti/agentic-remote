@@ -16,6 +16,11 @@ interface ActiveProcess {
   source: 'argument' | 'lock'
 }
 
+interface LockCandidate extends ActiveProcess {
+  lockPath: string
+  modifiedAt: number
+}
+
 function sessionStateDirectory(): string {
   return path.join(
     process.env.COPILOT_HOME?.trim() ||
@@ -39,6 +44,7 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
   }
 
   const processes: ActiveProcess[] = []
+  const argumentPids = new Set<number>()
   for (const line of output.split('\n')) {
     const match = line.match(sessionPattern)
     if (!match) {
@@ -50,8 +56,10 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
     }
     if (!(await isDescendantOf(pid, process.pid))) {
       processes.push({ pid, sessionId: match[1], source: 'argument' })
+      argumentPids.add(pid)
     }
   }
+  const lockCandidates: LockCandidate[] = []
   try {
     const sessionDirectories = await readdir(sessionStateDirectory(), {
       withFileTypes: true,
@@ -72,6 +80,7 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
         if (
           !Number.isInteger(pid) ||
           (await isDescendantOf(pid, process.pid)) ||
+          argumentPids.has(pid) ||
           processes.some(
             (processInfo) => processInfo.sessionId === sessionDirectory.name,
           )
@@ -91,10 +100,12 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
             commandLine.toLowerCase().includes('copilot') &&
             (await processMatchesLock(pid, lockPath))
           ) {
-            processes.push({
+            lockCandidates.push({
               pid,
               sessionId: sessionDirectory.name,
               source: 'lock',
+              lockPath,
+              modifiedAt: (await stat(lockPath)).mtimeMs,
             })
           }
         } catch (error) {
@@ -112,7 +123,92 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
       throw error
     }
   }
+  const selectedBySession = new Map<string, LockCandidate>()
+  for (const candidates of groupLockCandidates(lockCandidates).values()) {
+    const candidate = await selectCurrentLockCandidate(candidates)
+    const selected = selectedBySession.get(candidate.sessionId)
+    if (!selected || candidate.modifiedAt > selected.modifiedAt) {
+      selectedBySession.set(candidate.sessionId, candidate)
+    }
+  }
+  for (const selected of selectedBySession.values()) {
+    processes.push({
+      pid: selected.pid,
+      sessionId: selected.sessionId,
+      source: selected.source,
+    })
+  }
   return processes
+}
+
+function groupLockCandidates(
+  candidates: LockCandidate[],
+): Map<number, LockCandidate[]> {
+  const grouped = new Map<number, LockCandidate[]>()
+  for (const candidate of candidates) {
+    const processCandidates = grouped.get(candidate.pid) || []
+    processCandidates.push(candidate)
+    grouped.set(candidate.pid, processCandidates)
+  }
+  return grouped
+}
+
+async function selectCurrentLockCandidate(
+  candidates: LockCandidate[],
+): Promise<LockCandidate> {
+  if (candidates.length === 1) {
+    return candidates[0]
+  }
+  const openSessions = await openSessionIds(candidates[0].pid)
+  const openCandidate = candidates.find((candidate) =>
+    openSessions.has(candidate.sessionId),
+  )
+  return (
+    openCandidate ||
+    candidates.toSorted(
+      (left, right) => right.modifiedAt - left.modifiedAt,
+    )[0]
+  )
+}
+
+async function openSessionIds(pid: number): Promise<Set<string>> {
+  const sessions = new Set<string>()
+  let descriptors: string[]
+  try {
+    descriptors = await readdir(`/proc/${pid}/fd`)
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (error as NodeJS.ErrnoException).code === 'ESRCH'
+    ) {
+      return sessions
+    }
+    throw error
+  }
+  const stateDirectory = `${sessionStateDirectory()}${path.sep}`
+  await Promise.all(
+    descriptors.map(async (descriptor) => {
+      try {
+        const target = await readlink(`/proc/${pid}/fd/${descriptor}`)
+        if (
+          !target.startsWith(stateDirectory) ||
+          path.basename(target) !== 'session.db'
+        ) {
+          return
+        }
+        const relative = path.relative(stateDirectory, target)
+        const sessionId = relative.split(path.sep, 1)[0]
+        if (sessionId) {
+          sessions.add(sessionId)
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error
+        }
+      }
+    }),
+  )
+  return sessions
 }
 
 export async function findActiveCopilotProcesses(): Promise<

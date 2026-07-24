@@ -353,7 +353,7 @@ describe('App', () => {
     })
   })
 
-  it('supports acronym aliases and configures the web status line', async () => {
+  it('supports command abbreviations and configures the web status line', async () => {
       render(<App />)
       const textarea = await screen.findByLabelText('Message')
       expect(screen.getByTestId('web-statusline')).toBeInTheDocument()

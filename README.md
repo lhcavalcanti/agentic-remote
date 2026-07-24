@@ -21,8 +21,9 @@ Composer controls follow Copilot CLI conventions:
 For Copilot sessions running in tmux, Agentic Remote routes prompts, queued
 input, slash commands, and cancel actions into the owning terminal pane. This
 keeps the CLI and web timeline on the same agent instead of creating a detached
-SDK turn. `/statusline` configures the web status line; command acronyms such as
-`/aa` resolve to `/allow-all`.
+SDK turn. `/statusline` configures the web status line. Command abbreviations
+follow Copilot CLI completion behavior: typing `/aa` expands to `/allow-all`
+before the canonical command is sent to Copilot.
 
 ## Why this architecture
 

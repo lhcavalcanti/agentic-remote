@@ -261,6 +261,10 @@ describe('App', () => {
   it('supports send, newline, and queue keyboard controls', async () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
+    Object.defineProperty(textarea, 'scrollHeight', {
+      configurable: true,
+      value: 96,
+    })
 
     fireEvent.change(textarea, { target: { value: 'send now' } })
     fireEvent.keyDown(textarea, { key: 'Enter' })
@@ -275,6 +279,12 @@ describe('App', () => {
     fireEvent.change(textarea, { target: { value: 'keep editing' } })
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
     expect(sendMessage).not.toHaveBeenCalled()
+    expect(textarea).toHaveStyle({ height: '96px' })
+
+    fireEvent.change(textarea, { target: { value: 'firstsecond' } })
+    ;(textarea as HTMLTextAreaElement).setSelectionRange(5, 5)
+    fireEvent.click(screen.getByRole('button', { name: 'Insert newline' }))
+    expect(textarea).toHaveValue('first\nsecond')
 
     fireEvent.change(textarea, { target: { value: 'queue this' } })
     fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })

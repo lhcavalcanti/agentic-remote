@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import {
   closestCenter,
@@ -23,6 +23,7 @@ import {
   Bot,
   CheckCircle2,
   Command,
+  CornerDownLeft,
   Folder,
   GripVertical,
   History,
@@ -792,6 +793,7 @@ function App() {
   )
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
 
   const visibleSessions = useMemo(
@@ -1162,6 +1164,15 @@ function App() {
     return () => window.cancelAnimationFrame(frame)
   }, [selectedKey, selected?.messages.length, latestContent])
 
+  useLayoutEffect(() => {
+    const textarea = composerRef.current
+    if (!textarea) {
+      return
+    }
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`
+  }, [composer])
+
   function selectSession(session: ManagedSession) {
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
@@ -1234,6 +1245,19 @@ function App() {
   function selectCommand(command: SlashCommand) {
     setComposer(`/${command.name}${command.inputHint ? ' ' : ''}`)
     setSelectedCommandIndex(0)
+  }
+
+  function insertComposerNewline() {
+    const textarea = composerRef.current
+    const start = textarea?.selectionStart ?? composer.length
+    const end = textarea?.selectionEnd ?? start
+    setComposer(
+      `${composer.slice(0, start)}\n${composer.slice(end)}`,
+    )
+    window.requestAnimationFrame(() => {
+      composerRef.current?.focus()
+      composerRef.current?.setSelectionRange(start + 1, start + 1)
+    })
   }
 
   function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -1662,9 +1686,18 @@ function App() {
                 onChange={(event) => setComposer(event.target.value)}
                 onKeyDown={composerKeyDown}
                 placeholder={`Message agent on ${selected.computerName}…`}
+                ref={composerRef}
                 rows={1}
                 value={composer}
               />
+              <button
+                aria-label="Insert newline"
+                className="send-button composer-newline-button"
+                onClick={insertComposerNewline}
+                type="button"
+              >
+                <CornerDownLeft size={17} />
+              </button>
               {selected.status === 'running' ? (
                 <>
                   <button

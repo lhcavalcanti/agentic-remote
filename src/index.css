@@ -1055,6 +1055,13 @@ button {
   background: var(--panel-soft);
 }
 
+.composer-newline-button {
+  display: none;
+  color: var(--muted-strong);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+}
+
 .composer-hint {
   margin: 6px 0 0;
   color: #676b61;
@@ -1326,7 +1333,16 @@ button {
   }
 
   .composer {
+    grid-template-columns: minmax(0, 1fr) 40px 40px;
     border-radius: 15px;
+  }
+
+  .composer--running {
+    grid-template-columns: minmax(0, 1fr) 40px 40px 40px;
+  }
+
+  .composer-newline-button {
+    display: grid;
   }
 
   .composer textarea {

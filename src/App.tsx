@@ -78,6 +78,16 @@ function computerTone(computerId: string): number {
   return hash % 6
 }
 
+function slashShortcut(value: string): string {
+  const parts = value.split(/[-_]/)
+  return parts.length > 1
+    ? parts
+    .map((part) => part[0] || '')
+    .join('')
+    .toLowerCase()
+    : ''
+}
+
 function readStoredOrder<T>(key: string, fallback: T): T {
   try {
     const value = localStorage.getItem(key)
@@ -86,6 +96,34 @@ function readStoredOrder<T>(key: string, fallback: T): T {
     return fallback
   }
 }
+
+type StatuslineSettings = {
+  enabled: boolean
+  computer: boolean
+  path: boolean
+  status: boolean
+  queue: boolean
+  sessionId: boolean
+}
+
+const defaultStatusline: StatuslineSettings = {
+  enabled: true,
+  computer: true,
+  path: true,
+  status: true,
+  queue: true,
+  sessionId: false,
+}
+
+const webCommands: SlashCommand[] = [
+  {
+    name: 'statusline',
+    aliases: ['footer'],
+    description: 'Configure the Agentic Remote status line',
+    inputHint: '[on|off|show]',
+    allowDuringAgentExecution: true,
+  },
+]
 
 function sortSessions(sessions: ManagedSession[]): ManagedSession[] {
   return [...sessions].sort((left, right) =>
@@ -663,6 +701,68 @@ function SortableComputerGroup({
   )
 }
 
+function StatuslineDialog({
+  open,
+  settings,
+  onChange,
+  onClose,
+}: {
+  open: boolean
+  settings: StatuslineSettings
+  onChange: (settings: StatuslineSettings) => void
+  onClose: () => void
+}) {
+  if (!open) {
+    return null
+  }
+  const options: Array<{
+    key: keyof Omit<StatuslineSettings, 'enabled'>
+    label: string
+  }> = [
+    { key: 'computer', label: 'Computer' },
+    { key: 'path', label: 'Working directory' },
+    { key: 'status', label: 'Agent status' },
+    { key: 'queue', label: 'Queued prompts' },
+    { key: 'sessionId', label: 'Session ID' },
+  ]
+  return (
+    <DialogFrame
+      eyebrow="Display"
+      onClose={onClose}
+      title="Status line"
+    >
+      <label className="statusline-toggle">
+        <input
+          checked={settings.enabled}
+          onChange={(event) =>
+            onChange({ ...settings, enabled: event.target.checked })
+          }
+          type="checkbox"
+        />
+        <span>Show status line</span>
+      </label>
+      <div className="statusline-options">
+        {options.map((option) => (
+          <label key={option.key}>
+            <input
+              checked={settings[option.key]}
+              disabled={!settings.enabled}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  [option.key]: event.target.checked,
+                })
+              }
+              type="checkbox"
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </DialogFrame>
+  )
+}
+
 function App() {
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
@@ -679,6 +779,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [computersOpen, setComputersOpen] = useState(false)
+  const [statuslineOpen, setStatuslineOpen] = useState(false)
+  const [statusline, setStatusline] = useState<StatuslineSettings>(() =>
+    readStoredOrder('agentic-remote:statusline', defaultStatusline),
+  )
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
     readStoredOrder('agentic-remote:computer-order', []),
@@ -746,6 +850,7 @@ function App() {
             .filter(
               (command) =>
                 command.name.toLowerCase().startsWith(commandQuery) ||
+                slashShortcut(command.name).startsWith(commandQuery) ||
                 command.aliases?.some((alias) =>
                   alias.toLowerCase().startsWith(commandQuery),
                 ),
@@ -833,6 +938,13 @@ function App() {
   }, [sessionOrder])
 
   useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:statusline',
+      JSON.stringify(statusline),
+    )
+  }, [statusline])
+
+  useEffect(() => {
     let active = true
     void Promise.all([listSessions(), listComputers()])
       .then(([loadedSessions, loadedComputers]) => {
@@ -898,7 +1010,15 @@ function App() {
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
         if (active) {
-          setCommands(availableCommands)
+          setCommands([
+            ...availableCommands,
+            ...webCommands.filter(
+              (webCommand) =>
+                !availableCommands.some(
+                  (command) => command.name === webCommand.name,
+                ),
+            ),
+          ])
         }
       })
       .catch(() => {
@@ -1068,10 +1188,23 @@ function App() {
     const command = commands.find(
       (candidate) =>
         candidate.name.toLowerCase() === commandName ||
+        slashShortcut(candidate.name) === commandName ||
         candidate.aliases?.some(
           (alias) => alias.toLowerCase() === commandName,
         ),
     )
+    if (command?.name === 'statusline') {
+      const input = content.slice(commandName.length + 1).trim().toLowerCase()
+      if (input === 'off') {
+        setStatusline((current) => ({ ...current, enabled: false }))
+      } else if (input === 'on') {
+        setStatusline((current) => ({ ...current, enabled: true }))
+      } else {
+        setStatuslineOpen(true)
+      }
+      setComposer('')
+      return
+    }
     const shouldEnqueue =
       enqueue ||
       (selected.status === 'running' &&
@@ -1131,8 +1264,7 @@ function App() {
       selectedSuggestion && composer === `/${selectedSuggestion.name}`
     if (
       (event.key === 'Tab' ||
-        (event.key === 'Enter' &&
-          (!exactCommand || Boolean(selectedSuggestion?.inputHint)))) &&
+        (event.key === 'Enter' && !exactCommand)) &&
       selectedSuggestion &&
       !composer.slice(1).includes(' ')
     ) {
@@ -1466,6 +1598,32 @@ function App() {
           <div aria-hidden="true" className="timeline-bottom" ref={bottomRef} />
         </div>
 
+        {selected && statusline.enabled ? (
+          <div className="web-statusline" data-testid="web-statusline">
+            {statusline.computer ? (
+              <span className={`web-statusline__computer session-item--tone-${computerTone(
+                selected.computerId,
+              )}`}>
+                {selected.computerName}
+              </span>
+            ) : null}
+            {statusline.path ? <span>{shortPath(selected.cwd)}</span> : null}
+            {statusline.status ? (
+              <span
+                className={`web-statusline__status web-statusline__status--${selected.status}`}
+              >
+                {selected.status}
+              </span>
+            ) : null}
+            {statusline.queue ? (
+              <span>{selected.queuedCount || 0} queued</span>
+            ) : null}
+            {statusline.sessionId ? (
+              <span>{selected.id.slice(0, 8)}</span>
+            ) : null}
+          </div>
+        ) : null}
+
         {selected ? (
           <footer className="composer-area">
             {showCommandMenu ? (
@@ -1576,6 +1734,12 @@ function App() {
           }
         }}
         open={computersOpen}
+      />
+      <StatuslineDialog
+        onChange={setStatusline}
+        onClose={() => setStatuslineOpen(false)}
+        open={statuslineOpen}
+        settings={statusline}
       />
     </div>
   )

@@ -28,6 +28,10 @@ import {
   stopActiveCopilotSession,
 } from './active-sessions.js'
 import { readSessionEvents, sessionEventLogVersion } from './event-log.js'
+import {
+  TmuxTerminalSessionController,
+  type TerminalSessionController,
+} from './terminal-session.js'
 
 interface ActivePrompt {
   assistantMessageId: string
@@ -66,6 +70,7 @@ export interface CopilotClientLike {
   ): Promise<CopilotSessionLike>
   listSessions(): Promise<SessionMetadata[]>
   deleteSession(sessionId: string): Promise<void>
+  rpc: Pick<CopilotClient['rpc'], 'commands'>
 }
 
 export interface AgentServiceEvents {
@@ -182,6 +187,16 @@ function readableToolName(value: string): string {
     .replace(/\b\w/g, (character) => character.toUpperCase())
 }
 
+function commandShortcut(value: string): string {
+  const parts = value.split(/[-_]/)
+  return parts.length > 1
+    ? parts
+    .map((part) => part[0] || '')
+    .join('')
+    .toLowerCase()
+    : ''
+}
+
 const ansiSequence = new RegExp(
   `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
   'g',
@@ -281,6 +296,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly eventLogFingerprints = new Map<string, string>()
   private readonly eventLogVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
+  private readonly externalCommandCache = new Map<
+    string,
+    {
+      expiresAt: number
+      commands: Awaited<
+        ReturnType<CopilotSessionLike['rpc']['commands']['list']>
+      >['commands']
+    }
+  >()
 
   constructor(
     readonly store: SessionStore,
@@ -295,6 +319,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     private readonly activeSessionStopper = stopActiveCopilotSession,
     private readonly sessionEventReader = readSessionEvents,
     private readonly sessionEventVersion = sessionEventLogVersion,
+    private readonly terminalController: TerminalSessionController =
+      new TmuxTerminalSessionController(),
   ) {
     super()
     this.client = client
@@ -422,6 +448,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!content) {
       throw new Error('Message cannot be empty')
     }
+    if (await this.terminalController.send(sessionId, content, enqueue)) {
+      const delivered = await this.store.update(sessionId, (session) => {
+        session.activity = enqueue ? 'Queued in terminal' : 'Sent to terminal'
+      })
+      this.publish(delivered)
+      return delivered
+    }
     if (
       this.activePrompts.has(sessionId) ||
       this.drainingSessions.has(sessionId)
@@ -477,13 +510,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async listCommands(sessionId: string): Promise<SlashCommand[]> {
-    const session = await this.ensureLoaded(sessionId)
-    const result = await session.rpc.commands.list({
-      includeBuiltins: true,
-      includeSkills: true,
-      includeClientCommands: true,
-    })
-    return result.commands.map((command) => ({
+    const commands = await this.commandCatalog(sessionId)
+    return commands.map((command) => ({
       name: command.name,
       aliases: command.aliases,
       description: command.description,
@@ -491,6 +519,69 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       inputRequired: command.input?.required,
       allowDuringAgentExecution: command.allowDuringAgentExecution,
     }))
+  }
+
+  private async commandCatalog(sessionId: string) {
+    if (await this.terminalController.has(sessionId)) {
+      const stored = this.store.get(sessionId)
+      if (!stored) {
+        throw new Error('Session not found')
+      }
+      const cacheKey = stored.cwd
+      const cached = this.externalCommandCache.get(cacheKey)
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.commands
+      }
+      const temporarySession = await this.client.createSession({
+        workingDirectory: stored.cwd,
+        streaming: false,
+        infiniteSessions: { enabled: false },
+        onPermissionRequest: () => ({ kind: 'user-not-available' }),
+      })
+      try {
+        const commands = (
+          await temporarySession.rpc.commands.list({
+            includeBuiltins: true,
+            includeSkills: true,
+            includeClientCommands: true,
+          })
+        ).commands
+        this.externalCommandCache.set(cacheKey, {
+          expiresAt: Date.now() + 60_000,
+          commands,
+        })
+        return commands
+      } finally {
+        await temporarySession.disconnect().catch(() => undefined)
+        await this.client
+          .deleteSession(temporarySession.sessionId)
+          .catch(() => undefined)
+      }
+    }
+    const session = await this.ensureLoaded(sessionId)
+    return (
+      await session.rpc.commands.list({
+        includeBuiltins: true,
+        includeSkills: true,
+        includeClientCommands: true,
+      })
+    ).commands
+  }
+
+  private async sessionCommandCatalog(sessionId: string) {
+    if (await this.terminalController.has(sessionId)) {
+      return {
+        commands: await this.commandCatalog(sessionId),
+        session: undefined,
+      }
+    }
+    const session = await this.ensureLoaded(sessionId)
+    const result = await session.rpc.commands.list({
+      includeBuiltins: true,
+      includeSkills: true,
+      includeClientCommands: true,
+    })
+    return { commands: result.commands, session }
   }
 
   async executeCommand(
@@ -506,19 +597,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!name) {
       throw new Error('Slash command name is required')
     }
-    const session = await this.ensureLoaded(sessionId)
-    const available = await session.rpc.commands.list({
-      includeBuiltins: true,
-      includeSkills: true,
-      includeClientCommands: true,
-    })
-    const commandInfo = available.commands.find(
+    const catalog = await this.sessionCommandCatalog(sessionId)
+    const commandInfo = catalog.commands.find(
       (candidate) =>
         candidate.name.toLowerCase() === name.toLowerCase() ||
         candidate.aliases?.some(
           (alias) => alias.toLowerCase() === name.toLowerCase(),
-        ),
+        ) ||
+        commandShortcut(candidate.name) === name.toLowerCase(),
     )
+    const canonicalName = commandInfo?.name || name
+    const canonicalCommand = `/${canonicalName}${
+      parts.length > 0 ? ` ${parts.join(' ')}` : ''
+    }`
     const busy =
       this.activePrompts.has(sessionId) ||
       this.drainingSessions.has(sessionId)
@@ -529,21 +620,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error(`/${name} must be queued while the agent is running`)
     }
+    if (
+      await this.terminalController.send(
+        sessionId,
+        canonicalCommand,
+        enqueue,
+      )
+    ) {
+      const notice = await this.store.addMessage(sessionId, {
+        id: randomUUID(),
+        role: 'notice',
+        content: enqueue ? `Queued ${canonicalCommand}` : canonicalCommand,
+        createdAt: new Date().toISOString(),
+      })
+      this.publish(notice)
+      return notice
+    }
+    const session = catalog.session
+    if (!session) {
+      throw new Error('External terminal is no longer available')
+    }
     if (enqueue) {
-      const result = await session.rpc.commands.enqueue({ command })
+      const result = await session.rpc.commands.enqueue({
+        command: canonicalCommand,
+      })
       if (!result.queued) {
         throw new Error('This session does not support command queueing')
       }
     } else {
       const result = await session.rpc.commands.invoke({
-        name,
+        name: canonicalName,
         input: parts.join(' '),
       })
       if (result.kind === 'agent-prompt') {
         const notice = await this.store.addMessage(sessionId, {
           id: randomUUID(),
           role: 'notice',
-          content: result.notice || command,
+          content: result.notice || canonicalCommand,
           createdAt: new Date().toISOString(),
         })
         this.publish(notice)
@@ -553,9 +666,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         result.kind === 'text'
           ? stripAnsi(result.text)
           : result.kind === 'completed'
-            ? result.message || command
+            ? result.message || canonicalCommand
             : `${result.title}\n\n${result.options
-                .map((option) => `- /${name} ${option.name} — ${option.description}`)
+                .map(
+                  (option) =>
+                    `- /${canonicalName} ${option.name} — ${option.description}`,
+                )
                 .join('\n')}`
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
@@ -569,7 +685,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const notice = await this.store.addMessage(sessionId, {
       id: randomUUID(),
       role: 'notice',
-      content: enqueue ? `Queued ${command}` : command,
+      content: enqueue ? `Queued ${canonicalCommand}` : canonicalCommand,
       createdAt: new Date().toISOString(),
     })
     this.publish(notice)
@@ -577,6 +693,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async cancel(sessionId: string): Promise<void> {
+    if (await this.terminalController.cancel(sessionId)) {
+      return
+    }
     const session = this.sessions.get(sessionId)
     if (!session || !this.activePrompts.has(sessionId)) {
       return

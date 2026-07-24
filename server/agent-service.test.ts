@@ -8,7 +8,7 @@ import type {
   SessionEvent,
   SessionMetadata,
 } from '@github/copilot-sdk'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentService,
   type CopilotClientLike,
@@ -44,6 +44,14 @@ class DeferredSession implements CopilotSessionLike {
             name: 'plan',
             description: 'Create a plan',
             kind: 'builtin' as const,
+            allowDuringAgentExecution: true,
+          },
+          {
+            name: 'allow-all',
+            aliases: ['yolo'],
+            description: 'Enable all permissions',
+            kind: 'builtin' as const,
+            input: { hint: '[on|off|show]' },
             allowDuringAgentExecution: true,
           },
         ],
@@ -92,6 +100,11 @@ class DeferredSession implements CopilotSessionLike {
 class FakeCopilotClient implements CopilotClientLike {
   readonly session = new DeferredSession()
   nextSessionList?: Promise<SessionMetadata[]>
+  readonly rpc = {
+    commands: {
+      list: async () => this.session.rpc.commands.list(),
+    },
+  }
 
   async start() {}
   async stop(): Promise<Error[]> {
@@ -511,6 +524,65 @@ describe('AgentService deletion', () => {
     ])
     client.session.resolvePrompt()
     await new Promise((resolve) => setTimeout(resolve, 10))
+    await service.stop()
+  })
+
+  it('routes external-session prompts and aliases to the owning terminal', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    await service.sendMessage(client.session.sessionId, 'hello terminal')
+    await service.executeCommand(
+      client.session.sessionId,
+      '/aa on',
+    )
+
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      1,
+      client.session.sessionId,
+      'hello terminal',
+      false,
+    )
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      2,
+      client.session.sessionId,
+      '/allow-all on',
+      false,
+    )
+    expect(client.session.sentPrompts).toEqual([])
     await service.stop()
   })
 })

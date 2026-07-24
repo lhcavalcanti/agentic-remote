@@ -1,15 +1,27 @@
 import { execFile } from 'node:child_process'
-import { readFile, readlink } from 'node:fs/promises'
+import { readdir, readFile, readlink, stat } from 'node:fs/promises'
+import path from 'node:path'
 import { promisify } from 'node:util'
 import type { DiscoveredSession } from './session-store.js'
 
 const execFileAsync = promisify(execFile)
 const sessionPattern =
   /(?:^|\s)--session-id(?:=|\s+)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\s|$)/i
+let clockTicks: Promise<number> | undefined
+let bootTimeMs: Promise<number> | undefined
 
 interface ActiveProcess {
   pid: number
   sessionId: string
+  source: 'argument' | 'lock'
+}
+
+function sessionStateDirectory(): string {
+  return path.join(
+    process.env.COPILOT_HOME?.trim() ||
+      path.join(process.env.HOME || process.cwd(), '.copilot'),
+    'session-state',
+  )
 }
 
 async function findActiveProcesses(): Promise<ActiveProcess[]> {
@@ -36,9 +48,77 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
     if (!Number.isInteger(pid)) {
       continue
     }
-    processes.push({ pid, sessionId: match[1] })
+    if (!(await isDescendantOf(pid, process.pid))) {
+      processes.push({ pid, sessionId: match[1], source: 'argument' })
+    }
+  }
+  try {
+    const sessionDirectories = await readdir(sessionStateDirectory(), {
+      withFileTypes: true,
+    })
+    for (const sessionDirectory of sessionDirectories) {
+      if (!sessionDirectory.isDirectory()) {
+        continue
+      }
+      const files = await readdir(
+        path.join(sessionStateDirectory(), sessionDirectory.name),
+      )
+      for (const file of files) {
+        const lock = file.match(/^inuse\.(\d+)\.lock$/)
+        if (!lock) {
+          continue
+        }
+        const pid = Number.parseInt(lock[1], 10)
+        if (
+          !Number.isInteger(pid) ||
+          (await isDescendantOf(pid, process.pid)) ||
+          processes.some(
+            (processInfo) => processInfo.sessionId === sessionDirectory.name,
+          )
+        ) {
+          continue
+        }
+        try {
+          const commandLine = (
+            await readFile(`/proc/${pid}/cmdline`, 'utf8')
+          ).replaceAll('\0', ' ')
+          const lockPath = path.join(
+            sessionStateDirectory(),
+            sessionDirectory.name,
+            file,
+          )
+          if (
+            commandLine.toLowerCase().includes('copilot') &&
+            (await processMatchesLock(pid, lockPath))
+          ) {
+            processes.push({
+              pid,
+              sessionId: sessionDirectory.name,
+              source: 'lock',
+            })
+          }
+        } catch (error) {
+          if (
+            (error as NodeJS.ErrnoException).code !== 'ENOENT' &&
+            (error as NodeJS.ErrnoException).code !== 'ESRCH'
+          ) {
+            throw error
+          }
+        }
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error
+    }
   }
   return processes
+}
+
+export async function findActiveCopilotProcesses(): Promise<
+  Array<{ pid: number; sessionId: string; source: 'argument' | 'lock' }>
+> {
+  return findActiveProcesses()
 }
 
 export async function findActiveCopilotSessions(): Promise<DiscoveredSession[]> {
@@ -99,7 +179,45 @@ async function processStillMatches(
     const commandLine = (await readFile(`/proc/${processInfo.pid}/cmdline`, 'utf8'))
       .replaceAll('\0', ' ')
       .trim()
-    return commandLine.match(sessionPattern)?.[1] === sessionId
+    if (processInfo.source === 'argument') {
+      return commandLine.match(sessionPattern)?.[1] === sessionId
+    }
+    const lockPath = path.join(
+      sessionStateDirectory(),
+      sessionId,
+      `inuse.${processInfo.pid}.lock`,
+    )
+    return (
+      commandLine.toLowerCase().includes('copilot') &&
+      (await processMatchesLock(processInfo.pid, lockPath))
+    )
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (error as NodeJS.ErrnoException).code === 'ESRCH'
+    ) {
+      return false
+    }
+
+    throw error
+  }
+}
+
+async function processMatchesLock(
+  pid: number,
+  lockPath: string,
+): Promise<boolean> {
+  try {
+    const [lockContent, lockMetadata, processStart] = await Promise.all([
+      readFile(lockPath, 'utf8'),
+      stat(lockPath),
+      processStartTimeMs(pid),
+    ])
+    if (lockContent.trim() !== String(pid)) {
+      return false
+    }
+    const lockDelay = lockMetadata.mtimeMs - processStart
+    return lockDelay >= -2_000 && lockDelay <= 30_000
   } catch (error) {
     if (
       (error as NodeJS.ErrnoException).code === 'ENOENT' ||
@@ -109,4 +227,71 @@ async function processStillMatches(
     }
     throw error
   }
+}
+
+async function processStartTimeMs(pid: number): Promise<number> {
+  const [processStat, boot, ticks] = await Promise.all([
+    readFile(`/proc/${pid}/stat`, 'utf8'),
+    getBootTimeMs(),
+    getClockTicks(),
+  ])
+  const fields = processStat
+    .slice(processStat.lastIndexOf(')') + 1)
+    .trim()
+    .split(/\s+/)
+  const startTicks = Number.parseInt(fields[19], 10)
+  if (!Number.isFinite(startTicks)) {
+    throw new Error(`Unable to read start time for PID ${pid}`)
+  }
+  return boot + (startTicks * 1_000) / ticks
+}
+
+function getClockTicks(): Promise<number> {
+  clockTicks ??= execFileAsync('getconf', ['CLK_TCK']).then(({ stdout }) => {
+    const value = Number.parseInt(stdout.trim(), 10)
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error('Unable to determine CLK_TCK')
+    }
+    return value
+  })
+  return clockTicks
+}
+
+function getBootTimeMs(): Promise<number> {
+  bootTimeMs ??= readFile('/proc/stat', 'utf8').then((content) => {
+    const match = content.match(/^btime\s+(\d+)$/m)
+    if (!match) {
+      throw new Error('Unable to determine system boot time')
+    }
+    return Number.parseInt(match[1], 10) * 1_000
+  })
+  return bootTimeMs
+}
+
+async function isDescendantOf(
+  candidatePid: number,
+  ancestorPid: number,
+): Promise<boolean> {
+  let current = candidatePid
+  const seen = new Set<number>()
+  while (current > 1 && !seen.has(current)) {
+    if (current === ancestorPid) {
+      return true
+    }
+    seen.add(current)
+    try {
+      const stat = await readFile(`/proc/${current}/stat`, 'utf8')
+      const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)
+      current = Number.parseInt(fields[1], 10)
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+        (error as NodeJS.ErrnoException).code === 'ESRCH'
+      ) {
+        return false
+      }
+      throw error
+    }
+  }
+  return false
 }

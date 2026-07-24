@@ -126,6 +126,13 @@ describe('App', () => {
         description: 'Show usage',
         allowDuringAgentExecution: true,
       },
+      {
+        name: 'allow-all',
+        aliases: ['yolo'],
+        description: 'Enable all permissions',
+        inputHint: '[on|off|show]',
+        allowDuringAgentExecution: true,
+      },
     ])
     vi.mocked(sendMessage).mockResolvedValue(session)
     vi.mocked(executeCommand).mockResolvedValue(session)
@@ -344,5 +351,26 @@ describe('App', () => {
         enqueue: true,
       })
     })
+  })
+
+  it('supports acronym aliases and configures the web status line', async () => {
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      expect(screen.getByTestId('web-statusline')).toBeInTheDocument()
+
+      fireEvent.change(textarea, { target: { value: '/aa' } })
+      expect(await screen.findByText('/allow-all')).toBeInTheDocument()
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      expect(textarea).toHaveValue('/allow-all ')
+
+      fireEvent.change(textarea, { target: { value: '/statusline' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+      expect(
+        await screen.findByRole('dialog', { name: 'Status line' }),
+      ).toBeInTheDocument()
+      fireEvent.click(screen.getByLabelText('Working directory'))
+      expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
+        '~/src/project',
+      )
   })
 })

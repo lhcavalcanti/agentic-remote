@@ -33,6 +33,8 @@ Commands:
       Follow service logs.
   update
       Pull the current branch, install dependencies, build, and restart.
+  rollback
+      Activate the previous immutable release and restart the service.
   uninstall
       Stop and remove the service. Application data is preserved.
   help
@@ -101,14 +103,14 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=$REPO_ROOT
+WorkingDirectory=$CONFIG_DIR/releases/current
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=4317
 Environment=$(systemd_quote "PATH=$runtime_path")
 Environment=$(systemd_quote "COPILOT_BIN=$copilot_bin")
 EnvironmentFile=-$ENV_FILE
-ExecStart=$(systemd_quote "$pnpm_bin") start
+ExecStart=$(systemd_quote "$pnpm_bin") --dir $CONFIG_DIR/releases/current start
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
@@ -120,6 +122,37 @@ EOF
 
   install -m 0644 "$temporary" "$SERVICE_FILE"
   rm -f -- "$temporary"
+}
+
+publish_release() {
+  local releases_dir release_id release_dir temporary_link
+  releases_dir="$CONFIG_DIR/releases"
+  release_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  release_dir="$releases_dir/$release_id"
+  temporary_link="$releases_dir/.current-$$"
+
+  mkdir -p "$release_dir"
+  mkdir -p "$release_dir/dist"
+  cp -a "$REPO_ROOT/dist/." "$release_dir/dist/"
+  cp -a \
+    "$REPO_ROOT/server" \
+    "$REPO_ROOT/shared" \
+    "$REPO_ROOT/package.json" \
+    "$REPO_ROOT/tsconfig.json" \
+    "$REPO_ROOT/tsconfig.server.json" \
+    "$release_dir/"
+  cp -a "$REPO_ROOT/node_modules" "$release_dir/node_modules"
+  ln -s "$release_dir" "$temporary_link"
+  mv -Tf "$temporary_link" "$releases_dir/current"
+
+  # Keep the current release plus two rollback candidates.
+  find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
+    sort -nr |
+    tail -n +4 |
+    cut -d' ' -f2- |
+    while IFS= read -r old_release; do
+      rm -rf -- "$old_release"
+    done
 }
 
 enable_linger() {
@@ -191,13 +224,15 @@ setup_service() {
   pnpm --dir "$REPO_ROOT" build
 
   mkdir -p "$SYSTEMD_DIR" "$CONFIG_DIR" "$(dirname "$COMMAND_LINK")"
+  publish_release
   local environment_tmp
   environment_tmp="$(mktemp "$CONFIG_DIR/.environment.XXXXXX")"
   printf '%s\n' \
     "HOST=$host" \
     "PORT=$port" \
     "AGENTIC_REMOTE_ROLE=$role" \
-    "AGENTIC_REMOTE_NODE_NAME=$name" >"$environment_tmp"
+    "AGENTIC_REMOTE_NODE_NAME=$name" \
+    "AGENTIC_REMOTE_RELEASE_DIR=$CONFIG_DIR/releases/current/dist" >"$environment_tmp"
   if [[ -n "$data_directory" ]]; then
     printf 'AGENTIC_REMOTE_DATA_DIR=%s\n' "$data_directory" >>"$environment_tmp"
   fi
@@ -245,6 +280,31 @@ update_service() {
   setup_service
 }
 
+rollback_service() {
+  local releases_dir current_release previous_release temporary_link
+  releases_dir="$CONFIG_DIR/releases"
+  [[ -d "$releases_dir" ]] || die "no previous release is available"
+  current_release="$(readlink -f "$releases_dir/current" 2>/dev/null || true)"
+  previous_release="$(
+    find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
+      sort -nr |
+      cut -d' ' -f2- |
+      while IFS= read -r release; do
+        release="$(readlink -f "$release")"
+        if [[ "$release" != "$current_release" ]]; then
+          printf '%s\n' "$release"
+          break
+        fi
+      done
+  )"
+  [[ -n "$previous_release" ]] || die "no previous release is available"
+  temporary_link="$releases_dir/.current-$$"
+  ln -s "$previous_release" "$temporary_link"
+  mv -Tf "$temporary_link" "$releases_dir/current"
+  systemctl --user restart "$SERVICE_NAME"
+  printf 'Rolled back to %s\n' "$(basename "$previous_release")"
+}
+
 uninstall_service() {
   systemctl --user disable --now "$SERVICE_NAME" 2>/dev/null || true
   rm -f -- "$SERVICE_FILE"
@@ -283,6 +343,10 @@ case "$command" in
   update)
     (($# == 0)) || die "update does not accept options"
     update_service
+    ;;
+  rollback)
+    (($# == 0)) || die "rollback does not accept options"
+    rollback_service
     ;;
   uninstall)
     (($# == 0)) || die "uninstall does not accept options"

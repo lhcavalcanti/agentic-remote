@@ -18,6 +18,12 @@ Composer controls follow Copilot CLI conventions:
 - Typing `/` opens autocomplete populated from the session's real Copilot
   command list
 
+For Copilot sessions running in tmux, Agentic Remote routes prompts, queued
+input, slash commands, and cancel actions into the owning terminal pane. This
+keeps the CLI and web timeline on the same agent instead of creating a detached
+SDK turn. `/statusline` configures the web status line; command acronyms such as
+`/aa` resolve to `/allow-all`.
+
 ## Why this architecture
 
 - **React + Vite** produces a small production bundle and fast responsive UI.
@@ -102,6 +108,13 @@ Setup installs dependencies, creates the production build, installs an enabled
 systemd user service, attempts to enable boot-time user lingering, and links the
 command to `~/.local/bin/agentic-remote`.
 
+Production UI assets are copied into immutable release directories under
+`~/.config/agentic-remote/releases`. The running service never serves directly
+from the development `dist/` directory, so local builds cannot invalidate its
+hashed JavaScript or CSS assets. Backend source and dependencies are pinned in
+the same release. `agentic-remote rollback` atomically activates the previous
+release and restarts the service.
+
 Use the URL and token from `pair-info` in the hub's **Computers** dialog. Pairing
 tokens grant control of Copilot sessions on that node and are stored with mode
 `0600`. The current transport is intended for a trusted LAN; use an encrypted
@@ -117,6 +130,7 @@ agentic-remote status
 agentic-remote logs
 agentic-remote pair-info
 agentic-remote update
+agentic-remote rollback
 agentic-remote uninstall
 ```
 

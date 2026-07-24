@@ -461,8 +461,9 @@ button {
     "header"
     "banner"
     "timeline"
+    "statusline"
     "composer";
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   overflow: hidden;
 }
 
@@ -861,6 +862,71 @@ button {
   z-index: 2;
   padding: 8px max(18px, calc((100% - 800px) / 2)) max(10px, env(safe-area-inset-bottom));
   background: var(--bg);
+}
+
+.web-statusline {
+  grid-area: statusline;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 5px max(18px, calc((100% - 800px) / 2));
+  color: #73776d;
+  border-top: 1px solid var(--border);
+  background: #0f100e;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.web-statusline__computer {
+  color: var(--computer-accent);
+}
+
+.web-statusline__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.web-statusline__status::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.web-statusline__status--running {
+  color: var(--accent);
+}
+
+.web-statusline__status--waiting {
+  color: #f2c96d;
+}
+
+.web-statusline__status--error {
+  color: var(--danger);
+}
+
+.statusline-toggle,
+.statusline-options label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.statusline-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 14px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
 .command-menu {

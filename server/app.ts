@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { realpath } from 'node:fs/promises'
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
@@ -82,7 +83,10 @@ export async function buildApp(
 
   if (role === 'hub' && options.serveStatic) {
     const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
-    const publicDirectory = path.resolve(serverDirectory, '../dist')
+    const configuredDirectory = process.env.AGENTIC_REMOTE_RELEASE_DIR?.trim()
+      ? path.resolve(process.env.AGENTIC_REMOTE_RELEASE_DIR)
+      : path.resolve(serverDirectory, '../dist')
+    const publicDirectory = await realpath(configuredDirectory)
     await app.register(fastifyStatic, {
       root: publicDirectory,
       wildcard: false,
@@ -90,7 +94,8 @@ export async function buildApp(
     app.setNotFoundHandler((request, reply) => {
       if (
         request.url.startsWith('/api/') ||
-        request.url.startsWith('/node-api/')
+        request.url.startsWith('/node-api/') ||
+        request.url.startsWith('/assets/')
       ) {
         return reply.code(404).send({ error: 'Not found' })
       }

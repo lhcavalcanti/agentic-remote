@@ -14,20 +14,24 @@ import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import App from './App'
 import {
   activateSession,
+  createSession,
   deleteSession,
   executeCommand,
   getSession,
   listCommands,
   listComputers,
+  listDirectories,
   listHistory,
   listSessions,
   sendMessage,
 } from './api'
+import { composerMaximumHeight } from './composer-sizing'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
+  listDirectories: vi.fn(),
   getSession: vi.fn(),
   listCommands: vi.fn(),
   addComputer: vi.fn(),
@@ -64,6 +68,14 @@ const computer: ComputerSummary = {
   name: 'development',
   isLocal: true,
   online: true,
+}
+
+const secondComputer: ComputerSummary = {
+  id: 'computer-2',
+  name: 'homelab-prod',
+  isLocal: false,
+  online: true,
+  baseUrl: 'http://10.0.0.233:4317',
 }
 
 const session: ManagedSession = {
@@ -107,13 +119,33 @@ const historicalSession: ManagedSession = {
 }
 
 describe('App', () => {
+  it('caps composer growth for iPhone viewport heights', () => {
+    expect(composerMaximumHeight(true, 844)).toBe(104)
+    expect(composerMaximumHeight(true, 430)).toBe(72)
+    expect(composerMaximumHeight(false, 430)).toBe(180)
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') =>
+        path === '~'
+          ? {
+              path: '~',
+              directories: [{ name: 'src', path: '~/src' }],
+            }
+          : {
+              path: '~/src',
+              parent: '~',
+              directories: [{ name: 'project', path: '~/src/project' }],
+            },
+    )
     vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(createSession).mockResolvedValue(session)
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'model',
@@ -175,9 +207,22 @@ describe('App', () => {
     expect(
       screen.getByRole('heading', { name: 'Choose a folder' }),
     ).toBeInTheDocument()
-    expect(
-      screen.getByLabelText('Absolute folder path on that computer'),
-    ).toHaveValue('')
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith('computer-1', '~'),
+    )
+    expect(screen.getByText(/The session will start in/)).toHaveTextContent('~')
+
+    fireEvent.click(screen.getByRole('option', { name: 'src' }))
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith('computer-1', '~/src'),
+    )
+    expect(screen.getByText(/The session will start in/)).toHaveTextContent(
+      '~/src',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', { cwd: '~/src' }),
+    )
   })
 
   it('opens a historical session from the new-session dialog', async () => {
@@ -190,6 +235,7 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Previous session'), {
       target: { value: 'computer-1:historical-session' },
     })
+
     fireEvent.click(screen.getByRole('button', { name: 'Open session' }))
 
     await waitFor(() => {
@@ -198,6 +244,58 @@ describe('App', () => {
         'historical-session',
       )
     })
+  })
+
+  it('ignores stale folder responses after switching computers', async () => {
+    let resolveStale:
+      | ((value: {
+          path: string
+          parent: string
+          directories: Array<{ name: string; path: string }>
+        }) => void)
+      | undefined
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listDirectories).mockImplementation(
+      async (computerId, requestedPath = '~') => {
+        if (computerId === 'computer-1' && requestedPath === '~/src') {
+          return new Promise((resolve) => {
+            resolveStale = resolve
+          })
+        }
+        if (computerId === 'computer-2') {
+          return {
+            path: '~',
+            directories: [{ name: 'services', path: '~/services' }],
+          }
+        }
+        return {
+          path: '~',
+          directories: [{ name: 'src', path: '~/src' }],
+        }
+      },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(await screen.findByRole('option', { name: 'src' }))
+    fireEvent.change(screen.getAllByLabelText('Computer')[0], {
+      target: { value: 'computer-2' },
+    })
+    expect(
+      await screen.findByRole('option', { name: 'services' }),
+    ).toBeInTheDocument()
+
+    resolveStale?.({
+      path: '~/src',
+      parent: '~',
+      directories: [{ name: 'project', path: '~/src/project' }],
+    })
+    await act(() => Promise.resolve())
+
+    expect(
+      screen.queryByRole('option', { name: 'project' }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText(/The session will start in/)).toHaveTextContent('~')
   })
 
   it('closes the owning Copilot session after confirmation', async () => {

@@ -22,9 +22,11 @@ import {
   ArrowUp,
   Bot,
   CheckCircle2,
+  ChevronLeft,
   Command,
   CornerDownLeft,
   Folder,
+  FolderOpen,
   GripVertical,
   History,
   LoaderCircle,
@@ -45,6 +47,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
   ComputerSummary,
+  DirectoryListing,
   HubEvent,
   ManagedSession,
   PendingPermission,
@@ -61,11 +64,13 @@ import {
   listComputers,
   listCommands,
   listHistory,
+  listDirectories,
   listSessions,
   removeComputer,
   replyPermission,
   sendMessage,
 } from './api'
+import { composerMaximumHeight } from './composer-sizing'
 
 function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string {
   return `${session.computerId}:${session.id}`
@@ -214,7 +219,11 @@ function NewSessionDialog({
   onCreated: (session: ManagedSession) => void
 }) {
   const [computerId, setComputerId] = useState('')
-  const [cwd, setCwd] = useState('')
+  const [cwd, setCwd] = useState('~')
+  const [directoryListing, setDirectoryListing] =
+    useState<DirectoryListing>()
+  const [loadingDirectories, setLoadingDirectories] = useState(false)
+  const directoryRequest = useRef(0)
   const [mode, setMode] = useState<'new' | 'previous'>('new')
   const [history, setHistory] = useState<ManagedSession[]>([])
   const [historyKey, setHistoryKey] = useState('')
@@ -229,6 +238,8 @@ function NewSessionDialog({
   useEffect(() => {
     if (open) {
       setComputerId(defaultComputerId || available[0]?.id || '')
+      setCwd('~')
+      setDirectoryListing(undefined)
       setMode('new')
       setHistoryKey('')
       setError(undefined)
@@ -242,8 +253,59 @@ function NewSessionDialog({
     }
   }, [open, defaultComputerId, available])
 
+  useEffect(() => {
+    if (!open || mode !== 'new' || !computerId) {
+      return
+    }
+    let active = true
+    const request = ++directoryRequest.current
+    setLoadingDirectories(true)
+    setError(undefined)
+    void listDirectories(computerId, '~')
+      .then((listing) => {
+        if (active && request === directoryRequest.current) {
+          setDirectoryListing(listing)
+          setCwd(listing.path)
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active && request === directoryRequest.current) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+      .finally(() => {
+        if (active && request === directoryRequest.current) {
+          setLoadingDirectories(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [computerId, mode, open])
+
   if (!open) {
     return null
+  }
+
+  async function browseDirectory(path: string) {
+    const request = ++directoryRequest.current
+    setLoadingDirectories(true)
+    setError(undefined)
+    try {
+      const listing = await listDirectories(computerId, path)
+      if (request === directoryRequest.current) {
+        setDirectoryListing(listing)
+        setCwd(listing.path)
+      }
+    } catch (caught) {
+      if (request === directoryRequest.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    } finally {
+      if (request === directoryRequest.current) {
+        setLoadingDirectories(false)
+      }
+    }
   }
 
   async function submit(event: FormEvent) {
@@ -261,6 +323,7 @@ function NewSessionDialog({
         if (!previous) {
           throw new Error('Choose a previous session')
         }
+
         onCreated(await activateSession(previous.computerId, previous.id))
       }
     } catch (caught) {
@@ -310,8 +373,10 @@ function NewSessionDialog({
           <select
             className="dialog-select"
             onChange={(event) => {
+              directoryRequest.current += 1
               setComputerId(event.target.value)
               setHistoryKey('')
+              setCwd('~')
             }}
             value={computerId}
           >
@@ -323,19 +388,55 @@ function NewSessionDialog({
           </select>
         </label>
         {mode === 'new' ? (
-          <label className="field">
-            <span>Absolute folder path on that computer</span>
-            <div className="path-input">
-              <Folder aria-hidden="true" size={18} />
-              <input
-                autoFocus
-                onChange={(event) => setCwd(event.target.value)}
-                placeholder="/home/you/src/project"
-                spellCheck={false}
-                value={cwd}
-              />
+          <div className="folder-picker">
+            <div className="folder-picker__toolbar">
+              <button
+                aria-label="Parent folder"
+                className="icon-button"
+                disabled={!directoryListing?.parent || loadingDirectories}
+                onClick={() =>
+                  void browseDirectory(directoryListing?.parent || '~')
+                }
+                type="button"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <div className="folder-picker__path">
+                <Folder size={15} />
+                <strong>{directoryListing?.path || '~'}</strong>
+              </div>
             </div>
-          </label>
+            <div
+              aria-label="Folders"
+              className="folder-picker__list"
+              role="listbox"
+            >
+              {loadingDirectories ? (
+                <p>Loading folders…</p>
+              ) : directoryListing?.directories.length ? (
+                directoryListing.directories.map((directory) => (
+                  <button
+                    key={`${directory.name}:${directory.path}`}
+                    onClick={() => void browseDirectory(directory.path)}
+                    role="option"
+                    type="button"
+                  >
+                    <FolderOpen size={17} />
+                    <span>{directory.name}</span>
+                    <ChevronLeft
+                      className="folder-picker__chevron"
+                      size={15}
+                    />
+                  </button>
+                ))
+              ) : (
+                <p>No subfolders here.</p>
+              )}
+            </div>
+            <p className="folder-picker__hint">
+              The session will start in <strong>{cwd || '~'}</strong>.
+            </p>
+          </div>
         ) : (
           <label className="field">
             <span>Previous session</span>
@@ -781,6 +882,11 @@ function App() {
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [computersOpen, setComputersOpen] = useState(false)
   const [statuslineOpen, setStatuslineOpen] = useState(false)
+  const [viewportHeight, setViewportHeight] = useState(() =>
+    typeof window === 'undefined'
+      ? 800
+      : window.visualViewport?.height || window.innerHeight,
+  )
   const [statusline, setStatusline] = useState<StatuslineSettings>(() =>
     readStoredOrder('agentic-remote:statusline', defaultStatusline),
   )
@@ -871,6 +977,17 @@ function App() {
       ? computerFilter
       : computers.find((computer) => computer.isLocal)?.id) ||
     computers.find((computer) => computer.online)?.id
+
+  useEffect(() => {
+    const updateViewport = () =>
+      setViewportHeight(window.visualViewport?.height || window.innerHeight)
+    window.visualViewport?.addEventListener('resize', updateViewport)
+    window.addEventListener('resize', updateViewport)
+    return () => {
+      window.visualViewport?.removeEventListener('resize', updateViewport)
+      window.removeEventListener('resize', updateViewport)
+    }
+  }, [])
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, {
@@ -1169,9 +1286,17 @@ function App() {
     if (!textarea) {
       return
     }
+    const mobile =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(max-width: 720px)').matches
+        : window.innerWidth <= 720
+    const maximumHeight = composerMaximumHeight(mobile, viewportHeight)
     textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`
-  }, [composer])
+    textarea.style.height = `${Math.min(
+      textarea.scrollHeight,
+      maximumHeight,
+    )}px`
+  }, [composer, viewportHeight])
 
   function selectSession(session: ManagedSession) {
     setSelectedKey(sessionKey(session))

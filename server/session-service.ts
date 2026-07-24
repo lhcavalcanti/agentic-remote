@@ -1,4 +1,5 @@
 import type {
+  DirectoryListing,
   ServerEvent,
   SessionDetail,
   SlashCommand,
@@ -33,4 +34,5 @@ export interface SessionService {
   ): Promise<SessionDetail>
   on(event: 'event', listener: (event: ServerEvent) => void): unknown
   off(event: 'event', listener: (event: ServerEvent) => void): unknown
+  listDirectories(path?: string): Promise<DirectoryListing>
 }

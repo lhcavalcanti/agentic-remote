@@ -103,3 +103,12 @@ export interface ExecuteCommandInput {
   command: string
   enqueue?: boolean
 }
+
+export interface DirectoryListing {
+  path: string
+  parent?: string
+  directories: Array<{
+    name: string
+    path: string
+  }>
+}

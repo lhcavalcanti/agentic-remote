@@ -3,6 +3,7 @@ import type {
   AddComputerInput,
   ComputerSummary,
   CreateSessionInput,
+  DirectoryListing,
   ExecuteCommandInput,
   HubEvent,
   ManagedSession,
@@ -163,6 +164,15 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return [...local, ...remote.flat()].sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt),
     )
+  }
+
+  async listDirectories(
+    computerId: string,
+    path?: string,
+  ): Promise<DirectoryListing> {
+    return computerId === this.identity.info.id
+      ? this.localService.listDirectories(path)
+      : this.requireClient(computerId).listDirectories(path)
   }
 
   async getSession(computerId: string, sessionId: string): Promise<ManagedSession> {

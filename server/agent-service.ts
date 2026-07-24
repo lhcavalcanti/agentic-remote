@@ -28,6 +28,7 @@ import {
   stopActiveCopilotSession,
 } from './active-sessions.js'
 import { readSessionEvents, sessionEventLogVersion } from './event-log.js'
+import { listHomeDirectories } from './directory-browser.js'
 import {
   TmuxTerminalSessionController,
   type TerminalSessionController,
@@ -375,6 +376,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...session,
       messages: [],
     }))
+  }
+
+  listDirectories(path?: string) {
+    return listHomeDirectories(path)
   }
 
   getSession(id: string): SessionDetail | undefined {

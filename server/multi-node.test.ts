@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
 import type {
+  DirectoryListing,
   HubEvent,
   ServerEvent,
   SessionDetail,
@@ -42,6 +43,17 @@ class FakeSessionService extends EventEmitter implements SessionService {
       ...structuredClone(session),
       messages: [],
     }))
+  }
+
+  async listDirectories(path = '~'): Promise<DirectoryListing> {
+    return {
+      path,
+      parent: path === '~' ? undefined : '~',
+      directories:
+        path === '~'
+          ? [{ name: 'src', path: '~/src' }]
+          : [],
+    }
   }
 
   getSession(id: string): SessionDetail | undefined {
@@ -281,6 +293,15 @@ describe('multi-node hub', () => {
         url: '/api/computers',
       })
       expect(computers.json().computers).toHaveLength(2)
+
+      const directories = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/directories?path=~`,
+      })
+      expect(directories.json()).toMatchObject({
+        path: '~',
+        directories: [{ name: 'src', path: '~/src' }],
+      })
 
       const sessions = await hub.app.inject({
         method: 'GET',

@@ -2,6 +2,7 @@ import type {
   AddComputerInput,
   ComputerSummary,
   CreateSessionInput,
+  DirectoryListing,
   ExecuteCommandInput,
   ManagedSession,
   PermissionReplyInput,
@@ -76,6 +77,15 @@ export async function listSessions(): Promise<ManagedSession[]> {
 export async function listHistory(): Promise<ManagedSession[]> {
   const response = await request<{ sessions: ManagedSession[] }>('/api/history')
   return response.sessions
+}
+
+export async function listDirectories(
+  computerId: string,
+  path = '~',
+): Promise<DirectoryListing> {
+  return request<DirectoryListing>(
+    `/api/computers/${encodeURIComponent(computerId)}/directories?path=${encodeURIComponent(path)}`,
+  )
 }
 
 export async function getSession(

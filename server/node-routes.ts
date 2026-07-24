@@ -23,6 +23,10 @@ const executeCommandSchema = z.object({
   enqueue: z.boolean().optional(),
 })
 
+const directoryQuerySchema = z.object({
+  path: z.string().trim().max(4096).optional(),
+})
+
 function tokenMatches(actual: string | undefined, expected: string): boolean {
   const prefix = 'Bearer '
   if (!actual?.startsWith(prefix)) {
@@ -55,6 +59,14 @@ export async function registerNodeRoutes(
       node.get('/history', async () => ({
         sessions: service.listHistory(),
       }))
+
+      node.get<{ Querystring: { path?: string } }>(
+        '/directories',
+        async (request) => {
+          const query = directoryQuerySchema.parse(request.query)
+          return service.listDirectories(query.path)
+        },
+      )
 
       node.get<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/commands',

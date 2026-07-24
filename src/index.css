@@ -1216,6 +1216,92 @@ button {
   border-top: 1px solid var(--border);
 }
 
+.folder-picker {
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: #121310;
+}
+
+.folder-picker__toolbar {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.folder-picker__path {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.folder-picker__path strong {
+  overflow: hidden;
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-picker__list {
+  max-height: min(310px, 38dvh);
+  padding: 6px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.folder-picker__list > button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 22px minmax(0, 1fr) 18px;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 7px 9px;
+  color: var(--muted-strong);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-picker__list > button:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.folder-picker__list > p {
+  margin: 18px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.folder-picker__chevron {
+  transform: rotate(180deg);
+}
+
+.folder-picker__hint {
+  margin: 0;
+  padding: 9px 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.folder-picker__hint strong {
+  color: var(--accent);
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
 .path-input {
   display: flex;
   align-items: center;
@@ -1346,6 +1432,7 @@ button {
   }
 
   .composer textarea {
+    max-height: 104px;
     font-size: 16px;
   }
 

@@ -27,6 +27,10 @@ const executeCommandSchema = z.object({
   enqueue: z.boolean().optional(),
 })
 
+const directoryQuerySchema = z.object({
+  path: z.string().trim().max(4096).optional(),
+})
+
 interface SessionParams {
   computerId: string
   sessionId: string
@@ -63,6 +67,17 @@ export async function registerHubRoutes(
   app.get('/api/history', async () => ({
     sessions: await manager.listHistory(),
   }))
+
+  app.get<{
+    Params: { computerId: string }
+    Querystring: { path?: string }
+  }>(
+    '/api/computers/:computerId/directories',
+    async (request) => {
+      const query = directoryQuerySchema.parse(request.query)
+      return manager.listDirectories(request.params.computerId, query.path)
+    },
+  )
 
   app.get<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId',

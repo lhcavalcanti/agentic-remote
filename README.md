@@ -6,6 +6,8 @@ serves the UI and routes commands to paired nodes.
 
 The sidebar contains only currently open sessions. Use **New session → Open
 previous** to browse persisted history by computer and resume a closed session.
+New sessions start at `~`; browse folders by tapping them instead of typing
+paths. Browsing is restricted to the selected computer's user home directory.
 Computer groups and sessions can be reordered by dragging their handles; order
 is retained in the browser. Open transcripts synchronize from Copilot's event
 logs so terminal- and UI-originated messages stay consistent.
@@ -17,6 +19,9 @@ Composer controls follow Copilot CLI conventions:
 - **Ctrl/Cmd+Enter** queues behind the active turn
 - Typing `/` opens autocomplete populated from the session's real Copilot
   command list
+
+On phones, the composer grows to a compact maximum height and shrinks further
+when the virtual keyboard reduces the viewport.
 
 For Copilot sessions running in tmux, Agentic Remote routes prompts, queued
 input, slash commands, and cancel actions into the owning terminal pane. This

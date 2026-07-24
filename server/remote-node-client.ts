@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import type {
   CreateSessionInput,
+  DirectoryListing,
   ExecuteCommandInput,
   NodeInfo,
   PermissionReplyInput,
@@ -62,6 +63,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       '/node-api/history',
     )
     return response.sessions
+  }
+
+  async listDirectories(path = '~'): Promise<DirectoryListing> {
+    return this.request<DirectoryListing>(
+      `/node-api/directories?path=${encodeURIComponent(path)}`,
+    )
   }
 
   async getSession(sessionId: string): Promise<SessionDetail> {

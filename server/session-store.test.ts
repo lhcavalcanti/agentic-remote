@@ -104,6 +104,31 @@ describe('SessionStore', () => {
     })
   })
 
+  it('keeps managed sessions open when reloaded and synchronized', async () => {
+    const { directory, store } = await createStore()
+    await store.create(
+      {
+        id: 'managed-session',
+        cwd: '/tmp/project',
+        title: 'Managed project',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true },
+    )
+
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    await reloaded.syncOpen([])
+
+    expect(reloaded.get('managed-session')).toMatchObject({
+      isOpen: true,
+    })
+    expect(reloaded.get('managed-session')).not.toHaveProperty('managedOpen')
+  })
+
   it('discovers sessions without replacing locally stored history', async () => {
     const { store } = await createStore()
     await store.create({

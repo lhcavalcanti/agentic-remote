@@ -194,6 +194,37 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('keeps UI-created sessions open across service restarts', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const firstService = new AgentService(
+      new SessionStore(stateDirectory),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await firstService.start()
+    const created = await firstService.createSession(directory)
+    await firstService.stop()
+
+    const restartedService = new AgentService(
+      new SessionStore(stateDirectory),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await restartedService.start()
+
+    expect(restartedService.listSessions()).toEqual([
+      expect.objectContaining({
+        id: created.id,
+        isOpen: true,
+      }),
+    ])
+    await restartedService.stop()
+  })
+
   it('does not resurrect a deletion from an in-flight discovery snapshot', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

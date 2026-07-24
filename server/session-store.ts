@@ -12,11 +12,16 @@ export interface DiscoveredSession {
 
 interface StoredState {
   version: 1
-  sessions: Record<string, SessionDetail>
+  sessions: Record<string, StoredSession>
 }
 
-function cloneSession(session: SessionDetail): SessionDetail {
-  return structuredClone(session)
+interface StoredSession extends SessionDetail {
+  managedOpen?: boolean
+}
+
+function cloneSession(session: StoredSession): SessionDetail {
+  const { managedOpen: _managedOpen, ...detail } = structuredClone(session)
+  return detail
 }
 
 export class SessionStore {
@@ -50,7 +55,7 @@ export class SessionStore {
     }
 
     for (const session of Object.values(this.state.sessions)) {
-      session.isOpen = false
+      session.isOpen = session.managedOpen === true
       session.queuedCount = 0
       if (session.status !== 'idle') {
         session.status = 'idle'
@@ -74,8 +79,14 @@ export class SessionStore {
     return session ? cloneSession(session) : undefined
   }
 
-  async create(session: SessionDetail): Promise<SessionDetail> {
-    this.state.sessions[session.id] = cloneSession(session)
+  async create(
+    session: SessionDetail,
+    options: { managedOpen?: boolean } = {},
+  ): Promise<SessionDetail> {
+    this.state.sessions[session.id] = {
+      ...cloneSession(session),
+      managedOpen: options.managedOpen,
+    }
     await this.persist()
     return cloneSession(session)
   }
@@ -129,14 +140,21 @@ export class SessionStore {
   async syncOpen(sessionIds: string[]): Promise<void> {
     const active = new Set(sessionIds)
     for (const session of Object.values(this.state.sessions)) {
-      session.isOpen = active.has(session.id)
+      session.isOpen = session.managedOpen === true || active.has(session.id)
     }
     await this.persist()
   }
 
-  async setOpen(sessionId: string, isOpen: boolean): Promise<SessionDetail> {
+  async setOpen(
+    sessionId: string,
+    isOpen: boolean,
+    managedOpen = false,
+  ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.isOpen = isOpen
+      if (managedOpen) {
+        session.managedOpen = isOpen
+      }
     })
   }
 
@@ -210,7 +228,7 @@ export class SessionStore {
 
   private mutateInMemory(
     sessionId: string,
-    mutation: (session: SessionDetail) => void,
+    mutation: (session: StoredSession) => void,
   ): SessionDetail {
     const session = this.state.sessions[sessionId]
     if (!session) {
@@ -222,7 +240,7 @@ export class SessionStore {
 
   private async mutate(
     sessionId: string,
-    mutation: (session: SessionDetail) => void,
+    mutation: (session: StoredSession) => void,
   ): Promise<SessionDetail> {
     const session = this.mutateInMemory(sessionId, mutation)
     await this.persist()

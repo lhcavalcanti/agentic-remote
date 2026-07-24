@@ -410,7 +410,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async activateSession(id: string): Promise<SessionDetail> {
     const session = await this.openSession(id)
-    const opened = await this.store.setOpen(id, true)
+    const opened = await this.store.setOpen(id, true, true)
     this.publish(opened)
     return {
       ...opened,
@@ -431,15 +431,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.hydratedSessions.add(sdkSession.sessionId)
 
     const now = new Date().toISOString()
-    const session = await this.store.create({
-      id: sdkSession.sessionId,
-      cwd,
-      title: path.basename(cwd) || 'New session',
-      updatedAt: now,
-      status: 'idle',
-      isOpen: true,
-      messages: [],
-    })
+    const session = await this.store.create(
+      {
+        id: sdkSession.sessionId,
+        cwd,
+        title: path.basename(cwd) || 'New session',
+        updatedAt: now,
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true },
+    )
     this.publish(session)
     return session
   }

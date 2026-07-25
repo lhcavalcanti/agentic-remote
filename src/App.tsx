@@ -1390,8 +1390,8 @@ function App() {
     }
     const mobile =
       typeof window.matchMedia === 'function'
-        ? window.matchMedia('(max-width: 720px)').matches
-        : window.innerWidth <= 720
+        ? window.matchMedia('(max-width: 960px)').matches
+        : window.innerWidth <= 960
     const maximumHeight = composerMaximumHeight(mobile, viewportHeight)
     textarea.style.height = 'auto'
     textarea.style.height = `${Math.min(

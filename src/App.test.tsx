@@ -605,17 +605,20 @@ describe('App', () => {
       render(<App />)
       const textarea = await screen.findByLabelText('Message')
       expect(screen.getByTestId('web-statusline')).toBeInTheDocument()
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+      expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'gpt-5.6-sol',
       )
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+      expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'effort high',
       )
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+      expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'long context',
       )
       expect(screen.getByTestId('web-statusline')).toHaveTextContent(
         'ctx ~200k/922k (22%)',
+      )
+      expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
+        'gpt-5.6-sol',
       )
 
       fireEvent.change(textarea, { target: { value: '/aa' } })

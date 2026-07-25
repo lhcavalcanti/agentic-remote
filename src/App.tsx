@@ -1936,19 +1936,6 @@ function App() {
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
             ) : null}
-            {statusline.model && selected.runtime?.model ? (
-              <span>{selected.runtime.model}</span>
-            ) : null}
-            {statusline.effort && selected.runtime?.reasoningEffort ? (
-              <span>effort {selected.runtime.reasoningEffort}</span>
-            ) : null}
-            {statusline.contextTier && selected.runtime?.contextTier ? (
-              <span>
-                {selected.runtime.contextTier === 'long_context'
-                  ? 'long context'
-                  : `${selected.runtime.contextTier} context`}
-              </span>
-            ) : null}
             {statusline.contextUsage &&
             selected.runtime?.contextTokens !== undefined &&
             selected.runtime.contextTokenLimit ? (
@@ -2088,6 +2075,28 @@ function App() {
                 </button>
               )}
             </div>
+            {((statusline.model && selected.runtime?.model) ||
+              (statusline.effort && selected.runtime?.reasoningEffort) ||
+              (statusline.contextTier && selected.runtime?.contextTier)) ? (
+              <div
+                className="composer-runtime"
+                data-testid="composer-runtime"
+              >
+                {statusline.model && selected.runtime?.model ? (
+                  <span>{selected.runtime.model}</span>
+                ) : null}
+                {statusline.effort && selected.runtime?.reasoningEffort ? (
+                  <span>effort {selected.runtime.reasoningEffort}</span>
+                ) : null}
+                {statusline.contextTier && selected.runtime?.contextTier ? (
+                  <span>
+                    {selected.runtime.contextTier === 'long_context'
+                      ? 'long context'
+                      : `${selected.runtime.contextTier} context`}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             <p className="composer-hint">
               Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue
               {selected.queuedCount

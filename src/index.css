@@ -984,12 +984,14 @@ button {
   max-width: 800px;
   min-width: 0;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px 10px;
   margin: 6px auto 0;
   color: #73776d;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 9px;
   line-height: 1.35;
+  text-align: right;
 }
 
 .web-statusline__computer {

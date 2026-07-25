@@ -864,6 +864,62 @@ button {
   background: var(--bg);
 }
 
+.queued-prompts {
+  max-width: 800px;
+  max-height: 160px;
+  margin: 0 auto 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(24, 25, 22, 0.96);
+}
+
+.queued-prompts > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.queued-prompts__list {
+  max-height: 126px;
+  overflow-y: auto;
+}
+
+.queued-prompt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px 30px;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 7px 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.queued-prompt:last-child {
+  border-bottom: 0;
+}
+
+.queued-prompt > span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.queued-prompt .icon-button {
+  width: 30px;
+  height: 30px;
+}
+
 .web-statusline {
   grid-area: statusline;
   display: flex;
@@ -1439,6 +1495,14 @@ button {
 
   .composer-area {
     padding: 8px 10px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .queued-prompts {
+    max-height: 116px;
+  }
+
+  .queued-prompts__list {
+    max-height: 82px;
   }
 
   .command-menu {

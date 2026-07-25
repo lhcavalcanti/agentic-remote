@@ -68,6 +68,7 @@ import {
   listDirectories,
   listSessions,
   removeComputer,
+  removeQueuedPrompt,
   renameSession,
   replyPermission,
   sendMessage,
@@ -976,6 +977,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [permissionBusy, setPermissionBusy] = useState(false)
+  const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -1417,6 +1419,7 @@ function App() {
     if (!selected || !content || sending) {
       return
     }
+
     const isCommand = content.startsWith('/')
     const commandName = isCommand
       ? content.slice(1).split(/\s+/, 1)[0].toLowerCase()
@@ -1464,6 +1467,31 @@ function App() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setSending(false)
+    }
+  }
+
+  async function manageQueuedPrompt(promptId: string, edit: boolean) {
+    if (!selected || queueActionId) {
+      return
+    }
+    const target = selected
+    setQueueActionId(promptId)
+    setError(undefined)
+    try {
+      const result = await removeQueuedPrompt(
+        target.computerId,
+        target.id,
+        promptId,
+      )
+      setSessions((current) => upsertSession(current, result.session))
+      if (edit) {
+        setComposer(result.prompt.content)
+        window.requestAnimationFrame(() => composerRef.current?.focus())
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setQueueActionId(undefined)
     }
   }
 
@@ -1885,6 +1913,43 @@ function App() {
 
         {selected ? (
           <footer className="composer-area">
+            {selected.queuedPrompts?.length ? (
+              <section aria-label="Queued prompts" className="queued-prompts">
+                <header>
+                  <strong>Queued</strong>
+                  <span>{selected.queuedPrompts.length}</span>
+                </header>
+                <div className="queued-prompts__list">
+                  {selected.queuedPrompts.map((prompt, index) => (
+                    <div className="queued-prompt" key={prompt.id}>
+                      <span>{prompt.content}</span>
+                      <button
+                        aria-label={`Edit queued prompt ${index + 1}`}
+                        className="icon-button"
+                        disabled={Boolean(queueActionId)}
+                        onClick={() =>
+                          void manageQueuedPrompt(prompt.id, true)
+                        }
+                        type="button"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        aria-label={`Remove queued prompt ${index + 1}`}
+                        className="icon-button icon-button--danger"
+                        disabled={Boolean(queueActionId)}
+                        onClick={() =>
+                          void manageQueuedPrompt(prompt.id, false)
+                        }
+                        type="button"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
             {showCommandMenu ? (
               <div className="command-menu" role="listbox" aria-label="Commands">
                 {commandSuggestions.map((command, index) => (

@@ -24,6 +24,12 @@ export interface PendingPermission {
   options: PermissionOption[]
 }
 
+export interface QueuedPrompt {
+  id: string
+  content: string
+  createdAt: string
+}
+
 export interface SessionSummary {
   id: string
   cwd: string
@@ -32,6 +38,7 @@ export interface SessionSummary {
   status: SessionStatus
   isOpen?: boolean
   queuedCount?: number
+  queuedPrompts?: QueuedPrompt[]
   activity?: string
 }
 
@@ -51,6 +58,11 @@ export interface ComputerSummary {
 export interface ManagedSession extends SessionDetail {
   computerId: string
   computerName: string
+}
+
+export interface ManagedRemovedQueuedPrompt {
+  session: ManagedSession
+  prompt: QueuedPrompt
 }
 
 export interface NodeInfo {
@@ -83,6 +95,11 @@ export interface SendMessageInput {
 
 export interface RenameSessionInput {
   title: string
+}
+
+export interface RemovedQueuedPrompt {
+  session: SessionDetail
+  prompt: QueuedPrompt
 }
 
 export interface PermissionReplyInput {

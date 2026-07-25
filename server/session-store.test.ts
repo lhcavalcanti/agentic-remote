@@ -213,6 +213,46 @@ describe('SessionStore', () => {
     expect(reloaded.get('custom-title')).not.toHaveProperty('customTitle')
   })
 
+  it('persists queued prompts and removes a selected entry', async () => {
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'queued-session',
+      cwd: '/tmp/project',
+      title: 'Queued project',
+      updatedAt: '2026-07-25T01:00:00.000Z',
+      status: 'running',
+      messages: [],
+    })
+    await store.enqueuePrompt('queued-session', {
+      id: 'first',
+      content: 'First prompt',
+      createdAt: '2026-07-25T01:00:01.000Z',
+    })
+    await store.enqueuePrompt('queued-session', {
+      id: 'second',
+      content: 'Second prompt',
+      createdAt: '2026-07-25T01:00:02.000Z',
+    })
+
+    const removed = await store.removeQueuedPrompt('queued-session', 'first')
+    await store.markQueueDispatched(
+      'queued-session',
+      '2026-07-25T01:00:03.000Z',
+    )
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+
+    expect(removed.prompt?.content).toBe('First prompt')
+    expect(reloaded.get('queued-session')).toMatchObject({
+      status: 'running',
+      queuedCount: 1,
+      queuedPrompts: [{ id: 'second', content: 'Second prompt' }],
+    })
+    expect(reloaded.queueDispatchAt('queued-session')).toBe(
+      '2026-07-25T01:00:03.000Z',
+    )
+  })
+
   it('keeps only currently active sessions open', async () => {
     const { store } = await createStore()
     for (const id of ['running', 'stopped']) {

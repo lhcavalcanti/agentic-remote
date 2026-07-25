@@ -5,6 +5,7 @@ import type {
   DirectoryListing,
   ExecuteCommandInput,
   ManagedSession,
+  ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
   RenameSessionInput,
   SendMessageInput,
@@ -150,6 +151,17 @@ export async function renameSession(
     },
   )
   return response.session
+}
+
+export async function removeQueuedPrompt(
+  computerId: string,
+  sessionId: string,
+  promptId: string,
+): Promise<ManagedRemovedQueuedPrompt> {
+  return request<ManagedRemovedQueuedPrompt>(
+    `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}`,
+    { method: 'DELETE' },
+  )
 }
 
 export async function sendMessage(

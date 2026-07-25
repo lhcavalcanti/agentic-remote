@@ -17,6 +17,8 @@ import {
 import type {
   ChatMessage,
   PendingPermission,
+  QueuedPrompt,
+  RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
   SessionStatus,
@@ -286,7 +288,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly hydratingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly activePrompts = new Map<string, ActivePrompt>()
   private readonly drainingSessions = new Set<string>()
-  private readonly promptQueues = new Map<string, string[]>()
+  private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
@@ -335,6 +337,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.client.start()
     await this.discoverSessions()
     await this.refreshTranscripts()
+    await Promise.all(
+      this.store
+        .list()
+        .filter(
+          (session) =>
+            session.isOpen &&
+            session.queuedPrompts?.length &&
+            !this.externalSessionIds.has(session.id),
+        )
+        .map((session) => this.drainSdkQueue(session.id)),
+    )
     this.discoveryTimer = setInterval(() => {
       void this.refreshDiscovery()
     }, 10_000)
@@ -516,9 +529,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!content) {
       throw new Error('Message cannot be empty')
     }
-    if (await this.terminalController.send(sessionId, content, enqueue)) {
+    const terminalBacked = await this.terminalController.has(sessionId)
+    const storedStatus = this.store.get(sessionId)?.status
+    if (
+      enqueue &&
+      terminalBacked &&
+      (storedStatus === 'running' ||
+        storedStatus === 'waiting' ||
+        this.drainingSessions.has(sessionId))
+    ) {
+      return this.enqueuePrompt(sessionId, content)
+    }
+    if (await this.terminalController.send(sessionId, content, false)) {
       const delivered = await this.store.update(sessionId, (session) => {
-        session.activity = enqueue ? 'Queued in terminal' : 'Sent to terminal'
+        session.activity = 'Sent to terminal'
       })
       this.publish(delivered)
       return delivered
@@ -530,17 +554,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!enqueue) {
         throw new Error('This session is already responding')
       }
-      const queue = this.promptQueues.get(sessionId) || []
-      queue.push(content)
-      this.promptQueues.set(sessionId, queue)
-      const queued = await this.store.update(sessionId, (session) => {
-        session.queuedCount = queue.length
-      })
-      this.publish(queued)
-      return queued
+      return this.enqueuePrompt(sessionId, content)
     }
 
     return this.startMessage(sessionId, content)
+  }
+
+  async removeQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<RemovedQueuedPrompt> {
+    return this.serializeQueue(sessionId, async () => {
+      const { session, prompt } = await this.store.removeQueuedPrompt(
+        sessionId,
+        promptId,
+      )
+      if (!prompt) {
+        throw new Error('Queued prompt not found')
+      }
+      this.publish(session)
+      return { session, prompt }
+    })
+  }
+
+  private async enqueuePrompt(
+    sessionId: string,
+    content: string,
+  ): Promise<SessionDetail> {
+    const prompt: QueuedPrompt = {
+      id: randomUUID(),
+      content,
+      createdAt: new Date().toISOString(),
+    }
+    return this.serializeQueue(sessionId, async () => {
+      const queued = await this.store.enqueuePrompt(sessionId, prompt)
+      this.publish(queued)
+      return queued
+    })
   }
 
   private async startMessage(
@@ -688,17 +738,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error(`/${name} must be queued while the agent is running`)
     }
+    const storedStatus = this.store.get(sessionId)?.status
     if (
-      await this.terminalController.send(
-        sessionId,
-        canonicalCommand,
-        enqueue,
-      )
+      !catalog.session &&
+      enqueue &&
+      (storedStatus === 'running' ||
+        storedStatus === 'waiting' ||
+        this.drainingSessions.has(sessionId))
     ) {
+      return this.enqueuePrompt(sessionId, canonicalCommand)
+    }
+    if (await this.terminalController.send(sessionId, canonicalCommand, false)) {
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
         role: 'notice',
-        content: enqueue ? `Queued ${canonicalCommand}` : canonicalCommand,
+        content: canonicalCommand,
         createdAt: new Date().toISOString(),
       })
       this.publish(notice)
@@ -811,7 +865,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.hydratingSessions.delete(sessionId)
       this.activePrompts.delete(sessionId)
       this.drainingSessions.delete(sessionId)
-      this.promptQueues.delete(sessionId)
+      this.queueOperations.delete(sessionId)
       completed = true
       this.emit('event', { type: 'session.removed', sessionId })
     } finally {
@@ -1041,7 +1095,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.eventLogVersions.set(sessionId, version)
           return
         }
-        const status = statusFromEvents(events)
+        let status = statusFromEvents(events)
+        const queueDispatchAt = this.store.queueDispatchAt(sessionId)
+        if (queueDispatchAt) {
+          const dispatchTime = Date.parse(queueDispatchAt)
+          const completion = events.some(
+            (event) =>
+              Date.parse(event.timestamp) > dispatchTime &&
+              (event.type === 'assistant.turn_end' ||
+                event.type === 'session.idle' ||
+                event.type === 'session.error' ||
+                event.type === 'abort'),
+          )
+          if (completion) {
+            await this.store.clearQueueDispatch(sessionId)
+          } else {
+            status = 'running'
+          }
+        }
         const lastMessage = messages.at(-1)
         const activity =
           lastMessage?.role === 'activity' &&
@@ -1065,6 +1136,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.eventLogVersions.set(sessionId, version)
         this.liveTranscriptWatermarks.delete(sessionId)
         this.publish(updated)
+        if (
+          status === 'idle' &&
+          this.externalSessionIds.has(sessionId) &&
+          updated.queuedPrompts?.length
+        ) {
+          await this.drainTerminalQueue(sessionId)
+        }
       }),
     )
   }
@@ -1167,41 +1245,91 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(updated)
       this.emit('event', { type: 'error', sessionId, message })
     } finally {
-      this.drainingSessions.add(sessionId)
       this.activePrompts.delete(sessionId)
-      try {
-        if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
-          const queue = this.promptQueues.get(sessionId) || []
-          const next = queue.shift()
-          if (queue.length === 0) {
-            this.promptQueues.delete(sessionId)
-          }
-          const queued = await this.store.update(sessionId, (session) => {
-            session.queuedCount = queue.length
-          })
-          this.publish(queued)
-          if (next) {
-            try {
-              await this.startMessage(sessionId, next)
-            } catch (error) {
-              const pending = this.promptQueues.get(sessionId) || []
-              pending.unshift(next)
-              this.promptQueues.set(sessionId, pending)
-              const restored = await this.store.update(
-                sessionId,
-                (session) => {
-                  session.queuedCount = pending.length
-                },
-              )
-              this.publish(restored)
-              this.publishError(sessionId, error)
-            }
+      await this.drainSdkQueue(sessionId)
+    }
+  }
+
+  private async drainSdkQueue(sessionId: string): Promise<void> {
+    if (this.drainingSessions.has(sessionId)) {
+      return
+    }
+    this.drainingSessions.add(sessionId)
+    try {
+      if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
+        const { session: queued, prompt: next } = await this.serializeQueue(
+          sessionId,
+          () => this.store.shiftQueuedPrompt(sessionId),
+        )
+        this.publish(queued)
+        if (next) {
+          try {
+            await this.startMessage(sessionId, next.content)
+          } catch (error) {
+            const restored = await this.serializeQueue(
+              sessionId,
+              () => this.store.enqueuePrompt(sessionId, next, true),
+            )
+            this.publish(restored)
+            this.publishError(sessionId, error)
           }
         }
-      } catch (error) {
-        this.publishError(sessionId, error)
-      } finally {
-        this.drainingSessions.delete(sessionId)
+      }
+    } catch (error) {
+      this.publishError(sessionId, error)
+    } finally {
+      this.drainingSessions.delete(sessionId)
+    }
+  }
+
+  private async drainTerminalQueue(sessionId: string): Promise<void> {
+    if (this.drainingSessions.has(sessionId)) {
+      return
+    }
+    this.drainingSessions.add(sessionId)
+    try {
+      await this.serializeQueue(sessionId, async () => {
+        const stored = this.store.get(sessionId)
+        const next = stored?.queuedPrompts?.[0]
+        if (!next || stored.status !== 'idle') {
+          return
+        }
+        const dispatchedAt = new Date().toISOString()
+        if (!(await this.terminalController.send(sessionId, next.content, false))) {
+          throw new Error('External terminal is no longer available')
+        }
+        const { prompt } = await this.store.removeQueuedPrompt(
+          sessionId,
+          next.id,
+        )
+        if (!prompt) {
+          return
+        }
+        const running = await this.store.markQueueDispatched(
+          sessionId,
+          dispatchedAt,
+        )
+        this.publish(running)
+      })
+    } catch (error) {
+      this.publishError(sessionId, error)
+    } finally {
+      this.drainingSessions.delete(sessionId)
+    }
+  }
+
+  private async serializeQueue<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.queueOperations.get(sessionId) || Promise.resolve()
+    const current = previous.catch(() => undefined).then(operation)
+    this.queueOperations.set(sessionId, current)
+    try {
+      return await current
+    } finally {
+      if (this.queueOperations.get(sessionId) === current) {
+        this.queueOperations.delete(sessionId)
       }
     }
   }

@@ -7,6 +7,7 @@ import type {
   ExecuteCommandInput,
   HubEvent,
   ManagedSession,
+  ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
   RenameSessionInput,
   SendMessageInput,
@@ -232,6 +233,25 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         ? await this.localService.renameSession(sessionId, input.title)
         : await this.requireClient(computerId).renameSession(sessionId, input)
     return managedSession(session, computer)
+  }
+
+  async removeQueuedPrompt(
+    computerId: string,
+    sessionId: string,
+    promptId: string,
+  ): Promise<ManagedRemovedQueuedPrompt> {
+    const computer = this.requireComputer(computerId)
+    const result =
+      computerId === this.identity.info.id
+        ? await this.localService.removeQueuedPrompt(sessionId, promptId)
+        : await this.requireClient(computerId).removeQueuedPrompt(
+            sessionId,
+            promptId,
+          )
+    return {
+      session: managedSession(result.session, computer),
+      prompt: result.prompt,
+    }
   }
 
   async sendMessage(

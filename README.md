@@ -26,6 +26,12 @@ Composer controls follow Copilot CLI conventions:
 - Typing `/` opens autocomplete populated from the session's real Copilot
   command list
 
+UI-originated queued prompts appear above the composer. Remove deletes any
+selected queued prompt; Edit removes it and restores its text to the composer.
+Agentic Remote owns these prompt queues because Copilot's native queue API only
+supports removing the most recent item. Items queued directly inside the CLI
+are not exposed for individual editing in the web UI.
+
 On phones, the composer grows to a compact maximum height and shrinks further
 when the virtual keyboard reduces the viewport.
 

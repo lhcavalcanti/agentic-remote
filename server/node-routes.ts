@@ -131,6 +131,15 @@ export async function registerNodeRoutes(
         },
       )
 
+      node.delete<{ Params: { sessionId: string; promptId: string } }>(
+        '/sessions/:sessionId/queue/:promptId',
+        async (request) =>
+          service.removeQueuedPrompt(
+            request.params.sessionId,
+            request.params.promptId,
+          ),
+      )
+
       node.post<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/messages',
         async (request, reply) => {

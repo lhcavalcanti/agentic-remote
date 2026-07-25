@@ -7,6 +7,7 @@ import type {
   NodeInfo,
   PermissionReplyInput,
   RenameSessionInput,
+  RemovedQueuedPrompt,
   SendMessageInput,
   ServerEvent,
   SessionDetail,
@@ -120,6 +121,16 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       },
     )
     return response.session
+  }
+
+  async removeQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<RemovedQueuedPrompt> {
+    return this.request<RemovedQueuedPrompt>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(promptId)}`,
+      { method: 'DELETE' },
+    )
   }
 
   async sendMessage(

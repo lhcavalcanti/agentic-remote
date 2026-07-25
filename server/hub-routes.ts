@@ -150,6 +150,16 @@ export async function registerHubRoutes(
     },
   )
 
+  app.delete<{ Params: SessionParams & { promptId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue/:promptId',
+    async (request) =>
+      manager.removeQueuedPrompt(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.promptId,
+      ),
+  )
+
   app.post<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/commands',
     async (request) => {

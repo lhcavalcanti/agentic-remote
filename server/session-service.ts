@@ -1,5 +1,6 @@
 import type {
   DirectoryListing,
+  RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
   SlashCommand,
@@ -15,6 +16,10 @@ export interface SessionService {
   activateSession(id: string): Promise<SessionDetail>
   createSession(cwd: string, terminalBacked?: boolean): Promise<SessionDetail>
   renameSession(id: string, title: string): Promise<SessionDetail>
+  removeQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<RemovedQueuedPrompt>
   sendMessage(
     sessionId: string,
     content: string,

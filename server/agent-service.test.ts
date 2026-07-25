@@ -239,6 +239,50 @@ describe('AgentService deletion', () => {
     await restartedService.stop()
   })
 
+  it('resumes a persisted SDK queue after service restart', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const client = new FakeCopilotClient()
+    const store = new SessionStore(stateDirectory)
+    await store.initialize()
+    await store.create(
+      {
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'Queued SDK session',
+        updatedAt: '2026-07-25T01:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        queuedCount: 1,
+        queuedPrompts: [
+          {
+            id: 'persisted-queue',
+            content: 'Resume after restart',
+            createdAt: '2026-07-25T01:00:01.000Z',
+          },
+        ],
+        messages: [],
+      },
+      { managedOpen: true },
+    )
+    const service = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+
+    expect(client.session.sentPrompts).toEqual(['Resume after restart'])
+    expect(
+      service.store.get(client.session.sessionId)?.queuedCount ?? 0,
+    ).toBe(0)
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
   it('creates terminal-backed sessions without starting an SDK session', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -689,6 +733,56 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('removes a selected queued prompt before it runs', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    await service.createSession(directory)
+    await service.sendMessage(client.session.sessionId, 'first')
+    const withSecond = await service.sendMessage(
+      client.session.sessionId,
+      'second',
+      true,
+    )
+    const withThird = await service.sendMessage(
+      client.session.sessionId,
+      'third',
+      true,
+    )
+    const second = withSecond.queuedPrompts?.[0]
+    expect(second).toBeDefined()
+    expect(withThird.queuedPrompts?.map((prompt) => prompt.content)).toEqual([
+      'second',
+      'third',
+    ])
+
+    const removed = await service.removeQueuedPrompt(
+      client.session.sessionId,
+      second!.id,
+    )
+    expect(removed.prompt.content).toBe('second')
+    expect(removed.session.queuedPrompts?.map((prompt) => prompt.content)).toEqual(
+      ['third'],
+    )
+    client.session.resolvePrompt()
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (client.session.sentPrompts.length === 2) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(client.session.sentPrompts).toEqual(['first', 'third'])
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
   it('runs safe commands immediately and requires unsafe commands to queue', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -772,6 +866,11 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       '/aa on',
     )
+    await service.executeCommand(
+      client.session.sessionId,
+      '/usage',
+      true,
+    )
 
     expect(terminal.send).toHaveBeenNthCalledWith(
       1,
@@ -785,7 +884,144 @@ describe('AgentService deletion', () => {
       '/allow-all on',
       false,
     )
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      3,
+      client.session.sessionId,
+      '/usage',
+      false,
+    )
+    expect(
+      service.store.get(client.session.sessionId)?.queuedCount ?? 0,
+    ).toBe(0)
     expect(client.session.sentPrompts).toEqual([])
+    await service.stop()
+  })
+
+  it('holds terminal queues in the app and sends the next prompt when idle', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    let eventVersion: string | undefined
+    let events: SessionEvent[] = []
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => eventVersion,
+      terminal,
+    )
+    await service.start()
+    await service.store.updateStatus(client.session.sessionId, 'running')
+
+    const queued = await service.sendMessage(
+      client.session.sessionId,
+      'first terminal prompt',
+      true,
+    )
+    await service.executeCommand(
+      client.session.sessionId,
+      '/usage',
+      true,
+    )
+    expect(queued.queuedPrompts?.[0]?.content).toBe(
+      'first terminal prompt',
+    )
+    expect(terminal.send).not.toHaveBeenCalled()
+
+    const firstIdleAt = new Date().toISOString()
+    events = JSON.parse(
+      JSON.stringify([
+        {
+          type: 'session.idle',
+          id: 'idle-event',
+          parentId: null,
+          timestamp: firstIdleAt,
+          data: {},
+        },
+      ]),
+    ) as SessionEvent[]
+    eventVersion = 'events-v1'
+    await service.refreshTranscripts()
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'first terminal prompt',
+      false,
+    )
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      status: 'running',
+      queuedCount: 1,
+      queuedPrompts: [{ content: '/usage' }],
+    })
+
+    events = JSON.parse(
+      JSON.stringify([
+        ...events,
+        {
+          type: 'user.message',
+          id: 'queued-user-event',
+          parentId: 'idle-event',
+          timestamp: new Date(Date.now() + 1_000).toISOString(),
+          data: { content: 'first terminal prompt' },
+        },
+      ]),
+    ) as SessionEvent[]
+    eventVersion = 'events-v2'
+    await service.refreshTranscripts()
+    expect(terminal.send).toHaveBeenCalledTimes(1)
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      status: 'running',
+      queuedCount: 1,
+    })
+
+    events = JSON.parse(
+      JSON.stringify([
+        ...events,
+        {
+          type: 'session.idle',
+          id: 'second-idle-event',
+          parentId: 'queued-user-event',
+          timestamp: new Date(Date.now() + 2_000).toISOString(),
+          data: {},
+        },
+      ]),
+    ) as SessionEvent[]
+    eventVersion = 'events-v3'
+    await service.refreshTranscripts()
+    expect(terminal.send).toHaveBeenLastCalledWith(
+      client.session.sessionId,
+      '/usage',
+      false,
+    )
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      status: 'running',
+      queuedCount: 0,
+      queuedPrompts: [],
+    })
     await service.stop()
   })
 })

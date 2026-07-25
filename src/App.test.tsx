@@ -23,6 +23,7 @@ import {
   listDirectories,
   listHistory,
   listSessions,
+  removeQueuedPrompt,
   renameSession,
   sendMessage,
 } from './api'
@@ -31,6 +32,7 @@ import { composerMaximumHeight } from './composer-sizing'
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
   renameSession: vi.fn(),
+  removeQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
   listDirectories: vi.fn(),
@@ -175,6 +177,9 @@ describe('App', () => {
         title: input.title,
       }),
     )
+    vi.mocked(removeQueuedPrompt).mockRejectedValue(
+      new Error('No queued prompt configured'),
+    )
     vi.mocked(executeCommand).mockResolvedValue(session)
     vi.mocked(activateSession).mockResolvedValue({
       ...historicalSession,
@@ -300,6 +305,72 @@ describe('App', () => {
       ),
     )
     expect(await screen.findAllByText('Renamed project')).not.toHaveLength(0)
+  })
+
+  it('shows queued prompts and supports edit and remove actions', async () => {
+    const first = {
+      id: 'queue-1',
+      content: 'First queued prompt',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const second = {
+      id: 'queue-2',
+      content: 'Second queued prompt',
+      createdAt: '2026-07-25T01:00:01.000Z',
+    }
+    const queuedSession = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 2,
+      queuedPrompts: [first, second],
+    }
+    vi.mocked(listSessions).mockResolvedValue([queuedSession])
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+    vi.mocked(removeQueuedPrompt)
+      .mockResolvedValueOnce({
+        session: {
+          ...queuedSession,
+          queuedCount: 1,
+          queuedPrompts: [second],
+        },
+        prompt: first,
+      })
+      .mockResolvedValueOnce({
+        session: {
+          ...queuedSession,
+          queuedCount: 0,
+          queuedPrompts: [],
+        },
+        prompt: second,
+      })
+    render(<App />)
+    await screen.findByText('First queued prompt')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Edit queued prompt 1' }),
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue(
+        'First queued prompt',
+      ),
+    )
+    expect(removeQueuedPrompt).toHaveBeenCalledWith(
+      'computer-1',
+      'session-1',
+      'queue-1',
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Remove queued prompt 1' }),
+    )
+    await waitFor(() =>
+      expect(screen.queryByText('Second queued prompt')).not.toBeInTheDocument(),
+    )
+    expect(removeQueuedPrompt).toHaveBeenLastCalledWith(
+      'computer-1',
+      'session-1',
+      'queue-2',
+    )
   })
 
   it('ignores stale folder responses after switching computers', async () => {

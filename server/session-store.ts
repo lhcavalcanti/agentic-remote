@@ -1,6 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { ChatMessage, SessionDetail, SessionStatus } from '../shared/contracts.js'
+import type {
+  ChatMessage,
+  QueuedPrompt,
+  SessionDetail,
+  SessionStatus,
+} from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
 
 export interface DiscoveredSession {
@@ -18,12 +23,14 @@ interface StoredState {
 interface StoredSession extends SessionDetail {
   managedOpen?: boolean
   customTitle?: boolean
+  queueDispatchAt?: string
 }
 
 function cloneSession(session: StoredSession): SessionDetail {
   const {
     managedOpen: _managedOpen,
     customTitle: _customTitle,
+    queueDispatchAt: _queueDispatchAt,
     ...detail
   } = structuredClone(session)
   return detail
@@ -61,8 +68,12 @@ export class SessionStore {
 
     for (const session of Object.values(this.state.sessions)) {
       session.isOpen = session.managedOpen === true
-      session.queuedCount = 0
-      if (session.status !== 'idle') {
+      session.queuedPrompts ??= []
+      session.queuedCount = session.queuedPrompts.length
+      if (session.queueDispatchAt) {
+        session.status = 'running'
+        session.activity = 'Sent queued prompt'
+      } else if (session.status !== 'idle') {
         session.status = 'idle'
         session.activity = undefined
         session.pendingPermission = undefined
@@ -173,6 +184,65 @@ export class SessionStore {
     })
   }
 
+  async enqueuePrompt(
+    sessionId: string,
+    prompt: QueuedPrompt,
+    prepend = false,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const queue = session.queuedPrompts || []
+      session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
+      session.queuedCount = session.queuedPrompts.length
+    })
+  }
+
+  async removeQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {
+    let removed: QueuedPrompt | undefined
+    const session = await this.mutate(sessionId, (stored) => {
+      const queue = stored.queuedPrompts || []
+      const index = queue.findIndex((prompt) => prompt.id === promptId)
+      if (index >= 0) {
+        removed = queue[index]
+        stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
+        stored.queuedCount = stored.queuedPrompts.length
+      }
+    })
+    return { session, prompt: removed }
+  }
+
+  async shiftQueuedPrompt(
+    sessionId: string,
+  ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {
+    const first = this.state.sessions[sessionId]?.queuedPrompts?.[0]
+    return first
+      ? this.removeQueuedPrompt(sessionId, first.id)
+      : { session: this.requireSession(sessionId) }
+  }
+
+  queueDispatchAt(sessionId: string): string | undefined {
+    return this.state.sessions[sessionId]?.queueDispatchAt
+  }
+
+  async markQueueDispatched(
+    sessionId: string,
+    dispatchedAt: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.queueDispatchAt = dispatchedAt
+      session.status = 'running'
+      session.activity = 'Sent queued prompt'
+    })
+  }
+
+  async clearQueueDispatch(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.queueDispatchAt = undefined
+    })
+  }
+
   async remove(sessionId: string): Promise<void> {
     delete this.state.sessions[sessionId]
     await this.persist()
@@ -251,6 +321,14 @@ export class SessionStore {
     }
     mutation(session)
     return cloneSession(session)
+  }
+
+  private requireSession(sessionId: string): SessionDetail {
+    const session = this.get(sessionId)
+    if (!session) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    return session
   }
 
   private async mutate(

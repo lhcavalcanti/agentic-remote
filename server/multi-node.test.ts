@@ -108,6 +108,20 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
+  async removeQueuedPrompt(sessionId: string, promptId: string) {
+    const session = this.sessions.get(sessionId)
+    const prompt = session?.queuedPrompts?.find((entry) => entry.id === promptId)
+    if (!session || !prompt) {
+      throw new Error('Queued prompt not found')
+    }
+    session.queuedPrompts = session.queuedPrompts?.filter(
+      (entry) => entry.id !== promptId,
+    )
+    session.queuedCount = session.queuedPrompts?.length || 0
+    this.emitEvent({ type: 'session.upserted', session })
+    return { session: structuredClone(session), prompt }
+  }
+
   async sendMessage(sessionId: string, content: string): Promise<SessionDetail> {
     const session = this.sessions.get(sessionId)
     if (!session) {
@@ -234,8 +248,17 @@ afterEach(async () => {
 
 describe('multi-node hub', () => {
   it('registers, aggregates, routes, and deletes remote sessions', async () => {
+    const remoteSession = session('remote-session', 'Remote')
+    remoteSession.queuedCount = 1
+    remoteSession.queuedPrompts = [
+      {
+        id: 'remote-queue',
+        content: 'Queued remote prompt',
+        createdAt: '2026-07-25T01:00:00.000Z',
+      },
+    ]
     const remoteService = new FakeSessionService(
-      session('remote-session', 'Remote'),
+      remoteSession,
       session('historical-session', 'Historical', false),
     )
     const remote = await buildApp({
@@ -352,6 +375,14 @@ describe('multi-node hub', () => {
       expect(renamed.json().session).toMatchObject({
         title: 'Renamed remote',
         computerName: 'homelab-prod',
+      })
+      const removedQueue = await hub.app.inject({
+        method: 'DELETE',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/queue/remote-queue`,
+      })
+      expect(removedQueue.json()).toMatchObject({
+        session: { queuedCount: 0, computerName: 'homelab-prod' },
+        prompt: { content: 'Queued remote prompt' },
       })
 
       const history = await hub.app.inject({

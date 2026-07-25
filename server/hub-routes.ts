@@ -156,6 +156,16 @@ export async function registerHubRoutes(
     },
   )
 
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/clear',
+    async (request) => ({
+      session: await manager.clearConversation(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
+  )
+
   app.get<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/runtime',
     async (request) =>

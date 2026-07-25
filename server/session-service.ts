@@ -23,6 +23,7 @@ export interface SessionService {
     id: string,
     input: ConfigureRuntimeInput,
   ): Promise<SessionDetail>
+  clearConversation(id: string): Promise<SessionDetail>
   removeQueuedPrompt(
     sessionId: string,
     promptId: string,

@@ -32,6 +32,11 @@ Agentic Remote owns these prompt queues because Copilot's native queue API only
 supports removing the most recent item. Items queued directly inside the CLI
 are not exposed for individual editing in the web UI.
 
+Use `/clear` or the eraser action to remove the current Copilot context and
+Agentic Remote transcript while keeping an open session in the same folder and
+tmux window. Clear replaces the underlying Copilot session ID so deleted history
+cannot reappear.
+
 On phones, the composer grows to a compact maximum height and shrinks further
 when the virtual keyboard reduces the viewport.
 

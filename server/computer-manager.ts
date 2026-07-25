@@ -278,6 +278,18 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return managedSession(session, computer)
   }
 
+  async clearConversation(
+    computerId: string,
+    sessionId: string,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.clearConversation(sessionId)
+        : await this.requireClient(computerId).clearConversation(sessionId)
+    return managedSession(session, computer)
+  }
+
   async sendMessage(
     computerId: string,
     sessionId: string,

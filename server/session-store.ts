@@ -189,6 +189,58 @@ export class SessionStore {
     })
   }
 
+  async clearConversation(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.messages = []
+      session.status = 'idle'
+      session.isOpen = true
+      session.activity = undefined
+      session.pendingPermission = undefined
+      session.queuedPrompts = []
+      session.queuedCount = 0
+      session.queueDispatchAt = undefined
+      if (session.runtime) {
+        session.runtime.contextTokens = undefined
+        session.runtime.contextEstimated = undefined
+      }
+      session.updatedAt = new Date().toISOString()
+    })
+  }
+
+  async replaceWithClearedSession(
+    sessionId: string,
+    replacementId: string,
+  ): Promise<SessionDetail> {
+    const existing = this.state.sessions[sessionId]
+    if (!existing) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    const replacement: StoredSession = {
+      ...existing,
+      id: replacementId,
+      messages: [],
+      status: 'idle',
+      isOpen: true,
+      activity: undefined,
+      pendingPermission: undefined,
+      queuedPrompts: [],
+      queuedCount: 0,
+      queueDispatchAt: undefined,
+      updatedAt: new Date().toISOString(),
+      runtime: existing.runtime
+        ? {
+            ...existing.runtime,
+            contextTokens: undefined,
+            contextEstimated: undefined,
+          }
+        : undefined,
+    }
+    delete this.state.sessions[sessionId]
+    this.state.sessions[replacementId] = replacement
+    await this.persist()
+    return cloneSession(replacement)
+  }
+
   async enqueuePrompt(
     sessionId: string,
     prompt: QueuedPrompt,

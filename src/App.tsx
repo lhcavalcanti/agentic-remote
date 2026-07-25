@@ -25,6 +25,7 @@ import {
   ChevronLeft,
   Command,
   CornerDownLeft,
+  Eraser,
   Folder,
   FolderOpen,
   GripVertical,
@@ -61,6 +62,7 @@ import {
   activateSession,
   addComputer,
   cancelSession,
+  clearConversation,
   configureRuntime,
   createSession,
   deleteSession,
@@ -144,6 +146,11 @@ const webCommands: SlashCommand[] = [
     description: 'Configure the Agentic Remote status line',
     inputHint: '[on|off|show]',
     allowDuringAgentExecution: true,
+  },
+  {
+    name: 'clear',
+    description: 'Clear this session conversation and Copilot context',
+    allowDuringAgentExecution: false,
   },
 ]
 
@@ -1209,6 +1216,7 @@ function App() {
   const [permissionBusy, setPermissionBusy] = useState(false)
   const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
@@ -1680,6 +1688,11 @@ function App() {
       setComposer('')
       return
     }
+    if (command?.name === 'clear') {
+      setComposer('')
+      await clearSelectedConversation()
+      return
+    }
     const shouldEnqueue =
       enqueue ||
       (selected.status === 'running' &&
@@ -1710,6 +1723,7 @@ function App() {
     if (!selected || queueActionId) {
       return
     }
+
     const target = selected
     setQueueActionId(promptId)
     setError(undefined)
@@ -1728,6 +1742,39 @@ function App() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setQueueActionId(undefined)
+    }
+  }
+
+  async function clearSelectedConversation() {
+    if (
+      !selected ||
+      clearing ||
+      !window.confirm(
+        `Clear the conversation in "${selected.title}"?\n\nThis removes Copilot context and Agentic Remote history but keeps the session open.`,
+      )
+    ) {
+      return
+    }
+    const target = selected
+    setClearing(true)
+    setError(undefined)
+    try {
+      const cleared = await clearConversation(target.computerId, target.id)
+      setSessions((current) =>
+        upsertSession(
+          current.filter(
+            (session) =>
+              session.id !== target.id ||
+              session.computerId !== target.computerId,
+          ),
+          cleared,
+        ),
+      )
+      setSelectedKey(sessionKey(cleared))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setClearing(false)
     }
   }
 
@@ -2006,6 +2053,17 @@ function App() {
                 : 'Ready when you are'}
             </span>
           </div>
+          {selected ? (
+            <button
+              aria-label="Clear conversation"
+              className="icon-button"
+              disabled={clearing || selected.status !== 'idle'}
+              onClick={() => void clearSelectedConversation()}
+              type="button"
+            >
+              <Eraser size={17} />
+            </button>
+          ) : null}
           {selected ? (
             <button
               aria-label="Rename session"

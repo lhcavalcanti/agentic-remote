@@ -191,6 +191,20 @@ export async function configureRuntime(
   return response.session
 }
 
+export async function clearConversation(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/clear`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
+  return response.session
+}
+
 export async function sendMessage(
   computerId: string,
   sessionId: string,

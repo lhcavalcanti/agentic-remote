@@ -155,6 +155,17 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.session
   }
 
+  async clearConversation(sessionId: string): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/clear`,
+      {
+        method: 'POST',
+        body: '{}',
+      },
+    )
+    return response.session
+  }
+
   async sendMessage(
     sessionId: string,
     input: SendMessageInput,

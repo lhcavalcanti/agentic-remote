@@ -37,7 +37,7 @@ describe('TmuxTerminalSessionController', () => {
       `#!/usr/bin/env bash\nprintf '%s' "$PWD" >"${output}"\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
-    const tmuxSession = `agentic-create-${process.pid}`
+    const tmuxSession = String(process.pid)
     tmuxSessions.push(tmuxSession)
     await execFileAsync('tmux', [
       'new-session',
@@ -93,6 +93,24 @@ describe('TmuxTerminalSessionController', () => {
     expect(commandLine).toContain('--model gpt-test')
     expect(commandLine).toContain('--effort high')
     expect(commandLine).toContain('--context long_context')
+    let cleared = false
+    const replacementId = 'fedcba98-7654-3210-fedc-ba9876543210'
+    expect(
+      await controller.reset(
+        sessionId,
+        replacementId,
+        directory,
+        {
+          model: 'gpt-test',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
+        async () => {
+          cleared = true
+        },
+      ),
+    ).toBe(true)
+    expect(cleared).toBe(true)
   })
 
   it('delivers a prompt into the owning terminal pane', async () => {

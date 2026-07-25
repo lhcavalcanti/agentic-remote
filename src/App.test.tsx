@@ -14,6 +14,7 @@ import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import App from './App'
 import {
   activateSession,
+  clearConversation,
   createSession,
   configureRuntime,
   deleteSession,
@@ -45,6 +46,7 @@ vi.mock('./api', () => ({
   createSession: vi.fn(),
   configureRuntime: vi.fn(),
   getRuntimeOptions: vi.fn(),
+  clearConversation: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
   executeCommand: vi.fn(),
@@ -170,6 +172,11 @@ describe('App', () => {
       ],
     })
     vi.mocked(configureRuntime).mockResolvedValue(session)
+    vi.mocked(clearConversation).mockResolvedValue({
+      ...session,
+      id: 'cleared-session',
+      messages: [],
+    })
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'model',
@@ -455,6 +462,33 @@ describe('App', () => {
       expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1')
     })
     expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+  })
+
+  it('clears Copilot and UI history from the header and slash command', async () => {
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Clear conversation' }),
+    )
+    await waitFor(() =>
+      expect(clearConversation).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+      ),
+    )
+    expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+
+    vi.mocked(clearConversation).mockClear()
+    const textarea = screen.getByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: '/clear' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() =>
+      expect(clearConversation).toHaveBeenCalledWith(
+        'computer-1',
+        'cleared-session',
+      ),
+    )
   })
 
   it('resynchronizes sessions when the event stream reconnects', async () => {

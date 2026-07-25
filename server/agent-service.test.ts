@@ -124,9 +124,11 @@ class FakeCopilotClient implements CopilotClientLike {
   readonly session = new DeferredSession()
   nextSessionList?: Promise<SessionMetadata[]>
   resumeError?: Error
+  createError?: Error
   listModelsError?: Error
   models: ModelInfo[] = []
   readonly createdConfigs: SessionConfig[] = []
+  readonly deletedSessionIds: string[] = []
   readonly resumedSessionIds: string[] = []
   readonly rpc = {
     commands: {
@@ -139,6 +141,9 @@ class FakeCopilotClient implements CopilotClientLike {
     return []
   }
   async createSession(config: SessionConfig): Promise<CopilotSessionLike> {
+    if (this.createError) {
+      throw this.createError
+    }
     this.createdConfigs.push(config)
     return this.session
   }
@@ -161,7 +166,9 @@ class FakeCopilotClient implements CopilotClientLike {
     }
     return this.models
   }
-  async deleteSession() {}
+  async deleteSession(sessionId: string) {
+    this.deletedSessionIds.push(sessionId)
+  }
 }
 
 const directories: string[] = []
@@ -473,6 +480,128 @@ describe('AgentService deletion', () => {
     await restartedService.stop()
   })
 
+  it('clears SDK conversation history while keeping the session open', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    await service.store.addMessage(created.id, {
+      id: 'old-message',
+      role: 'user',
+      content: 'Remove this history',
+      createdAt: new Date().toISOString(),
+    })
+
+    const cleared = await service.clearConversation(created.id)
+
+    expect(cleared).toMatchObject({
+      isOpen: true,
+      messages: [],
+      status: 'idle',
+    })
+    expect(cleared.id).not.toBe(created.id)
+    expect(service.store.get(created.id)).toBeUndefined()
+    expect(client.deletedSessionIds).toContain(created.id)
+    expect(client.createdConfigs.at(-1)).toMatchObject({
+      sessionId: cleared.id,
+      workingDirectory: directory,
+    })
+    await service.stop()
+  })
+
+  it('does not restore a stale transcript after clearing', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    let version: string | undefined
+    let releaseEvents: (events: SessionEvent[]) => void = () => undefined
+    let readerStarted: () => void = () => undefined
+    const started = new Promise<void>((resolve) => {
+      readerStarted = resolve
+    })
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () =>
+        new Promise<SessionEvent[]>((resolve) => {
+          readerStarted()
+          releaseEvents = resolve
+        }),
+      async () => version,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    await service.store.addMessage(created.id, {
+      id: 'old-message',
+      role: 'user',
+      content: 'Old history',
+      createdAt: '2026-07-25T22:00:00.000Z',
+    })
+    version = 'old-events'
+    const refresh = service.refreshTranscripts()
+    await started
+
+    const clearing = service.clearConversation(created.id)
+    releaseEvents(
+      JSON.parse(`[
+        {
+          "type":"user.message",
+          "id":"old-event",
+          "parentId":null,
+          "timestamp":"2026-07-25T22:00:00.000Z",
+          "data":{"content":"Old history"}
+        }
+      ]`) as SessionEvent[],
+    )
+    const [, cleared] = await Promise.all([refresh, clearing])
+
+    expect(service.store.get(created.id)).toBeUndefined()
+    expect(service.store.get(cleared.id)?.messages).toEqual([])
+    await service.stop()
+  })
+
+  it('keeps failed SDK clear state recoverable', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    await service.store.addMessage(created.id, {
+      id: 'old-message',
+      role: 'user',
+      content: 'Old history',
+      createdAt: new Date().toISOString(),
+    })
+    client.createError = new Error('temporary create failure')
+
+    const cleared = await service.clearConversation(created.id)
+    expect(service.store.get(created.id)).toBeUndefined()
+    expect(service.store.get(cleared.id)?.messages).toEqual([])
+
+    client.createError = undefined
+    client.resumeError = new Error(`Session not found: ${cleared.id}`)
+    await expect(service.openSession(cleared.id)).resolves.toMatchObject({
+      id: cleared.id,
+      messages: [],
+    })
+    await service.stop()
+  })
+
   it('resumes a persisted SDK queue after service restart', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -532,6 +661,18 @@ describe('AgentService deletion', () => {
       cancel: vi.fn(async () => true),
       rename: vi.fn(async () => true),
       configure: vi.fn(async () => true),
+      reset: vi.fn(
+        async (
+          _sessionId: string,
+          _replacementId: string,
+          _cwd: string,
+          _runtime: unknown,
+          clearState: () => Promise<void>,
+        ) => {
+          await clearState()
+          return true
+        },
+      ),
     }
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
@@ -577,6 +718,27 @@ describe('AgentService deletion', () => {
       contextTier: 'long_context',
       contextTokenLimit: 100_000,
     })
+    await service.store.addMessage(created.id, {
+      id: 'terminal-history',
+      role: 'user',
+      content: 'Clear terminal history',
+      createdAt: new Date().toISOString(),
+    })
+    const cleared = await service.clearConversation(created.id)
+    expect(terminal.reset).toHaveBeenCalledWith(
+      created.id,
+      cleared.id,
+      directory,
+      {
+        model: 'gpt-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      },
+      expect.any(Function),
+    )
+    expect(cleared.id).not.toBe(created.id)
+    expect(cleared.messages).toEqual([])
+    expect(client.deletedSessionIds).toContain(created.id)
     await service.stop()
   })
 

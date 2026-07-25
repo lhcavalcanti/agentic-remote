@@ -137,6 +137,13 @@ export async function registerNodeRoutes(
         },
       )
 
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/clear',
+        async (request) => ({
+          session: await service.clearConversation(request.params.sessionId),
+        }),
+      )
+
       node.get<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/runtime',
         async (request) => service.runtimeOptions(request.params.sessionId),

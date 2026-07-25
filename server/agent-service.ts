@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { realpath, stat } from 'node:fs/promises'
+import { realpath, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import {
@@ -98,6 +98,21 @@ const runtimeEventTypes = new Set<SessionEvent['type']>([
   'assistant.message',
   'tool.execution_start',
 ])
+const sessionIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+async function removeCopilotSessionFiles(sessionId: string): Promise<void> {
+  if (!sessionIdPattern.test(sessionId)) {
+    return
+  }
+  const copilotHome =
+    process.env.COPILOT_HOME?.trim() ||
+    path.join(process.env.HOME || process.cwd(), '.copilot')
+  await rm(path.join(copilotHome, 'session-state', sessionId), {
+    recursive: true,
+    force: true,
+  })
+}
 
 export interface AgentServiceEvents {
   event: [event: ServerEvent]
@@ -794,6 +809,132 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return updated
   }
 
+  async clearConversation(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (
+      stored.status === 'running' ||
+      stored.status === 'waiting' ||
+      this.drainingSessions.has(id)
+    ) {
+      throw new Error('Conversation can only be cleared while the session is idle')
+    }
+    const runtime: ConfigureRuntimeInput | undefined =
+      stored.runtime?.model &&
+      stored.runtime.reasoningEffort &&
+      (stored.runtime.contextTier === 'default' ||
+        stored.runtime.contextTier === 'long_context')
+        ? {
+            model: stored.runtime.model,
+            reasoningEffort: stored.runtime.reasoningEffort,
+            contextTier: stored.runtime.contextTier,
+          }
+        : undefined
+    const replacementId = randomUUID()
+    this.deletedSessionIds.add(id)
+    this.discoveryGeneration += 1
+    try {
+      if (this.externalSessionIds.has(id)) {
+        if (!this.terminalController.reset) {
+          throw new Error('Terminal conversation reset is not available')
+        }
+        const reset = await this.terminalController.reset(
+          id,
+          replacementId,
+          stored.cwd,
+          runtime,
+          async () => {
+            try {
+              await this.client.deleteSession(id)
+            } catch (error) {
+              if (!isMissingSessionError(error)) {
+                throw error
+              }
+            }
+            await removeCopilotSessionFiles(id)
+          },
+        )
+        if (!reset) {
+          throw new Error('External terminal is no longer available')
+        }
+        await this.terminalController.rename?.(replacementId, stored.title)
+        this.externalSessionIds.delete(id)
+        this.externalSessionIds.add(replacementId)
+      } else {
+        const active = this.sessions.get(id)
+        if (active) {
+          await active.disconnect()
+          this.sessions.delete(id)
+        }
+        this.hydratedSessions.delete(id)
+        try {
+          await this.client.deleteSession(id)
+        } catch (error) {
+          if (!isMissingSessionError(error)) {
+            throw error
+          }
+        }
+        await removeCopilotSessionFiles(id)
+        let fresh: CopilotSessionLike | undefined
+        try {
+          fresh = await this.client.createSession({
+            sessionId: replacementId,
+            workingDirectory: stored.cwd,
+            streaming: true,
+            model: runtime?.model,
+            contextTier: runtime?.contextTier,
+            onPermissionRequest: (request, invocation) =>
+              this.requestPermission(invocation.sessionId, request),
+          })
+        } catch (error) {
+          this.publishError(replacementId, error)
+        }
+        if (fresh) {
+          this.attachSession(fresh)
+          this.sessions.set(replacementId, fresh)
+          this.hydratedSessions.add(replacementId)
+        }
+        if (fresh && runtime) {
+          await fresh.rpc.model
+            .switchTo({
+              modelId: runtime.model,
+              reasoningEffort: runtime.reasoningEffort,
+              contextTier: runtime.contextTier,
+            })
+            .catch((error: unknown) =>
+              this.publishError(replacementId, error),
+            )
+        }
+      }
+      for (const [requestId, permission] of this.permissions) {
+        if (permission.sessionId === id) {
+          permission.resolve({ kind: 'user-not-available' })
+          this.permissions.delete(requestId)
+        }
+      }
+      this.eventLogFingerprints.delete(id)
+      this.eventLogVersions.delete(id)
+      this.liveTranscriptWatermarks.delete(id)
+      this.activePrompts.delete(id)
+      this.queueOperations.delete(id)
+      const cleared = await this.store.replaceWithClearedSession(
+        id,
+        replacementId,
+      )
+      this.emit('event', { type: 'session.removed', sessionId: id })
+      this.publish(cleared)
+      return cleared
+    } finally {
+      if (this.transcriptInFlight) {
+        await this.transcriptInFlight
+      }
+      this.deletedSessionIds.delete(id)
+      this.discoveryGeneration += 1
+    }
+  }
+
   private async createTerminalSession(cwd: string): Promise<SessionDetail> {
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
@@ -1286,7 +1427,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const storedIds = new Set(this.store.list().map((session) => session.id))
     this.externalSessionIds = new Set(
       [
-        ...activeSessions.map((session) => session.id),
+        ...activeSessions
+          .filter((session) => !this.deletedSessionIds.has(session.id))
+          .map((session) => session.id),
         ...this.launchingTerminalSessionIds,
       ],
     )

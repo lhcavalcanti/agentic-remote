@@ -145,6 +145,17 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
+  async clearConversation(id: string): Promise<SessionDetail> {
+    const session = this.sessions.get(id)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.messages = []
+    session.status = 'idle'
+    this.emitEvent({ type: 'session.upserted', session })
+    return structuredClone(session)
+  }
+
   async removeQueuedPrompt(sessionId: string, promptId: string) {
     const session = this.sessions.get(sessionId)
     const prompt = session?.queuedPrompts?.find((entry) => entry.id === promptId)
@@ -444,6 +455,16 @@ describe('multi-node hub', () => {
           reasoningEffort: 'high',
           contextTier: 'long_context',
         },
+      })
+      const cleared = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/clear`,
+        payload: {},
+      })
+      expect(cleared.json().session).toMatchObject({
+        id: 'remote-session',
+        computerName: 'homelab-prod',
+        messages: [],
       })
 
       const history = await hub.app.inject({

@@ -20,6 +20,13 @@ export interface TerminalSessionController {
     cwd: string,
     input: ConfigureRuntimeInput,
   ): Promise<boolean>
+  reset?(
+    sessionId: string,
+    replacementId: string,
+    cwd: string,
+    input: ConfigureRuntimeInput | undefined,
+    clearState: () => Promise<void>,
+  ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
@@ -68,35 +75,72 @@ export class TmuxTerminalSessionController
     input: ConfigureRuntimeInput,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const target = await this.target(sessionId)
-      if (!target) {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
         return false
       }
-      const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
+      const command = await copilotCommand(owner.pid, sessionId, input)
       await execFileAsync('tmux', [
         'respawn-pane',
         '-k',
         '-t',
-        target,
+        owner.target,
         '-c',
         cwd,
-        copilot,
-        '--session-id',
-        sessionId,
-        '--model',
-        input.model,
-        '--effort',
-        input.reasoningEffort,
-        '--context',
-        input.contextTier,
+        ...command,
       ])
-      for (let attempt = 0; attempt < 60; attempt += 1) {
-        if (await this.target(sessionId)) {
-          return true
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100))
+      await this.waitForNewOwner(sessionId, owner.pid)
+      return true
+    })
+  }
+
+  async reset(
+    sessionId: string,
+    replacementId: string,
+    cwd: string,
+    input: ConfigureRuntimeInput | undefined,
+    clearState: () => Promise<void>,
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        return false
       }
-      throw new Error('Copilot did not restart with the runtime settings')
+      const originalCommand = await processCommand(owner.pid)
+      const command = await copilotCommand(owner.pid, replacementId, input)
+      await execFileAsync('tmux', [
+        'respawn-pane',
+        '-k',
+        '-t',
+        owner.target,
+        '/usr/bin/sleep',
+        '300',
+      ])
+      try {
+        await clearState()
+        await execFileAsync('tmux', [
+          'respawn-pane',
+          '-k',
+          '-t',
+          owner.target,
+          '-c',
+          cwd,
+          ...command,
+        ])
+        await this.waitForNewOwner(replacementId, owner.pid)
+      } catch (error) {
+        await execFileAsync('tmux', [
+          'respawn-pane',
+          '-k',
+          '-t',
+          owner.target,
+          '-c',
+          cwd,
+          ...originalCommand,
+        ]).catch(() => undefined)
+        throw error
+      }
+      return true
     })
   }
 
@@ -178,12 +222,34 @@ export class TmuxTerminalSessionController
   }
 
   private async target(sessionId: string): Promise<string | undefined> {
+    return (await this.owner(sessionId))?.target
+  }
+
+  private async owner(
+    sessionId: string,
+  ): Promise<{ pid: number; target: string } | undefined> {
     const processInfo = (await findActiveCopilotProcesses()).find(
       (candidate) => candidate.sessionId === sessionId,
     )
-    return processInfo
-      ? tmuxTargetForPid(processInfo.pid)
-      : undefined
+    if (!processInfo) {
+      return undefined
+    }
+    const target = await tmuxTargetForPid(processInfo.pid)
+    return target ? { pid: processInfo.pid, target } : undefined
+  }
+
+  private async waitForNewOwner(
+    sessionId: string,
+    previousPid: number,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const owner = await this.owner(sessionId)
+      if (owner && owner.pid !== previousPid) {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    throw new Error('Copilot did not restart in the tmux pane')
   }
 
   private async createWindow(
@@ -213,7 +279,7 @@ export class TmuxTerminalSessionController
           '-F',
           format,
           '-t',
-          `=${selected.name}`,
+          `=${selected.name}:`,
           '-n',
           windowName,
           '-c',
@@ -324,6 +390,78 @@ function safeWindowName(title: string): string {
     .join('')
     .trim()
   return (sanitized || 'copilot').slice(0, 40)
+}
+
+async function processCommand(pid: number): Promise<string[]> {
+  const command = (await readFile(`/proc/${pid}/cmdline`, 'utf8'))
+    .split('\0')
+    .filter(Boolean)
+  if (command.length === 0) {
+    throw new Error(`Unable to read command line for Copilot PID ${pid}`)
+  }
+  return command
+}
+
+async function copilotCommand(
+  pid: number,
+  sessionId: string,
+  runtime?: ConfigureRuntimeInput,
+): Promise<string[]> {
+  const original = await processCommand(pid)
+  const result = [original[0]]
+  const optionsWithValues = new Set([
+    '--session-id',
+    '--model',
+    '--effort',
+    '--reasoning-effort',
+    '--context',
+  ])
+  const runtimeOptions = new Set([
+    '--model',
+    '--effort',
+    '--reasoning-effort',
+    '--context',
+  ])
+  for (let index = 1; index < original.length; index += 1) {
+    const argument = original[index]
+    const option = argument.split('=', 1)[0]
+    if (
+      option === '--session-id' ||
+      option === '--resume' ||
+      option === '-r' ||
+      option === '--continue'
+    ) {
+      if (
+        !argument.includes('=') &&
+        (option === '--session-id' ||
+          ((option === '--resume' || option === '-r') &&
+            original[index + 1] &&
+            !original[index + 1].startsWith('-')))
+      ) {
+        index += 1
+      }
+      continue
+    }
+    if (runtime && runtimeOptions.has(option)) {
+      if (!argument.includes('=') && optionsWithValues.has(option)) {
+        index += 1
+      }
+      continue
+    }
+    result.push(argument)
+  }
+  result.push('--session-id', sessionId)
+  if (runtime) {
+    result.push(
+      '--model',
+      runtime.model,
+      '--effort',
+      runtime.reasoningEffort,
+      '--context',
+      runtime.contextTier,
+    )
+  }
+  return result
 }
 
 async function waitForPaneText(target: string, expected: string): Promise<void> {

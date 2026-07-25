@@ -25,12 +25,13 @@ async function request<TResult>(
   path: string,
   init?: RequestInit,
 ): Promise<TResult> {
+  const headers = new Headers(init?.headers)
+  if (init?.body != null && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json')
+  }
   const response = await fetch(path, {
     ...init,
-    headers: {
-      'content-type': 'application/json',
-      ...init?.headers,
-    },
+    headers,
   })
   if (!response.ok) {
     throw await responseError(response)

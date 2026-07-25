@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
   AssistantMessageEvent,
+  ModelInfo,
   ResumeSessionConfig,
   SessionConfig,
   SessionEvent,
@@ -14,6 +15,7 @@ import {
   type CopilotClientLike,
   type CopilotSessionLike,
   messagesFromHistory,
+  runtimeInfoFromEvents,
 } from './agent-service.js'
 import { SessionStore } from './session-store.js'
 
@@ -107,6 +109,7 @@ class FakeCopilotClient implements CopilotClientLike {
   readonly session = new DeferredSession()
   nextSessionList?: Promise<SessionMetadata[]>
   resumeError?: Error
+  listModelsError?: Error
   readonly createdConfigs: SessionConfig[] = []
   readonly resumedSessionIds: string[] = []
   readonly rpc = {
@@ -135,6 +138,12 @@ class FakeCopilotClient implements CopilotClientLike {
   }
   async listSessions(): Promise<SessionMetadata[]> {
     return this.nextSessionList ?? []
+  }
+  async listModels(): Promise<ModelInfo[]> {
+    if (this.listModelsError) {
+      throw this.listModelsError
+    }
+    return []
   }
   async deleteSession() {}
 }
@@ -177,12 +186,185 @@ describe('AgentService deletion', () => {
         "parentId":"user-2",
         "timestamp":"2026-07-22T00:00:02.000Z",
         "data":{"content":"Visible prompt"}
+      },
+      {
+        "type":"user.message",
+        "id":"agent-review",
+        "parentId":"user-3",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{
+          "source":"agent-session-id",
+          "content":"Internal review request"
+        }
       }
     ]`) as SessionEvent[]
 
     expect(messagesFromHistory(events)).toEqual([
       expect.objectContaining({ role: 'user', content: 'Visible prompt' }),
     ])
+  })
+
+  it('extracts model, effort, tier, and estimated context usage', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"session.resume",
+        "id":"resume",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{
+          "selectedModel":"gpt-test",
+          "reasoningEffort":"medium",
+          "contextTier":"long_context"
+        }
+      },
+      {
+        "type":"session.model_change",
+        "id":"model",
+        "parentId":"resume",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "newModel":"gpt-test",
+          "reasoningEffort":"high",
+          "contextTier":"long_context"
+        }
+      },
+      {
+        "type":"session.compaction_start",
+        "id":"context",
+        "parentId":"model",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{
+          "systemTokens":100,
+          "conversationTokens":400,
+          "toolDefinitionsTokens":50
+        }
+      },
+      {
+        "type":"user.message",
+        "id":"prompt",
+        "parentId":"context",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{"content":"12345678"}
+      },
+      {
+        "type":"assistant.message",
+        "id":"subagent",
+        "agentId":"review-agent",
+        "parentId":"prompt",
+        "timestamp":"2026-07-22T00:00:04.000Z",
+        "data":{
+          "messageId":"subagent",
+          "content":"Review result",
+          "model":"lightweight-review-model"
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(
+      runtimeInfoFromEvents(
+        events,
+        undefined,
+        new Map([
+          [
+            'gpt-test',
+            { default: 1_000, long: 2_000, maximum: 3_000 },
+          ],
+        ]),
+      ),
+    ).toEqual({
+      model: 'gpt-test',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+      contextTokens: 552,
+      contextTokenLimit: 2_000,
+      contextEstimated: true,
+    })
+  })
+
+  it('preserves exact usage limits across later runtime events', () => {
+      const previous = {
+        model: 'gpt-test',
+        contextTokens: 700,
+        contextTokenLimit: 1_050,
+        contextEstimated: false,
+      }
+      const events = JSON.parse(`[
+        {
+          "type":"assistant.message",
+          "id":"assistant",
+          "parentId":null,
+          "timestamp":"2026-07-22T00:00:00.000Z",
+          "data":{"messageId":"assistant","content":"Done","model":"gpt-test"}
+        }
+      ]`) as SessionEvent[]
+
+      expect(
+        runtimeInfoFromEvents(
+          events,
+          previous,
+          new Map([
+            ['gpt-test', { default: 800, long: 900, maximum: 1_000 }],
+          ]),
+          false,
+        ),
+      ).toMatchObject({
+        contextTokens: 700,
+        contextTokenLimit: 1_050,
+        contextEstimated: false,
+      })
+  })
+
+  it('reads model and effort from fresh session start events', () => {
+      const events = JSON.parse(`[
+        {
+          "type":"session.start",
+          "id":"start",
+          "parentId":null,
+          "timestamp":"2026-07-22T00:00:00.000Z",
+          "data":{
+            "sessionId":"session",
+            "version":1,
+            "producer":"copilot-agent",
+            "copilotVersion":"1.0.75",
+            "startTime":"2026-07-22T00:00:00.000Z",
+            "selectedModel":"gpt-fresh",
+            "reasoningEffort":"medium",
+            "contextTier":"default",
+            "context":{"cwd":"/tmp"}
+          }
+        }
+      ]`) as SessionEvent[]
+
+      expect(
+        runtimeInfoFromEvents(events, undefined, new Map(), false),
+      ).toMatchObject({
+        model: 'gpt-fresh',
+        reasoningEffort: 'medium',
+        contextTier: 'default',
+      })
+  })
+
+  it('continues startup when model limits are unavailable', async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      client.listModelsError = new Error('models unavailable')
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        client,
+        async () => [],
+        async () => undefined,
+      )
+
+      await service.start()
+
+      expect(warning).toHaveBeenCalledWith(
+        'Unable to load model context limits:',
+        client.listModelsError,
+      )
+      warning.mockRestore()
+      await service.stop()
   })
 
   it('ignores a prompt completion after its session was deleted', async () => {

@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   QueuedPrompt,
   SessionDetail,
+  SessionRuntimeInfo,
   SessionStatus,
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
@@ -145,11 +146,15 @@ export class SessionStore {
     messages: ChatMessage[],
     status: SessionStatus,
     activity?: string,
+    runtime?: SessionRuntimeInfo,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.messages = messages
       session.status = status
       session.activity = activity
+      if (runtime) {
+        session.runtime = runtime
+      }
       session.updatedAt =
         messages.at(-1)?.createdAt || session.updatedAt
     })

@@ -9,6 +9,7 @@ import {
   type CopilotSession,
   type PermissionRequest,
   type PermissionRequestResult,
+  type ModelInfo,
   type ResumeSessionConfig,
   type SessionConfig,
   type SessionEvent,
@@ -21,6 +22,7 @@ import type {
   RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
+  SessionRuntimeInfo,
   SessionStatus,
   SlashCommand,
 } from '../shared/contracts.js'
@@ -74,8 +76,24 @@ export interface CopilotClientLike {
   ): Promise<CopilotSessionLike>
   listSessions(): Promise<SessionMetadata[]>
   deleteSession(sessionId: string): Promise<void>
+  listModels?(): Promise<ModelInfo[]>
   rpc: Pick<CopilotClient['rpc'], 'commands'>
 }
+
+interface ModelPromptLimits {
+  default?: number
+  long?: number
+  maximum?: number
+}
+
+const runtimeEventTypes = new Set<SessionEvent['type']>([
+  'session.start',
+  'session.resume',
+  'session.model_change',
+  'session.usage_info',
+  'assistant.message',
+  'tool.execution_start',
+])
 
 export interface AgentServiceEvents {
   event: [event: ServerEvent]
@@ -110,6 +128,9 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
 
   for (const event of events) {
     if (event.type === 'user.message') {
+      if (stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
+        continue
+      }
       const content = visibleUserContent(event.data.content)
       if (content) {
         currentToolGroup = undefined
@@ -236,6 +257,177 @@ function statusFromEvents(events: SessionEvent[]): SessionStatus {
   return status
 }
 
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function contextTextLength(value: unknown): number {
+  if (typeof value === 'string') {
+    return value.length
+  }
+  if (Array.isArray(value)) {
+    return value.reduce((total, entry) => total + contextTextLength(entry), 0)
+  }
+  if (value && typeof value === 'object') {
+    const content = (value as Record<string, unknown>).content
+    return content === undefined ? 0 : contextTextLength(content)
+  }
+  return 0
+}
+
+function eventContextLength(event: SessionEvent): number {
+  const data = recordValue(event.data)
+  if (event.type === 'user.message') {
+    const source = stringValue(data.source)
+    return source?.startsWith('agent-')
+      ? 0
+      : contextTextLength(data.content)
+  }
+  if (event.type === 'assistant.message') {
+    return event.agentId ? 0 : contextTextLength(data.content)
+  }
+  if (event.type === 'tool.execution_complete') {
+    return event.agentId ? 0 : contextTextLength(data.result)
+  }
+  return 0
+}
+
+function estimatedContextTokens(events: SessionEvent[]): number | undefined {
+  let baselineIndex = -1
+  let baselineTokens = 0
+  const completedIndex = events.findLastIndex(
+    (event) =>
+      event.type === 'session.compaction_complete' &&
+      recordValue(event.data).success === true,
+  )
+  if (completedIndex >= 0) {
+    const complete = recordValue(events[completedIndex].data)
+    const start = events
+      .slice(0, completedIndex)
+      .findLast((event) => event.type === 'session.compaction_start')
+    const startData = recordValue(start?.data)
+    baselineTokens =
+      (numberValue(startData.systemTokens) || 0) +
+      (numberValue(startData.toolDefinitionsTokens) || 0) +
+      Math.ceil(contextTextLength(complete.summaryContent) / 4)
+    baselineIndex = completedIndex
+  } else {
+    const startIndex = events.findLastIndex(
+      (event) => event.type === 'session.compaction_start',
+    )
+    if (startIndex >= 0) {
+      const startData = recordValue(events[startIndex].data)
+      baselineTokens =
+        (numberValue(startData.systemTokens) || 0) +
+        (numberValue(startData.conversationTokens) || 0) +
+        (numberValue(startData.toolDefinitionsTokens) || 0)
+      baselineIndex = startIndex
+    }
+  }
+  const addedCharacters = events
+    .slice(baselineIndex + 1)
+    .reduce((total, event) => total + eventContextLength(event), 0)
+  const estimate = baselineTokens + Math.ceil(addedCharacters / 4)
+  return estimate > 0 ? estimate : undefined
+}
+
+export function runtimeInfoFromEvents(
+  events: SessionEvent[],
+  previous: SessionRuntimeInfo | undefined,
+  modelLimits: ReadonlyMap<string, ModelPromptLimits> = new Map(),
+  estimateContext = true,
+): SessionRuntimeInfo | undefined {
+  const runtime: SessionRuntimeInfo = { ...previous }
+  let exactContext = false
+  for (const event of events) {
+    if (event.agentId) {
+      continue
+    }
+    const data = recordValue(event.data)
+    if (event.type === 'session.start') {
+      runtime.model = stringValue(data.selectedModel) || runtime.model
+      runtime.reasoningEffort =
+        stringValue(data.reasoningEffort) || runtime.reasoningEffort
+      runtime.contextTier =
+        stringValue(data.contextTier) || runtime.contextTier
+    } else if (event.type === 'session.resume') {
+      runtime.model = stringValue(data.selectedModel) || runtime.model
+      runtime.reasoningEffort =
+        stringValue(data.reasoningEffort) || runtime.reasoningEffort
+      runtime.contextTier =
+        stringValue(data.contextTier) || runtime.contextTier
+    } else if (event.type === 'session.model_change') {
+      runtime.model = stringValue(data.newModel) || runtime.model
+      runtime.reasoningEffort =
+        stringValue(data.reasoningEffort) || runtime.reasoningEffort
+      runtime.contextTier =
+        stringValue(data.contextTier) || runtime.contextTier
+    } else if (
+      event.type === 'assistant.message' ||
+      event.type === 'tool.execution_start'
+    ) {
+      runtime.model = stringValue(data.model) || runtime.model
+    } else if (event.type === 'session.usage_info') {
+      runtime.contextTokens =
+        numberValue(data.currentTokens) || runtime.contextTokens
+      runtime.contextTokenLimit =
+        numberValue(data.tokenLimit) || runtime.contextTokenLimit
+      runtime.contextEstimated = false
+      exactContext = true
+    }
+  }
+  const limits = runtime.model ? modelLimits.get(runtime.model) : undefined
+  if (
+    !exactContext &&
+    limits &&
+    previous?.contextEstimated !== false
+  ) {
+    runtime.contextTokenLimit =
+      runtime.contextTier === 'long_context'
+        ? limits.long || limits.maximum
+        : limits.default || limits.maximum
+  }
+
+  if (
+    !exactContext &&
+    estimateContext &&
+    previous?.contextEstimated !== false
+  ) {
+    const estimate = estimatedContextTokens(events)
+    if (estimate !== undefined) {
+      runtime.contextTokens = estimate
+      runtime.contextEstimated = true
+    }
+  }
+  return Object.values(runtime).some((value) => value !== undefined)
+    ? runtime
+    : undefined
+}
+
+function runtimeInfoMatches(
+  left: SessionRuntimeInfo | undefined,
+  right: SessionRuntimeInfo,
+): boolean {
+  return (
+    left?.model === right.model &&
+    left?.reasoningEffort === right.reasoningEffort &&
+    left?.contextTier === right.contextTier &&
+    left?.contextTokens === right.contextTokens &&
+    left?.contextTokenLimit === right.contextTokenLimit &&
+    left?.contextEstimated === right.contextEstimated
+  )
+}
+
 function isMissingSessionError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false
@@ -302,6 +494,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly eventLogFingerprints = new Map<string, string>()
   private readonly eventLogVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
+  private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
   private readonly externalCommandCache = new Map<
     string,
     {
@@ -335,6 +528,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async start(): Promise<void> {
     await this.store.initialize()
     await this.client.start()
+    await this.loadModelPromptLimits()
     await this.discoverSessions()
     await this.refreshTranscripts()
     await Promise.all(
@@ -396,6 +590,32 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   listDirectories(path?: string) {
     return listHomeDirectories(path)
+  }
+
+  private async loadModelPromptLimits(): Promise<void> {
+    if (!this.client.listModels) {
+      return
+    }
+    let models: ModelInfo[]
+    try {
+      models = await this.client.listModels()
+    } catch (error) {
+      console.warn('Unable to load model context limits:', error)
+      return
+    }
+    for (const model of models) {
+      const value = recordValue(model)
+      const capabilities = recordValue(value.capabilities)
+      const capabilityLimits = recordValue(capabilities.limits)
+      const billing = recordValue(value.billing)
+      const tokenPrices = recordValue(billing.tokenPrices)
+      const longContext = recordValue(tokenPrices.longContext)
+      this.modelPromptLimits.set(model.id, {
+        default: numberValue(tokenPrices.maxPromptTokens),
+        long: numberValue(longContext.maxPromptTokens),
+        maximum: numberValue(capabilityLimits.max_prompt_tokens),
+      })
+    }
   }
 
   getSession(id: string): SessionDetail | undefined {
@@ -1119,6 +1339,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           lastMessage.activityStatus === 'running'
             ? lastMessage.content
             : undefined
+        const runtime = runtimeInfoFromEvents(
+          events,
+          stored?.runtime,
+          this.modelPromptLimits,
+        )
         if (
           this.activePrompts.has(sessionId) ||
           this.deletedSessionIds.has(sessionId) ||
@@ -1131,6 +1356,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           messages,
           status,
           activity,
+          runtime,
         )
         this.eventLogFingerprints.set(sessionId, fingerprint)
         this.eventLogVersions.set(sessionId, version)
@@ -1155,6 +1381,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
+    const stored = this.store.get(sessionId)
+
+    if (
+      runtimeEventTypes.has(event.type) &&
+      stored &&
+      !this.deletingSessions.has(sessionId)
+    ) {
+      const runtime = runtimeInfoFromEvents(
+        [event],
+        stored.runtime,
+        this.modelPromptLimits,
+        false,
+      )
+      if (runtime && !runtimeInfoMatches(stored.runtime, runtime)) {
+        void this.store
+          .update(sessionId, (session) => {
+            session.runtime = runtime
+          })
+          .then((session) => this.publish(session))
+          .catch((error: unknown) => this.publishError(sessionId, error))
+      }
+    }
 
     if (
       event.type === 'assistant.message_delta' &&

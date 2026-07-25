@@ -113,6 +113,10 @@ type StatuslineSettings = {
   status: boolean
   queue: boolean
   sessionId: boolean
+  model: boolean
+  effort: boolean
+  contextTier: boolean
+  contextUsage: boolean
 }
 
 const defaultStatusline: StatuslineSettings = {
@@ -122,6 +126,10 @@ const defaultStatusline: StatuslineSettings = {
   status: true,
   queue: true,
   sessionId: false,
+  model: true,
+  effort: true,
+  contextTier: true,
+  contextUsage: true,
 }
 
 const webCommands: SlashCommand[] = [
@@ -166,6 +174,16 @@ function shortPath(value: string): string {
     return `~/${value.split('/').slice(3).join('/')}`
   }
   return value
+}
+
+function compactTokens(value: number): string {
+  if (value < 1_000) {
+    return String(value)
+  }
+  if (value < 1_000_000) {
+    return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`
+  }
+  return `${(value / 1_000_000).toFixed(1)}m`
 }
 
 function DialogFrame({
@@ -846,6 +864,10 @@ function StatuslineDialog({
     { key: 'status', label: 'Agent status' },
     { key: 'queue', label: 'Queued prompts' },
     { key: 'sessionId', label: 'Session ID' },
+    { key: 'model', label: 'Model' },
+    { key: 'effort', label: 'Reasoning effort' },
+    { key: 'contextTier', label: 'Context tier' },
+    { key: 'contextUsage', label: 'Context usage' },
   ]
   return (
     <DialogFrame
@@ -990,7 +1012,13 @@ function App() {
       : window.visualViewport?.height || window.innerHeight,
   )
   const [statusline, setStatusline] = useState<StatuslineSettings>(() =>
-    readStoredOrder('agentic-remote:statusline', defaultStatusline),
+    ({
+      ...defaultStatusline,
+      ...readStoredOrder<Partial<StatuslineSettings>>(
+        'agentic-remote:statusline',
+        {},
+      ),
+    }),
   )
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
@@ -1907,6 +1935,34 @@ function App() {
             ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
+            ) : null}
+            {statusline.model && selected.runtime?.model ? (
+              <span>{selected.runtime.model}</span>
+            ) : null}
+            {statusline.effort && selected.runtime?.reasoningEffort ? (
+              <span>effort {selected.runtime.reasoningEffort}</span>
+            ) : null}
+            {statusline.contextTier && selected.runtime?.contextTier ? (
+              <span>
+                {selected.runtime.contextTier === 'long_context'
+                  ? 'long context'
+                  : `${selected.runtime.contextTier} context`}
+              </span>
+            ) : null}
+            {statusline.contextUsage &&
+            selected.runtime?.contextTokens !== undefined &&
+            selected.runtime.contextTokenLimit ? (
+              <span>
+                ctx {selected.runtime.contextEstimated ? '~' : ''}
+                {compactTokens(selected.runtime.contextTokens)}/
+                {compactTokens(selected.runtime.contextTokenLimit)} (
+                {Math.round(
+                  (selected.runtime.contextTokens /
+                    selected.runtime.contextTokenLimit) *
+                    100,
+                )}
+                %)
+              </span>
             ) : null}
           </div>
         ) : null}

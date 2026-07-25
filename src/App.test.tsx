@@ -589,9 +589,34 @@ describe('App', () => {
   })
 
   it('supports command abbreviations and configures the web status line', async () => {
+      const runtimeSession = {
+        ...session,
+        runtime: {
+          model: 'gpt-5.6-sol',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+          contextTokens: 200_000,
+          contextTokenLimit: 922_000,
+          contextEstimated: true,
+        },
+      }
+      vi.mocked(listSessions).mockResolvedValue([runtimeSession])
+      vi.mocked(getSession).mockResolvedValue(runtimeSession)
       render(<App />)
       const textarea = await screen.findByLabelText('Message')
       expect(screen.getByTestId('web-statusline')).toBeInTheDocument()
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        'gpt-5.6-sol',
+      )
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        'effort high',
+      )
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        'long context',
+      )
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        'ctx ~200k/922k (22%)',
+      )
 
       fireEvent.change(textarea, { target: { value: '/aa' } })
       expect(await screen.findByText('/allow-all')).toBeInTheDocument()

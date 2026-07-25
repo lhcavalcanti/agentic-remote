@@ -56,7 +56,7 @@ export class NodeIdentityStore {
     return {
       id: identity.id,
       name: identity.name,
-      version: '0.12.1',
+      version: '0.13.0',
     }
   }
 

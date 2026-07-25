@@ -30,6 +30,15 @@ export interface QueuedPrompt {
   createdAt: string
 }
 
+export interface SessionRuntimeInfo {
+  model?: string
+  reasoningEffort?: string
+  contextTier?: string
+  contextTokens?: number
+  contextTokenLimit?: number
+  contextEstimated?: boolean
+}
+
 export interface SessionSummary {
   id: string
   cwd: string
@@ -40,6 +49,7 @@ export interface SessionSummary {
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
   activity?: string
+  runtime?: SessionRuntimeInfo
 }
 
 export interface SessionDetail extends SessionSummary {

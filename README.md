@@ -41,6 +41,9 @@ keeps the CLI and web timeline on the same agent instead of creating a detached
 SDK turn. `/statusline` configures the web status line. Command abbreviations
 follow Copilot CLI completion behavior: typing `/aa` expands to `/allow-all`
 before the canonical command is sent to Copilot.
+The status line can show the root agent's model, reasoning effort, context tier,
+and current context usage. A `~` prefix marks usage estimated from persisted CLI
+events when Copilot does not expose an exact live count.
 
 ## Why this architecture
 

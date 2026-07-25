@@ -1,5 +1,7 @@
 import type {
   DirectoryListing,
+  ConfigureRuntimeInput,
+  RuntimeOptions,
   RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
@@ -16,6 +18,11 @@ export interface SessionService {
   activateSession(id: string): Promise<SessionDetail>
   createSession(cwd: string, terminalBacked?: boolean): Promise<SessionDetail>
   renameSession(id: string, title: string): Promise<SessionDetail>
+  runtimeOptions(id: string): Promise<RuntimeOptions>
+  configureRuntime(
+    id: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<SessionDetail>
   removeQueuedPrompt(
     sessionId: string,
     promptId: string,

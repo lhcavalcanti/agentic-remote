@@ -24,10 +24,25 @@ class DeferredSession implements CopilotSessionLike {
   readonly sentPrompts: string[] = []
   readonly invokedCommands: string[] = []
   readonly assignedNames: string[] = []
+  readonly runtimeSwitches: Array<{
+    modelId: string
+    reasoningEffort?: string
+    contextTier?: string
+  }> = []
   private readonly responseResolvers: Array<
     (value: AssistantMessageEvent | undefined) => void
   > = []
   readonly rpc = {
+    model: {
+      switchTo: async (input: {
+        modelId: string
+        reasoningEffort?: string
+        contextTier?: string
+      }) => {
+        this.runtimeSwitches.push(input)
+        return { modelId: input.modelId }
+      },
+    },
     name: {
       set: async ({ name }: { name: string }) => {
         this.assignedNames.push(name)
@@ -110,6 +125,7 @@ class FakeCopilotClient implements CopilotClientLike {
   nextSessionList?: Promise<SessionMetadata[]>
   resumeError?: Error
   listModelsError?: Error
+  models: ModelInfo[] = []
   readonly createdConfigs: SessionConfig[] = []
   readonly resumedSessionIds: string[] = []
   readonly rpc = {
@@ -143,12 +159,48 @@ class FakeCopilotClient implements CopilotClientLike {
     if (this.listModelsError) {
       throw this.listModelsError
     }
-    return []
+    return this.models
   }
   async deleteSession() {}
 }
 
 const directories: string[] = []
+
+function configurableModel(): ModelInfo {
+  return {
+    id: 'gpt-configurable',
+    name: 'GPT Configurable',
+    capabilities: {
+      family: 'gpt-configurable',
+      limits: {
+        max_prompt_tokens: 100_000,
+        max_context_window_tokens: 120_000,
+      },
+      supports: {
+        vision: false,
+        reasoningEffort: true,
+      },
+      tokenizer: 'o200k_base',
+      type: 'chat',
+    },
+    billing: {
+      tokenPrices: {
+        inputPrice: 0,
+        outputPrice: 0,
+        batchSize: 1,
+        maxPromptTokens: 50_000,
+        longContext: {
+          inputPrice: 0,
+          outputPrice: 0,
+          batchSize: 1,
+          maxPromptTokens: 100_000,
+        },
+      },
+    },
+    supportedReasoningEfforts: ['medium', 'high'],
+    defaultReasoningEffort: 'medium',
+  } as ModelInfo
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -469,6 +521,7 @@ describe('AgentService deletion', () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
     const terminal = {
       create: vi.fn(async () => ({
         sessionName: '0',
@@ -478,6 +531,7 @@ describe('AgentService deletion', () => {
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
       rename: vi.fn(async () => true),
+      configure: vi.fn(async () => true),
     }
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
@@ -507,6 +561,22 @@ describe('AgentService deletion', () => {
       created.id,
       'Renamed terminal',
     )
+    const configured = await service.configureRuntime(created.id, {
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
+    expect(terminal.configure).toHaveBeenCalledWith(created.id, directory, {
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
+    expect(configured.runtime).toMatchObject({
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+      contextTokenLimit: 100_000,
+    })
     await service.stop()
   })
 
@@ -514,6 +584,7 @@ describe('AgentService deletion', () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
@@ -527,6 +598,25 @@ describe('AgentService deletion', () => {
 
     expect(client.session.assignedNames).toEqual(['Renamed SDK'])
     expect(renamed.title).toBe('Renamed SDK')
+    const options = await service.runtimeOptions(created.id)
+    expect(options.models[0]).toMatchObject({
+      id: 'gpt-configurable',
+      reasoningEfforts: ['medium', 'high'],
+      contextTiers: ['default', 'long_context'],
+    })
+    const configured = await service.configureRuntime(created.id, {
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
+    expect(client.session.runtimeSwitches).toEqual([
+      {
+        modelId: 'gpt-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      },
+    ])
+    expect(configured.runtime?.model).toBe('gpt-configurable')
     await service.stop()
   })
 

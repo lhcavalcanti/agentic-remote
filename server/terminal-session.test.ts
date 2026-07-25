@@ -58,6 +58,13 @@ describe('TmuxTerminalSessionController', () => {
       'Project workspace',
     )
     expect(await controller.rename(sessionId, 'Renamed project')).toBe(true)
+    expect(
+      await controller.configure(sessionId, directory, {
+        model: 'gpt-test',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      }),
+    ).toBe(true)
 
     expect(location.sessionName).toBe(tmuxSession)
     expect(await readFile(output, 'utf8')).toBe(directory)
@@ -71,6 +78,21 @@ describe('TmuxTerminalSessionController', () => {
       ])
     ).stdout
     expect(windows).toContain('Renamed project-01234567')
+    const panePid = (
+      await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        location.windowId,
+        '#{pane_pid}',
+      ])
+    ).stdout.trim()
+    const commandLine = (await readFile(`/proc/${panePid}/cmdline`, 'utf8'))
+      .replaceAll('\0', ' ')
+      .trim()
+    expect(commandLine).toContain('--model gpt-test')
+    expect(commandLine).toContain('--effort high')
+    expect(commandLine).toContain('--context long_context')
   })
 
   it('delivers a prompt into the owning terminal pane', async () => {

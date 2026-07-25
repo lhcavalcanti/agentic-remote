@@ -7,11 +7,13 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
 import type {
+  ConfigureRuntimeInput,
   DirectoryListing,
   HubEvent,
   ServerEvent,
   SessionDetail,
   SlashCommand,
+  RuntimeOptions,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import type { SessionService } from './session-service.js'
@@ -104,6 +106,41 @@ class FakeSessionService extends EventEmitter implements SessionService {
       throw new Error('Session not found')
     }
     session.title = title
+    this.emitEvent({ type: 'session.upserted', session })
+    return structuredClone(session)
+  }
+
+  async runtimeOptions(id: string): Promise<RuntimeOptions> {
+    const session = this.sessions.get(id)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    return {
+      current: session.runtime || {},
+      models: [
+        {
+          id: 'remote-model',
+          name: 'Remote model',
+          reasoningEfforts: ['medium', 'high'],
+          contextTiers: ['default', 'long_context'],
+        },
+      ],
+    }
+  }
+
+  async configureRuntime(
+    id: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<SessionDetail> {
+    const session = this.sessions.get(id)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.runtime = {
+      model: input.model,
+      reasoningEffort: input.reasoningEffort,
+      contextTier: input.contextTier,
+    }
     this.emitEvent({ type: 'session.upserted', session })
     return structuredClone(session)
   }
@@ -383,6 +420,30 @@ describe('multi-node hub', () => {
       expect(removedQueue.json()).toMatchObject({
         session: { queuedCount: 0, computerName: 'homelab-prod' },
         prompt: { content: 'Queued remote prompt' },
+      })
+      const runtimeOptions = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/runtime`,
+      })
+      expect(runtimeOptions.json().models).toEqual([
+        expect.objectContaining({ id: 'remote-model' }),
+      ])
+      const configuredRuntime = await hub.app.inject({
+        method: 'PATCH',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/runtime`,
+        payload: {
+          model: 'remote-model',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
+      })
+      expect(configuredRuntime.json().session).toMatchObject({
+        computerName: 'homelab-prod',
+        runtime: {
+          model: 'remote-model',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
       })
 
       const history = await hub.app.inject({

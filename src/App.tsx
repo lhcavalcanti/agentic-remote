@@ -37,6 +37,7 @@ import {
   Pencil,
   Plus,
   Server,
+  SlidersHorizontal,
   Square,
   Trash2,
   Wifi,
@@ -48,20 +49,24 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
   ComputerSummary,
+  ConfigureRuntimeInput,
   DirectoryListing,
   HubEvent,
   ManagedSession,
   PendingPermission,
+  RuntimeOptions,
   SlashCommand,
 } from '../shared/contracts'
 import {
   activateSession,
   addComputer,
   cancelSession,
+  configureRuntime,
   createSession,
   deleteSession,
   executeCommand,
   getSession,
+  getRuntimeOptions,
   listComputers,
   listCommands,
   listHistory,
@@ -907,6 +912,208 @@ function StatuslineDialog({
   )
 }
 
+function RuntimeDialog({
+  open,
+  session,
+  onClose,
+  onConfigured,
+}: {
+  open: boolean
+  session?: ManagedSession
+  onClose: () => void
+  onConfigured: (session: ManagedSession) => void
+}) {
+  const [options, setOptions] = useState<RuntimeOptions>()
+  const [configuration, setConfiguration] = useState<ConfigureRuntimeInput>()
+  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string>()
+  const computerId = session?.computerId
+  const sessionId = session?.id
+
+  useEffect(() => {
+    if (!open || !computerId || !sessionId) {
+      return
+    }
+    let active = true
+    setLoading(true)
+    setOptions(undefined)
+    setConfiguration(undefined)
+    setError(undefined)
+    void getRuntimeOptions(computerId, sessionId)
+      .then((loaded) => {
+        if (!active) {
+          return
+        }
+        const model =
+          loaded.models.find((entry) => entry.id === loaded.current.model) ||
+          loaded.models[0]
+        setOptions(loaded)
+        if (model) {
+          setConfiguration({
+            model: model.id,
+            reasoningEffort:
+              loaded.current.reasoningEffort &&
+              model.reasoningEfforts.includes(
+                loaded.current.reasoningEffort,
+              )
+                ? loaded.current.reasoningEffort
+                : model.reasoningEfforts[0],
+            contextTier:
+              loaded.current.contextTier === 'long_context' &&
+              model.contextTiers.includes('long_context')
+                ? 'long_context'
+                : 'default',
+          })
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [computerId, open, sessionId])
+
+  if (!open || !session) {
+    return null
+  }
+  const targetSession = session
+
+  const selectedModel = options?.models.find(
+    (model) => model.id === configuration?.model,
+  )
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (!configuration) {
+      return
+    }
+    setSubmitting(true)
+    setError(undefined)
+    try {
+      onConfigured(
+        await configureRuntime(
+          targetSession.computerId,
+          targetSession.id,
+          configuration,
+        ),
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <DialogFrame
+      eyebrow="Agent runtime"
+      onClose={onClose}
+      title="Model and context"
+    >
+      {loading ? <p className="dialog-message">Loading runtime options…</p> : null}
+      {!loading && options?.models.length === 0 ? (
+        <p className="form-error">No runtime models are available.</p>
+      ) : null}
+      {configuration && selectedModel ? (
+        <form onSubmit={submit}>
+          <label className="field">
+            <span>Model</span>
+            <select
+              className="dialog-select"
+              onChange={(event) => {
+                const model = options?.models.find(
+                  (entry) => entry.id === event.target.value,
+                )
+                if (!model) {
+                  return
+                }
+                setConfiguration({
+                  model: model.id,
+                  reasoningEffort: model.reasoningEfforts[0],
+                  contextTier: model.contextTiers.includes('long_context')
+                    ? configuration.contextTier
+                    : 'default',
+                })
+              }}
+              value={configuration.model}
+            >
+              {options?.models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Reasoning effort</span>
+            <select
+              className="dialog-select"
+              onChange={(event) =>
+                setConfiguration({
+                  ...configuration,
+                  reasoningEffort: event.target.value,
+                })
+              }
+              value={configuration.reasoningEffort}
+            >
+              {selectedModel.reasoningEfforts.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Context size</span>
+            <select
+              className="dialog-select"
+              onChange={(event) =>
+                setConfiguration({
+                  ...configuration,
+                  contextTier: event.target.value as
+                    | 'default'
+                    | 'long_context',
+                })
+              }
+              value={configuration.contextTier}
+            >
+              {selectedModel.contextTiers.map((tier) => (
+                <option key={tier} value={tier}>
+                  {tier === 'long_context' ? 'Long context' : 'Default context'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="runtime-dialog__hint">
+            Tmux sessions restart their Copilot pane with the same session ID.
+            Change settings only while the agent is idle.
+          </p>
+          {error ? <p className="form-error">{error}</p> : null}
+          <button
+            className="primary-button dialog__submit"
+            disabled={submitting}
+            type="submit"
+          >
+            {submitting ? 'Applying…' : 'Apply runtime settings'}
+          </button>
+        </form>
+      ) : null}
+      {!loading && error && !configuration ? (
+        <p className="form-error">{error}</p>
+      ) : null}
+    </DialogFrame>
+  )
+}
+
 function RenameSessionDialog({
   open,
   session,
@@ -994,6 +1201,7 @@ function App() {
   const [selectedKey, setSelectedKey] = useState<string>()
   const [composer, setComposer] = useState('')
   const [renameOpen, setRenameOpen] = useState(false)
+  const [runtimeOpen, setRuntimeOpen] = useState(false)
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -1936,21 +2144,6 @@ function App() {
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
             ) : null}
-            {statusline.contextUsage &&
-            selected.runtime?.contextTokens !== undefined &&
-            selected.runtime.contextTokenLimit ? (
-              <span>
-                ctx {selected.runtime.contextEstimated ? '~' : ''}
-                {compactTokens(selected.runtime.contextTokens)}/
-                {compactTokens(selected.runtime.contextTokenLimit)} (
-                {Math.round(
-                  (selected.runtime.contextTokens /
-                    selected.runtime.contextTokenLimit) *
-                    100,
-                )}
-                %)
-              </span>
-            ) : null}
           </div>
         ) : null}
 
@@ -2077,11 +2270,18 @@ function App() {
             </div>
             {((statusline.model && selected.runtime?.model) ||
               (statusline.effort && selected.runtime?.reasoningEffort) ||
-              (statusline.contextTier && selected.runtime?.contextTier)) ? (
-              <div
+              (statusline.contextTier && selected.runtime?.contextTier) ||
+              (statusline.contextUsage &&
+                selected.runtime?.contextTokens !== undefined &&
+                selected.runtime.contextTokenLimit)) ? (
+              <button
+                aria-label="Configure model, effort, and context"
                 className="composer-runtime"
                 data-testid="composer-runtime"
+                onClick={() => setRuntimeOpen(true)}
+                type="button"
               >
+                <SlidersHorizontal aria-hidden="true" size={12} />
                 {statusline.model && selected.runtime?.model ? (
                   <span>{selected.runtime.model}</span>
                 ) : null}
@@ -2095,7 +2295,22 @@ function App() {
                       : `${selected.runtime.contextTier} context`}
                   </span>
                 ) : null}
-              </div>
+                {statusline.contextUsage &&
+                selected.runtime?.contextTokens !== undefined &&
+                selected.runtime.contextTokenLimit ? (
+                  <span>
+                      ctx {selected.runtime.contextEstimated ? '~' : ''}
+                      {compactTokens(selected.runtime.contextTokens)}/
+                      {compactTokens(selected.runtime.contextTokenLimit)} (
+                      {Math.round(
+                        (selected.runtime.contextTokens /
+                          selected.runtime.contextTokenLimit) *
+                          100,
+                      )}
+                      %)
+                  </span>
+                ) : null}
+              </button>
             ) : null}
             <p className="composer-hint">
               Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue
@@ -2138,6 +2353,15 @@ function App() {
         onClose={() => setStatuslineOpen(false)}
         open={statuslineOpen}
         settings={statusline}
+      />
+      <RuntimeDialog
+        onClose={() => setRuntimeOpen(false)}
+        onConfigured={(session) => {
+          setSessions((current) => upsertSession(current, session))
+          setRuntimeOpen(false)
+        }}
+        open={runtimeOpen}
+        session={selected}
       />
       <RenameSessionDialog
         onClose={() => setRenameOpen(false)}

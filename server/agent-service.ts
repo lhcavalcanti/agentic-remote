@@ -17,12 +17,15 @@ import {
 } from '@github/copilot-sdk'
 import type {
   ChatMessage,
+  ConfigureRuntimeInput,
   PendingPermission,
   QueuedPrompt,
   RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
   SessionRuntimeInfo,
+  RuntimeModelOption,
+  RuntimeOptions,
   SessionStatus,
   SlashCommand,
 } from '../shared/contracts.js'
@@ -63,6 +66,7 @@ export interface CopilotSessionLike {
       'list' | 'invoke' | 'enqueue'
     >
     name: Pick<CopilotSession['rpc']['name'], 'set'>
+    model: Pick<CopilotSession['rpc']['model'], 'switchTo'>
   }
 }
 
@@ -495,6 +499,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly eventLogVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
+  private readonly runtimeModels = new Map<string, RuntimeModelOption>()
   private readonly externalCommandCache = new Map<
     string,
     {
@@ -615,6 +620,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         long: numberValue(longContext.maxPromptTokens),
         maximum: numberValue(capabilityLimits.max_prompt_tokens),
       })
+      const supportedEfforts = Array.isArray(value.supportedReasoningEfforts)
+        ? value.supportedReasoningEfforts.filter(
+            (effort): effort is string => typeof effort === 'string',
+          )
+        : []
+      this.runtimeModels.set(model.id, {
+        id: model.id,
+        name: stringValue(value.name) || model.id,
+        reasoningEfforts:
+          supportedEfforts.length > 0
+            ? supportedEfforts
+            : [stringValue(value.defaultReasoningEffort) || 'medium'],
+        contextTiers:
+          Object.keys(longContext).length > 0
+            ? ['default', 'long_context']
+            : ['default'],
+      })
     }
   }
 
@@ -706,6 +728,70 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const renamed = await this.store.renameSession(id, title)
     this.publish(renamed)
     return renamed
+  }
+
+  async runtimeOptions(id: string): Promise<RuntimeOptions> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    return {
+      current: stored.runtime || {},
+      models: [...this.runtimeModels.values()],
+    }
+  }
+
+  async configureRuntime(
+    id: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (stored.status === 'running' || stored.status === 'waiting') {
+      throw new Error('Runtime settings can only change while the session is idle')
+    }
+    const model = this.runtimeModels.get(input.model)
+    if (!model) {
+      throw new Error('Selected model is not available')
+    }
+    if (!model.reasoningEfforts.includes(input.reasoningEffort)) {
+      throw new Error('Selected reasoning effort is not supported by this model')
+    }
+    if (!model.contextTiers.includes(input.contextTier)) {
+      throw new Error('Selected context tier is not supported by this model')
+    }
+    if (this.externalSessionIds.has(id)) {
+      if (!this.terminalController.configure) {
+        throw new Error('Terminal runtime configuration is not available')
+      }
+      if (!(await this.terminalController.configure(id, stored.cwd, input))) {
+        throw new Error('External terminal is no longer available')
+      }
+    } else {
+      const session = await this.ensureLoaded(id)
+      await session.rpc.model.switchTo({
+        modelId: input.model,
+        reasoningEffort: input.reasoningEffort,
+        contextTier: input.contextTier,
+      })
+    }
+    const limits = this.modelPromptLimits.get(input.model)
+    const updated = await this.store.update(id, (session) => {
+      session.runtime = {
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        contextTier: input.contextTier,
+        contextTokenLimit:
+          input.contextTier === 'long_context'
+            ? limits?.long || limits?.maximum
+            : limits?.default || limits?.maximum,
+        contextEstimated: true,
+      }
+    })
+    this.publish(updated)
+    return updated
   }
 
   private async createTerminalSession(cwd: string): Promise<SessionDetail> {

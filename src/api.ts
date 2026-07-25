@@ -1,6 +1,7 @@
 import type {
   AddComputerInput,
   ComputerSummary,
+  ConfigureRuntimeInput,
   CreateSessionInput,
   DirectoryListing,
   ExecuteCommandInput,
@@ -8,6 +9,7 @@ import type {
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
   RenameSessionInput,
+  RuntimeOptions,
   SendMessageInput,
   SlashCommand,
 } from '../shared/contracts'
@@ -162,6 +164,30 @@ export async function removeQueuedPrompt(
     `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}`,
     { method: 'DELETE' },
   )
+}
+
+export async function getRuntimeOptions(
+  computerId: string,
+  sessionId: string,
+): Promise<RuntimeOptions> {
+  return request<RuntimeOptions>(
+    `${sessionPath(computerId, sessionId)}/runtime`,
+  )
+}
+
+export async function configureRuntime(
+  computerId: string,
+  sessionId: string,
+  input: ConfigureRuntimeInput,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/runtime`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  )
+  return response.session
 }
 
 export async function sendMessage(

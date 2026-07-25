@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { findActiveCopilotProcesses } from './active-sessions.js'
+import type { ConfigureRuntimeInput } from '../shared/contracts.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -14,6 +15,11 @@ export interface TerminalSessionController {
     title: string,
   ): Promise<{ sessionName: string; windowId: string }>
   rename?(sessionId: string, title: string): Promise<boolean>
+  configure?(
+    sessionId: string,
+    cwd: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
@@ -53,6 +59,44 @@ export class TmuxTerminalSessionController
       const windowName = `${safeWindowName(title)}-${sessionId.slice(0, 8)}`
       await execFileAsync('tmux', ['rename-window', '-t', target, windowName])
       return true
+    })
+  }
+
+  async configure(
+    sessionId: string,
+    cwd: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const target = await this.target(sessionId)
+      if (!target) {
+        return false
+      }
+      const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
+      await execFileAsync('tmux', [
+        'respawn-pane',
+        '-k',
+        '-t',
+        target,
+        '-c',
+        cwd,
+        copilot,
+        '--session-id',
+        sessionId,
+        '--model',
+        input.model,
+        '--effort',
+        input.reasoningEffort,
+        '--context',
+        input.contextTier,
+      ])
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        if (await this.target(sessionId)) {
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      throw new Error('Copilot did not restart with the runtime settings')
     })
   }
 

@@ -2,12 +2,14 @@ import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import type {
   CreateSessionInput,
+  ConfigureRuntimeInput,
   DirectoryListing,
   ExecuteCommandInput,
   NodeInfo,
   PermissionReplyInput,
   RenameSessionInput,
   RemovedQueuedPrompt,
+  RuntimeOptions,
   SendMessageInput,
   ServerEvent,
   SessionDetail,
@@ -131,6 +133,26 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(promptId)}`,
       { method: 'DELETE' },
     )
+  }
+
+  async runtimeOptions(sessionId: string): Promise<RuntimeOptions> {
+    return this.request<RuntimeOptions>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/runtime`,
+    )
+  }
+
+  async configureRuntime(
+    sessionId: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/runtime`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+    )
+    return response.session
   }
 
   async sendMessage(

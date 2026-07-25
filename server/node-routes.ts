@@ -40,6 +40,12 @@ const executeCommandSchema = z.object({
   enqueue: z.boolean().optional(),
 })
 
+const configureRuntimeSchema = z.object({
+  model: z.string().trim().min(1).max(200),
+  reasoningEffort: z.string().trim().min(1).max(50),
+  contextTier: z.enum(['default', 'long_context']),
+})
+
 const directoryQuerySchema = z.object({
   path: z.string().trim().max(4096).optional(),
 })
@@ -126,6 +132,24 @@ export async function registerNodeRoutes(
             session: await service.renameSession(
               request.params.sessionId,
               input.title,
+            ),
+          }
+        },
+      )
+
+      node.get<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/runtime',
+        async (request) => service.runtimeOptions(request.params.sessionId),
+      )
+
+      node.patch<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/runtime',
+        async (request) => {
+          const input = configureRuntimeSchema.parse(request.body)
+          return {
+            session: await service.configureRuntime(
+              request.params.sessionId,
+              input,
             ),
           }
         },

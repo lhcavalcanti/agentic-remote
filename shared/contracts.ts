@@ -39,6 +39,24 @@ export interface SessionRuntimeInfo {
   contextEstimated?: boolean
 }
 
+export interface RuntimeModelOption {
+  id: string
+  name: string
+  reasoningEfforts: string[]
+  contextTiers: Array<'default' | 'long_context'>
+}
+
+export interface RuntimeOptions {
+  current: SessionRuntimeInfo
+  models: RuntimeModelOption[]
+}
+
+export interface ConfigureRuntimeInput {
+  model: string
+  reasoningEffort: string
+  contextTier: 'default' | 'long_context'
+}
+
 export interface SessionSummary {
   id: string
   cwd: string

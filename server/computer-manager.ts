@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type {
   AddComputerInput,
+  ConfigureRuntimeInput,
   ComputerSummary,
   CreateSessionInput,
   DirectoryListing,
@@ -11,6 +12,7 @@ import type {
   PermissionReplyInput,
   RenameSessionInput,
   SendMessageInput,
+  RuntimeOptions,
   ServerEvent,
   SessionDetail,
   SlashCommand,
@@ -252,6 +254,28 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       session: managedSession(result.session, computer),
       prompt: result.prompt,
     }
+  }
+
+  async runtimeOptions(
+    computerId: string,
+    sessionId: string,
+  ): Promise<RuntimeOptions> {
+    return computerId === this.identity.info.id
+      ? this.localService.runtimeOptions(sessionId)
+      : this.requireClient(computerId).runtimeOptions(sessionId)
+  }
+
+  async configureRuntime(
+    computerId: string,
+    sessionId: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.configureRuntime(sessionId, input)
+        : await this.requireClient(computerId).configureRuntime(sessionId, input)
+    return managedSession(session, computer)
   }
 
   async sendMessage(

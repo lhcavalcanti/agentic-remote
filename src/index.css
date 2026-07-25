@@ -981,17 +981,47 @@ button {
 
 .composer-runtime {
   display: flex;
+  width: fit-content;
   max-width: 800px;
   min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 4px 10px;
-  margin: 6px auto 0;
+  margin: 6px 0 0 auto;
+  padding: 2px 3px;
   color: #73776d;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 9px;
   line-height: 1.35;
   text-align: right;
+  cursor: pointer;
+}
+
+.composer-runtime:hover {
+  color: var(--muted-strong);
+  background: var(--panel-raised);
+}
+
+.composer-runtime svg {
+  flex: 0 0 auto;
+}
+
+.dialog-message,
+.runtime-dialog__hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.dialog-message {
+  margin: 12px 0 0;
+}
+
+.runtime-dialog__hint {
+  margin: 14px 0 0;
 }
 
 .web-statusline__computer {

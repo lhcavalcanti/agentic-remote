@@ -15,9 +15,11 @@ import App from './App'
 import {
   activateSession,
   createSession,
+  configureRuntime,
   deleteSession,
   executeCommand,
   getSession,
+  getRuntimeOptions,
   listCommands,
   listComputers,
   listDirectories,
@@ -41,6 +43,8 @@ vi.mock('./api', () => ({
   addComputer: vi.fn(),
   removeComputer: vi.fn(),
   createSession: vi.fn(),
+  configureRuntime: vi.fn(),
+  getRuntimeOptions: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
   executeCommand: vi.fn(),
@@ -150,6 +154,22 @@ describe('App', () => {
     )
     vi.mocked(getSession).mockResolvedValue(session)
     vi.mocked(createSession).mockResolvedValue(session)
+    vi.mocked(getRuntimeOptions).mockResolvedValue({
+      current: {
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      },
+      models: [
+        {
+          id: 'gpt-5.6-sol',
+          name: 'GPT-5.6 Sol',
+          reasoningEfforts: ['medium', 'high', 'xhigh'],
+          contextTiers: ['default', 'long_context'],
+        },
+      ],
+    })
+    vi.mocked(configureRuntime).mockResolvedValue(session)
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'model',
@@ -614,11 +634,43 @@ describe('App', () => {
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'long context',
       )
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+      expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'ctx ~200k/922k (22%)',
       )
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
         'gpt-5.6-sol',
+      )
+      expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
+        'ctx ~200k/922k (22%)',
+      )
+
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Configure model, effort, and context',
+        }),
+      )
+      expect(
+        await screen.findByRole('dialog', { name: 'Model and context' }),
+      ).toBeInTheDocument()
+      fireEvent.change(screen.getByLabelText('Reasoning effort'), {
+        target: { value: 'xhigh' },
+      })
+      fireEvent.change(screen.getByLabelText('Context size'), {
+        target: { value: 'default' },
+      })
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Apply runtime settings' }),
+      )
+      await waitFor(() =>
+        expect(configureRuntime).toHaveBeenCalledWith(
+          'computer-1',
+          'session-1',
+          {
+            model: 'gpt-5.6-sol',
+            reasoningEffort: 'xhigh',
+            contextTier: 'default',
+          },
+        ),
       )
 
       fireEvent.change(textarea, { target: { value: '/aa' } })

@@ -44,6 +44,12 @@ const executeCommandSchema = z.object({
   enqueue: z.boolean().optional(),
 })
 
+const configureRuntimeSchema = z.object({
+  model: z.string().trim().min(1).max(200),
+  reasoningEffort: z.string().trim().min(1).max(50),
+  contextTier: z.enum(['default', 'long_context']),
+})
+
 const directoryQuerySchema = z.object({
   path: z.string().trim().max(4096).optional(),
 })
@@ -142,6 +148,29 @@ export async function registerHubRoutes(
       const input = renameSessionSchema.parse(request.body)
       return {
         session: await manager.renameSession(
+          request.params.computerId,
+          request.params.sessionId,
+          input,
+        ),
+      }
+    },
+  )
+
+  app.get<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/runtime',
+    async (request) =>
+      manager.runtimeOptions(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+  )
+
+  app.patch<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/runtime',
+    async (request) => {
+      const input = configureRuntimeSchema.parse(request.body)
+      return {
+        session: await manager.configureRuntime(
           request.params.computerId,
           request.params.sessionId,
           input,

@@ -8,6 +8,7 @@ import type {
   HubEvent,
   ManagedSession,
   PermissionReplyInput,
+  RenameSessionInput,
   SendMessageInput,
   ServerEvent,
   SessionDetail,
@@ -217,6 +218,19 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       computerId === this.identity.info.id
         ? await this.localService.activateSession(sessionId)
         : await this.requireClient(computerId).activateSession(sessionId)
+    return managedSession(session, computer)
+  }
+
+  async renameSession(
+    computerId: string,
+    sessionId: string,
+    input: RenameSessionInput,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.renameSession(sessionId, input.title)
+        : await this.requireClient(computerId).renameSession(sessionId, input)
     return managedSession(session, computer)
   }
 

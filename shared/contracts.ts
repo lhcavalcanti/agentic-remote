@@ -81,6 +81,10 @@ export interface SendMessageInput {
   enqueue?: boolean
 }
 
+export interface RenameSessionInput {
+  title: string
+}
+
 export interface PermissionReplyInput {
   optionId: string
 }

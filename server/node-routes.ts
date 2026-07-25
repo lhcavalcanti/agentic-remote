@@ -10,6 +10,22 @@ const createSessionSchema = z.object({
   terminalBacked: z.boolean().default(true),
 })
 
+const renameSessionSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .refine(
+      (title) =>
+        [...title].every((character) => {
+          const code = character.charCodeAt(0)
+          return code >= 32 && code !== 127 && character !== '"'
+        }),
+      'Session names cannot contain control characters or double quotes',
+    ),
+})
+
 const sendMessageSchema = z.object({
   content: z.string().trim().min(1).max(200_000),
   enqueue: z.boolean().optional(),
@@ -100,6 +116,19 @@ export async function registerNodeRoutes(
         async (request) => ({
           session: await service.activateSession(request.params.sessionId),
         }),
+      )
+
+      node.patch<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId',
+        async (request) => {
+          const input = renameSessionSchema.parse(request.body)
+          return {
+            session: await service.renameSession(
+              request.params.sessionId,
+              input.title,
+            ),
+          }
+        },
       )
 
       node.post<{ Params: { sessionId: string } }>(

@@ -6,6 +6,7 @@ import type {
   ExecuteCommandInput,
   NodeInfo,
   PermissionReplyInput,
+  RenameSessionInput,
   SendMessageInput,
   ServerEvent,
   SessionDetail,
@@ -102,6 +103,20 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       {
         method: 'POST',
         body: '{}',
+      },
+    )
+    return response.session
+  }
+
+  async renameSession(
+    sessionId: string,
+    input: RenameSessionInput,
+  ): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
       },
     )
     return response.session

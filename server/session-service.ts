@@ -14,6 +14,7 @@ export interface SessionService {
   openSession(id: string): Promise<SessionDetail>
   activateSession(id: string): Promise<SessionDetail>
   createSession(cwd: string, terminalBacked?: boolean): Promise<SessionDetail>
+  renameSession(id: string, title: string): Promise<SessionDetail>
   sendMessage(
     sessionId: string,
     content: string,

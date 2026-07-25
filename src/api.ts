@@ -6,6 +6,7 @@ import type {
   ExecuteCommandInput,
   ManagedSession,
   PermissionReplyInput,
+  RenameSessionInput,
   SendMessageInput,
   SlashCommand,
 } from '../shared/contracts'
@@ -131,6 +132,21 @@ export async function activateSession(
     {
       method: 'POST',
       body: '{}',
+    },
+  )
+  return response.session
+}
+
+export async function renameSession(
+  computerId: string,
+  sessionId: string,
+  input: RenameSessionInput,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    sessionPath(computerId, sessionId),
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
     },
   )
   return response.session

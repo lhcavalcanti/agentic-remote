@@ -17,10 +17,15 @@ interface StoredState {
 
 interface StoredSession extends SessionDetail {
   managedOpen?: boolean
+  customTitle?: boolean
 }
 
 function cloneSession(session: StoredSession): SessionDetail {
-  const { managedOpen: _managedOpen, ...detail } = structuredClone(session)
+  const {
+    managedOpen: _managedOpen,
+    customTitle: _customTitle,
+    ...detail
+  } = structuredClone(session)
   return detail
 }
 
@@ -96,7 +101,9 @@ export class SessionStore {
       const existing = this.state.sessions[discovered.id]
       if (existing) {
         existing.cwd = discovered.cwd
-        existing.title = discovered.title || existing.title
+        if (!existing.customTitle) {
+          existing.title = discovered.title || existing.title
+        }
         if (discovered.updatedAt > existing.updatedAt) {
           existing.updatedAt = discovered.updatedAt
         }
@@ -155,6 +162,14 @@ export class SessionStore {
       if (managedOpen) {
         session.managedOpen = isOpen
       }
+    })
+  }
+
+  async renameSession(sessionId: string, title: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.title = title
+      session.customTitle = true
+      session.updatedAt = new Date().toISOString()
     })
   }
 

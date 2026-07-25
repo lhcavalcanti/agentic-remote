@@ -23,12 +23,14 @@ import {
   listDirectories,
   listHistory,
   listSessions,
+  renameSession,
   sendMessage,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
+  renameSession: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
   listDirectories: vi.fn(),
@@ -167,6 +169,12 @@ describe('App', () => {
       },
     ])
     vi.mocked(sendMessage).mockResolvedValue(session)
+    vi.mocked(renameSession).mockImplementation(
+      async (_computerId, _sessionId, input) => ({
+        ...session,
+        title: input.title,
+      }),
+    )
     vi.mocked(executeCommand).mockResolvedValue(session)
     vi.mocked(activateSession).mockResolvedValue({
       ...historicalSession,
@@ -264,6 +272,34 @@ describe('App', () => {
         'historical-session',
       )
     })
+  })
+
+  it('renames the selected session from the conversation header', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+    fireEvent.change(screen.getByLabelText('Session name'), {
+      target: { value: 'Renamed project' },
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, status: 'running' },
+        }),
+      } as MessageEvent)
+    })
+    expect(screen.getByLabelText('Session name')).toHaveValue('Renamed project')
+    fireEvent.submit(screen.getByLabelText('Session name').closest('form')!)
+
+    await waitFor(() =>
+      expect(renameSession).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        { title: 'Renamed project' },
+      ),
+    )
+    expect(await screen.findAllByText('Renamed project')).not.toHaveLength(0)
   })
 
   it('ignores stale folder responses after switching computers', async () => {

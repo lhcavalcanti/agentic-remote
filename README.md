@@ -15,6 +15,8 @@ SDK-only session instead.
 Computer groups and sessions can be reordered by dragging their handles; order
 is retained in the browser. Open transcripts synchronize from Copilot's event
 logs so terminal- and UI-originated messages stay consistent.
+Use the pencil action in the conversation header to rename a session; custom
+names persist across discovery refreshes and also rename tmux-backed windows.
 
 Composer controls follow Copilot CLI conventions:
 

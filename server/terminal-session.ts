@@ -13,6 +13,7 @@ export interface TerminalSessionController {
     cwd: string,
     title: string,
   ): Promise<{ sessionName: string; windowId: string }>
+  rename?(sessionId: string, title: string): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
@@ -41,6 +42,18 @@ export class TmuxTerminalSessionController
 
   async has(sessionId: string): Promise<boolean> {
     return Boolean(await this.target(sessionId))
+  }
+
+  async rename(sessionId: string, title: string): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const target = await this.target(sessionId)
+      if (!target) {
+        return false
+      }
+      const windowName = `${safeWindowName(title)}-${sessionId.slice(0, 8)}`
+      await execFileAsync('tmux', ['rename-window', '-t', target, windowName])
+      return true
+    })
   }
 
   async cancel(sessionId: string): Promise<boolean> {

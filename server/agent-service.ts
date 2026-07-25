@@ -58,6 +58,7 @@ export interface CopilotSessionLike {
       CopilotSession['rpc']['commands'],
       'list' | 'invoke' | 'enqueue'
     >
+    name: Pick<CopilotSession['rpc']['name'], 'set'>
   }
 }
 
@@ -456,6 +457,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
     this.publish(session)
     return session
+  }
+
+  async renameSession(id: string, title: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (this.externalSessionIds.has(id)) {
+      await this.terminalController.rename?.(id, title)
+    } else {
+      const session = await this.ensureLoaded(id)
+      await session.rpc.name.set({ name: title })
+    }
+    const renamed = await this.store.renameSession(id, title)
+    this.publish(renamed)
+    return renamed
   }
 
   private async createTerminalSession(cwd: string): Promise<SessionDetail> {

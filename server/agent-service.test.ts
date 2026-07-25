@@ -21,10 +21,16 @@ class DeferredSession implements CopilotSessionLike {
   readonly sessionId = 'active-session'
   readonly sentPrompts: string[] = []
   readonly invokedCommands: string[] = []
+  readonly assignedNames: string[] = []
   private readonly responseResolvers: Array<
     (value: AssistantMessageEvent | undefined) => void
   > = []
   readonly rpc = {
+    name: {
+      set: async ({ name }: { name: string }) => {
+        this.assignedNames.push(name)
+      },
+    },
     commands: {
       list: async () => ({
         commands: [
@@ -245,6 +251,7 @@ describe('AgentService deletion', () => {
       has: vi.fn(async () => true),
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
+      rename: vi.fn(async () => true),
     }
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
@@ -268,6 +275,32 @@ describe('AgentService deletion', () => {
     expect(service.listSessions()).toEqual([
       expect.objectContaining({ id: created.id, isOpen: true }),
     ])
+    const renamed = await service.renameSession(created.id, 'Renamed terminal')
+    expect(renamed.title).toBe('Renamed terminal')
+    expect(terminal.rename).toHaveBeenCalledWith(
+      created.id,
+      'Renamed terminal',
+    )
+    await service.stop()
+  })
+
+  it('renames SDK sessions through Copilot and persists the title', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+
+    const renamed = await service.renameSession(created.id, 'Renamed SDK')
+
+    expect(client.session.assignedNames).toEqual(['Renamed SDK'])
+    expect(renamed.title).toBe('Renamed SDK')
     await service.stop()
   })
 
@@ -284,6 +317,7 @@ describe('AgentService deletion', () => {
       has: vi.fn(async () => true),
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
+      rename: vi.fn(async () => true),
     }
     const activeSessions = async () =>
       launchedSessionId

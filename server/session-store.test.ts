@@ -185,6 +185,34 @@ describe('SessionStore', () => {
     })
   })
 
+  it('preserves a custom title across discovery and reloads', async () => {
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'custom-title',
+      cwd: '/tmp/project',
+      title: 'Generated title',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+    await store.renameSession('custom-title', 'My project')
+    await store.syncDiscovered([
+      {
+        id: 'custom-title',
+        cwd: '/tmp/project',
+        title: 'New generated title',
+        updatedAt: '2026-07-23T00:00:00.000Z',
+      },
+    ])
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+
+    expect(reloaded.get('custom-title')).toMatchObject({
+      title: 'My project',
+    })
+    expect(reloaded.get('custom-title')).not.toHaveProperty('customTitle')
+  })
+
   it('keeps only currently active sessions open', async () => {
     const { store } = await createStore()
     for (const id of ['running', 'stopped']) {

@@ -51,11 +51,13 @@ describe('TmuxTerminalSessionController', () => {
     vi.stubEnv('COPILOT_BIN', executable)
     const sessionId = '01234567-89ab-cdef-0123-456789abcdef'
 
-    const location = await new TmuxTerminalSessionController().create(
+    const controller = new TmuxTerminalSessionController()
+    const location = await controller.create(
       sessionId,
       directory,
       'Project workspace',
     )
+    expect(await controller.rename(sessionId, 'Renamed project')).toBe(true)
 
     expect(location.sessionName).toBe(tmuxSession)
     expect(await readFile(output, 'utf8')).toBe(directory)
@@ -68,7 +70,7 @@ describe('TmuxTerminalSessionController', () => {
         '#{window_name}',
       ])
     ).stdout
-    expect(windows).toContain('Project workspace-01234567')
+    expect(windows).toContain('Renamed project-01234567')
   })
 
   it('delivers a prompt into the owning terminal pane', async () => {

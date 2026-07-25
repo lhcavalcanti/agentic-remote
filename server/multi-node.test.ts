@@ -98,6 +98,16 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
+  async renameSession(id: string, title: string): Promise<SessionDetail> {
+    const session = this.sessions.get(id)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.title = title
+    this.emitEvent({ type: 'session.upserted', session })
+    return structuredClone(session)
+  }
+
   async sendMessage(sessionId: string, content: string): Promise<SessionDetail> {
     const session = this.sessions.get(sessionId)
     if (!session) {
@@ -333,6 +343,15 @@ describe('multi-node hub', () => {
       expect(detail.json().session).toMatchObject({
         computerName: 'homelab-prod',
         messages: [{ content: 'Remote history' }],
+      })
+      const renamed = await hub.app.inject({
+        method: 'PATCH',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session`,
+        payload: { title: 'Renamed remote' },
+      })
+      expect(renamed.json().session).toMatchObject({
+        title: 'Renamed remote',
+        computerName: 'homelab-prod',
       })
 
       const history = await hub.app.inject({

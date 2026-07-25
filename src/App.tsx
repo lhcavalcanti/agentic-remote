@@ -34,6 +34,7 @@ import {
   Menu,
   MessageSquare,
   MonitorCog,
+  Pencil,
   Plus,
   Server,
   Square,
@@ -67,6 +68,7 @@ import {
   listDirectories,
   listSessions,
   removeComputer,
+  renameSession,
   replyPermission,
   sendMessage,
 } from './api'
@@ -882,12 +884,93 @@ function StatuslineDialog({
   )
 }
 
+function RenameSessionDialog({
+  open,
+  session,
+  onClose,
+  onRenamed,
+}: {
+  open: boolean
+  session?: ManagedSession
+  onClose: () => void
+  onRenamed: (session: ManagedSession) => void
+}) {
+  if (!open || !session) {
+    return null
+  }
+  return (
+    <RenameSessionForm
+      key={sessionKey(session)}
+      onClose={onClose}
+      onRenamed={onRenamed}
+      session={session}
+    />
+  )
+}
+
+function RenameSessionForm({
+  session,
+  onClose,
+  onRenamed,
+}: {
+  session: ManagedSession
+  onClose: () => void
+  onRenamed: (session: ManagedSession) => void
+}) {
+  const [title, setTitle] = useState(session.title)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string>()
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setSubmitting(true)
+    setError(undefined)
+    try {
+      onRenamed(
+        await renameSession(session.computerId, session.id, {
+          title: title.trim(),
+        }),
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <DialogFrame eyebrow="Session" onClose={onClose} title="Rename session">
+      <form onSubmit={submit}>
+        <label className="field">
+          <span>Session name</span>
+          <input
+            autoFocus
+            className="dialog-input"
+            maxLength={100}
+            onChange={(event) => setTitle(event.target.value)}
+            value={title}
+          />
+        </label>
+        {error ? <p className="form-error">{error}</p> : null}
+        <button
+          className="primary-button dialog__submit"
+          disabled={submitting || !title.trim()}
+          type="submit"
+        >
+          {submitting ? 'Renaming…' : 'Rename session'}
+        </button>
+      </form>
+    </DialogFrame>
+  )
+}
+
 function App() {
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
   const [computerFilter, setComputerFilter] = useState('all')
   const [selectedKey, setSelectedKey] = useState<string>()
   const [composer, setComposer] = useState('')
+  const [renameOpen, setRenameOpen] = useState(false)
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -1661,6 +1744,16 @@ function App() {
           </div>
           {selected ? (
             <button
+              aria-label="Rename session"
+              className="icon-button"
+              onClick={() => setRenameOpen(true)}
+              type="button"
+            >
+              <Pencil size={17} />
+            </button>
+          ) : null}
+          {selected ? (
+            <button
               aria-label="Close session"
               className="icon-button icon-button--danger"
               disabled={deleting}
@@ -1915,6 +2008,15 @@ function App() {
         onClose={() => setStatuslineOpen(false)}
         open={statuslineOpen}
         settings={statusline}
+      />
+      <RenameSessionDialog
+        onClose={() => setRenameOpen(false)}
+        onRenamed={(session) => {
+          setSessions((current) => upsertSession(current, session))
+          setRenameOpen(false)
+        }}
+        open={renameOpen}
+        session={selected}
       />
     </div>
   )

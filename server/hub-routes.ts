@@ -14,6 +14,22 @@ const createSessionSchema = z.object({
   terminalBacked: z.boolean().default(true),
 })
 
+const renameSessionSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .refine(
+      (title) =>
+        [...title].every((character) => {
+          const code = character.charCodeAt(0)
+          return code >= 32 && code !== 127 && character !== '"'
+        }),
+      'Session names cannot contain control characters or double quotes',
+    ),
+})
+
 const sendMessageSchema = z.object({
   content: z.string().trim().min(1).max(200_000),
   enqueue: z.boolean().optional(),
@@ -118,6 +134,20 @@ export async function registerHubRoutes(
         request.params.sessionId,
       ),
     }),
+  )
+
+  app.patch<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId',
+    async (request) => {
+      const input = renameSessionSchema.parse(request.body)
+      return {
+        session: await manager.renameSession(
+          request.params.computerId,
+          request.params.sessionId,
+          input,
+        ),
+      }
+    },
   )
 
   app.post<{ Params: SessionParams }>(

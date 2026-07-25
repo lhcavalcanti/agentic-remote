@@ -32,6 +32,7 @@ class DeferredSession implements CopilotSessionLike {
   private readonly responseResolvers: Array<
     (value: AssistantMessageEvent | undefined) => void
   > = []
+  private readonly eventHandlers: Array<(event: SessionEvent) => void> = []
   readonly rpc = {
     model: {
       switchTo: async (input: {
@@ -97,8 +98,20 @@ class DeferredSession implements CopilotSessionLike {
     },
   }
 
-  on(_handler: (event: SessionEvent) => void): () => void {
-    return () => undefined
+  on(handler: (event: SessionEvent) => void): () => void {
+    this.eventHandlers.push(handler)
+    return () => {
+      const index = this.eventHandlers.indexOf(handler)
+      if (index >= 0) {
+        this.eventHandlers.splice(index, 1)
+      }
+    }
+  }
+
+  emit(event: SessionEvent): void {
+    for (const handler of this.eventHandlers) {
+      handler(event)
+    }
   }
 
   sendAndWait(content: string): Promise<AssistantMessageEvent | undefined> {
@@ -1009,7 +1022,14 @@ describe('AgentService deletion', () => {
         "id":"tool-start",
         "parentId":"user-1",
         "timestamp":"2026-07-22T00:00:01.000Z",
-        "data":{"toolCallId":"call-1","toolName":"bash"}
+        "data":{
+          "toolCallId":"call-1",
+          "toolName":"bash",
+          "arguments":{
+            "description":"Run checks",
+            "command":"pnpm test"
+          }
+        }
       },
       {
         "type":"tool.execution_complete",
@@ -1017,6 +1037,24 @@ describe('AgentService deletion', () => {
         "parentId":"tool-start",
         "timestamp":"2026-07-22T00:00:02.000Z",
         "data":{"toolCallId":"call-1","success":true}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"tool-start-2",
+        "parentId":"tool-end",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{
+          "toolCallId":"call-2",
+          "toolName":"view",
+          "arguments":{"path":"/tmp/project.ts"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"tool-end-2",
+        "parentId":"tool-start-2",
+        "timestamp":"2026-07-22T00:00:04.000Z",
+        "data":{"toolCallId":"call-2","success":false}
       }
     ]`) as SessionEvent[]
     const store = new SessionStore(path.join(directory, 'state'))
@@ -1041,8 +1079,13 @@ describe('AgentService deletion', () => {
       expect.objectContaining({ role: 'user', content: 'hello' }),
       expect.objectContaining({
         role: 'activity',
-        content: 'Tool · Bash',
+        content: 'Bash · Run checks\n$ pnpm test',
         activityStatus: 'completed',
+      }),
+      expect.objectContaining({
+        role: 'activity',
+        content: 'View\n/tmp/project.ts',
+        activityStatus: 'failed',
       }),
     ])
 
@@ -1052,7 +1095,7 @@ describe('AgentService deletion', () => {
         {
           type: 'assistant.message',
           id: 'assistant-1',
-          timestamp: '2026-07-22T00:00:03.000Z',
+          timestamp: '2026-07-22T00:00:05.000Z',
           content: 'latest response',
         },
       ]),
@@ -1063,6 +1106,78 @@ describe('AgentService deletion', () => {
       role: 'assistant',
       content: 'latest response',
     })
+    await service.stop()
+  })
+
+  it('streams each SDK tool call as a separate detailed activity', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    const start = (id: string, toolName: string, args: object) =>
+      JSON.parse(
+        JSON.stringify({
+          type: 'tool.execution_start',
+          id: `start-${id}`,
+          parentId: null,
+          timestamp: new Date().toISOString(),
+          data: { toolCallId: id, toolName, arguments: args },
+        }),
+      ) as SessionEvent
+    const complete = (id: string, success: boolean) =>
+      JSON.parse(
+        JSON.stringify({
+          type: 'tool.execution_complete',
+          id: `complete-${id}`,
+          parentId: `start-${id}`,
+          timestamp: new Date().toISOString(),
+          data: { toolCallId: id, success },
+        }),
+      ) as SessionEvent
+
+    client.session.emit(
+      start('call-a', 'bash', {
+        description: 'Run unit tests',
+        command: 'pnpm test',
+      }),
+    )
+    client.session.emit(
+      start('call-b', 'view', { path: '/tmp/source.ts' }),
+    )
+    client.session.emit(complete('call-a', true))
+    client.session.emit(complete('call-b', false))
+    await vi.waitFor(() =>
+      expect(
+        service.store
+          .get(created.id)
+          ?.messages.filter((message) => message.role === 'activity'),
+      ).toHaveLength(2),
+    )
+
+    expect(
+      service.store
+        .get(created.id)
+        ?.messages.filter((message) => message.role === 'activity'),
+    ).toEqual([
+      expect.objectContaining({
+        id: 'tool:call-a',
+        content: 'Bash · Run unit tests\n$ pnpm test',
+        activityStatus: 'completed',
+      }),
+      expect.objectContaining({
+        id: 'tool:call-b',
+        content: 'View\n/tmp/source.ts',
+        activityStatus: 'failed',
+      }),
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 20))
     await service.stop()
   })
 

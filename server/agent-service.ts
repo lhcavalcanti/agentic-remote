@@ -120,30 +120,7 @@ export interface AgentServiceEvents {
 
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
-  type ToolGroup = {
-    messageIndex: number
-    names: Set<string>
-    active: Set<string>
-    failed: boolean
-  }
-  const tools = new Map<string, ToolGroup>()
-  let currentToolGroup: ToolGroup | undefined
-
-  const updateToolGroup = (group: ToolGroup) => {
-    const message = messages[group.messageIndex]
-    if (!message) {
-      return
-    }
-    const names = [...group.names]
-    message.content =
-      names.length === 1
-        ? `Tool · ${names[0]}`
-        : `Tools · ${names.slice(0, 3).join(', ')}${
-            names.length > 3 ? ` +${names.length - 3}` : ''
-          }`
-    message.activityStatus =
-      group.active.size > 0 ? 'running' : group.failed ? 'failed' : 'completed'
-  }
+  const tools = new Map<string, number>()
 
   for (const event of events) {
     if (event.type === 'user.message') {
@@ -152,7 +129,6 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       const content = visibleUserContent(event.data.content)
       if (content) {
-        currentToolGroup = undefined
         messages.push({
           id: event.id,
           role: 'user',
@@ -165,7 +141,6 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     if (event.type === 'assistant.message' && !event.agentId) {
       const content = event.data.content.trim()
       if (content) {
-        currentToolGroup = undefined
         messages.push({
           id: event.data.messageId || event.id,
           role: 'assistant',
@@ -176,36 +151,22 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       continue
     }
     if (event.type === 'tool.execution_start' && !event.agentId) {
-      const toolCallId = event.data.toolCallId
-      if (!currentToolGroup) {
-        currentToolGroup = {
-          messageIndex: messages.length,
-          names: new Set(),
-          active: new Set(),
-          failed: false,
-        }
-        messages.push({
-          id: `tools:${event.id}`,
-          role: 'activity',
-          content: '',
-          createdAt: event.timestamp,
-          activityStatus: 'running',
-        })
-      }
-      currentToolGroup.names.add(readableToolName(event.data.toolName))
-      currentToolGroup.active.add(toolCallId)
-      tools.set(toolCallId, currentToolGroup)
-      messages[currentToolGroup.messageIndex].createdAt = event.timestamp
-      updateToolGroup(currentToolGroup)
+      tools.set(event.data.toolCallId, messages.length)
+      messages.push({
+        id: `tool:${event.data.toolCallId}`,
+        role: 'activity',
+        content: toolActivityContent(event.data),
+        createdAt: event.timestamp,
+        activityStatus: 'running',
+      })
       continue
     }
     if (event.type === 'tool.execution_complete' && !event.agentId) {
-      const group = tools.get(event.data.toolCallId)
-      if (group) {
-        group.active.delete(event.data.toolCallId)
-        group.failed ||= !event.data.success
-        messages[group.messageIndex].createdAt = event.timestamp
-        updateToolGroup(group)
+      const messageIndex = tools.get(event.data.toolCallId)
+      const message =
+        messageIndex === undefined ? undefined : messages[messageIndex]
+      if (message) {
+        message.activityStatus = event.data.success ? 'completed' : 'failed'
       }
     }
   }
@@ -229,6 +190,50 @@ function readableToolName(value: string): string {
     .replaceAll('_', ' ')
     .replaceAll('-', ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+function previewText(value: unknown, multiline = false): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const normalized = stripAnsi(value).replaceAll('\0', '').trim()
+  if (!normalized) {
+    return undefined
+  }
+  const preview = multiline
+    ? normalized
+        .split(/\r?\n/)
+        .slice(0, 3)
+        .map((line) => line.trim())
+        .join('\n')
+    : normalized.replace(/\s+/g, ' ')
+  return preview.length > 320 ? `${preview.slice(0, 319)}…` : preview
+}
+
+function toolActivityContent(data: unknown): string {
+  const tool = recordValue(data)
+  const toolName = stringValue(tool.toolName) || 'tool'
+  const argumentsValue = recordValue(tool.arguments)
+  const toolDescription = recordValue(tool.toolDescription)
+  const description =
+    previewText(toolDescription.description) ||
+    previewText(argumentsValue.description)
+  const command = previewText(argumentsValue.command, true)
+  const detail =
+    command ||
+    previewText(argumentsValue.path) ||
+    previewText(argumentsValue.file_path) ||
+    previewText(argumentsValue.query) ||
+    previewText(argumentsValue.pattern) ||
+    previewText(argumentsValue.url)
+  const title = `${readableToolName(toolName)}${
+    description ? ` · ${description}` : ''
+  }`
+  if (!detail) {
+    return title
+  }
+  const commandLike = /(?:bash|shell|powershell)/i.test(toolName)
+  return `${title}\n${commandLike ? `$ ${detail}` : detail}`
 }
 
 function commandShortcut(value: string): string {
@@ -1562,12 +1567,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             status = 'running'
           }
         }
-        const lastMessage = messages.at(-1)
-        const activity =
-          lastMessage?.role === 'activity' &&
-          lastMessage.activityStatus === 'running'
-            ? lastMessage.content
-            : undefined
+        const activity = messages
+          .findLast(
+            (message) =>
+              message.role === 'activity' &&
+              message.activityStatus === 'running',
+          )
+          ?.content.split('\n', 1)[0]
         const runtime = runtimeInfoFromEvents(
           events,
           stored?.runtime,
@@ -1660,15 +1666,32 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'tool.execution_start') {
+    if (event.type === 'tool.execution_start' && !event.agentId) {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       void this.store
-        .update(sessionId, (stored) => {
-          stored.activity =
-            event.data.toolDescription?.description || event.data.toolName
-        })
+        .startToolActivity(
+          sessionId,
+          event.data.toolCallId,
+          toolActivityContent(event.data),
+          event.timestamp,
+        )
+        .then((stored) => this.publish(stored))
+        .catch((error: unknown) => this.publishError(sessionId, error))
+      return
+    }
+
+    if (event.type === 'tool.execution_complete' && !event.agentId) {
+      if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        return
+      }
+      void this.store
+        .finishToolActivity(
+          sessionId,
+          event.data.toolCallId,
+          event.data.success,
+        )
         .then((stored) => this.publish(stored))
         .catch((error: unknown) => this.publishError(sessionId, error))
     }

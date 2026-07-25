@@ -312,6 +312,54 @@ export class SessionStore {
     })
   }
 
+  async startToolActivity(
+    sessionId: string,
+    toolCallId: string,
+    content: string,
+    createdAt: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const id = `tool:${toolCallId}`
+      const existing = session.messages.find((message) => message.id === id)
+      if (existing) {
+        existing.content = content
+        existing.activityStatus = 'running'
+      } else {
+        session.messages.push({
+          id,
+          role: 'activity',
+          content,
+          createdAt,
+          activityStatus: 'running',
+        })
+      }
+      session.activity = content.split('\n', 1)[0]
+      session.updatedAt = createdAt
+    })
+  }
+
+  async finishToolActivity(
+    sessionId: string,
+    toolCallId: string,
+    success: boolean,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const activity = session.messages.find(
+        (message) => message.id === `tool:${toolCallId}`,
+      )
+      if (activity) {
+        activity.activityStatus = success ? 'completed' : 'failed'
+      }
+      session.activity = session.messages
+        .findLast(
+          (message) =>
+            message.role === 'activity' &&
+            message.activityStatus === 'running',
+        )
+        ?.content.split('\n', 1)[0]
+    })
+  }
+
   streamMessage(sessionId: string, messageId: string, chunk: string): SessionDetail {
     return this.mutateInMemory(sessionId, (session) => {
       const message = session.messages.find((entry) => entry.id === messageId)

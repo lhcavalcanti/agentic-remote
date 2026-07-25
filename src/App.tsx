@@ -699,6 +699,8 @@ function ActivityMessage({
   content: string
   status?: 'running' | 'completed' | 'failed'
 }) {
+  const [title, ...detailLines] = content.split('\n')
+  const detail = detailLines.join('\n').trim()
   const icon =
     status === 'failed' ? (
       <XCircle size={14} />
@@ -710,7 +712,10 @@ function ActivityMessage({
   return (
     <div className={`activity-message activity-message--${status || 'running'}`}>
       {icon}
-      <span>{content}</span>
+      <span>
+        <strong>{title}</strong>
+        {detail ? <code>{detail}</code> : null}
+      </span>
     </div>
   )
 }
@@ -1292,6 +1297,10 @@ function App() {
     [selectedKey, sessions],
   )
   selectedRef.current = selected
+  const hasRunningTool = selected?.messages.some(
+    (message) =>
+      message.role === 'activity' && message.activityStatus === 'running',
+  )
   const selectedComputerId = selected?.computerId
   const selectedSessionId = selected?.id
   const commandQuery = composer.startsWith('/')
@@ -2170,7 +2179,9 @@ function App() {
               permission={selected.pendingPermission}
             />
           ) : null}
-          {selected?.activity && !selected.pendingPermission ? (
+          {selected?.activity &&
+          !selected.pendingPermission &&
+          !hasRunningTool ? (
             <div className="activity-line">
               <span className="activity-pulse" />
               {selected.activity}

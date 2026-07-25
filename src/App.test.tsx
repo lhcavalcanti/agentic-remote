@@ -107,7 +107,7 @@ const session: ManagedSession = {
     {
       id: 'message-2',
       role: 'activity',
-      content: 'Bash',
+      content: 'Bash\n$ pnpm test',
       createdAt: '2026-07-22T00:00:00.500Z',
       activityStatus: 'completed',
     },
@@ -229,6 +229,7 @@ describe('App', () => {
     expect((await screen.findAllByText('Project chat')).length).toBeGreaterThan(0)
     expect(screen.getByText('Hello agent')).toBeInTheDocument()
     expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.getByText('$ pnpm test')).toBeInTheDocument()
     expect(screen.getByText('Ready.').tagName).toBe('STRONG')
     expect(screen.getByLabelText('Message')).toBeInTheDocument()
     expect(document.querySelector('.session-item')?.className).toMatch(

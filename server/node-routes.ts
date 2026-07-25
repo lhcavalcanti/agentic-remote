@@ -7,6 +7,7 @@ import type { SessionService } from './session-service.js'
 
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
+  terminalBacked: z.boolean().default(true),
 })
 
 const sendMessageSchema = z.object({
@@ -86,7 +87,12 @@ export async function registerNodeRoutes(
         const input = createSessionSchema.parse(request.body)
         return reply
           .code(201)
-          .send({ session: await service.createSession(input.cwd) })
+          .send({
+            session: await service.createSession(
+              input.cwd,
+              input.terminalBacked,
+            ),
+          })
       })
 
       node.post<{ Params: { sessionId: string } }>(

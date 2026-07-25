@@ -102,6 +102,7 @@ class FakeCopilotClient implements CopilotClientLike {
   nextSessionList?: Promise<SessionMetadata[]>
   resumeError?: Error
   readonly createdConfigs: SessionConfig[] = []
+  readonly resumedSessionIds: string[] = []
   readonly rpc = {
     commands: {
       list: async () => this.session.rpc.commands.list(),
@@ -117,9 +118,10 @@ class FakeCopilotClient implements CopilotClientLike {
     return this.session
   }
   async resumeSession(
-    _sessionId: string,
+    sessionId: string,
     _config: ResumeSessionConfig,
   ): Promise<CopilotSessionLike> {
+    this.resumedSessionIds.push(sessionId)
     if (this.resumeError) {
       throw this.resumeError
     }
@@ -229,6 +231,98 @@ describe('AgentService deletion', () => {
       }),
     ])
     await restartedService.stop()
+  })
+
+  it('creates terminal-backed sessions without starting an SDK session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      create: vi.fn(async () => ({
+        sessionName: '0',
+        windowId: '@10',
+      })),
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const created = await service.createSession(directory, true)
+
+    expect(terminal.create).toHaveBeenCalledWith(
+      created.id,
+      directory,
+      path.basename(directory),
+    )
+    expect(client.createdConfigs).toEqual([])
+    expect(service.listSessions()).toEqual([
+      expect.objectContaining({ id: created.id, isOpen: true }),
+    ])
+    await service.stop()
+  })
+
+  it('keeps a terminal launch open across an in-flight discovery snapshot', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    let launchedSessionId = ''
+    const terminal = {
+      create: vi.fn(async (sessionId: string) => {
+        launchedSessionId = sessionId
+        return { sessionName: '0', windowId: '@11' }
+      }),
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const activeSessions = async () =>
+      launchedSessionId
+        ? [
+            {
+              id: launchedSessionId,
+              cwd: directory,
+              title: 'Active Copilot session',
+              updatedAt: new Date().toISOString(),
+            },
+          ]
+        : []
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      activeSessions,
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    let releaseSnapshot: (sessions: SessionMetadata[]) => void = () => undefined
+    client.nextSessionList = new Promise((resolve) => {
+      releaseSnapshot = resolve
+    })
+    const refresh = service.refreshDiscovery()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const created = await service.createSession(directory, true)
+    releaseSnapshot([])
+    await refresh
+    await service.openSession(created.id)
+
+    expect(service.listSessions()).toEqual([
+      expect.objectContaining({ id: created.id, isOpen: true }),
+    ])
+    expect(client.resumedSessionIds).toEqual([])
+    await service.stop()
   })
 
   it('recreates an empty managed session when Copilot cannot resume it', async () => {

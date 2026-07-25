@@ -224,6 +224,7 @@ function NewSessionDialog({
     useState<DirectoryListing>()
   const [loadingDirectories, setLoadingDirectories] = useState(false)
   const directoryRequest = useRef(0)
+  const [terminalBacked, setTerminalBacked] = useState(true)
   const [mode, setMode] = useState<'new' | 'previous'>('new')
   const [history, setHistory] = useState<ManagedSession[]>([])
   const [historyKey, setHistoryKey] = useState('')
@@ -240,6 +241,7 @@ function NewSessionDialog({
       setComputerId(defaultComputerId || available[0]?.id || '')
       setCwd('~')
       setDirectoryListing(undefined)
+      setTerminalBacked(true)
       setMode('new')
       setHistoryKey('')
       setError(undefined)
@@ -314,7 +316,9 @@ function NewSessionDialog({
     setError(undefined)
     try {
       if (mode === 'new') {
-        onCreated(await createSession(computerId, { cwd }))
+        onCreated(
+          await createSession(computerId, { cwd, terminalBacked }),
+        )
         setCwd('')
       } else {
         const previous = history.find(
@@ -436,6 +440,19 @@ function NewSessionDialog({
             <p className="folder-picker__hint">
               The session will start in <strong>{cwd || '~'}</strong>.
             </p>
+            <label className="tmux-session-option">
+              <input
+                checked={terminalBacked}
+                onChange={(event) => setTerminalBacked(event.target.checked)}
+                type="checkbox"
+              />
+              <span>
+                <strong>Create in tmux</strong>
+                <small>
+                  Opens a new window that remains accessible from SSH.
+                </small>
+              </span>
+            </label>
           </div>
         ) : (
           <label className="field">

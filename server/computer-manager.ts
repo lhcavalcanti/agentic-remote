@@ -200,7 +200,10 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     const computer = this.requireComputer(computerId)
     const session =
       computerId === this.identity.info.id
-        ? await this.localService.createSession(input.cwd)
+        ? await this.localService.createSession(
+            input.cwd,
+            input.terminalBacked,
+          )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)
   }

@@ -27,6 +27,50 @@ afterEach(async () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it('creates a Copilot window in the configured existing tmux session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const output = path.join(directory, 'cwd.txt')
+    const executable = path.join(directory, 'copilot-window-fake')
+    await writeFile(
+      executable,
+      `#!/usr/bin/env bash\nprintf '%s' "$PWD" >"${output}"\nsleep 60\n`,
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-create-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const sessionId = '01234567-89ab-cdef-0123-456789abcdef'
+
+    const location = await new TmuxTerminalSessionController().create(
+      sessionId,
+      directory,
+      'Project workspace',
+    )
+
+    expect(location.sessionName).toBe(tmuxSession)
+    expect(await readFile(output, 'utf8')).toBe(directory)
+    const windows = (
+      await execFileAsync('tmux', [
+        'list-windows',
+        '-t',
+        tmuxSession,
+        '-F',
+        '#{window_name}',
+      ])
+    ).stdout
+    expect(windows).toContain('Project workspace-01234567')
+  })
+
   it('delivers a prompt into the owning terminal pane', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)

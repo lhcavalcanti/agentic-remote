@@ -22,7 +22,7 @@ import type {
   SessionStatus,
   SlashCommand,
 } from '../shared/contracts.js'
-import { SessionStore } from './session-store.js'
+import { SessionStore, type DiscoveredSession } from './session-store.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
@@ -294,6 +294,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private transcriptTimer?: NodeJS.Timeout
   private transcriptInFlight?: Promise<void>
   private externalSessionIds = new Set<string>()
+  private readonly launchingTerminalSessionIds = new Set<string>()
+  private discoveryGeneration = 0
   private readonly eventLogFingerprints = new Map<string, string>()
   private readonly eventLogVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
@@ -391,6 +393,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored) {
       throw new Error('Session not found')
     }
+    if (this.externalSessionIds.has(id)) {
+      return stored
+    }
     if (this.hydratedSessions.has(id)) {
       return stored
     }
@@ -418,8 +423,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async createSession(inputPath: string): Promise<SessionDetail> {
+  async createSession(
+    inputPath: string,
+    terminalBacked = false,
+  ): Promise<SessionDetail> {
     const cwd = await this.validateDirectory(inputPath)
+    if (terminalBacked) {
+      return this.createTerminalSession(cwd)
+    }
     const sdkSession = await this.client.createSession({
       workingDirectory: cwd,
       streaming: true,
@@ -445,6 +456,38 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
     this.publish(session)
     return session
+  }
+
+  private async createTerminalSession(cwd: string): Promise<SessionDetail> {
+    if (!this.terminalController.create) {
+      throw new Error('Terminal-backed sessions are not available')
+    }
+    const sessionId = randomUUID()
+    const title = path.basename(cwd) || 'New session'
+    this.launchingTerminalSessionIds.add(sessionId)
+    this.discoveryGeneration += 1
+    try {
+      await this.terminalController.create(sessionId, cwd, title)
+      const now = new Date().toISOString()
+      const session = await this.store.create({
+        id: sessionId,
+        cwd,
+        title,
+        updatedAt: now,
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      })
+      this.externalSessionIds.add(sessionId)
+      this.publish(session)
+      return session
+    } catch (error) {
+      await this.activeSessionStopper(sessionId)
+      throw error
+    } finally {
+      this.launchingTerminalSessionIds.delete(sessionId)
+      this.discoveryGeneration += 1
+    }
   }
 
   async sendMessage(
@@ -849,13 +892,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async discoverSessions(): Promise<void> {
-    const [sessions, activeSessions] = await Promise.all([
-      this.client.listSessions(),
-      this.activeSessionFinder(),
-    ])
+    let sessions: SessionMetadata[]
+    let activeSessions: DiscoveredSession[]
+    while (true) {
+      const generation = this.discoveryGeneration
+      const discovery = await Promise.all([
+        this.client.listSessions(),
+        this.activeSessionFinder(),
+      ])
+      sessions = discovery[0]
+      activeSessions = discovery[1]
+      if (generation === this.discoveryGeneration) {
+        break
+      }
+    }
     const storedIds = new Set(this.store.list().map((session) => session.id))
     this.externalSessionIds = new Set(
-      activeSessions.map((session) => session.id),
+      [
+        ...activeSessions.map((session) => session.id),
+        ...this.launchingTerminalSessionIds,
+      ],
     )
     const indexedSessions = sessions.flatMap((session) => {
       if (this.deletedSessionIds.has(session.sessionId)) {
@@ -894,7 +950,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ],
     )
     await this.store.syncOpen([
-      ...activeSessions.map((session) => session.id),
+      ...this.externalSessionIds,
       ...this.sessions.keys(),
     ])
   }

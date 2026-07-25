@@ -18,6 +18,7 @@ import type { SessionService } from './session-service.js'
 
 class FakeSessionService extends EventEmitter implements SessionService {
   private readonly sessions = new Map<string, SessionDetail>()
+  lastCreateTerminalBacked?: boolean
 
   constructor(...sessions: SessionDetail[]) {
     super()
@@ -78,7 +79,11 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
-  async createSession(cwd: string): Promise<SessionDetail> {
+  async createSession(
+    cwd: string,
+    terminalBacked?: boolean,
+  ): Promise<SessionDetail> {
+    this.lastCreateTerminalBacked = terminalBacked
     const session: SessionDetail = {
       id: randomUUID(),
       cwd,
@@ -312,6 +317,14 @@ describe('multi-node hub', () => {
           .json()
           .sessions.map((entry: { computerName: string }) => entry.computerName),
       ).toEqual(expect.arrayContaining(['homelab-prod', hub.identity.info.name]))
+
+      const created = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions`,
+        payload: { cwd: '/srv/new-session' },
+      })
+      expect(created.statusCode, created.body).toBe(201)
+      expect(remoteService.lastCreateTerminalBacked).toBe(true)
 
       const detail = await hub.app.inject({
         method: 'GET',

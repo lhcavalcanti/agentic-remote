@@ -211,6 +211,7 @@ describe('App', () => {
       expect(listDirectories).toHaveBeenCalledWith('computer-1', '~'),
     )
     expect(screen.getByText(/The session will start in/)).toHaveTextContent('~')
+    expect(screen.getByRole('checkbox', { name: /Create in tmux/ })).toBeChecked()
 
     fireEvent.click(screen.getByRole('option', { name: 'src' }))
     await waitFor(() =>
@@ -221,7 +222,26 @@ describe('App', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
     await waitFor(() =>
-      expect(createSession).toHaveBeenCalledWith('computer-1', { cwd: '~/src' }),
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~/src',
+        terminalBacked: true,
+      }),
+    )
+  })
+
+  it('allows SDK-backed session creation by disabling tmux', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    const checkbox = screen.getByRole('checkbox', { name: /Create in tmux/ })
+    fireEvent.click(checkbox)
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        terminalBacked: false,
+      }),
     )
   })
 

@@ -13,7 +13,7 @@ export interface SessionService {
   getSession(id: string): SessionDetail | undefined
   openSession(id: string): Promise<SessionDetail>
   activateSession(id: string): Promise<SessionDetail>
-  createSession(cwd: string): Promise<SessionDetail>
+  createSession(cwd: string, terminalBacked?: boolean): Promise<SessionDetail>
   sendMessage(
     sessionId: string,
     content: string,

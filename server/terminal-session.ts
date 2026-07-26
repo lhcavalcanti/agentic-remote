@@ -27,6 +27,7 @@ export interface TerminalSessionController {
     input: ConfigureRuntimeInput | undefined,
     clearState: () => Promise<void>,
   ): Promise<boolean>
+  restart?(sessionId: string, cwd: string): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
@@ -140,6 +141,27 @@ export class TmuxTerminalSessionController
         ]).catch(() => undefined)
         throw error
       }
+      return true
+    })
+  }
+
+  async restart(sessionId: string, cwd: string): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        return false
+      }
+      const command = await processCommand(owner.pid)
+      await execFileAsync('tmux', [
+        'respawn-pane',
+        '-k',
+        '-t',
+        owner.target,
+        '-c',
+        cwd,
+        ...command,
+      ])
+      await this.waitForNewOwner(sessionId, owner.pid)
       return true
     })
   }

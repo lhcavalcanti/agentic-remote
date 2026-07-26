@@ -144,6 +144,13 @@ export async function registerNodeRoutes(
         }),
       )
 
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/restart',
+        async (request) => ({
+          session: await service.restartSession(request.params.sessionId),
+        }),
+      )
+
       node.get<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/runtime',
         async (request) => service.runtimeOptions(request.params.sessionId),

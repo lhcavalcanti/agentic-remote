@@ -814,6 +814,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return updated
   }
 
+  async restartSession(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (
+      stored.status === 'running' ||
+      stored.status === 'waiting' ||
+      this.drainingSessions.has(id)
+    ) {
+      throw new Error('Session can only restart while idle')
+    }
+    if (this.externalSessionIds.has(id)) {
+      if (!this.terminalController.restart) {
+        throw new Error('Terminal session restart is not available')
+      }
+      if (!(await this.terminalController.restart(id, stored.cwd))) {
+        throw new Error('External terminal is no longer available')
+      }
+    } else {
+      const active = this.sessions.get(id)
+      if (active) {
+        await active.disconnect()
+        this.sessions.delete(id)
+      }
+      await this.resumeSession(id)
+    }
+    const restarted = await this.store.update(id, (session) => {
+      session.status = 'idle'
+      session.activity = undefined
+      session.pendingPermission = undefined
+      session.updatedAt = new Date().toISOString()
+    })
+    this.publish(restarted)
+    return restarted
+  }
+
   async clearConversation(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {

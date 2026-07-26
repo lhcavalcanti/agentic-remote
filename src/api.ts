@@ -205,6 +205,20 @@ export async function clearConversation(
   return response.session
 }
 
+export async function restartSession(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/restart`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
+  return response.session
+}
+
 export async function sendMessage(
   computerId: string,
   sessionId: string,

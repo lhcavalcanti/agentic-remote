@@ -28,6 +28,7 @@ import {
   listSessions,
   removeQueuedPrompt,
   renameSession,
+  restartSession,
   sendMessage,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
@@ -47,6 +48,7 @@ vi.mock('./api', () => ({
   configureRuntime: vi.fn(),
   getRuntimeOptions: vi.fn(),
   clearConversation: vi.fn(),
+  restartSession: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
   executeCommand: vi.fn(),
@@ -177,6 +179,7 @@ describe('App', () => {
       id: 'cleared-session',
       messages: [],
     })
+    vi.mocked(restartSession).mockResolvedValue(session)
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'model',
@@ -488,6 +491,31 @@ describe('App', () => {
       expect(clearConversation).toHaveBeenCalledWith(
         'computer-1',
         'cleared-session',
+      ),
+    )
+  })
+
+  it('restarts the selected session without removing UI history', async () => {
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restart session' }))
+    await waitFor(() =>
+      expect(restartSession).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+      ),
+    )
+    expect(screen.getByText('Hello agent')).toBeInTheDocument()
+
+    vi.mocked(restartSession).mockClear()
+    const textarea = screen.getByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: '/restart' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() =>
+      expect(restartSession).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
       ),
     )
   })

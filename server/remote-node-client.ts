@@ -166,6 +166,17 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.session
   }
 
+  async restartSession(sessionId: string): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/restart`,
+      {
+        method: 'POST',
+        body: '{}',
+      },
+    )
+    return response.session
+  }
+
   async sendMessage(
     sessionId: string,
     input: SendMessageInput,

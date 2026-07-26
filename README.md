@@ -36,6 +36,9 @@ Use `/clear` or the eraser action to remove the current Copilot context and
 Agentic Remote transcript while keeping an open session in the same folder and
 tmux window. Clear replaces the underlying Copilot session ID so deleted history
 cannot reappear.
+Use `/restart` or the restart action to restart the owning Copilot process while
+preserving the session ID, conversation, queue, title, folder, runtime settings,
+and tmux window.
 
 On phones, the composer grows to a compact maximum height and shrinks further
 when the virtual keyboard reduces the viewport.

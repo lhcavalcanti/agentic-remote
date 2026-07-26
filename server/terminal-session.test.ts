@@ -93,6 +93,7 @@ describe('TmuxTerminalSessionController', () => {
     expect(commandLine).toContain('--model gpt-test')
     expect(commandLine).toContain('--effort high')
     expect(commandLine).toContain('--context long_context')
+    expect(await controller.restart(sessionId, directory)).toBe(true)
     let cleared = false
     const replacementId = 'fedcba98-7654-3210-fedc-ba9876543210'
     expect(

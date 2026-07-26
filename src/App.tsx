@@ -37,6 +37,7 @@ import {
   MonitorCog,
   Pencil,
   Plus,
+  RefreshCw,
   Server,
   SlidersHorizontal,
   Square,
@@ -77,6 +78,7 @@ import {
   removeComputer,
   removeQueuedPrompt,
   renameSession,
+  restartSession,
   replyPermission,
   sendMessage,
 } from './api'
@@ -150,6 +152,11 @@ const webCommands: SlashCommand[] = [
   {
     name: 'clear',
     description: 'Clear this session conversation and Copilot context',
+    allowDuringAgentExecution: false,
+  },
+  {
+    name: 'restart',
+    description: 'Restart Copilot while preserving this conversation',
     allowDuringAgentExecution: false,
   },
 ]
@@ -1222,6 +1229,7 @@ function App() {
   const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [restarting, setRestarting] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
@@ -1702,6 +1710,11 @@ function App() {
       await clearSelectedConversation()
       return
     }
+    if (command?.name === 'restart') {
+      setComposer('')
+      await restartSelectedSession()
+      return
+    }
     const shouldEnqueue =
       enqueue ||
       (selected.status === 'running' &&
@@ -1764,6 +1777,7 @@ function App() {
     ) {
       return
     }
+
     const target = selected
     setClearing(true)
     setError(undefined)
@@ -1784,6 +1798,23 @@ function App() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setClearing(false)
+    }
+  }
+
+  async function restartSelectedSession() {
+    if (!selected || restarting) {
+      return
+    }
+    const target = selected
+    setRestarting(true)
+    setError(undefined)
+    try {
+      const restarted = await restartSession(target.computerId, target.id)
+      setSessions((current) => upsertSession(current, restarted))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setRestarting(false)
     }
   }
 
@@ -2062,6 +2093,17 @@ function App() {
                 : 'Ready when you are'}
             </span>
           </div>
+          {selected ? (
+            <button
+              aria-label="Restart session"
+              className="icon-button"
+              disabled={restarting || selected.status !== 'idle'}
+              onClick={() => void restartSelectedSession()}
+              type="button"
+            >
+              <RefreshCw size={17} />
+            </button>
+          ) : null}
           {selected ? (
             <button
               aria-label="Clear conversation"

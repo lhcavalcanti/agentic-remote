@@ -166,6 +166,16 @@ export async function registerHubRoutes(
     }),
   )
 
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/restart',
+    async (request) => ({
+      session: await manager.restartSession(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
+  )
+
   app.get<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/runtime',
     async (request) =>

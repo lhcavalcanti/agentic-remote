@@ -529,6 +529,35 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('restarts an SDK session without clearing history', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    await service.store.addMessage(created.id, {
+      id: 'kept-message',
+      role: 'user',
+      content: 'Keep this history',
+      createdAt: new Date().toISOString(),
+    })
+
+    const restarted = await service.restartSession(created.id)
+
+    expect(restarted.messages).toEqual([
+      expect.objectContaining({ content: 'Keep this history' }),
+    ])
+    expect(client.resumedSessionIds).toContain(created.id)
+    expect(client.deletedSessionIds).not.toContain(created.id)
+    await service.stop()
+  })
+
   it('does not restore a stale transcript after clearing', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -674,6 +703,7 @@ describe('AgentService deletion', () => {
       cancel: vi.fn(async () => true),
       rename: vi.fn(async () => true),
       configure: vi.fn(async () => true),
+      restart: vi.fn(async () => true),
       reset: vi.fn(
         async (
           _sessionId: string,
@@ -737,6 +767,11 @@ describe('AgentService deletion', () => {
       content: 'Clear terminal history',
       createdAt: new Date().toISOString(),
     })
+    const restarted = await service.restartSession(created.id)
+    expect(terminal.restart).toHaveBeenCalledWith(created.id, directory)
+    expect(restarted.messages).toEqual([
+      expect.objectContaining({ content: 'Clear terminal history' }),
+    ])
     const cleared = await service.clearConversation(created.id)
     expect(terminal.reset).toHaveBeenCalledWith(
       created.id,

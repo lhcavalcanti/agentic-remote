@@ -128,6 +128,8 @@ type StatuslineSettings = {
   effort: boolean
   contextTier: boolean
   contextUsage: boolean
+  mode: boolean
+  permissions: boolean
 }
 
 const defaultStatusline: StatuslineSettings = {
@@ -141,6 +143,8 @@ const defaultStatusline: StatuslineSettings = {
   effort: true,
   contextTier: true,
   contextUsage: true,
+  mode: true,
+  permissions: true,
 }
 
 const webCommands: SlashCommand[] = [
@@ -954,6 +958,8 @@ function StatuslineDialog({
     { key: 'effort', label: 'Reasoning effort' },
     { key: 'contextTier', label: 'Context tier' },
     { key: 'contextUsage', label: 'Context usage' },
+    { key: 'mode', label: 'Agent mode' },
+    { key: 'permissions', label: 'Permission mode' },
   ]
   return (
     <DialogFrame
@@ -2353,6 +2359,15 @@ function App() {
             ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
+            ) : null}
+            {statusline.mode && selected.runtime?.mode ? (
+              <span>{selected.runtime.mode}</span>
+            ) : null}
+            {statusline.permissions &&
+            selected.runtime?.allowAllPermissions !== undefined ? (
+              <span>
+                {selected.runtime.allowAllPermissions ? 'allow all' : 'ask'}
+              </span>
             ) : null}
           </div>
         ) : null}

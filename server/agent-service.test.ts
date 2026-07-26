@@ -312,6 +312,23 @@ describe('AgentService deletion', () => {
         }
       },
       {
+        "type":"session.mode_changed",
+        "id":"mode",
+        "parentId":"context",
+        "timestamp":"2026-07-22T00:00:02.500Z",
+        "data":{"previousMode":"interactive","newMode":"autopilot"}
+      },
+      {
+        "type":"session.permissions_changed",
+        "id":"permissions",
+        "parentId":"mode",
+        "timestamp":"2026-07-22T00:00:02.600Z",
+        "data":{
+          "previousAllowAllPermissions":false,
+          "allowAllPermissions":true
+        }
+      },
+      {
         "type":"user.message",
         "id":"prompt",
         "parentId":"context",
@@ -350,6 +367,8 @@ describe('AgentService deletion', () => {
       contextTokens: 552,
       contextTokenLimit: 2_000,
       contextEstimated: true,
+      mode: 'autopilot',
+      allowAllPermissions: true,
     })
   })
 
@@ -1167,6 +1186,13 @@ describe('AgentService deletion', () => {
         "parentId":"tool-start-2",
         "timestamp":"2026-07-22T00:00:04.000Z",
         "data":{"toolCallId":"call-2","success":false}
+      },
+      {
+        "type":"session.context_changed",
+        "id":"context-change",
+        "parentId":"tool-end-2",
+        "timestamp":"2026-07-22T00:00:04.500Z",
+        "data":{"cwd":"/tmp/changed-project"}
       }
     ]`) as SessionEvent[]
     const store = new SessionStore(path.join(directory, 'state'))
@@ -1183,7 +1209,7 @@ describe('AgentService deletion', () => {
       ],
       async () => undefined,
       async () => events,
-      async () => `events-${events.length}`,
+      async () => `events-${events.length}-${events.at(-1)?.id}`,
     )
     await service.start()
 
@@ -1195,9 +1221,12 @@ describe('AgentService deletion', () => {
         activityStatus: 'failed',
       }),
     ])
+    expect(store.get(sessionId)?.cwd).toBe('/tmp/changed-project')
+    await service.refreshDiscovery()
+    expect(store.get(sessionId)?.cwd).toBe('/tmp/changed-project')
 
     events = [
-      ...events,
+      ...events.filter((event) => event.type !== 'session.context_changed'),
       ...messagesAsEvents([
         {
           type: 'assistant.message',
@@ -1213,6 +1242,78 @@ describe('AgentService deletion', () => {
       role: 'assistant',
       content: 'latest response',
     })
+    expect(store.get(sessionId)?.cwd).toBe('/tmp/changed-project')
+    await service.stop()
+  })
+
+  it('synchronizes external workspace metadata without transcript events', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = 'abcdef12-1111-2222-3333-ef1234567890'
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Creation title',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    let workspace = {
+      cwd: '/tmp/first-cwd',
+      title: 'First workspace title',
+      updatedAt: '2026-07-26T04:00:00.000Z',
+    }
+    let workspaceVersion = 'workspace-1'
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      rename: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+      async () => workspace,
+      async () => workspaceVersion,
+    )
+
+    await service.start()
+
+    expect(service.store.get(sessionId)).toMatchObject({
+      cwd: '/tmp/first-cwd',
+      title: 'First workspace title',
+    })
+    workspace = {
+      cwd: '/tmp/second-cwd',
+      title: 'Second workspace title',
+      updatedAt: '2026-07-26T04:00:01.000Z',
+    }
+    workspaceVersion = 'workspace-2'
+    await service.refreshTranscripts()
+    await service.refreshDiscovery()
+    expect(service.store.get(sessionId)).toMatchObject({
+      cwd: '/tmp/second-cwd',
+      title: 'Second workspace title',
+    })
+    expect(terminal.rename).toHaveBeenCalledWith(
+      sessionId,
+      'Second workspace title',
+    )
     await service.stop()
   })
 
@@ -1279,6 +1380,56 @@ describe('AgentService deletion', () => {
         activityStatus: 'failed',
       }),
     ])
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.context_changed",
+        "id":"cwd-change",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:05.000Z",
+        "data":{"cwd":"/tmp/live-project"}
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.title_changed",
+        "id":"title-change",
+        "parentId":"cwd-change",
+        "timestamp":"2026-07-22T00:00:06.000Z",
+        "ephemeral":true,
+        "data":{"title":"Live project"}
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.mode_changed",
+        "id":"mode-change",
+        "parentId":"title-change",
+        "timestamp":"2026-07-22T00:00:07.000Z",
+        "data":{"previousMode":"interactive","newMode":"plan"}
+      }`) as SessionEvent,
+    )
+    client.session.emit(
+      JSON.parse(`{
+        "type":"session.permissions_changed",
+        "id":"permissions-change",
+        "parentId":"mode-change",
+        "timestamp":"2026-07-22T00:00:08.000Z",
+        "data":{
+          "previousAllowAllPermissions":false,
+          "allowAllPermissions":true
+        }
+      }`) as SessionEvent,
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)).toMatchObject({
+        cwd: '/tmp/live-project',
+        title: 'Live project',
+        runtime: {
+          mode: 'plan',
+          allowAllPermissions: true,
+        },
+      }),
+    )
     await new Promise((resolve) => setTimeout(resolve, 20))
     await service.stop()
   })

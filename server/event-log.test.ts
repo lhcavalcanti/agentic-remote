@@ -2,7 +2,12 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readSessionEvents, sessionEventLogVersion } from './event-log.js'
+import {
+  readSessionEvents,
+  readSessionWorkspaceMetadata,
+  sessionEventLogVersion,
+  sessionWorkspaceVersion,
+} from './event-log.js'
 
 const directories: string[] = []
 
@@ -41,5 +46,31 @@ describe('readSessionEvents', () => {
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: 'user.message' })
     expect(await sessionEventLogVersion('session-1')).toMatch(/^\d+:\d+/)
+  })
+
+  it('reads current cwd and title from workspace metadata', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'event-log-test-'))
+    directories.push(directory)
+    vi.stubEnv('COPILOT_HOME', directory)
+    const sessionDirectory = path.join(directory, 'session-state', 'session-1')
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(
+      path.join(sessionDirectory, 'workspace.yaml'),
+      [
+        'id: session-1',
+        'cwd: "/tmp/project with spaces"',
+        "name: 'Current project'",
+        'updated_at: 2026-07-26T04:00:00.000Z',
+      ].join('\n'),
+    )
+
+    await expect(readSessionWorkspaceMetadata('session-1')).resolves.toEqual({
+      cwd: '/tmp/project with spaces',
+      title: 'Current project',
+      updatedAt: '2026-07-26T04:00:00.000Z',
+    })
+    await expect(sessionWorkspaceVersion('session-1')).resolves.toMatch(
+      /^\d+:\d+/,
+    )
   })
 })

@@ -44,6 +44,8 @@ export interface SessionRuntimeInfo {
   contextTokens?: number
   contextTokenLimit?: number
   contextEstimated?: boolean
+  mode?: string
+  allowAllPermissions?: boolean
 }
 
 export interface RuntimeModelOption {

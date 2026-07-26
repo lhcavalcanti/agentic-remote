@@ -723,6 +723,8 @@ describe('App', () => {
           contextTokens: 200_000,
           contextTokenLimit: 922_000,
           contextEstimated: true,
+          mode: 'plan',
+          allowAllPermissions: true,
         },
       }
       vi.mocked(listSessions).mockResolvedValue([runtimeSession])
@@ -747,6 +749,10 @@ describe('App', () => {
       )
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
         'ctx ~200k/922k (22%)',
+      )
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent('plan')
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        'allow all',
       )
 
       fireEvent.click(

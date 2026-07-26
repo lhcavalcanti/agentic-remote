@@ -41,6 +41,11 @@ preserving the session ID, conversation, queue, title, folder, runtime settings,
 and tmux window.
 Tmux window names mirror the Agentic Remote session title and follow both manual
 renames and Copilot's automatic title updates.
+State-changing CLI commands synchronize back to the web UI: `/cwd` updates the
+sidebar/header/status path, title changes update UI and tmux, `/model` updates
+model/effort/context details, and mode/allow-all changes appear in the status
+line. External sessions use mtime-guarded `workspace.yaml` metadata when CLI
+events are ephemeral.
 
 On phones, the composer grows to a compact maximum height and shrinks further
 when the virtual keyboard reduces the viewport.

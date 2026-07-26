@@ -36,7 +36,12 @@ import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
 } from './active-sessions.js'
-import { readSessionEvents, sessionEventLogVersion } from './event-log.js'
+import {
+  readSessionEvents,
+  readSessionWorkspaceMetadata,
+  sessionEventLogVersion,
+  sessionWorkspaceVersion,
+} from './event-log.js'
 import { listHomeDirectories } from './directory-browser.js'
 import {
   TmuxTerminalSessionController,
@@ -105,6 +110,8 @@ const runtimeEventTypes = new Set<SessionEvent['type']>([
   'session.start',
   'session.resume',
   'session.model_change',
+  'session.mode_changed',
+  'session.permissions_changed',
   'session.usage_info',
   'assistant.message',
   'tool.execution_start',
@@ -335,6 +342,7 @@ function eventContextLength(event: SessionEvent): number {
       ? 0
       : contextTextLength(data.content)
   }
+
   if (event.type === 'assistant.message') {
     return event.agentId ? 0 : contextTextLength(data.content)
   }
@@ -342,6 +350,25 @@ function eventContextLength(event: SessionEvent): number {
     return event.agentId ? 0 : contextTextLength(data.result)
   }
   return 0
+}
+
+function workingDirectoryFromEvents(
+  events: SessionEvent[],
+  fallback?: string,
+): string | undefined {
+  let cwd = fallback
+  for (const event of events) {
+    if (event.agentId) {
+      continue
+    }
+    const data = recordValue(event.data)
+    if (event.type === 'session.start' || event.type === 'session.resume') {
+      cwd = stringValue(recordValue(data.context).cwd) || cwd
+    } else if (event.type === 'session.context_changed') {
+      cwd = stringValue(data.cwd) || cwd
+    }
+  }
+  return cwd
 }
 
 function estimatedContextTokens(events: SessionEvent[]): number | undefined {
@@ -414,6 +441,13 @@ export function runtimeInfoFromEvents(
         stringValue(data.reasoningEffort) || runtime.reasoningEffort
       runtime.contextTier =
         stringValue(data.contextTier) || runtime.contextTier
+    } else if (event.type === 'session.mode_changed') {
+      runtime.mode = stringValue(data.newMode) || runtime.mode
+    } else if (
+      event.type === 'session.permissions_changed' &&
+      typeof data.allowAllPermissions === 'boolean'
+    ) {
+      runtime.allowAllPermissions = data.allowAllPermissions
     } else if (
       event.type === 'assistant.message' ||
       event.type === 'tool.execution_start'
@@ -466,7 +500,9 @@ function runtimeInfoMatches(
     left?.contextTier === right.contextTier &&
     left?.contextTokens === right.contextTokens &&
     left?.contextTokenLimit === right.contextTokenLimit &&
-    left?.contextEstimated === right.contextEstimated
+    left?.contextEstimated === right.contextEstimated &&
+    left?.mode === right.mode &&
+    left?.allowAllPermissions === right.allowAllPermissions
   )
 }
 
@@ -541,6 +577,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private discoveryGeneration = 0
   private readonly eventLogFingerprints = new Map<string, string>()
   private readonly eventLogVersions = new Map<string, string>()
+  private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
   private readonly runtimeModels = new Map<string, RuntimeModelOption>()
@@ -569,6 +606,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     private readonly sessionEventVersion = sessionEventLogVersion,
     private readonly terminalController: TerminalSessionController =
       new TmuxTerminalSessionController(),
+    private readonly workspaceReader = readSessionWorkspaceMetadata,
+    private readonly workspaceVersion = sessionWorkspaceVersion,
   ) {
     super()
     this.client = client
@@ -832,6 +871,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const limits = this.modelPromptLimits.get(input.model)
     const updated = await this.store.update(id, (session) => {
       session.runtime = {
+        ...session.runtime,
         model: input.model,
         reasoningEffort: input.reasoningEffort,
         contextTier: input.contextTier,
@@ -998,6 +1038,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.eventLogFingerprints.delete(id)
       this.eventLogVersions.delete(id)
+      this.workspaceVersions.delete(id)
       this.liveTranscriptWatermarks.delete(id)
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
@@ -1403,6 +1444,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.delete(sessionId)
       this.drainingSessions.delete(sessionId)
       this.queueOperations.delete(sessionId)
+      this.workspaceVersions.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
       this.answeredTerminalInputs.delete(sessionId)
       completed = true
@@ -1692,6 +1734,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return
         }
         if (this.externalSessionIds.has(sessionId)) {
+          await this.syncExternalWorkspace(sessionId)
           await this.syncTerminalUserInput(sessionId)
         }
         const version = await this.sessionEventVersion(sessionId)
@@ -1751,6 +1794,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           stored?.runtime,
           this.modelPromptLimits,
         )
+        const cwd = workingDirectoryFromEvents(events, stored?.cwd)
+        const contextCwd = events.some(
+          (event) =>
+            event.type === 'session.context_changed' && !event.agentId,
+        )
         if (
           this.activePrompts.has(sessionId) ||
           this.deletedSessionIds.has(sessionId) ||
@@ -1764,6 +1812,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           status,
           activity,
           runtime,
+          cwd,
+          contextCwd,
         )
         this.eventLogFingerprints.set(sessionId, fingerprint)
         this.eventLogVersions.set(sessionId, version)
@@ -1823,6 +1873,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private async syncExternalWorkspace(sessionId: string): Promise<void> {
+    const version = await this.workspaceVersion(sessionId)
+    if (!version || this.workspaceVersions.get(sessionId) === version) {
+      return
+    }
+    const metadata = await this.workspaceReader(sessionId)
+    this.workspaceVersions.set(sessionId, version)
+    if (!metadata || this.deletedSessionIds.has(sessionId)) {
+      return
+    }
+    const stored = this.store.get(sessionId)
+    if (
+      !stored ||
+      (metadata.cwd === stored.cwd &&
+        (!metadata.title || metadata.title === stored.title))
+    ) {
+      return
+    }
+    const updated = await this.store.syncWorkspaceMetadata(sessionId, metadata)
+    this.publish(updated)
+    if (metadata.title && this.terminalController.rename) {
+      await this.terminalController
+        .rename(sessionId, updated.title)
+        .catch((error: unknown) => this.publishError(sessionId, error))
+    }
+  }
+
   private attachSession(session: CopilotSessionLike): void {
     session.on((event) => {
       this.handleSessionEvent(session.sessionId, event)
@@ -1832,6 +1909,38 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
+
+    if (
+      event.type === 'session.context_changed' &&
+      !event.agentId &&
+      stored &&
+      !this.deletingSessions.has(sessionId)
+    ) {
+      const cwd = event.data.cwd?.trim()
+      if (cwd && cwd !== stored.cwd) {
+        void this.store
+          .updateWorkingDirectory(sessionId, cwd, event.timestamp)
+          .then((session) => this.publish(session))
+          .catch((error: unknown) => this.publishError(sessionId, error))
+      }
+      return
+    }
+
+    if (
+      event.type === 'session.title_changed' &&
+      !event.agentId &&
+      stored &&
+      !this.deletingSessions.has(sessionId)
+    ) {
+      const title = event.data.title.trim()
+      if (title && title !== stored.title) {
+        void this.store
+          .updateAutomaticTitle(sessionId, title, event.timestamp)
+          .then((session) => this.publish(session))
+          .catch((error: unknown) => this.publishError(sessionId, error))
+      }
+      return
+    }
 
     if (
       runtimeEventTypes.has(event.type) &&

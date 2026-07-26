@@ -25,6 +25,8 @@ interface StoredSession extends SessionDetail {
   managedOpen?: boolean
   customTitle?: boolean
   queueDispatchAt?: string
+  contextCwd?: boolean
+  workspaceTitle?: boolean
 }
 
 function cloneSession(session: StoredSession): SessionDetail {
@@ -32,6 +34,8 @@ function cloneSession(session: StoredSession): SessionDetail {
     managedOpen: _managedOpen,
     customTitle: _customTitle,
     queueDispatchAt: _queueDispatchAt,
+    contextCwd: _contextCwd,
+    workspaceTitle: _workspaceTitle,
     ...detail
   } = structuredClone(session)
   return detail
@@ -114,8 +118,10 @@ export class SessionStore {
     for (const discovered of sessions) {
       const existing = this.state.sessions[discovered.id]
       if (existing) {
-        existing.cwd = discovered.cwd
-        if (!existing.customTitle) {
+        if (!existing.contextCwd) {
+          existing.cwd = discovered.cwd
+        }
+        if (!existing.customTitle && !existing.workspaceTitle) {
           existing.title = discovered.title || existing.title
         }
         if (discovered.updatedAt > existing.updatedAt) {
@@ -149,6 +155,8 @@ export class SessionStore {
     status: SessionStatus,
     activity?: string,
     runtime?: SessionRuntimeInfo,
+    cwd?: string,
+    contextCwd = false,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.messages = messages
@@ -156,6 +164,10 @@ export class SessionStore {
       session.activity = activity
       if (runtime) {
         session.runtime = runtime
+      }
+      if (cwd && (!session.contextCwd || contextCwd)) {
+        session.cwd = cwd
+        session.contextCwd ||= contextCwd
       }
       session.updatedAt =
         messages.at(-1)?.createdAt || session.updatedAt
@@ -188,6 +200,51 @@ export class SessionStore {
       session.title = title
       session.customTitle = true
       session.updatedAt = new Date().toISOString()
+    })
+  }
+
+  async updateWorkingDirectory(
+    sessionId: string,
+    cwd: string,
+    updatedAt: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.cwd = cwd
+      session.contextCwd = true
+      session.updatedAt = updatedAt
+    })
+  }
+
+  async updateAutomaticTitle(
+    sessionId: string,
+    title: string,
+    updatedAt: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (!session.customTitle) {
+        session.title = title
+        session.workspaceTitle = true
+        session.updatedAt = updatedAt
+      }
+    })
+  }
+
+  async syncWorkspaceMetadata(
+    sessionId: string,
+    metadata: { cwd?: string; title?: string; updatedAt?: string },
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (metadata.cwd) {
+        session.cwd = metadata.cwd
+        session.contextCwd = true
+      }
+      if (metadata.title && !session.customTitle) {
+        session.title = metadata.title
+        session.workspaceTitle = true
+      }
+      if (metadata.updatedAt && metadata.updatedAt > session.updatedAt) {
+        session.updatedAt = metadata.updatedAt
+      }
     })
   }
 

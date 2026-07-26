@@ -644,6 +644,15 @@ button {
   margin: -14px 0;
 }
 
+.tool-activity-slot {
+  position: sticky;
+  z-index: 2;
+  bottom: 0;
+  padding: 6px 0 2px;
+  background: linear-gradient(transparent, var(--bg) 35%);
+  animation: tool-activity-change 180ms ease-out;
+}
+
 .message--notice {
   padding: 9px 12px;
   color: var(--muted-strong);
@@ -710,6 +719,17 @@ button {
 @keyframes activity-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes tool-activity-change {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

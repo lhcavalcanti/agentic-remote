@@ -112,7 +112,7 @@ describe('TmuxTerminalSessionController', () => {
         '#{window_name}',
       ])
     ).stdout
-    expect(windows).toContain('Renamed project-01234567')
+    expect(windows).toContain('Renamed project')
     const panePid = (
       await execFileAsync('tmux', [
         'display-message',

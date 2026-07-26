@@ -323,19 +323,16 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const id = `tool:${toolCallId}`
-      const existing = session.messages.find((message) => message.id === id)
-      if (existing) {
-        existing.content = content
-        existing.activityStatus = 'running'
-      } else {
-        session.messages.push({
-          id,
-          role: 'activity',
-          content,
-          createdAt,
-          activityStatus: 'running',
-        })
-      }
+      session.messages = session.messages.filter(
+        (message) => message.role !== 'activity',
+      )
+      session.messages.push({
+        id,
+        role: 'activity',
+        content,
+        createdAt,
+        activityStatus: 'running',
+      })
       session.activity = content.split('\n', 1)[0]
       session.updatedAt = createdAt
     })
@@ -353,6 +350,7 @@ export class SessionStore {
       if (activity) {
         activity.activityStatus = success ? 'completed' : 'failed'
       }
+
       session.activity = session.messages
         .findLast(
           (message) =>
@@ -385,6 +383,10 @@ export class SessionStore {
         throw new Error(`Message ${messageId} does not exist`)
       }
       message.content = content
+      session.messages = session.messages.filter(
+        (entry) => entry.role !== 'activity',
+      )
+      session.activity = undefined
       session.updatedAt = new Date().toISOString()
     })
   }

@@ -131,7 +131,12 @@ export interface AgentServiceEvents {
 
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
-  const tools = new Map<string, number>()
+  const clearToolActivity = () => {
+    const index = messages.findIndex((message) => message.role === 'activity')
+    if (index >= 0) {
+      messages.splice(index, 1)
+    }
+  }
 
   for (const event of events) {
     if (event.type === 'user.message') {
@@ -140,6 +145,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       const content = visibleUserContent(event.data.content)
       if (content) {
+        clearToolActivity()
         messages.push({
           id: event.id,
           role: 'user',
@@ -152,6 +158,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     if (event.type === 'assistant.message' && !event.agentId) {
       const content = event.data.content.trim()
       if (content) {
+        clearToolActivity()
         messages.push({
           id: event.data.messageId || event.id,
           role: 'assistant',
@@ -162,7 +169,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       continue
     }
     if (event.type === 'tool.execution_start' && !event.agentId) {
-      tools.set(event.data.toolCallId, messages.length)
+      clearToolActivity()
       messages.push({
         id: `tool:${event.data.toolCallId}`,
         role: 'activity',
@@ -173,9 +180,9 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       continue
     }
     if (event.type === 'tool.execution_complete' && !event.agentId) {
-      const messageIndex = tools.get(event.data.toolCallId)
-      const message =
-        messageIndex === undefined ? undefined : messages[messageIndex]
+      const message = messages.find(
+        (entry) => entry.id === `tool:${event.data.toolCallId}`,
+      )
       if (message) {
         message.activityStatus = event.data.success ? 'completed' : 'failed'
       }
@@ -1574,7 +1581,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         break
       }
     }
-    const storedIds = new Set(this.store.list().map((session) => session.id))
+    const storedBeforeDiscovery = this.store.list()
+    const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
+    const previousTitles = new Map(
+      storedBeforeDiscovery.map((session) => [session.id, session.title]),
+    )
     this.externalSessionIds = new Set(
       [
         ...activeSessions
@@ -1619,6 +1630,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           })),
       ],
     )
+    const renameTerminal = this.terminalController.rename?.bind(
+      this.terminalController,
+    )
+    if (renameTerminal) {
+      await Promise.all(
+        activeSessions.map(async (session) => {
+          const previousTitle = previousTitles.get(session.id)
+          const currentTitle = this.store.get(session.id)?.title
+          if (
+            previousTitle &&
+            currentTitle &&
+            currentTitle !== previousTitle
+          ) {
+            await renameTerminal(session.id, currentTitle)
+              .catch((error: unknown) => this.publishError(session.id, error))
+          }
+        }),
+      )
+    }
     await this.store.syncOpen([
       ...this.externalSessionIds,
       ...this.sessions.keys(),

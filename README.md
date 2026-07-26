@@ -39,6 +39,8 @@ cannot reappear.
 Use `/restart` or the restart action to restart the owning Copilot process while
 preserving the session ID, conversation, queue, title, folder, runtime settings,
 and tmux window.
+Tmux window names mirror the Agentic Remote session title and follow both manual
+renames and Copilot's automatic title updates.
 
 On phones, the composer grows to a compact maximum height and shrinks further
 when the virtual keyboard reduces the viewport.
@@ -49,9 +51,10 @@ keeps the CLI and web timeline on the same agent instead of creating a detached
 SDK turn. `/statusline` configures the web status line. Command abbreviations
 follow Copilot CLI completion behavior: typing `/aa` expands to `/allow-all`
 before the canonical command is sent to Copilot.
-Root-agent tool calls appear individually in the scrolling timeline with their
-name, concise description/command/path/query preview, and live completion
-status. Raw tool output and subagent internals remain hidden.
+The current root-agent tool appears in one sticky timeline row with its name,
+concise description/command/path/query preview, and live completion status. The
+row transitions to the next tool and disappears after the final response. Raw
+tool output and subagent internals remain hidden.
 `ask_user` questions appear as interactive cards with choice buttons and an
 optional freeform answer. SDK callbacks and tmux CLI dialogs are both supported
 across local and remote computers.

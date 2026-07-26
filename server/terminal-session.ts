@@ -78,7 +78,7 @@ export class TmuxTerminalSessionController
       if (!target) {
         return false
       }
-      const windowName = `${safeWindowName(title)}-${sessionId.slice(0, 8)}`
+      const windowName = safeWindowName(title)
       await execFileAsync('tmux', ['rename-window', '-t', target, windowName])
       return true
     })
@@ -405,7 +405,7 @@ export class TmuxTerminalSessionController
       throw new Error(`Configured tmux session not found: ${configured}`)
     }
     const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
-    const windowName = `${safeWindowName(title)}-${sessionId.slice(0, 8)}`
+    const windowName = safeWindowName(title)
     const format = '#{session_name}\t#{window_id}'
     const args = selected
       ? [
@@ -581,7 +581,7 @@ function safeWindowName(title: string): string {
     })
     .join('')
     .trim()
-  return (sanitized || 'copilot').slice(0, 40)
+  return (sanitized || 'copilot').slice(0, 80)
 }
 
 async function processCommand(pid: number): Promise<string[]> {

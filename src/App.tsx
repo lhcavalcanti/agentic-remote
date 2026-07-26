@@ -1368,10 +1368,10 @@ function App() {
     [selectedKey, sessions],
   )
   selectedRef.current = selected
-  const hasRunningTool = selected?.messages.some(
-    (message) =>
-      message.role === 'activity' && message.activityStatus === 'running',
+  const currentTool = selected?.messages.findLast(
+    (message) => message.role === 'activity',
   )
+  const hasRunningTool = currentTool?.activityStatus === 'running'
   const selectedComputerId = selected?.computerId
   const selectedSessionId = selected?.id
   const commandQuery = composer.startsWith('/')
@@ -2264,39 +2264,43 @@ function App() {
             </div>
           ) : (
             <div className="message-stack">
-              {selected.messages.map((message) => (
+              {selected.messages
+                .filter((message) => message.role !== 'activity')
+                .map((message) => (
                 <article className={`message message--${message.role}`} key={message.id}>
-                  {message.role === 'activity' ? (
-                    <ActivityMessage
-                      content={message.content}
-                      status={message.activityStatus}
-                    />
-                  ) : (
-                    <>
-                      <div className="message__label">
-                        {message.role === 'user'
-                          ? 'You'
-                          : message.role === 'notice'
-                            ? 'Command'
-                            : 'Agent'}
-                      </div>
-                      <div className="message__content">
-                        {message.content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {message.content}
-                          </ReactMarkdown>
-                        ) : (
-                          <span className="typing-indicator">
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                        )}
-                      </div>
-                    </>
-                  )}
+                  <div className="message__label">
+                    {message.role === 'user'
+                      ? 'You'
+                      : message.role === 'notice'
+                        ? 'Command'
+                        : 'Agent'}
+                  </div>
+                  <div className="message__content">
+                    {message.content ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {message.content}
+                      </ReactMarkdown>
+                    ) : (
+                      <span className="typing-indicator">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                    )}
+                  </div>
                 </article>
               ))}
+              {currentTool ? (
+                <article
+                  className="message message--activity tool-activity-slot"
+                  key={currentTool.id}
+                >
+                  <ActivityMessage
+                    content={currentTool.content}
+                    status={currentTool.activityStatus}
+                  />
+                </article>
+              ) : null}
             </div>
           )}
           {selected?.pendingPermission ? (

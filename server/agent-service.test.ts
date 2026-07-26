@@ -767,10 +767,21 @@ describe('AgentService deletion', () => {
         },
       ),
     }
+    let activeSessionId = ''
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
-      async () => [],
+      async () =>
+        activeSessionId
+          ? [
+              {
+                id: activeSessionId,
+                cwd: directory,
+                title: 'Active Copilot session',
+                updatedAt: new Date().toISOString(),
+              },
+            ]
+          : [],
       async () => undefined,
       async () => [],
       async () => undefined,
@@ -779,6 +790,22 @@ describe('AgentService deletion', () => {
     await service.start()
 
     const created = await service.createSession(directory, true)
+    activeSessionId = created.id
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: created.id,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Automatic project name',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    await service.refreshDiscovery()
+    expect(terminal.rename).toHaveBeenCalledWith(
+      created.id,
+      'Automatic project name',
+    )
 
     expect(terminal.create).toHaveBeenCalledWith(
       created.id,
@@ -1164,11 +1191,6 @@ describe('AgentService deletion', () => {
       expect.objectContaining({ role: 'user', content: 'hello' }),
       expect.objectContaining({
         role: 'activity',
-        content: 'Bash · Run checks\n$ pnpm test',
-        activityStatus: 'completed',
-      }),
-      expect.objectContaining({
-        role: 'activity',
         content: 'View\n/tmp/project.ts',
         activityStatus: 'failed',
       }),
@@ -1243,7 +1265,7 @@ describe('AgentService deletion', () => {
         service.store
           .get(created.id)
           ?.messages.filter((message) => message.role === 'activity'),
-      ).toHaveLength(2),
+      ).toHaveLength(1),
     )
 
     expect(
@@ -1251,11 +1273,6 @@ describe('AgentService deletion', () => {
         .get(created.id)
         ?.messages.filter((message) => message.role === 'activity'),
     ).toEqual([
-      expect.objectContaining({
-        id: 'tool:call-a',
-        content: 'Bash · Run unit tests\n$ pnpm test',
-        activityStatus: 'completed',
-      }),
       expect.objectContaining({
         id: 'tool:call-b',
         content: 'View\n/tmp/source.ts',

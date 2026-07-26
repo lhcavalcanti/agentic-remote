@@ -29,6 +29,7 @@ import {
   removeQueuedPrompt,
   renameSession,
   restartSession,
+  replyUserInput,
   sendMessage,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
@@ -55,6 +56,7 @@ vi.mock('./api', () => ({
   cancelSession: vi.fn(),
   deleteSession: vi.fn(),
   replyPermission: vi.fn(),
+  replyUserInput: vi.fn(),
 }))
 
 class MockWebSocket {
@@ -180,6 +182,7 @@ describe('App', () => {
       messages: [],
     })
     vi.mocked(restartSession).mockResolvedValue(session)
+    vi.mocked(replyUserInput).mockResolvedValue(session)
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'model',
@@ -402,6 +405,45 @@ describe('App', () => {
       'session-1',
       'queue-2',
     )
+  })
+
+  it('shows and answers ask-user prompts', async () => {
+    const askingSession = {
+      ...session,
+      status: 'waiting' as const,
+      pendingUserInput: {
+        requestId: 'question-1',
+        question: 'Which environment?',
+        choices: ['Production', 'Staging'],
+        allowFreeform: true,
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([askingSession])
+    vi.mocked(getSession).mockResolvedValue(askingSession)
+    vi.mocked(replyUserInput).mockResolvedValue({
+      ...askingSession,
+      status: 'running',
+      pendingUserInput: undefined,
+    })
+    render(<App />)
+
+    expect(await screen.findByText('Which environment?')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Production' }),
+    ).toBeInTheDocument()
+    const input = screen.getByLabelText('Your answer')
+    fireEvent.change(input, { target: { value: 'Development' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() =>
+      expect(replyUserInput).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'question-1',
+        { answer: 'Development', wasFreeform: true },
+      ),
+    )
+    expect(screen.queryByText('Which environment?')).not.toBeInTheDocument()
   })
 
   it('ignores stale folder responses after switching computers', async () => {

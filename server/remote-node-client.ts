@@ -14,6 +14,7 @@ import type {
   ServerEvent,
   SessionDetail,
   SlashCommand,
+  UserInputReplyInput,
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 
@@ -229,6 +230,21 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   ): Promise<SessionDetail> {
     const response = await this.request<{ session: SessionDetail }>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(requestId)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    )
+    return response.session
+  }
+
+  async replyUserInput(
+    sessionId: string,
+    requestId: string,
+    input: UserInputReplyInput,
+  ): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/user-input/${encodeURIComponent(requestId)}`,
       {
         method: 'POST',
         body: JSON.stringify(input),

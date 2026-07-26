@@ -2,6 +2,7 @@ import type {
   DirectoryListing,
   ConfigureRuntimeInput,
   RuntimeOptions,
+  UserInputReplyInput,
   RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
@@ -22,6 +23,11 @@ export interface SessionService {
   configureRuntime(
     id: string,
     input: ConfigureRuntimeInput,
+  ): Promise<SessionDetail>
+  replyUserInput(
+    sessionId: string,
+    requestId: string,
+    input: UserInputReplyInput,
   ): Promise<SessionDetail>
   clearConversation(id: string): Promise<SessionDetail>
   restartSession(id: string): Promise<SessionDetail>

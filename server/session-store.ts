@@ -71,6 +71,7 @@ export class SessionStore {
       session.isOpen = session.managedOpen === true
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
+      session.pendingUserInput = undefined
       if (session.queueDispatchAt) {
         session.status = 'running'
         session.activity = 'Sent queued prompt'
@@ -78,6 +79,7 @@ export class SessionStore {
         session.status = 'idle'
         session.activity = undefined
         session.pendingPermission = undefined
+        session.pendingUserInput = undefined
       }
       for (const message of session.messages) {
         message.streaming = false
@@ -223,6 +225,7 @@ export class SessionStore {
       isOpen: true,
       activity: undefined,
       pendingPermission: undefined,
+      pendingUserInput: undefined,
       queuedPrompts: [],
       queuedCount: 0,
       queueDispatchAt: undefined,

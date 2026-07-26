@@ -52,6 +52,9 @@ before the canonical command is sent to Copilot.
 Root-agent tool calls appear individually in the scrolling timeline with their
 name, concise description/command/path/query preview, and live completion
 status. Raw tool output and subagent internals remain hidden.
+`ask_user` questions appear as interactive cards with choice buttons and an
+optional freeform answer. SDK callbacks and tmux CLI dialogs are both supported
+across local and remote computers.
 The status line can show the root agent's model, reasoning effort, context tier,
 and current context usage. A `~` prefix marks usage estimated from persisted CLI
 events when Copilot does not expose an exact live count.

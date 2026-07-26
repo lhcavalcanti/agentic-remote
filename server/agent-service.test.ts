@@ -558,6 +558,56 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('handles SDK ask-user requests through the session UI state', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    const handler = client.createdConfigs.at(-1)?.onUserInputRequest
+    if (!handler) {
+      throw new Error('User input handler was not configured')
+    }
+
+    const response = handler(
+      {
+        question: 'Which environment?',
+        choices: ['Production', 'Staging'],
+        allowFreeform: true,
+      },
+      { sessionId: created.id },
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.pendingUserInput).toMatchObject({
+        question: 'Which environment?',
+        choices: ['Production', 'Staging'],
+      }),
+    )
+    const requestId = service.store.get(created.id)?.pendingUserInput?.requestId
+    if (!requestId) {
+      throw new Error('User input request was not stored')
+    }
+
+    const updated = await service.replyUserInput(created.id, requestId, {
+      answer: 'Staging',
+      wasFreeform: false,
+    })
+
+    await expect(response).resolves.toEqual({
+      answer: 'Staging',
+      wasFreeform: false,
+    })
+    expect(updated.pendingUserInput).toBeUndefined()
+    expect(updated.status).toBe('running')
+    await service.stop()
+  })
+
   it('does not restore a stale transcript after clearing', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -1606,6 +1656,79 @@ describe('AgentService deletion', () => {
       queuedCount: 0,
       queuedPrompts: [],
     })
+    await service.stop()
+  })
+
+  it('detects and answers terminal ask-user requests', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const request = {
+      requestId: 'terminal:question',
+      question: 'Choose a color',
+      choices: ['Red', 'Blue'],
+      allowFreeform: true,
+    }
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingUserInput: vi.fn(async () => request),
+      replyUserInput: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+
+    expect(
+      service.store.get(client.session.sessionId)?.pendingUserInput,
+    ).toEqual(request)
+    const updated = await service.replyUserInput(
+      client.session.sessionId,
+      request.requestId,
+      { answer: 'Blue', wasFreeform: false },
+    )
+    expect(terminal.replyUserInput).toHaveBeenCalledWith(
+      client.session.sessionId,
+      request,
+      'Blue',
+      false,
+    )
+    expect(updated.pendingUserInput).toBeUndefined()
+    const checksAfterReply = terminal.pendingUserInput.mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, 2_100))
+    await service.refreshTranscripts()
+    expect(
+      service.store.get(client.session.sessionId)?.pendingUserInput,
+    ).toBeUndefined()
+    expect(terminal.pendingUserInput.mock.calls.length).toBe(
+      checksAfterReply + 1,
+    )
     await service.stop()
   })
 })

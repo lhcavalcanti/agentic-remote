@@ -12,6 +12,7 @@ import type {
   RuntimeOptions,
   SendMessageInput,
   SlashCommand,
+  UserInputReplyInput,
 } from '../shared/contracts'
 
 async function responseError(response: Response): Promise<Error> {
@@ -274,6 +275,22 @@ export async function replyPermission(
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     `${sessionPath(computerId, sessionId)}/permissions/${encodeURIComponent(requestId)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  )
+  return response.session
+}
+
+export async function replyUserInput(
+  computerId: string,
+  sessionId: string,
+  requestId: string,
+  input: UserInputReplyInput,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/user-input/${encodeURIComponent(requestId)}`,
     {
       method: 'POST',
       body: JSON.stringify(input),

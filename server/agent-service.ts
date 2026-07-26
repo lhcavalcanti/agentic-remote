@@ -19,11 +19,13 @@ import type {
   ChatMessage,
   ConfigureRuntimeInput,
   PendingPermission,
+  PendingUserInput,
   QueuedPrompt,
   RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
   SessionRuntimeInfo,
+  UserInputReplyInput,
   RuntimeModelOption,
   RuntimeOptions,
   SessionStatus,
@@ -45,9 +47,18 @@ interface ActivePrompt {
   assistantMessageId: string
 }
 
+type UserInputHandler = NonNullable<SessionConfig['onUserInputRequest']>
+type UserInputRequest = Parameters<UserInputHandler>[0]
+type UserInputResponse = Awaited<ReturnType<UserInputHandler>>
+
 interface PendingSdkPermission {
   sessionId: string
   resolve: (result: PermissionRequestResult) => void
+}
+
+interface PendingSdkUserInput {
+  sessionId: string
+  resolve: (response: UserInputResponse) => void
 }
 
 export interface CopilotSessionLike {
@@ -508,6 +519,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
+  private readonly userInputs = new Map<string, PendingSdkUserInput>()
+  private readonly terminalUserInputChecks = new Map<string, number>()
+  private readonly answeredTerminalInputs = new Map<
+    string,
+    { requestId: string; expiresAt: number }
+  >()
   private discoveryTimer?: NodeJS.Timeout
   private discoveryInFlight?: Promise<void>
   private transcriptTimer?: NodeJS.Timeout
@@ -590,6 +607,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       permission.resolve({ kind: 'user-not-available' })
     }
     this.permissions.clear()
+    for (const input of this.userInputs.values()) {
+      input.resolve({ answer: '', wasFreeform: true })
+    }
+    this.userInputs.clear()
+    this.terminalUserInputChecks.clear()
+    this.answeredTerminalInputs.clear()
     const errors = await this.client.stop()
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Copilot SDK did not stop cleanly')
@@ -712,6 +735,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       streaming: true,
       onPermissionRequest: (request, invocation) =>
         this.requestPermission(invocation.sessionId, request),
+      onUserInputRequest: (request, invocation) =>
+        this.requestUserInput(invocation.sessionId, request),
     })
     this.attachSession(sdkSession)
     this.sessions.set(sdkSession.sessionId, sdkSession)
@@ -929,6 +954,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             contextTier: runtime?.contextTier,
             onPermissionRequest: (request, invocation) =>
               this.requestPermission(invocation.sessionId, request),
+            onUserInputRequest: (request, invocation) =>
+              this.requestUserInput(invocation.sessionId, request),
           })
         } catch (error) {
           this.publishError(replacementId, error)
@@ -956,11 +983,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.permissions.delete(requestId)
         }
       }
+      for (const [requestId, input] of this.userInputs) {
+        if (input.sessionId === id) {
+          input.resolve({ answer: '', wasFreeform: true })
+          this.userInputs.delete(requestId)
+        }
+      }
       this.eventLogFingerprints.delete(id)
       this.eventLogVersions.delete(id)
       this.liveTranscriptWatermarks.delete(id)
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
+      this.terminalUserInputChecks.delete(id)
+      this.answeredTerminalInputs.delete(id)
       const cleared = await this.store.replaceWithClearedSession(
         id,
         replacementId,
@@ -1340,6 +1375,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.permissions.delete(requestId)
         }
       }
+      for (const [requestId, input] of this.userInputs) {
+        if (input.sessionId === sessionId) {
+          input.resolve({ answer: '', wasFreeform: true })
+          this.userInputs.delete(requestId)
+        }
+      }
 
       try {
         await this.client.deleteSession(sessionId)
@@ -1355,6 +1396,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.delete(sessionId)
       this.drainingSessions.delete(sessionId)
       this.queueOperations.delete(sessionId)
+      this.terminalUserInputChecks.delete(sessionId)
+      this.answeredTerminalInputs.delete(sessionId)
       completed = true
       this.emit('event', { type: 'session.removed', sessionId })
     } finally {
@@ -1384,6 +1427,67 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     const updated = await this.store.update(sessionId, (session) => {
       session.pendingPermission = undefined
+      session.status = 'running'
+      session.activity = 'Continuing'
+    })
+    this.publish(updated)
+    return updated
+  }
+
+  async replyUserInput(
+    sessionId: string,
+    requestId: string,
+    input: UserInputReplyInput,
+  ): Promise<SessionDetail> {
+    const stored = this.store.get(sessionId)
+    const request = stored?.pendingUserInput
+    if (!stored || !request || request.requestId !== requestId) {
+      throw new Error('User input request is no longer pending')
+    }
+    const answer = input.answer.trim()
+    if (!answer) {
+      throw new Error('Answer cannot be empty')
+    }
+    if (input.wasFreeform && !request.allowFreeform) {
+      throw new Error('This question does not allow a freeform response')
+    }
+    if (!input.wasFreeform && !request.choices.includes(answer)) {
+      throw new Error('The selected answer is not available')
+    }
+    const sdkPending = this.userInputs.get(requestId)
+    if (sdkPending) {
+      if (sdkPending.sessionId !== sessionId) {
+        throw new Error('User input request belongs to another session')
+      }
+      this.userInputs.delete(requestId)
+      sdkPending.resolve({ answer, wasFreeform: input.wasFreeform })
+    } else {
+      if (!this.terminalController.replyUserInput) {
+        throw new Error('Terminal user input is not available')
+      }
+      this.answeredTerminalInputs.set(sessionId, {
+        requestId,
+        expiresAt: Date.now() + 5_000,
+      })
+      let replied = false
+      try {
+        replied = await this.terminalController.replyUserInput(
+          sessionId,
+          request,
+          answer,
+          input.wasFreeform,
+        )
+      } catch (error) {
+        this.answeredTerminalInputs.delete(sessionId)
+        throw error
+      }
+      if (!replied) {
+        this.answeredTerminalInputs.delete(sessionId)
+        throw new Error('External terminal is no longer available')
+      }
+    }
+    const updated = await this.store.update(sessionId, (session) => {
+      session.pendingUserInput = undefined
       session.status = 'running'
       session.activity = 'Continuing'
     })
@@ -1421,6 +1525,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         streaming: true,
         onPermissionRequest: (request, invocation) =>
           this.requestPermission(invocation.sessionId, request),
+        onUserInputRequest: (request, invocation) =>
+          this.requestUserInput(invocation.sessionId, request),
         suppressResumeEvent: true,
       })
     } catch (error) {
@@ -1433,6 +1539,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         streaming: true,
         onPermissionRequest: (request, invocation) =>
           this.requestPermission(invocation.sessionId, request),
+        onUserInputRequest: (request, invocation) =>
+          this.requestUserInput(invocation.sessionId, request),
       })
     }
     this.attachSession(sdkSession)
@@ -1561,6 +1669,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ) {
           return
         }
+        if (this.externalSessionIds.has(sessionId)) {
+          await this.syncTerminalUserInput(sessionId)
+        }
         const version = await this.sessionEventVersion(sessionId)
         if (!version || this.eventLogVersions.get(sessionId) === version) {
           return
@@ -1586,7 +1697,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.eventLogVersions.set(sessionId, version)
           return
         }
-        let status = statusFromEvents(events)
+        let status = this.store.get(sessionId)?.pendingUserInput
+          ? 'waiting'
+          : statusFromEvents(events)
         const queueDispatchAt = this.store.queueDispatchAt(sessionId)
         if (queueDispatchAt) {
           const dispatchTime = Date.parse(queueDispatchAt)
@@ -1643,6 +1756,49 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }),
     )
+  }
+
+  private async syncTerminalUserInput(sessionId: string): Promise<void> {
+    if (!this.terminalController.pendingUserInput) {
+      return
+    }
+    const stored = this.store.get(sessionId)
+    if (!stored || this.deletedSessionIds.has(sessionId)) {
+      return
+    }
+    const now = Date.now()
+    const lastCheck = this.terminalUserInputChecks.get(sessionId) || 0
+    if (!stored.pendingUserInput && now - lastCheck < 2_000) {
+      return
+    }
+    this.terminalUserInputChecks.set(sessionId, now)
+    const pending = await this.terminalController.pendingUserInput(sessionId)
+    if (pending) {
+      const answered = this.answeredTerminalInputs.get(sessionId)
+      if (answered && answered.expiresAt <= now) {
+        this.answeredTerminalInputs.delete(sessionId)
+      } else if (answered?.requestId === pending.requestId) {
+        return
+      }
+      if (stored.pendingUserInput?.requestId === pending.requestId) {
+        return
+      }
+      const updated = await this.store.update(sessionId, (session) => {
+        session.pendingUserInput = pending
+        session.status = 'waiting'
+        session.activity = pending.question
+      })
+      this.publish(updated)
+      return
+    }
+    if (stored.pendingUserInput?.requestId.startsWith('terminal:')) {
+      const updated = await this.store.update(sessionId, (session) => {
+        session.pendingUserInput = undefined
+        session.status = 'running'
+        session.activity = 'Continuing'
+      })
+      this.publish(updated)
+    }
   }
 
   private attachSession(session: CopilotSessionLike): void {
@@ -1901,6 +2057,37 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .catch((error: unknown) => {
           this.permissions.delete(requestId)
           resolve({ kind: 'user-not-available' })
+          this.publishError(sessionId, error)
+        })
+    })
+  }
+
+  private requestUserInput(
+    sessionId: string,
+    request: UserInputRequest,
+  ): Promise<UserInputResponse> {
+    if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      return Promise.resolve({ answer: '', wasFreeform: true })
+    }
+    const requestId = randomUUID()
+    const pending: PendingUserInput = {
+      requestId,
+      question: request.question,
+      choices: request.choices || [],
+      allowFreeform: request.allowFreeform ?? true,
+    }
+    return new Promise<UserInputResponse>((resolve) => {
+      this.userInputs.set(requestId, { sessionId, resolve })
+      void this.store
+        .update(sessionId, (session) => {
+          session.pendingUserInput = pending
+          session.status = 'waiting'
+          session.activity = pending.question
+        })
+        .then((session) => this.publish(session))
+        .catch((error: unknown) => {
+          this.userInputs.delete(requestId)
+          resolve({ answer: '', wasFreeform: true })
           this.publishError(sessionId, error)
         })
     })

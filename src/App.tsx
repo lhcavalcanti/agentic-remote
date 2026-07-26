@@ -56,6 +56,7 @@ import type {
   HubEvent,
   ManagedSession,
   PendingPermission,
+  PendingUserInput,
   RuntimeOptions,
   SlashCommand,
 } from '../shared/contracts'
@@ -80,6 +81,7 @@ import {
   renameSession,
   restartSession,
   replyPermission,
+  replyUserInput,
   sendMessage,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
@@ -699,6 +701,66 @@ function PermissionCard({
   )
 }
 
+function UserInputCard({
+  request,
+  disabled,
+  onReply,
+}: {
+  request: PendingUserInput
+  disabled: boolean
+  onReply: (answer: string, wasFreeform: boolean) => void
+}) {
+  const [answer, setAnswer] = useState('')
+
+  return (
+    <section className="user-input-card">
+      <p className="eyebrow">Agent question</p>
+      <h3>{request.question}</h3>
+      {request.choices.length > 0 ? (
+        <div className="user-input-card__choices">
+          {request.choices.map((choice) => (
+            <button
+              className="secondary-button"
+              disabled={disabled}
+              key={choice}
+              onClick={() => onReply(choice, false)}
+              type="button"
+            >
+              {choice}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {request.allowFreeform ? (
+        <form
+          className="user-input-card__form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (answer.trim()) {
+              onReply(answer.trim(), true)
+            }
+          }}
+        >
+          <input
+            aria-label="Your answer"
+            disabled={disabled}
+            onChange={(event) => setAnswer(event.target.value)}
+            placeholder="Type your answer…"
+            value={answer}
+          />
+          <button
+            className="primary-button"
+            disabled={disabled || !answer.trim()}
+            type="submit"
+          >
+            Answer
+          </button>
+        </form>
+      ) : null}
+    </section>
+  )
+}
+
 function ActivityMessage({
   content,
   status,
@@ -1226,6 +1288,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [permissionBusy, setPermissionBusy] = useState(false)
+  const [userInputBusy, setUserInputBusy] = useState(false)
   const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -1882,6 +1945,7 @@ function App() {
     if (!selected?.pendingPermission) {
       return
     }
+
     setPermissionBusy(true)
     setError(undefined)
     try {
@@ -1896,6 +1960,27 @@ function App() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setPermissionBusy(false)
+    }
+  }
+
+  async function answerUserInput(answer: string, wasFreeform: boolean) {
+    if (!selected?.pendingUserInput || userInputBusy) {
+      return
+    }
+    setUserInputBusy(true)
+    setError(undefined)
+    try {
+      const updated = await replyUserInput(
+        selected.computerId,
+        selected.id,
+        selected.pendingUserInput.requestId,
+        { answer, wasFreeform },
+      )
+      setSessions((current) => upsertSession(current, updated))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setUserInputBusy(false)
     }
   }
 
@@ -2221,8 +2306,18 @@ function App() {
               permission={selected.pendingPermission}
             />
           ) : null}
+          {selected?.pendingUserInput ? (
+            <UserInputCard
+              disabled={userInputBusy}
+              onReply={(answer, wasFreeform) =>
+                void answerUserInput(answer, wasFreeform)
+              }
+              request={selected.pendingUserInput}
+            />
+          ) : null}
           {selected?.activity &&
           !selected.pendingPermission &&
+          !selected.pendingUserInput &&
           !hasRunningTool ? (
             <div className="activity-line">
               <span className="activity-pulse" />

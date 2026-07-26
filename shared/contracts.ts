@@ -24,6 +24,13 @@ export interface PendingPermission {
   options: PermissionOption[]
 }
 
+export interface PendingUserInput {
+  requestId: string
+  question: string
+  choices: string[]
+  allowFreeform: boolean
+}
+
 export interface QueuedPrompt {
   id: string
   content: string
@@ -73,6 +80,7 @@ export interface SessionSummary {
 export interface SessionDetail extends SessionSummary {
   messages: ChatMessage[]
   pendingPermission?: PendingPermission
+  pendingUserInput?: PendingUserInput
 }
 
 export interface ComputerSummary {
@@ -132,6 +140,11 @@ export interface RemovedQueuedPrompt {
 
 export interface PermissionReplyInput {
   optionId: string
+}
+
+export interface UserInputReplyInput {
+  answer: string
+  wasFreeform: boolean
 }
 
 export interface AddComputerInput {

@@ -1,10 +1,13 @@
 import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { findActiveCopilotProcesses } from './active-sessions.js'
-import type { ConfigureRuntimeInput } from '../shared/contracts.js'
+import type {
+  ConfigureRuntimeInput,
+  PendingUserInput,
+} from '../shared/contracts.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -28,6 +31,13 @@ export interface TerminalSessionController {
     clearState: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
+  pendingUserInput?(sessionId: string): Promise<PendingUserInput | undefined>
+  replyUserInput?(
+    sessionId: string,
+    request: PendingUserInput,
+    answer: string,
+    wasFreeform: boolean,
+  ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
@@ -38,6 +48,10 @@ export class TmuxTerminalSessionController
 {
   private readonly operations = new Map<string, Promise<unknown>>()
   private creationQueue: Promise<void> = Promise.resolve()
+  private activeProcessCache?: {
+    expiresAt: number
+    processes: ReturnType<typeof findActiveCopilotProcesses>
+  }
 
   async create(
     sessionId: string,
@@ -166,6 +180,93 @@ export class TmuxTerminalSessionController
     })
   }
 
+  async pendingUserInput(
+    sessionId: string,
+  ): Promise<PendingUserInput | undefined> {
+    const target = await this.target(sessionId)
+    if (!target) {
+      return undefined
+    }
+    const pane = (
+      await execFileAsync('tmux', [
+        'capture-pane',
+        '-p',
+        '-t',
+        target,
+        '-S',
+        '-80',
+      ])
+    ).stdout
+    return parseTerminalUserInput(pane)
+  }
+
+  async replyUserInput(
+    sessionId: string,
+    request: PendingUserInput,
+    answer: string,
+    wasFreeform: boolean,
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        return false
+      }
+      const pane = (
+        await execFileAsync('tmux', [
+          'capture-pane',
+          '-p',
+          '-t',
+          owner.target,
+          '-S',
+          '-80',
+        ])
+      ).stdout
+      const current = parseTerminalUserInput(pane)
+      if (!current || current.requestId !== request.requestId) {
+        throw new Error('The terminal question is no longer active')
+      }
+      const choiceIndex = current.choices.indexOf(answer)
+      if (wasFreeform && !current.allowFreeform) {
+        throw new Error('This question does not allow a freeform response')
+      }
+      if (!wasFreeform && choiceIndex < 0) {
+        throw new Error('The selected answer is not available')
+      }
+      const resetCount =
+        current.choices.length + (current.allowFreeform ? 1 : 0)
+      for (let index = 0; index < resetCount; index += 1) {
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Up'])
+        await new Promise((resolve) => setTimeout(resolve, 30))
+      }
+      const downCount = wasFreeform ? current.choices.length : choiceIndex
+      for (let index = 0; index < downCount; index += 1) {
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Down'])
+        await new Promise((resolve) => setTimeout(resolve, 40))
+      }
+      if (wasFreeform) {
+        const buffer = `agentic-remote-answer-${randomUUID()}`
+        await execFileAsync('tmux', [
+          'set-buffer',
+          '-b',
+          buffer,
+          '--',
+          answer,
+        ])
+        await execFileAsync('tmux', [
+          'paste-buffer',
+          '-p',
+          '-d',
+          '-b',
+          buffer,
+          '-t',
+          owner.target,
+        ])
+      }
+      await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
+      return true
+    })
+  }
+
   async cancel(sessionId: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const target = await this.target(sessionId)
@@ -250,7 +351,7 @@ export class TmuxTerminalSessionController
   private async owner(
     sessionId: string,
   ): Promise<{ pid: number; target: string } | undefined> {
-    const processInfo = (await findActiveCopilotProcesses()).find(
+    const processInfo = (await this.activeProcesses()).find(
       (candidate) => candidate.sessionId === sessionId,
     )
     if (!processInfo) {
@@ -258,6 +359,19 @@ export class TmuxTerminalSessionController
     }
     const target = await tmuxTargetForPid(processInfo.pid)
     return target ? { pid: processInfo.pid, target } : undefined
+  }
+
+  private activeProcesses(): ReturnType<typeof findActiveCopilotProcesses> {
+    const now = Date.now()
+    if (this.activeProcessCache && this.activeProcessCache.expiresAt > now) {
+      return this.activeProcessCache.processes
+    }
+    const processes = findActiveCopilotProcesses()
+    this.activeProcessCache = {
+      expiresAt: now + 500,
+      processes,
+    }
+    return processes
   }
 
   private async waitForNewOwner(
@@ -364,6 +478,62 @@ interface TmuxSessionInfo {
   name: string
   attached: number
   createdAt: number
+}
+
+function cleanDialogLine(line: string): string {
+  return line
+    .replace(/^[\s│┃╭╰]+/u, '')
+    .replace(/[\s│┃╮╯]+$/u, '')
+    .trim()
+}
+
+export function parseTerminalUserInput(
+  pane: string,
+): PendingUserInput | undefined {
+  const lines = pane.split('\n').map(cleanDialogLine)
+  const questionHeader = lines.findLastIndex((line) => line === 'Question')
+  if (questionHeader < 0) {
+    return undefined
+  }
+  const questionLines: string[] = []
+  const choices: string[] = []
+  let allowFreeform = false
+  for (const line of lines.slice(questionHeader + 1)) {
+    if (!line || /^[─━]+$/u.test(line)) {
+      continue
+    }
+    const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
+    if (choice) {
+      const label = choice[2].trim()
+      if (/type your answer/i.test(label)) {
+        allowFreeform = true
+      } else {
+        choices.push(label)
+      }
+      continue
+    }
+    if (choices.length > 0 || allowFreeform) {
+      if (/select|confirm|cancel/i.test(line)) {
+        break
+      }
+      continue
+    }
+    questionLines.push(line)
+  }
+  const question = questionLines.join(' ').trim()
+  if (!question || (choices.length === 0 && !allowFreeform)) {
+    return undefined
+  }
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ question, choices, allowFreeform }))
+    .digest('hex')
+    .slice(0, 24)
+  return {
+    requestId: `terminal:${fingerprint}`,
+    question,
+    choices,
+    allowFreeform,
+  }
 }
 
 async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {

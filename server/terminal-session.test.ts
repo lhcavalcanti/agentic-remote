@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TmuxTerminalSessionController } from './terminal-session.js'
+import {
+  parseTerminalUserInput,
+  TmuxTerminalSessionController,
+} from './terminal-session.js'
 
 const execFileAsync = promisify(execFile)
 const directories: string[] = []
@@ -27,6 +30,38 @@ afterEach(async () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it('parses Copilot ask-user choice and freeform dialogs', () => {
+    expect(
+      parseTerminalUserInput(`
+│ Question                                      │
+│ ────────────────────────────────────────────  │
+│ Which environment do you prefer?              │
+│                                               │
+│ ❯ 1. Production                               │
+│   2. Staging                                  │
+│   3. Other (type your answer)                 │
+│                                               │
+│ ↑/↓ to select · enter to confirm · esc cancel │
+      `),
+    ).toMatchObject({
+      question: 'Which environment do you prefer?',
+      choices: ['Production', 'Staging'],
+      allowFreeform: true,
+    })
+    expect(
+      parseTerminalUserInput(`
+│ Question                         │
+│ Which package group?             │
+│ ❯ 1. Standard                    │
+│   2. Other package managers      │
+│ ↑/↓ to select · enter to confirm │
+      `),
+    ).toMatchObject({
+      choices: ['Standard', 'Other package managers'],
+      allowFreeform: false,
+    })
+  })
+
   it('creates a Copilot window in the configured existing tmux session', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)

@@ -13,6 +13,7 @@ import type {
   ServerEvent,
   SessionDetail,
   SlashCommand,
+  UserInputReplyInput,
   RuntimeOptions,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
@@ -242,6 +243,20 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return this.openSession(sessionId)
   }
 
+  async replyUserInput(
+    sessionId: string,
+    _requestId: string,
+    _input: UserInputReplyInput,
+  ): Promise<SessionDetail> {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.pendingUserInput = undefined
+    session.status = 'running'
+    return structuredClone(session)
+  }
+
   private emitEvent(event: ServerEvent) {
     this.emit('event', event)
   }
@@ -315,6 +330,12 @@ describe('multi-node hub', () => {
         createdAt: '2026-07-25T01:00:00.000Z',
       },
     ]
+    remoteSession.pendingUserInput = {
+      requestId: 'remote-question',
+      question: 'Choose remote option',
+      choices: ['One', 'Two'],
+      allowFreeform: true,
+    }
     const remoteService = new FakeSessionService(
       remoteSession,
       session('historical-session', 'Historical', false),
@@ -425,6 +446,16 @@ describe('multi-node hub', () => {
         computerName: 'homelab-prod',
         messages: [{ content: 'Remote history' }],
       })
+      const answered = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/user-input/remote-question`,
+        payload: { answer: 'Two', wasFreeform: false },
+      })
+      expect(answered.json().session).toMatchObject({
+        computerName: 'homelab-prod',
+        status: 'running',
+      })
+      expect(answered.json().session).not.toHaveProperty('pendingUserInput')
       const renamed = await hub.app.inject({
         method: 'PATCH',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session`,

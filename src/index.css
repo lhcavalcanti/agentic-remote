@@ -894,7 +894,8 @@ button {
   }
 }
 
-.permission-card {
+.permission-card,
+.user-input-card {
   margin-top: 24px;
   padding: 16px;
   border: 1px solid rgba(242, 201, 109, 0.32);
@@ -911,11 +912,40 @@ button {
   text-transform: uppercase;
 }
 
-.permission-card h3 {
+.permission-card h3,
+.user-input-card h3 {
   margin: 0;
   font-size: 13px;
   font-weight: 570;
   line-height: 1.45;
+}
+
+.user-input-card__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.user-input-card__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.user-input-card__form input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  outline: 0;
+  background: #121310;
+}
+
+.user-input-card__form input:focus {
+  border-color: #59634c;
 }
 
 .permission-card__actions {
@@ -1695,6 +1725,12 @@ button {
   .permission-card__actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .user-input-card__choices,
+  .user-input-card__form {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 }
 

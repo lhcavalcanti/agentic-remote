@@ -35,6 +35,11 @@ const permissionReplySchema = z.object({
   optionId: z.string().trim().min(1).max(500),
 })
 
+const userInputReplySchema = z.object({
+  answer: z.string().trim().min(1).max(20_000),
+  wasFreeform: z.boolean(),
+})
+
 const executeCommandSchema = z.object({
   command: z.string().trim().startsWith('/').max(10_000),
   enqueue: z.boolean().optional(),
@@ -231,6 +236,20 @@ export async function registerNodeRoutes(
               request.params.sessionId,
               request.params.requestId,
               input.optionId,
+            ),
+          }
+        },
+      )
+
+      node.post<{ Params: { sessionId: string; requestId: string } }>(
+        '/sessions/:sessionId/user-input/:requestId',
+        async (request) => {
+          const input = userInputReplySchema.parse(request.body)
+          return {
+            session: await service.replyUserInput(
+              request.params.sessionId,
+              request.params.requestId,
+              input,
             ),
           }
         },

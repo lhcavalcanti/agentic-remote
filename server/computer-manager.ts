@@ -12,6 +12,7 @@ import type {
   PermissionReplyInput,
   RenameSessionInput,
   SendMessageInput,
+  UserInputReplyInput,
   RuntimeOptions,
   ServerEvent,
   SessionDetail,
@@ -367,6 +368,24 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.optionId,
           )
         : await this.requireClient(computerId).replyPermission(
+            sessionId,
+            requestId,
+            input,
+          )
+    return managedSession(session, computer)
+  }
+
+  async replyUserInput(
+    computerId: string,
+    sessionId: string,
+    requestId: string,
+    input: UserInputReplyInput,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.replyUserInput(sessionId, requestId, input)
+        : await this.requireClient(computerId).replyUserInput(
             sessionId,
             requestId,
             input,

@@ -79,6 +79,18 @@ export class TmuxTerminalSessionController
         return false
       }
       const windowName = safeWindowName(title)
+      const currentName = (
+        await execFileAsync('tmux', [
+          'display-message',
+          '-p',
+          '-t',
+          target,
+          '#{window_name}',
+        ])
+      ).stdout.trim()
+      if (currentName === windowName) {
+        return true
+      }
       await execFileAsync('tmux', ['rename-window', '-t', target, windowName])
       return true
     })

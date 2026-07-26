@@ -1583,9 +1583,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const storedBeforeDiscovery = this.store.list()
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
-    const previousTitles = new Map(
-      storedBeforeDiscovery.map((session) => [session.id, session.title]),
-    )
     this.externalSessionIds = new Set(
       [
         ...activeSessions
@@ -1636,13 +1633,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (renameTerminal) {
       await Promise.all(
         activeSessions.map(async (session) => {
-          const previousTitle = previousTitles.get(session.id)
           const currentTitle = this.store.get(session.id)?.title
-          if (
-            previousTitle &&
-            currentTitle &&
-            currentTitle !== previousTitle
-          ) {
+          if (currentTitle) {
             await renameTerminal(session.id, currentTitle)
               .catch((error: unknown) => this.publishError(session.id, error))
           }

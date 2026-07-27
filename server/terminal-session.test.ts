@@ -60,6 +60,20 @@ describe('TmuxTerminalSessionController', () => {
       choices: ['Standard', 'Other package managers'],
       allowFreeform: false,
     })
+    expect(
+      parseTerminalUserInput(`
+│ Question                           │
+│ Describe your deployment plan.     │
+│                                    │
+│ ❯ Type your answer...              │
+│                                    │
+│ enter to submit · esc to cancel    │
+      `),
+    ).toMatchObject({
+      question: 'Describe your deployment plan.',
+      choices: [],
+      allowFreeform: true,
+    })
   })
 
   it('creates a Copilot window in the configured existing tmux session', async () => {

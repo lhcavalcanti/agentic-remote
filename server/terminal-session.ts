@@ -514,6 +514,10 @@ export function parseTerminalUserInput(
     if (!line || /^[─━]+$/u.test(line)) {
       continue
     }
+    if (/^(?:❯\s*)?type your answer/i.test(line)) {
+      allowFreeform = true
+      continue
+    }
     const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
     if (choice) {
       const label = choice[2].trim()

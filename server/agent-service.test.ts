@@ -146,6 +146,7 @@ class FakeCopilotClient implements CopilotClientLike {
   readonly createdConfigs: SessionConfig[] = []
   readonly deletedSessionIds: string[] = []
   readonly resumedSessionIds: string[] = []
+  stopErrors: Error[] = []
   readonly rpc = {
     commands: {
       list: async () => this.session.rpc.commands.list(),
@@ -154,7 +155,7 @@ class FakeCopilotClient implements CopilotClientLike {
 
   async start() {}
   async stop(): Promise<Error[]> {
-    return []
+    return this.stopErrors
   }
   async createSession(config: SessionConfig): Promise<CopilotSessionLike> {
     if (this.createError) {
@@ -515,6 +516,32 @@ describe('AgentService deletion', () => {
       }),
     ])
     await restartedService.stop()
+  })
+
+  it('allows the SDK post-cleanup runtime timeout during shutdown', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.stopErrors = [
+      new Error(
+        'Failed to gracefully shut down runtime: runtime.shutdown timed out after 10000ms',
+      ),
+    ]
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await expect(service.stop()).resolves.toBeUndefined()
+    expect(warning).toHaveBeenCalledWith(
+      'Copilot SDK graceful shutdown timed out:',
+      client.stopErrors[0]?.message,
+    )
+    warning.mockRestore()
   })
 
   it('clears SDK conversation history while keeping the session open', async () => {

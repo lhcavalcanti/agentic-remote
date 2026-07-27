@@ -675,8 +675,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ),
       ...(await this.client.stop()),
     ]
-    if (errors.length > 0) {
-      throw new AggregateError(errors, 'Copilot SDK did not stop cleanly')
+    const runtimeTimeouts = errors.filter((error) =>
+      error.message.startsWith(
+        'Failed to gracefully shut down runtime: runtime.shutdown timed out',
+      ),
+    )
+    for (const timeout of runtimeTimeouts) {
+      // The SDK reports this after disposing its connection and killing its owned CLI.
+      console.warn('Copilot SDK graceful shutdown timed out:', timeout.message)
+    }
+    const fatalErrors = errors.filter((error) => !runtimeTimeouts.includes(error))
+    if (fatalErrors.length > 0) {
+      throw new AggregateError(fatalErrors, 'Copilot SDK did not stop cleanly')
     }
   }
 

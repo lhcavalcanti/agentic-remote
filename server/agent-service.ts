@@ -659,7 +659,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.userInputs.clear()
     this.terminalUserInputChecks.clear()
     this.answeredTerminalInputs.clear()
-    const errors = await this.client.stop()
+    const disconnected = await Promise.allSettled(
+      [...this.sessions.values()].map((session) => session.disconnect()),
+    )
+    this.sessions.clear()
+    const errors = [
+      ...disconnected.flatMap((result) =>
+        result.status === 'rejected'
+          ? [
+              result.reason instanceof Error
+                ? result.reason
+                : new Error(String(result.reason)),
+            ]
+          : [],
+      ),
+      ...(await this.client.stop()),
+    ]
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Copilot SDK did not stop cleanly')
     }

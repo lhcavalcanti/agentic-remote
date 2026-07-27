@@ -22,6 +22,7 @@ import { SessionStore } from './session-store.js'
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId = 'active-session'
   readonly sentPrompts: string[] = []
+  disconnectCount = 0
   readonly invokedCommands: string[] = []
   readonly assignedNames: string[] = []
   readonly runtimeSwitches: Array<{
@@ -130,7 +131,9 @@ class DeferredSession implements CopilotSessionLike {
   }
 
   async abort() {}
-  async disconnect() {}
+  async disconnect() {
+    this.disconnectCount += 1
+  }
 }
 
 class FakeCopilotClient implements CopilotClientLike {
@@ -485,15 +488,17 @@ describe('AgentService deletion', () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const stateDirectory = path.join(directory, 'state')
+    const firstClient = new FakeCopilotClient()
     const firstService = new AgentService(
       new SessionStore(stateDirectory),
-      new FakeCopilotClient(),
+      firstClient,
       async () => [],
       async () => undefined,
     )
     await firstService.start()
     const created = await firstService.createSession(directory)
     await firstService.stop()
+    expect(firstClient.session.disconnectCount).toBe(1)
 
     const restartedService = new AgentService(
       new SessionStore(stateDirectory),

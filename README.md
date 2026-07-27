@@ -33,7 +33,9 @@ In the installed mobile app, swipe right from the left screen edge to open
 Sessions and swipe left to close it. Horizontal code/table scrolling is excluded;
 browser Safari keeps its native Back gesture and uses the menu button.
 When the on-screen keyboard opens, the app follows iOS's visual viewport so the
-conversation header remains below the Dynamic Island.
+conversation header remains below the Dynamic Island, then restores the full
+screen when the keyboard closes. App dialogs also stay within the device safe
+areas.
 
 UI-originated queued prompts appear above the composer. Remove deletes any
 selected queued prompt; Edit removes it and restores its text to the composer.

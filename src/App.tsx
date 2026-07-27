@@ -1593,6 +1593,7 @@ function App() {
     useState<ServiceWorkerRegistration>()
   const [updatingApp, setUpdatingApp] = useState(false)
   const [updateToastDismissed, setUpdateToastDismissed] = useState(false)
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === 'undefined'
       ? 800
@@ -1717,16 +1718,45 @@ function App() {
 
   useEffect(() => {
     const updateViewport = () => {
-      setViewportHeight(window.visualViewport?.height || window.innerHeight)
-      setViewportOffsetTop(window.visualViewport?.offsetTop || 0)
+      const viewport = window.visualViewport
+      const activeElement = document.activeElement
+      const editorFocused =
+        activeElement instanceof HTMLElement &&
+        activeElement.matches('input, textarea, select, [contenteditable="true"]')
+      const open = Boolean(
+        editorFocused &&
+          viewport &&
+          window.innerHeight - viewport.height > 80,
+      )
+      setKeyboardOpen(open)
+      setViewportHeight(viewport?.height || window.innerHeight)
+      setViewportOffsetTop(open ? viewport?.offsetTop || 0 : 0)
     }
-    window.visualViewport?.addEventListener('resize', updateViewport)
-    window.visualViewport?.addEventListener('scroll', updateViewport)
-    window.addEventListener('resize', updateViewport)
+    const timers = new Set<number>()
+    const handleViewportChange = () => {
+      updateViewport()
+      for (const delay of [50, 250, 500]) {
+        const timer = window.setTimeout(() => {
+          timers.delete(timer)
+          updateViewport()
+        }, delay)
+        timers.add(timer)
+      }
+    }
+    window.visualViewport?.addEventListener('resize', handleViewportChange)
+    window.visualViewport?.addEventListener('scroll', handleViewportChange)
+    window.addEventListener('resize', handleViewportChange)
+    document.addEventListener('focusin', handleViewportChange)
+    document.addEventListener('focusout', handleViewportChange)
     return () => {
-      window.visualViewport?.removeEventListener('resize', updateViewport)
-      window.visualViewport?.removeEventListener('scroll', updateViewport)
-      window.removeEventListener('resize', updateViewport)
+      window.visualViewport?.removeEventListener('resize', handleViewportChange)
+      window.visualViewport?.removeEventListener('scroll', handleViewportChange)
+      window.removeEventListener('resize', handleViewportChange)
+      document.removeEventListener('focusin', handleViewportChange)
+      document.removeEventListener('focusout', handleViewportChange)
+      for (const timer of timers) {
+        window.clearTimeout(timer)
+      }
     }
   }, [])
 
@@ -2576,7 +2606,9 @@ function App() {
 
   return (
     <div
-      className="app-shell"
+      className={`app-shell ${
+        keyboardOpen ? 'app-shell--keyboard-open' : ''
+      }`}
       onTouchCancel={() => {
         sidebarGestureRef.current = undefined
       }}

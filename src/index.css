@@ -58,6 +58,7 @@ button {
 
 .app-shell {
   display: grid;
+  position: relative;
   grid-template-columns: 286px minmax(0, 1fr);
   height: 100dvh;
   min-height: 0;
@@ -1271,7 +1272,7 @@ button {
 }
 
 .app-settings-dialog {
-  max-height: calc(100dvh - 36px);
+  max-height: 100%;
   overflow-y: auto;
 }
 
@@ -1443,11 +1444,15 @@ button {
 }
 
 .dialog-backdrop {
-  position: fixed;
+  position: absolute;
   z-index: 30;
   inset: 0;
   display: grid;
-  padding: 18px;
+  padding:
+    max(18px, env(safe-area-inset-top))
+    max(18px, env(safe-area-inset-right))
+    max(18px, env(safe-area-inset-bottom))
+    max(18px, env(safe-area-inset-left));
   place-items: center;
   background: rgba(6, 7, 5, 0.72);
   backdrop-filter: blur(8px);
@@ -1757,9 +1762,14 @@ button {
   .app-shell {
     display: block;
     position: fixed;
-    top: var(--visual-viewport-top, 0);
+    top: 0;
     right: 0;
     left: 0;
+    height: 100dvh;
+  }
+
+  .app-shell--keyboard-open {
+    top: var(--visual-viewport-top, 0);
     height: var(--visual-viewport-height, 100dvh);
   }
 
@@ -1937,11 +1947,11 @@ button {
 
 @media (display-mode: standalone) and (max-width: 960px) {
   .composer-area {
-    padding-bottom: max(8px, calc(env(safe-area-inset-bottom) - 12px));
+    padding-bottom: max(6px, calc(env(safe-area-inset-bottom) - 20px));
   }
 
   .sidebar-settings {
-    padding-bottom: max(8px, calc(env(safe-area-inset-bottom) - 12px));
+    padding-bottom: max(6px, calc(env(safe-area-inset-bottom) - 20px));
   }
 }
 

@@ -132,6 +132,14 @@ const historicalSession: ManagedSession = {
   messages: [],
 }
 
+const secondSession: ManagedSession = {
+  ...session,
+  id: 'session-2',
+  title: 'Second chat',
+  cwd: '/home/lcavalcanti/src/second',
+  messages: [],
+}
+
 describe('App', () => {
   it('caps composer growth for iPhone viewport heights', () => {
     expect(composerMaximumHeight(true, 844)).toBe(104)
@@ -243,6 +251,39 @@ describe('App', () => {
     )
     expect(screen.getByLabelText('Reorder development')).toBeInTheDocument()
     expect(screen.getByLabelText('Reorder Project chat')).toBeInTheDocument()
+  })
+
+  it('preserves a separate composer draft for each session', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'First session draft' } })
+
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    fireEvent.change(textarea, { target: { value: 'Second session draft' } })
+
+    const firstSessionTitle = screen
+      .getAllByText('Project chat')
+      .find((element) => element.closest('.session-item'))
+    fireEvent.click(firstSessionTitle!.closest('button')!)
+    expect(textarea).toHaveValue('First session draft')
+
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+    expect(textarea).toHaveValue('Second session draft')
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toMatchObject({
+        'computer-1:session-1': 'First session draft',
+        'computer-1:session-2': 'Second session draft',
+      }),
+    )
   })
 
   it('opens the folder-first new session dialog', async () => {
@@ -513,6 +554,8 @@ describe('App', () => {
   it('clears Copilot and UI history from the header and slash command', async () => {
     render(<App />)
     await screen.findByText('Hello agent')
+    const textarea = screen.getByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this draft' } })
 
     fireEvent.click(
       screen.getByRole('button', { name: 'Clear conversation' }),
@@ -524,9 +567,9 @@ describe('App', () => {
       ),
     )
     expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+    expect(textarea).toHaveValue('Keep this draft')
 
     vi.mocked(clearConversation).mockClear()
-    const textarea = screen.getByLabelText('Message')
     fireEvent.change(textarea, { target: { value: '/clear' } })
     fireEvent.keyDown(textarea, { key: 'Enter' })
     await waitFor(() =>
@@ -617,6 +660,7 @@ describe('App', () => {
     })
 
     fireEvent.change(textarea, { target: { value: 'send now' } })
+    textarea.focus()
     fireEvent.keyDown(textarea, { key: 'Enter' })
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
@@ -624,6 +668,7 @@ describe('App', () => {
         enqueue: false,
       })
     })
+    await waitFor(() => expect(textarea).toHaveFocus())
 
     vi.mocked(sendMessage).mockClear()
     fireEvent.change(textarea, { target: { value: 'keep editing' } })

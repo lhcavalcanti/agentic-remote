@@ -26,6 +26,10 @@ Composer controls follow Copilot CLI conventions:
 - Typing `/` opens autocomplete populated from the session's real Copilot
   command list
 
+Unsent composer text is stored separately for each computer/session and returns
+when switching back. After Enter sends or queues, focus and the caret return to
+the composer unless another session was selected meanwhile.
+
 UI-originated queued prompts appear above the composer. Remove deletes any
 selected queued prompt; Edit removes it and restores its text to the composer.
 Agentic Remote owns these prompt queues because Copilot's native queue API only

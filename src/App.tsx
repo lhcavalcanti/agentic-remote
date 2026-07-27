@@ -1286,7 +1286,9 @@ function App() {
   const [computers, setComputers] = useState<ComputerSummary[]>([])
   const [computerFilter, setComputerFilter] = useState('all')
   const [selectedKey, setSelectedKey] = useState<string>()
-  const [composer, setComposer] = useState('')
+  const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
+    () => readStoredOrder('agentic-remote:composer-drafts', {}),
+  )
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   const [commands, setCommands] = useState<SlashCommand[]>([])
@@ -1373,6 +1375,7 @@ function App() {
     () => sessions.find((session) => sessionKey(session) === selectedKey),
     [selectedKey, sessions],
   )
+  const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
   selectedRef.current = selected
   const currentTool = selected?.messages.findLast(
     (message) => message.role === 'activity',
@@ -1494,6 +1497,13 @@ function App() {
       JSON.stringify(statusline),
     )
   }, [statusline])
+
+  useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify(composerDrafts),
+    )
+  }, [composerDrafts])
 
   useEffect(() => {
     let active = true
@@ -1653,6 +1663,11 @@ function App() {
         if (event.type === 'session.upserted') {
           setSessions((current) => upsertSession(current, event.session))
         } else if (event.type === 'session.removed') {
+          const removedKey = `${event.computerId}:${event.sessionId}`
+          setComposerDrafts((current) => {
+            const { [removedKey]: _removed, ...remaining } = current
+            return remaining
+          })
           setSessions((current) =>
             current.filter(
               (session) =>
@@ -1668,6 +1683,13 @@ function App() {
           )
           setSessions((current) =>
             current.filter((session) => session.computerId !== event.computerId),
+          )
+          setComposerDrafts((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(
+                ([key]) => !key.startsWith(`${event.computerId}:`),
+              ),
+            ),
           )
           setComputerFilter((current) =>
             current === event.computerId ? 'all' : current,
@@ -1730,6 +1752,47 @@ function App() {
     )}px`
   }, [composer, viewportHeight])
 
+  function setComposer(value: string) {
+    if (!selectedKey) {
+      return
+    }
+    setComposerForKey(selectedKey, value)
+  }
+
+  function setComposerForKey(targetKey: string, value: string) {
+    setComposerDrafts((current) => {
+      if (!value) {
+        const { [targetKey]: _removed, ...remaining } = current
+        return remaining
+      }
+      return { ...current, [targetKey]: value }
+    })
+  }
+
+  function moveComposerDraft(fromKey: string, toKey: string) {
+    if (fromKey === toKey) {
+      return
+    }
+    setComposerDrafts((current) => {
+      const value = current[fromKey]
+      const { [fromKey]: _removed, ...remaining } = current
+      return value ? { ...remaining, [toKey]: value } : remaining
+    })
+  }
+
+  function focusComposer(targetKey: string | undefined) {
+    window.requestAnimationFrame(() => {
+      const current = selectedRef.current
+      if (!targetKey || !current || sessionKey(current) !== targetKey) {
+        return
+      }
+      const textarea = composerRef.current
+      textarea?.focus()
+      const end = textarea?.value.length || 0
+      textarea?.setSelectionRange(end, end)
+    })
+  }
+
   function selectSession(session: ManagedSession) {
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
@@ -1749,6 +1812,7 @@ function App() {
     if (!selected || !content || sending) {
       return
     }
+    const targetKey = sessionKey(selected)
 
     const isCommand = content.startsWith('/')
     const commandName = isCommand
@@ -1776,12 +1840,13 @@ function App() {
     }
     if (command?.name === 'clear') {
       setComposer('')
-      await clearSelectedConversation()
+      focusComposer(await clearSelectedConversation())
       return
     }
     if (command?.name === 'restart') {
       setComposer('')
       await restartSelectedSession()
+      focusComposer(targetKey)
       return
     }
     const shouldEnqueue =
@@ -1803,10 +1868,11 @@ function App() {
           })
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
-      setComposer(content)
+      setComposerForKey(targetKey, content)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setSending(false)
+      focusComposer(targetKey)
     }
   }
 
@@ -1836,7 +1902,7 @@ function App() {
     }
   }
 
-  async function clearSelectedConversation() {
+  async function clearSelectedConversation(): Promise<string | undefined> {
     if (
       !selected ||
       clearing ||
@@ -1844,7 +1910,7 @@ function App() {
         `Clear the conversation in "${selected.title}"?\n\nThis removes Copilot context and Agentic Remote history but keeps the session open.`,
       )
     ) {
-      return
+      return undefined
     }
 
     const target = selected
@@ -1862,9 +1928,12 @@ function App() {
           cleared,
         ),
       )
+      moveComposerDraft(sessionKey(target), sessionKey(cleared))
       setSelectedKey(sessionKey(cleared))
+      return sessionKey(cleared)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
+      return sessionKey(target)
     } finally {
       setClearing(false)
     }
@@ -2003,6 +2072,7 @@ function App() {
     setError(undefined)
     try {
       await deleteSession(selected.computerId, selected.id)
+      setComposerForKey(sessionKey(selected), '')
       const remaining = sessions.filter(
         (session) => sessionKey(session) !== sessionKey(selected),
       )

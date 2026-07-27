@@ -1665,6 +1665,11 @@ button {
     transition: transform 180ms ease;
   }
 
+  .brand {
+    height: calc(74px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+  }
+
   .sidebar--open {
     transform: translateX(0);
   }
@@ -1691,9 +1696,10 @@ button {
   }
 
   .conversation-header {
-    height: 58px;
+    height: calc(58px + env(safe-area-inset-top));
+    min-height: calc(58px + env(safe-area-inset-top));
     gap: 2px;
-    padding: max(4px, env(safe-area-inset-top))
+    padding: env(safe-area-inset-top)
       max(6px, env(safe-area-inset-right)) 0
       max(6px, env(safe-area-inset-left));
   }

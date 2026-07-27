@@ -20,6 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   ArrowUp,
+  Bell,
   Bot,
   CheckCircle2,
   ChevronLeft,
@@ -85,6 +86,15 @@ import {
   sendMessage,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
+import {
+  activatePwaUpdate,
+  disablePushNotifications,
+  enablePushNotifications,
+  installedAsApp,
+  pushNotificationsSupported,
+  pushSubscription,
+  PWA_UPDATE_EVENT,
+} from './pwa'
 
 function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string {
   return `${session.computerId}:${session.id}`
@@ -667,6 +677,113 @@ function ComputersDialog({
           {submitting ? 'Connecting…' : 'Add computer'}
         </button>
       </form>
+    </DialogFrame>
+  )
+}
+
+function NotificationsDialog({
+  open,
+  onClose,
+}: {
+  open: boolean
+  onClose: () => void
+}) {
+  const [enabled, setEnabled] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string>()
+  const supported = pushNotificationsSupported()
+  const ios =
+    typeof navigator !== 'undefined' &&
+    /iPad|iPhone|iPod/.test(navigator.userAgent)
+  const requiresInstall = ios && !installedAsApp()
+
+  useEffect(() => {
+    if (!open || !supported || requiresInstall) {
+      return
+    }
+    let active = true
+    setLoading(true)
+    setError(undefined)
+    void pushSubscription()
+      .then((subscription) => {
+        if (active) {
+          setEnabled(Boolean(subscription))
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [open, requiresInstall, supported])
+
+  if (!open) {
+    return null
+  }
+
+  async function toggle() {
+    setSubmitting(true)
+    setError(undefined)
+    try {
+      if (enabled) {
+        await disablePushNotifications()
+        setEnabled(false)
+      } else {
+        await enablePushNotifications()
+        setEnabled(true)
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <DialogFrame
+      eyebrow="Web app"
+      onClose={onClose}
+      title="Notifications"
+    >
+      {!supported ? (
+        <p className="dialog-message">
+          Push notifications are not supported in this browser.
+        </p>
+      ) : requiresInstall ? (
+        <p className="dialog-message">
+          On iPhone, open this page in Safari, choose Share → Add to Home
+          Screen, then open the installed app to enable notifications.
+        </p>
+      ) : (
+        <>
+          <p className="dialog-message">
+            Receive a privacy-safe notification when an agent needs your input.
+            The question text is only shown after opening Agentic Remote.
+          </p>
+          <button
+            className={enabled ? 'secondary-button dialog__submit' : 'primary-button dialog__submit'}
+            disabled={loading || submitting}
+            onClick={() => void toggle()}
+            type="button"
+          >
+            {submitting
+              ? 'Updating…'
+              : enabled
+                ? 'Disable notifications'
+                : 'Enable notifications'}
+          </button>
+        </>
+      )}
+      {error ? <p className="form-error">{error}</p> : null}
     </DialogFrame>
   )
 }
@@ -1305,7 +1422,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [computersOpen, setComputersOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [statuslineOpen, setStatuslineOpen] = useState(false)
+  const [updateRegistration, setUpdateRegistration] =
+    useState<ServiceWorkerRegistration>()
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === 'undefined'
       ? 800
@@ -1506,6 +1626,16 @@ function App() {
   }, [composerDrafts])
 
   useEffect(() => {
+    const handleUpdate = (event: Event) => {
+      setUpdateRegistration(
+        (event as CustomEvent<ServiceWorkerRegistration>).detail,
+      )
+    }
+    window.addEventListener(PWA_UPDATE_EVENT, handleUpdate)
+    return () => window.removeEventListener(PWA_UPDATE_EVENT, handleUpdate)
+  }, [])
+
+  useEffect(() => {
     let active = true
     void Promise.all([listSessions(), listComputers()])
       .then(([loadedSessions, loadedComputers]) => {
@@ -1514,9 +1644,22 @@ function App() {
         }
         setSessions(sortSessions(loadedSessions))
         setComputers(loadedComputers)
+        const parameters = new URLSearchParams(window.location.search)
+        const requestedComputer = parameters.get('computer')
+        const requestedSession = parameters.get('session')
+        const requested = loadedSessions.find(
+          (session) =>
+            session.computerId === requestedComputer &&
+            session.id === requestedSession,
+        )
         setSelectedKey(
           (current) =>
-            current || (loadedSessions[0] ? sessionKey(loadedSessions[0]) : undefined),
+            current ||
+            (requested
+              ? sessionKey(requested)
+              : loadedSessions[0]
+                ? sessionKey(loadedSessions[0])
+                : undefined),
         )
       })
       .catch((caught: unknown) => {
@@ -2298,6 +2441,14 @@ function App() {
             </button>
           ) : null}
           <button
+            aria-label="Notifications"
+            className="icon-button"
+            onClick={() => setNotificationsOpen(true)}
+            type="button"
+          >
+            <Bell size={18} />
+          </button>
+          <button
             aria-label="New session"
             className="icon-button"
             onClick={() => setNewSessionOpen(true)}
@@ -2649,6 +2800,10 @@ function App() {
         open={statuslineOpen}
         settings={statusline}
       />
+      <NotificationsDialog
+        onClose={() => setNotificationsOpen(false)}
+        open={notificationsOpen}
+      />
       <RuntimeDialog
         onClose={() => setRuntimeOpen(false)}
         onConfigured={(session) => {
@@ -2658,6 +2813,18 @@ function App() {
         open={runtimeOpen}
         session={selected}
       />
+      {updateRegistration ? (
+        <div className="update-toast" role="status">
+          <span>A new Agentic Remote version is ready.</span>
+          <button
+            className="primary-button"
+            onClick={() => activatePwaUpdate(updateRegistration)}
+            type="button"
+          >
+            Update now
+          </button>
+        </div>
+      ) : null}
       <RenameSessionDialog
         onClose={() => setRenameOpen(false)}
         onRenamed={(session) => {

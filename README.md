@@ -54,6 +54,18 @@ events are ephemeral.
 On phones, the composer grows to a compact maximum height and shrinks further
 when the virtual keyboard reduces the viewport.
 
+## Install as a phone web app
+
+Agentic Remote is an installable PWA. On iPhone or iPad, open the HTTPS site in
+Safari, choose **Share → Add to Home Screen**, then open the installed app.
+Use the bell action to enable privacy-safe notifications when an agent asks a
+question. Notification text includes only the computer and session title; open
+the app to read the question and respond.
+
+The installed app checks for new versions on launch, hourly while open, and when
+returning to the foreground. Closing and reopening activates updates
+automatically; an **Update now** prompt activates a waiting version immediately.
+
 For Copilot sessions running in tmux, Agentic Remote routes prompts, queued
 input, slash commands, and cancel actions into the owning terminal pane. This
 keeps the CLI and web timeline on the same agent instead of creating a detached
@@ -200,6 +212,7 @@ settings.
 | `AGENTIC_REMOTE_DATA_DIR` | `~/.agentic-remote` | Local application state |
 | `AGENTIC_REMOTE_ROLE` | `hub` | Run the UI hub or a headless node |
 | `AGENTIC_REMOTE_NODE_NAME` | hostname | Friendly computer name |
+| `AGENTIC_REMOTE_VAPID_SUBJECT` | project URL | Web Push VAPID contact URL or `mailto:` address |
 
 ## Checks
 

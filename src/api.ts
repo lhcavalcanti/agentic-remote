@@ -298,3 +298,27 @@ export async function replyUserInput(
   )
   return response.session
 }
+
+export async function getPushPublicKey(): Promise<string> {
+  const response = await request<{ publicKey: string }>(
+    '/api/push/public-key',
+  )
+  return response.publicKey
+}
+
+export async function savePushSubscription(
+  subscription: PushSubscriptionJSON,
+): Promise<void> {
+  await request<{ ok: true }>('/api/push/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify(subscription),
+  })
+}
+
+export async function deletePushSubscription(endpoint: string): Promise<void> {
+  await requestVoid('/api/push/subscriptions', {
+    method: 'DELETE',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  })
+}

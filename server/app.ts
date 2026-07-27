@@ -12,6 +12,8 @@ import { registerHubRoutes } from './hub-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
 import { resolveDataDirectory } from './paths.js'
+import { PushNotificationService } from './push-notification-service.js'
+import { registerPushRoutes } from './push-routes.js'
 import { SessionStore } from './session-store.js'
 import type { SessionService } from './session-service.js'
 
@@ -25,6 +27,7 @@ export interface BuildAppOptions {
   serveStatic?: boolean
   role?: ServerRole
   dataDirectory?: string
+  pushService?: PushNotificationService
 }
 
 export async function buildApp(
@@ -34,6 +37,7 @@ export async function buildApp(
   service: SessionService
   identity: NodeIdentityStore
   manager?: ComputerManager
+  pushService?: PushNotificationService
 }> {
   const app = Fastify({ logger: options.logger ?? true })
   const role = options.role ?? 'hub'
@@ -46,6 +50,7 @@ export async function buildApp(
   await registerNodeRoutes(app, service, identity)
 
   let manager: ComputerManager | undefined
+  let pushService: PushNotificationService | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -55,7 +60,12 @@ export async function buildApp(
         new ComputerRegistry(dataDirectory),
       )
     await manager.initialize()
+    pushService =
+      options.pushService ?? new PushNotificationService(dataDirectory)
+    await pushService.initialize()
+    pushService.attach(manager)
     await registerHubRoutes(app, manager)
+    await registerPushRoutes(app, pushService)
   }
 
   app.get('/health', async () => ({
@@ -105,8 +115,9 @@ export async function buildApp(
 
   app.addHook('onClose', async () => {
     manager?.stop()
+    pushService?.stop()
     await service.stop()
   })
 
-  return { app, service, identity, manager }
+  return { app, service, identity, manager, pushService }
 }

@@ -286,6 +286,20 @@ describe('App', () => {
     )
   })
 
+  it('opens notification setup from the conversation header', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
+
+    expect(
+      await screen.findByRole('dialog', { name: 'Notifications' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Push notifications are not supported in this browser.'),
+    ).toBeInTheDocument()
+  })
+
   it('opens the folder-first new session dialog', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

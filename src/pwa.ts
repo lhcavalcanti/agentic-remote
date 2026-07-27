@@ -105,6 +105,46 @@ export async function registerPwa(): Promise<void> {
   })
 }
 
+export async function checkForPwaUpdate(): Promise<
+  ServiceWorkerRegistration | undefined
+> {
+  if (!('serviceWorker' in navigator)) {
+    return undefined
+  }
+  const registration = await navigator.serviceWorker.getRegistration()
+  if (!registration) {
+    return undefined
+  }
+  await registration.update()
+  if (registration.waiting) {
+    return registration
+  }
+  const worker =
+    registration.installing || (await waitForInstallingWorker(registration))
+  if (worker) {
+    await waitForWorkerInstalled(worker)
+  }
+  return registration.waiting ? registration : undefined
+}
+
+function waitForInstallingWorker(
+  registration: ServiceWorkerRegistration,
+): Promise<ServiceWorker | undefined> {
+  return new Promise((resolve) => {
+    const handleUpdateFound = () => {
+      window.clearTimeout(timeout)
+      resolve(registration.installing || undefined)
+    }
+    const timeout = window.setTimeout(() => {
+      registration.removeEventListener('updatefound', handleUpdateFound)
+      resolve(undefined)
+    }, 750)
+    registration.addEventListener('updatefound', handleUpdateFound, {
+      once: true,
+    })
+  })
+}
+
 function waitForWorkerInstalled(
   worker: ServiceWorker,
 ): Promise<void> {

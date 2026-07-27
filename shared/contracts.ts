@@ -103,6 +103,10 @@ export interface ManagedRemovedQueuedPrompt {
   prompt: QueuedPrompt
 }
 
+export interface PushSettings {
+  mutedSessions: string[]
+}
+
 export interface NodeInfo {
   id: string
   name: string

@@ -15,6 +15,12 @@ const unsubscribeSchema = z.object({
   endpoint: z.string().url().max(4096),
 })
 
+const sessionMuteSchema = z.object({
+  computerId: z.string().min(1).max(256),
+  sessionId: z.string().min(1).max(256),
+  muted: z.boolean(),
+})
+
 export async function registerPushRoutes(
   app: FastifyInstance,
   push: PushNotificationService,
@@ -32,5 +38,12 @@ export async function registerPushRoutes(
     const input = unsubscribeSchema.parse(request.body)
     await push.unsubscribe(input.endpoint)
     return reply.code(204).send()
+  })
+
+  app.get('/api/push/settings', async () => push.settings())
+
+  app.put('/api/push/session-mute', async (request) => {
+    const input = sessionMuteSchema.parse(request.body)
+    return push.setSessionMuted(input.computerId, input.sessionId, input.muted)
   })
 }

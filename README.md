@@ -61,13 +61,15 @@ when the virtual keyboard reduces the viewport.
 
 Agentic Remote is an installable PWA. On iPhone or iPad, open the HTTPS site in
 Safari, choose **Share → Add to Home Screen**, then open the installed app.
-Use the bell action to enable privacy-safe notifications when an agent asks a
-question. Notification text includes only the computer and session title; open
-the app to read the question and respond.
+Open **App settings** from the Sessions panel to enable privacy-safe
+notifications for all sessions. The bell in a session header mutes or unmutes
+only that session. Notification text includes only the computer and session
+title; open the app to read the question and respond.
 
 The installed app checks for new versions on launch, hourly while open, and when
 returning to the foreground. Closing and reopening activates updates
-automatically; an **Update now** prompt activates a waiting version immediately.
+automatically. App settings also provides **Check for updates**, **Update now**,
+and the web status-line preferences.
 
 For Copilot sessions running in tmux, Agentic Remote routes prompts, queued
 input, slash commands, and cancel actions into the owning terminal pane. This

@@ -19,6 +19,7 @@ import {
   configureRuntime,
   deleteSession,
   executeCommand,
+  getPushSettings,
   getSession,
   getRuntimeOptions,
   listCommands,
@@ -31,6 +32,7 @@ import {
   restartSession,
   replyUserInput,
   sendMessage,
+  setSessionNotificationsMuted,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
 
@@ -53,10 +55,12 @@ vi.mock('./api', () => ({
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
   executeCommand: vi.fn(),
+  getPushSettings: vi.fn(),
   cancelSession: vi.fn(),
   deleteSession: vi.fn(),
   replyPermission: vi.fn(),
   replyUserInput: vi.fn(),
+  setSessionNotificationsMuted: vi.fn(),
 }))
 
 class MockWebSocket {
@@ -212,6 +216,10 @@ describe('App', () => {
       },
     ])
     vi.mocked(sendMessage).mockResolvedValue(session)
+    vi.mocked(getPushSettings).mockResolvedValue({ mutedSessions: [] })
+    vi.mocked(setSessionNotificationsMuted).mockResolvedValue({
+      mutedSessions: ['computer-1:session-1'],
+    })
     vi.mocked(renameSession).mockImplementation(
       async (_computerId, _sessionId, input) => ({
         ...session,
@@ -253,17 +261,20 @@ describe('App', () => {
     expect(screen.getByLabelText('Reorder Project chat')).toBeInTheDocument()
   })
 
-  it('offers labeled notification settings in the sessions panel', async () => {
+  it('opens app settings from the sessions panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Notification settings' }),
+      screen.getByRole('button', { name: 'App settings' }),
     )
 
     expect(
-      screen.getByRole('heading', { name: 'Notifications' }),
+      screen.getByRole('dialog', { name: 'App settings' }),
     ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'App updates' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
   it('preserves a separate composer draft for each session', async () => {
@@ -299,18 +310,24 @@ describe('App', () => {
     )
   })
 
-  it('opens notification setup from the conversation header', async () => {
+  it('mutes notifications for the selected session from the header', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mute session notifications' }),
+    )
 
+    await waitFor(() =>
+      expect(setSessionNotificationsMuted).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        true,
+      ),
+    )
     expect(
-      await screen.findByRole('dialog', { name: 'Notifications' }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('Push notifications are not supported in this browser.'),
-    ).toBeInTheDocument()
+      screen.getByRole('button', { name: 'Unmute session notifications' }),
+    ).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('opens and closes the session panel with edge swipe gestures', async () => {

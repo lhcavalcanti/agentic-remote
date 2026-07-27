@@ -17,6 +17,7 @@ interface PushState {
   publicKey: string
   privateKey: string
   subscriptions: PushSubscription[]
+  mutedSessions: string[]
 }
 
 type PushSender = (
@@ -45,7 +46,7 @@ export class PushNotificationService {
     try {
       const state = JSON.parse(
         await readFile(this.statePath, 'utf8'),
-      ) as PushState
+      ) as Omit<PushState, 'mutedSessions'> & { mutedSessions?: string[] }
       if (
         state.version !== 1 ||
         !state.publicKey ||
@@ -54,7 +55,12 @@ export class PushNotificationService {
       ) {
         throw new Error('Unsupported push notification state format')
       }
-      this.state = state
+      this.state = {
+        ...state,
+        mutedSessions: Array.isArray(state.mutedSessions)
+          ? state.mutedSessions
+          : [],
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw error
@@ -65,6 +71,7 @@ export class PushNotificationService {
         publicKey: keys.publicKey,
         privateKey: keys.privateKey,
         subscriptions: [],
+        mutedSessions: [],
       }
       await this.persist()
     }
@@ -111,6 +118,30 @@ export class PushNotificationService {
     await this.persist()
   }
 
+  settings(): { mutedSessions: string[] } {
+    return {
+      mutedSessions: [...this.requireState().mutedSessions],
+    }
+  }
+
+  async setSessionMuted(
+    computerId: string,
+    sessionId: string,
+    muted: boolean,
+  ): Promise<{ mutedSessions: string[] }> {
+    const state = this.requireState()
+    const key = this.sessionKey(computerId, sessionId)
+    const mutedSessions = new Set(state.mutedSessions)
+    if (muted) {
+      mutedSessions.add(key)
+    } else {
+      mutedSessions.delete(key)
+    }
+    state.mutedSessions = [...mutedSessions].sort()
+    await this.persist()
+    return this.settings()
+  }
+
   private readonly handleEvent = (event: HubEvent) => {
     if (event.type === 'computer.removed') {
       const prefix = `${event.computerId}:`
@@ -119,10 +150,15 @@ export class PushNotificationService {
           this.notifiedQuestions.delete(key)
         }
       }
+      this.removeMutedSessions(prefix, false)
       return
     }
     if (event.type === 'session.removed') {
       this.removeSessionQuestions(event.computerId, event.sessionId)
+      this.removeMutedSessions(
+        this.sessionKey(event.computerId, event.sessionId),
+        true,
+      )
       return
     }
     if (event.type !== 'session.upserted') {
@@ -137,6 +173,13 @@ export class PushNotificationService {
       }
     }
     if (!requestId) {
+      return
+    }
+    if (
+      this.requireState().mutedSessions.includes(
+        this.sessionKey(session.computerId, session.id),
+      )
+    ) {
       return
     }
     const key = `${prefix}${requestId}`
@@ -156,6 +199,24 @@ export class PushNotificationService {
         this.notifiedQuestions.delete(key)
       }
     }
+  }
+
+  private sessionKey(computerId: string, sessionId: string): string {
+    return `${computerId}:${sessionId}`
+  }
+
+  private removeMutedSessions(value: string, exact: boolean): void {
+    const state = this.requireState()
+    const remaining = state.mutedSessions.filter((session) =>
+      exact ? session !== value : !session.startsWith(value),
+    )
+    if (remaining.length === state.mutedSessions.length) {
+      return
+    }
+    state.mutedSessions = remaining
+    void this.persist().catch((error: unknown) => {
+      console.warn('Unable to persist notification mute cleanup:', error)
+    })
   }
 
   private async notifyQuestion(session: ManagedSession): Promise<void> {

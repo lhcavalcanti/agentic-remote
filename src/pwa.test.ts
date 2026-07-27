@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from 'vitest'
-import { activatePwaUpdate } from './pwa'
+import { activatePwaUpdate, checkForPwaUpdate } from './pwa'
 
 describe('PWA updates', () => {
   it('asks the waiting worker to activate and reloads after controller change', async () => {
@@ -25,5 +25,22 @@ describe('PWA updates', () => {
 
     expect(postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' })
     expect(reload).toHaveBeenCalledOnce()
+  })
+
+  it('reports a waiting app update after checking the registration', async () => {
+    const registration = {
+      installing: null,
+      waiting: { postMessage: vi.fn() },
+      update: vi.fn(),
+    } as unknown as ServiceWorkerRegistration
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        getRegistration: vi.fn().mockResolvedValue(registration),
+      },
+    })
+
+    await expect(checkForPwaUpdate()).resolves.toBe(registration)
+    expect(registration.update).toHaveBeenCalledOnce()
   })
 })

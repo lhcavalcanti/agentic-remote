@@ -83,9 +83,40 @@ describe('PushNotificationService', () => {
       tag: 'agentic-question-computer-session',
     })
     expect(JSON.stringify(payload)).not.toContain('Hidden question text')
+
+    await service.setSessionMuted('computer', 'session', true)
+    expect(service.settings()).toEqual({
+      mutedSessions: ['computer:session'],
+    })
+    events.emit('event', {
+      ...event,
+      session: {
+        ...event.session,
+        pendingUserInput: {
+          ...event.session.pendingUserInput!,
+          requestId: 'muted-question',
+        },
+      },
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(sender).toHaveBeenCalledOnce()
+
+    await service.setSessionMuted('computer', 'session', false)
+    events.emit('event', {
+      ...event,
+      session: {
+        ...event.session,
+        pendingUserInput: {
+          ...event.session.pendingUserInput!,
+          requestId: 'unmuted-question',
+        },
+      },
+    })
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(2))
+
     events.emit('event', { type: 'computer.removed', computerId: 'computer' })
     events.emit('event', event)
-    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(3))
 
     service.stop()
     const reloaded = new PushNotificationService(directory, sender)

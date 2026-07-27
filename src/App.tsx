@@ -26,6 +26,7 @@ import { CSS } from '@dnd-kit/utilities'
 import {
   ArrowUp,
   Bell,
+  BellOff,
   Bot,
   CheckCircle2,
   ChevronLeft,
@@ -45,6 +46,7 @@ import {
   Plus,
   RefreshCw,
   Server,
+  Settings,
   SlidersHorizontal,
   Square,
   Trash2,
@@ -75,6 +77,7 @@ import {
   createSession,
   deleteSession,
   executeCommand,
+  getPushSettings,
   getSession,
   getRuntimeOptions,
   listComputers,
@@ -89,10 +92,12 @@ import {
   replyPermission,
   replyUserInput,
   sendMessage,
+  setSessionNotificationsMuted,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
 import {
   activatePwaUpdate,
+  checkForPwaUpdate,
   disablePushNotifications,
   enablePushNotifications,
   installedAsApp,
@@ -161,6 +166,23 @@ const defaultStatusline: StatuslineSettings = {
   mode: true,
   permissions: true,
 }
+
+const statuslineOptions: Array<{
+  key: keyof Omit<StatuslineSettings, 'enabled'>
+  label: string
+}> = [
+  { key: 'computer', label: 'Computer' },
+  { key: 'path', label: 'Working directory' },
+  { key: 'status', label: 'Agent status' },
+  { key: 'queue', label: 'Queued prompts' },
+  { key: 'sessionId', label: 'Session ID' },
+  { key: 'model', label: 'Model' },
+  { key: 'effort', label: 'Reasoning effort' },
+  { key: 'contextTier', label: 'Context tier' },
+  { key: 'contextUsage', label: 'Context usage' },
+  { key: 'mode', label: 'Agent mode' },
+  { key: 'permissions', label: 'Permission mode' },
+]
 
 const webCommands: SlashCommand[] = [
   {
@@ -231,18 +253,20 @@ function DialogFrame({
   eyebrow,
   onClose,
   children,
+  className,
 }: {
   title: string
   eyebrow: string
   onClose: () => void
   children: ReactNode
+  className?: string
 }) {
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <section
         aria-label={title}
         aria-modal="true"
-        className="dialog"
+        className={`dialog ${className || ''}`}
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
       >
@@ -686,17 +710,72 @@ function ComputersDialog({
   )
 }
 
-function NotificationsDialog({
+function StatuslineControls({
+  settings,
+  onChange,
+}: {
+  settings: StatuslineSettings
+  onChange: (settings: StatuslineSettings) => void
+}) {
+  return (
+    <>
+      <label className="statusline-toggle">
+        <input
+          checked={settings.enabled}
+          onChange={(event) =>
+            onChange({ ...settings, enabled: event.target.checked })
+          }
+          type="checkbox"
+        />
+        <span>Show status line</span>
+      </label>
+      <div className="statusline-options">
+        {statuslineOptions.map((option) => (
+          <label key={option.key}>
+            <input
+              checked={settings[option.key]}
+              disabled={!settings.enabled}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  [option.key]: event.target.checked,
+                })
+              }
+              type="checkbox"
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </>
+  )
+}
+
+function AppSettingsDialog({
   open,
   onClose,
+  onApplyUpdate,
+  onUpdateReady,
+  statusline,
+  onStatuslineChange,
+  updateRegistration,
+  updatingApp,
 }: {
   open: boolean
   onClose: () => void
+  onApplyUpdate: () => void
+  onUpdateReady: (registration: ServiceWorkerRegistration) => void
+  statusline: StatuslineSettings
+  onStatuslineChange: (settings: StatuslineSettings) => void
+  updateRegistration?: ServiceWorkerRegistration
+  updatingApp: boolean
 }) {
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [updateMessage, setUpdateMessage] = useState<string>()
   const supported = pushNotificationsSupported()
   const ios =
     typeof navigator !== 'undefined' &&
@@ -722,7 +801,7 @@ function NotificationsDialog({
       })
       .catch((caught: unknown) => {
         if (active) {
-          setError(caught instanceof Error ? caught.message : String(caught))
+          console.warn('Unable to load notification mute settings:', caught)
         }
       })
       .finally(() => {
@@ -757,47 +836,122 @@ function NotificationsDialog({
     }
   }
 
+  async function checkForUpdate() {
+    setCheckingUpdate(true)
+    setUpdateMessage(undefined)
+    try {
+      const registration = await checkForPwaUpdate()
+      if (registration) {
+        onUpdateReady(registration)
+        setUpdateMessage('An update is ready to install.')
+      } else {
+        setUpdateMessage('Agentic Remote is up to date.')
+      }
+    } catch (caught) {
+      setUpdateMessage(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
+
   return (
     <DialogFrame
-      eyebrow="Web app"
+      className="app-settings-dialog"
+      eyebrow="Application"
       onClose={onClose}
-      title="Notifications"
+      title="App settings"
     >
-      {!supported ? (
-        <p className="dialog-message">
-          Push notifications are not supported in this browser.
-        </p>
-      ) : requiresInstall ? (
-        <p className="dialog-message">
-          On iPhone, open this page in Safari, choose Share → Add to Home
-          Screen, then open the installed app to enable notifications.
-        </p>
-      ) : permissionBlocked ? (
-        <p className="dialog-message">
-          Notifications are blocked. On iPhone, open Settings → Notifications →
-          Agentic Remote and allow notifications.
-        </p>
-      ) : (
-        <>
+      <section className="app-settings-section">
+        <h3>Notifications</h3>
+        {!supported ? (
           <p className="dialog-message">
-            Receive a privacy-safe notification when an agent needs your input.
-            The question text is only shown after opening Agentic Remote.
+            Push notifications are not supported in this browser.
           </p>
-          <button
-            className={enabled ? 'secondary-button dialog__submit' : 'primary-button dialog__submit'}
-            disabled={loading || submitting}
-            onClick={() => void toggle()}
-            type="button"
-          >
-            {submitting
-              ? 'Updating…'
-              : enabled
-                ? 'Disable notifications'
-                : 'Enable notifications'}
-          </button>
-        </>
-      )}
-      {error ? <p className="form-error">{error}</p> : null}
+        ) : requiresInstall ? (
+          <p className="dialog-message">
+            On iPhone, open this page in Safari, choose Share → Add to Home
+            Screen, then open the installed app to enable notifications.
+          </p>
+        ) : permissionBlocked ? (
+          <p className="dialog-message">
+            Notifications are blocked. On iPhone, open Settings → Notifications
+            → Agentic Remote and allow notifications.
+          </p>
+        ) : (
+          <>
+            <p className="dialog-message">
+              Notify this device when any agent needs your input. Individual
+              sessions can be muted from their bell icon.
+            </p>
+            <button
+              className={
+                enabled
+                  ? 'secondary-button app-settings-section__action'
+                  : 'primary-button app-settings-section__action'
+              }
+              disabled={loading || submitting}
+              onClick={() => void toggle()}
+              type="button"
+            >
+              {loading
+                ? 'Checking…'
+                : submitting
+                  ? 'Updating…'
+                  : enabled
+                    ? 'Disable notifications'
+                    : 'Enable notifications'}
+            </button>
+          </>
+        )}
+        {error ? <p className="form-error">{error}</p> : null}
+      </section>
+
+      <section className="app-settings-section">
+        <h3>App updates</h3>
+        <p className="dialog-message">
+          Version {__APP_VERSION__}. Updates are checked automatically when the
+          app opens and returns to the foreground.
+        </p>
+        {updateRegistration ? (
+          <p className="dialog-message">
+            A new Agentic Remote version is ready.
+          </p>
+        ) : null}
+        <button
+          className="secondary-button app-settings-section__action"
+          disabled={checkingUpdate || updatingApp}
+          onClick={
+            updateRegistration
+              ? onApplyUpdate
+              : () => void checkForUpdate()
+          }
+          type="button"
+        >
+          {updatingApp
+            ? 'Updating…'
+            : checkingUpdate
+              ? 'Checking…'
+              : updateRegistration
+                ? 'Update now'
+                : 'Check for updates'}
+        </button>
+        {updateMessage ? (
+          <p className="app-settings-section__result" role="status">
+            {updateMessage}
+          </p>
+        ) : null}
+      </section>
+
+      <section className="app-settings-section">
+        <h3>Status line</h3>
+        <p className="dialog-message">
+          Choose the session and runtime details shown above the composer.
+        </p>
+        <StatuslineControls
+          onChange={onStatuslineChange}
+          settings={statusline}
+        />
+      </section>
     </DialogFrame>
   )
 }
@@ -1076,56 +1230,13 @@ function StatuslineDialog({
   if (!open) {
     return null
   }
-  const options: Array<{
-    key: keyof Omit<StatuslineSettings, 'enabled'>
-    label: string
-  }> = [
-    { key: 'computer', label: 'Computer' },
-    { key: 'path', label: 'Working directory' },
-    { key: 'status', label: 'Agent status' },
-    { key: 'queue', label: 'Queued prompts' },
-    { key: 'sessionId', label: 'Session ID' },
-    { key: 'model', label: 'Model' },
-    { key: 'effort', label: 'Reasoning effort' },
-    { key: 'contextTier', label: 'Context tier' },
-    { key: 'contextUsage', label: 'Context usage' },
-    { key: 'mode', label: 'Agent mode' },
-    { key: 'permissions', label: 'Permission mode' },
-  ]
   return (
     <DialogFrame
       eyebrow="Display"
       onClose={onClose}
       title="Status line"
     >
-      <label className="statusline-toggle">
-        <input
-          checked={settings.enabled}
-          onChange={(event) =>
-            onChange({ ...settings, enabled: event.target.checked })
-          }
-          type="checkbox"
-        />
-        <span>Show status line</span>
-      </label>
-      <div className="statusline-options">
-        {options.map((option) => (
-          <label key={option.key}>
-            <input
-              checked={settings[option.key]}
-              disabled={!settings.enabled}
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  [option.key]: event.target.checked,
-                })
-              }
-              type="checkbox"
-            />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </div>
+      <StatuslineControls onChange={onChange} settings={settings} />
     </DialogFrame>
   )
 }
@@ -1436,8 +1547,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [computersOpen, setComputersOpen] = useState(false)
-  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [statuslineOpen, setStatuslineOpen] = useState(false)
+  const [mutedSessions, setMutedSessions] = useState<string[]>([])
+  const [mutingSession, setMutingSession] = useState(false)
   const [updateRegistration, setUpdateRegistration] =
     useState<ServiceWorkerRegistration>()
   const [updatingApp, setUpdatingApp] = useState(false)
@@ -1527,6 +1640,9 @@ function App() {
   const hasRunningTool = currentTool?.activityStatus === 'running'
   const selectedComputerId = selected?.computerId
   const selectedSessionId = selected?.id
+  const selectedNotificationsMuted = selected
+    ? mutedSessions.includes(sessionKey(selected))
+    : false
   const commandQuery = composer.startsWith('/')
     ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
     : ''
@@ -1565,6 +1681,24 @@ function App() {
     return () => {
       window.visualViewport?.removeEventListener('resize', updateViewport)
       window.removeEventListener('resize', updateViewport)
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void getPushSettings()
+      .then((settings) => {
+        if (active) {
+          setMutedSessions(settings.mutedSessions)
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+    return () => {
+      active = false
     }
   }, [])
   const sensors = useSensors(
@@ -1780,9 +1914,13 @@ function App() {
     let reconnectDelay = 1_000
 
     const refreshSnapshot = async () => {
-      const [loadedSessions, loadedComputers] = await Promise.all([
+      const [loadedSessions, loadedComputers, pushSettings] = await Promise.all([
         listSessions(),
         listComputers(),
+        getPushSettings().catch((caught: unknown) => {
+          console.warn('Unable to refresh notification mute settings:', caught)
+          return undefined
+        }),
       ])
       setSessions((current) =>
         sortSessions(
@@ -1797,6 +1935,9 @@ function App() {
         ),
       )
       setComputers(loadedComputers)
+      if (pushSettings) {
+        setMutedSessions(pushSettings.mutedSessions)
+      }
       const selectedAtRefresh = selectedRef.current
       const selectedStillExists =
         selectedAtRefresh &&
@@ -2318,6 +2459,26 @@ function App() {
     }
   }
 
+  async function toggleSelectedSessionMute() {
+    if (!selected || mutingSession) {
+      return
+    }
+    setMutingSession(true)
+    setError(undefined)
+    try {
+      const settings = await setSessionNotificationsMuted(
+        selected.computerId,
+        selected.id,
+        !selectedNotificationsMuted,
+      )
+      setMutedSessions(settings.mutedSessions)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setMutingSession(false)
+    }
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const activeId = String(event.active.id)
     const overId = event.over ? String(event.over.id) : ''
@@ -2463,18 +2624,18 @@ function App() {
         </nav>
         <div className="sidebar-settings">
           <button
-            aria-label="Notification settings"
+            aria-label="App settings"
             className="sidebar-settings__button"
             onClick={() => {
               setSidebarOpen(false)
-              setNotificationsOpen(true)
+              setSettingsOpen(true)
             }}
             type="button"
           >
-            <Bell size={18} />
+            <Settings size={18} />
             <span>
-              <strong>Notifications</strong>
-              <small>Alert when an agent needs you</small>
+              <strong>App settings</strong>
+              <small>Notifications, updates, and display</small>
             </span>
           </button>
         </div>
@@ -2550,14 +2711,28 @@ function App() {
               <Trash2 size={18} />
             </button>
           ) : null}
-          <button
-            aria-label="Notifications"
-            className="icon-button"
-            onClick={() => setNotificationsOpen(true)}
-            type="button"
-          >
-            <Bell size={18} />
-          </button>
+          {selected ? (
+            <button
+              aria-label={
+                selectedNotificationsMuted
+                  ? 'Unmute session notifications'
+                  : 'Mute session notifications'
+              }
+              aria-pressed={selectedNotificationsMuted}
+              className={`icon-button ${
+                selectedNotificationsMuted ? 'icon-button--active' : ''
+              }`}
+              disabled={mutingSession}
+              onClick={() => void toggleSelectedSessionMute()}
+              type="button"
+            >
+              {selectedNotificationsMuted ? (
+                <BellOff size={18} />
+              ) : (
+                <Bell size={18} />
+              )}
+            </button>
+          ) : null}
           <button
             aria-label="New session"
             className="icon-button"
@@ -2910,9 +3085,15 @@ function App() {
         open={statuslineOpen}
         settings={statusline}
       />
-      <NotificationsDialog
-        onClose={() => setNotificationsOpen(false)}
-        open={notificationsOpen}
+      <AppSettingsDialog
+        onApplyUpdate={() => void applyPwaUpdate()}
+        onClose={() => setSettingsOpen(false)}
+        onStatuslineChange={setStatusline}
+        onUpdateReady={setUpdateRegistration}
+        open={settingsOpen}
+        statusline={statusline}
+        updateRegistration={updateRegistration}
+        updatingApp={updatingApp}
       />
       <RuntimeDialog
         onClose={() => setRuntimeOpen(false)}

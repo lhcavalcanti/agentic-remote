@@ -147,6 +147,12 @@ button {
   background: rgba(239, 129, 111, 0.08);
 }
 
+.icon-button--active {
+  color: var(--accent);
+  border-color: rgba(184, 243, 107, 0.24);
+  background: rgba(184, 243, 107, 0.08);
+}
+
 .icon-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -1243,6 +1249,38 @@ button {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+.app-settings-dialog {
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+}
+
+.app-settings-section {
+  padding: 18px 0;
+  border-top: 1px solid var(--border);
+}
+
+.app-settings-section:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.app-settings-section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.app-settings-section__action {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 14px;
+}
+
+.app-settings-section__result {
+  margin: 10px 0 0;
+  color: var(--muted-strong);
+  font-size: 11px;
 }
 
 .command-menu {

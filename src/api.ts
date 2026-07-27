@@ -6,6 +6,7 @@ import type {
   DirectoryListing,
   ExecuteCommandInput,
   ManagedSession,
+  PushSettings,
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
   RenameSessionInput,
@@ -320,5 +321,20 @@ export async function deletePushSubscription(endpoint: string): Promise<void> {
     method: 'DELETE',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ endpoint }),
+  })
+}
+
+export async function getPushSettings(): Promise<PushSettings> {
+  return request<PushSettings>('/api/push/settings')
+}
+
+export async function setSessionNotificationsMuted(
+  computerId: string,
+  sessionId: string,
+  muted: boolean,
+): Promise<PushSettings> {
+  return request<PushSettings>('/api/push/session-mute', {
+    method: 'PUT',
+    body: JSON.stringify({ computerId, sessionId, muted }),
   })
 }

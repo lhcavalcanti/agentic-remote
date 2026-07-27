@@ -1764,12 +1764,14 @@ button {
     position: fixed;
     top: 0;
     right: 0;
+    bottom: 0;
     left: 0;
-    height: 100dvh;
+    height: auto;
   }
 
   .app-shell--keyboard-open {
     top: var(--visual-viewport-top, 0);
+    bottom: auto;
     height: var(--visual-viewport-height, 100dvh);
   }
 

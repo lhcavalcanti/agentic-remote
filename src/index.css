@@ -1777,13 +1777,14 @@ button {
 
   .dialog-backdrop {
     padding: max(8px, env(safe-area-inset-top)) 0 0;
-    place-items: stretch;
+    align-items: end;
+    justify-items: stretch;
   }
 
   .dialog {
     width: 100%;
     max-width: none;
-    height: 100%;
+    height: auto;
     max-height: 100%;
     padding: 20px max(18px, env(safe-area-inset-right))
       max(14px, env(safe-area-inset-bottom))

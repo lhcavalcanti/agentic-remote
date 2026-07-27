@@ -1426,6 +1426,7 @@ function App() {
   const [statuslineOpen, setStatuslineOpen] = useState(false)
   const [updateRegistration, setUpdateRegistration] =
     useState<ServiceWorkerRegistration>()
+  const [updatingApp, setUpdatingApp] = useState(false)
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === 'undefined'
       ? 800
@@ -2211,6 +2212,7 @@ function App() {
     ) {
       return
     }
+
     setDeleting(true)
     setError(undefined)
     try {
@@ -2229,6 +2231,20 @@ function App() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setDeleting(false)
+    }
+  }
+
+  async function applyPwaUpdate() {
+    if (!updateRegistration || updatingApp) {
+      return
+    }
+    setUpdatingApp(true)
+    setError(undefined)
+    try {
+      await activatePwaUpdate(updateRegistration)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+      setUpdatingApp(false)
     }
   }
 
@@ -2818,10 +2834,11 @@ function App() {
           <span>A new Agentic Remote version is ready.</span>
           <button
             className="primary-button"
-            onClick={() => activatePwaUpdate(updateRegistration)}
+            disabled={updatingApp}
+            onClick={() => void applyPwaUpdate()}
             type="button"
           >
-            Update now
+            {updatingApp ? 'Updating…' : 'Update now'}
           </button>
         </div>
       ) : null}

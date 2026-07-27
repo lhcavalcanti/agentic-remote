@@ -105,15 +105,55 @@ export async function registerPwa(): Promise<void> {
   })
 }
 
-export function activatePwaUpdate(
-  registration: ServiceWorkerRegistration,
-): void {
-  let reloading = false
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!reloading) {
-      reloading = true
-      window.location.reload()
-    }
+function waitForWorkerInstalled(
+  worker: ServiceWorker,
+): Promise<void> {
+  if (worker.state === 'installed' || worker.state === 'activated') {
+    return Promise.resolve()
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(
+      () => reject(new Error('Timed out while preparing the update')),
+      10_000,
+    )
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'installed' || worker.state === 'activated') {
+        window.clearTimeout(timeout)
+        resolve()
+      } else if (worker.state === 'redundant') {
+        window.clearTimeout(timeout)
+        reject(new Error('The update worker became unavailable'))
+      }
+    })
   })
-  registration.waiting?.postMessage({ type: 'SKIP_WAITING' })
+}
+
+export async function activatePwaUpdate(
+  registration: ServiceWorkerRegistration,
+  reload: () => void = () => window.location.reload(),
+): Promise<void> {
+  if (!registration.waiting) {
+    await registration.update()
+    if (registration.installing) {
+      await waitForWorkerInstalled(registration.installing)
+    }
+  }
+  const worker = registration.waiting
+  if (!worker) {
+    reload()
+    return
+  }
+  const controllerChanged = new Promise<void>((resolve) => {
+    navigator.serviceWorker.addEventListener(
+      'controllerchange',
+      () => resolve(),
+      { once: true },
+    )
+  })
+  worker.postMessage({ type: 'SKIP_WAITING' })
+  await Promise.race([
+    controllerChanged,
+    new Promise<void>((resolve) => window.setTimeout(resolve, 4_000)),
+  ])
+  reload()
 }

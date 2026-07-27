@@ -63,6 +63,7 @@ button {
   min-height: 0;
   width: 100%;
   max-width: 100%;
+  overflow: hidden;
   background:
     radial-gradient(circle at 70% -15%, rgba(184, 243, 107, 0.045), transparent 35%),
     var(--bg);
@@ -463,6 +464,8 @@ button {
   min-width: 0;
   min-height: 0;
   height: 100%;
+  width: 100%;
+  max-width: 100%;
   grid-template-areas:
     "header"
     "banner"
@@ -471,6 +474,11 @@ button {
     "composer";
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   overflow: hidden;
+}
+
+.conversation > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .conversation-header {
@@ -537,9 +545,16 @@ button {
   cursor: pointer;
 }
 
+.error-banner span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .timeline {
   grid-area: timeline;
   min-height: 0;
+  width: 100%;
+  max-width: 100%;
   padding: 34px
     max(24px, env(safe-area-inset-right), calc((100% - 780px) / 2)) 22px
     max(24px, env(safe-area-inset-left), calc((100% - 780px) / 2));
@@ -610,6 +625,9 @@ button {
   font-size: 13px;
   font-weight: 660;
   cursor: pointer;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .primary-button {
@@ -632,6 +650,8 @@ button {
 
 .message-stack {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   gap: 32px;
 }
@@ -938,6 +958,7 @@ button {
   font-size: 13px;
   font-weight: 570;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .user-input-card__choices {
@@ -1107,6 +1128,7 @@ button {
   bottom: max(16px, env(safe-area-inset-bottom));
   display: flex;
   max-width: min(420px, calc(100vw - 32px));
+  min-width: 0;
   align-items: center;
   gap: 14px;
   padding: 12px;
@@ -1119,7 +1141,9 @@ button {
 }
 
 .update-toast span {
+  min-width: 0;
   flex: 1;
+  overflow-wrap: anywhere;
 }
 
 .runtime-dialog__hint {
@@ -1618,6 +1642,15 @@ button {
 }
 
 @media (max-width: 960px) {
+  .dialog-input,
+  .dialog-select,
+  .path-input input,
+  .computer-filter select,
+  .user-input-card__form input,
+  .composer textarea {
+    font-size: 16px;
+  }
+
   .app-shell {
     display: block;
   }
@@ -1659,15 +1692,20 @@ button {
 
   .conversation-header {
     height: 58px;
-    gap: 4px;
+    gap: 2px;
     padding: max(4px, env(safe-area-inset-top))
       max(6px, env(safe-area-inset-right)) 0
       max(6px, env(safe-area-inset-left));
   }
 
   .conversation-header .icon-button {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+  }
+
+  .conversation-header__title strong {
+    font-size: 12.5px;
   }
 
   .mobile-menu {

@@ -1827,6 +1827,12 @@ button {
   }
 }
 
+@media (display-mode: standalone) and (max-width: 960px) {
+  .composer-area {
+    padding-bottom: max(8px, calc(env(safe-area-inset-bottom) - 12px));
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

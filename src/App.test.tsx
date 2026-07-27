@@ -253,6 +253,19 @@ describe('App', () => {
     expect(screen.getByLabelText('Reorder Project chat')).toBeInTheDocument()
   })
 
+  it('offers labeled notification settings in the sessions panel', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Notification settings' }),
+    )
+
+    expect(
+      screen.getByRole('heading', { name: 'Notifications' }),
+    ).toBeInTheDocument()
+  })
+
   it('preserves a separate composer draft for each session', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>

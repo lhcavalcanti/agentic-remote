@@ -702,6 +702,10 @@ function NotificationsDialog({
     typeof navigator !== 'undefined' &&
     /iPad|iPhone|iPod/.test(navigator.userAgent)
   const requiresInstall = ios && !installedAsApp()
+  const permissionBlocked =
+    supported &&
+    typeof Notification !== 'undefined' &&
+    Notification.permission === 'denied'
 
   useEffect(() => {
     if (!open || !supported || requiresInstall) {
@@ -767,6 +771,11 @@ function NotificationsDialog({
         <p className="dialog-message">
           On iPhone, open this page in Safari, choose Share → Add to Home
           Screen, then open the installed app to enable notifications.
+        </p>
+      ) : permissionBlocked ? (
+        <p className="dialog-message">
+          Notifications are blocked. On iPhone, open Settings → Notifications →
+          Agentic Remote and allow notifications.
         </p>
       ) : (
         <>
@@ -2452,6 +2461,23 @@ function App() {
             </SortableContext>
           </DndContext>
         </nav>
+        <div className="sidebar-settings">
+          <button
+            aria-label="Notification settings"
+            className="sidebar-settings__button"
+            onClick={() => {
+              setSidebarOpen(false)
+              setNotificationsOpen(true)
+            }}
+            type="button"
+          >
+            <Bell size={18} />
+            <span>
+              <strong>Notifications</strong>
+              <small>Alert when an agent needs you</small>
+            </span>
+          </button>
+        </div>
       </aside>
 
       {sidebarOpen ? (

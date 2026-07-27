@@ -231,9 +231,55 @@ button {
 }
 
 .session-list {
+  flex: 1;
   min-height: 0;
   padding: 0 10px 24px;
   overflow-y: auto;
+}
+
+.sidebar-settings {
+  padding: 10px 14px max(10px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-settings__button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  color: var(--muted-strong);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-settings__button:hover {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--panel-raised);
+}
+
+.sidebar-settings__button > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-settings__button strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sidebar-settings__button small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-label {
@@ -1829,6 +1875,10 @@ button {
 
 @media (display-mode: standalone) and (max-width: 960px) {
   .composer-area {
+    padding-bottom: max(8px, calc(env(safe-area-inset-bottom) - 12px));
+  }
+
+  .sidebar-settings {
     padding-bottom: max(8px, calc(env(safe-area-inset-bottom) - 12px));
   }
 }

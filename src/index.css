@@ -1775,6 +1775,26 @@ button {
     height: var(--visual-viewport-height, 100dvh);
   }
 
+  .dialog-backdrop {
+    padding: max(8px, env(safe-area-inset-top)) 0 0;
+    place-items: stretch;
+  }
+
+  .dialog {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: 100%;
+    padding: 20px max(18px, env(safe-area-inset-right))
+      max(14px, env(safe-area-inset-bottom))
+      max(18px, env(safe-area-inset-left));
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 18px 18px 0 0;
+  }
+
   .sidebar {
     position: absolute;
     z-index: 20;

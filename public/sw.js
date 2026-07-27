@@ -82,9 +82,9 @@ self.addEventListener('push', (event) => {
   const payload = event.data?.json() || {}
   event.waitUntil(
     self.registration.showNotification(
-      payload.title || 'Agent needs your input',
+      payload.title || 'Agentic Remote',
       {
-        body: payload.body || 'Open Agentic Remote to respond.',
+        body: payload.body || 'Open Agentic Remote for details.',
         icon: '/icons/icon-192.png',
         badge: '/icons/icon-192.png',
         tag: payload.tag || 'agentic-remote-question',

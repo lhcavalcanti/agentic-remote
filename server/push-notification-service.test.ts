@@ -40,7 +40,7 @@ describe('PushNotificationService', () => {
     }
     await service.subscribe(subscription)
     const events = new EventEmitter<{ event: [HubEvent] }>()
-    service.attach(events)
+    await service.attach(events)
     const event: HubEvent = {
       type: 'session.upserted',
       session: {
@@ -117,6 +117,59 @@ describe('PushNotificationService', () => {
     events.emit('event', { type: 'computer.removed', computerId: 'computer' })
     events.emit('event', event)
     await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(3))
+
+    events.emit('event', {
+      ...event,
+      session: {
+        ...event.session,
+        pendingUserInput: undefined,
+        status: 'running',
+      },
+    })
+    events.emit('event', {
+      ...event,
+      session: {
+        ...event.session,
+        pendingUserInput: undefined,
+        queuedCount: 0,
+        status: 'idle',
+      },
+    })
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(4))
+    const completionPayload = JSON.parse(
+      sender.mock.calls[3]?.[1] as string,
+    ) as { title: string; body: string; data: { url: string } }
+    expect(completionPayload).toMatchObject({
+      title: 'Agent finished',
+      body: 'development · Project',
+      data: { url: '/?computer=computer&session=session' },
+    })
+
+    events.emit('event', {
+      ...event,
+      session: {
+        ...event.session,
+        pendingUserInput: undefined,
+        status: 'running',
+      },
+    })
+    events.emit('event', {
+      ...event,
+      session: {
+        ...event.session,
+        pendingUserInput: undefined,
+        queuedCount: 1,
+        status: 'idle',
+      },
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(sender).toHaveBeenCalledTimes(4)
+
+    await expect(service.sendTestNotification()).resolves.toEqual({ sent: 1 })
+    expect(JSON.parse(sender.mock.calls[4]?.[1] as string)).toMatchObject({
+      title: 'Agentic Remote notifications work',
+      data: { url: '/' },
+    })
 
     service.stop()
     const reloaded = new PushNotificationService(directory, sender)

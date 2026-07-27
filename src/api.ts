@@ -338,3 +338,10 @@ export async function setSessionNotificationsMuted(
     body: JSON.stringify({ computerId, sessionId, muted }),
   })
 }
+
+export async function sendTestPushNotification(): Promise<{ sent: number }> {
+  return request<{ sent: number }>('/api/push/test', {
+    method: 'POST',
+    body: JSON.stringify({ confirm: true }),
+  })
+}

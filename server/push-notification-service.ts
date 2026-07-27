@@ -10,6 +10,7 @@ import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 interface HubEventSource {
   on(event: 'event', listener: (event: HubEvent) => void): unknown
   off(event: 'event', listener: (event: HubEvent) => void): unknown
+  listSessions?(): Promise<ManagedSession[]>
 }
 
 interface PushState {
@@ -32,6 +33,7 @@ export class PushNotificationService {
   private writeQueue: Promise<void> = Promise.resolve()
   private manager?: HubEventSource
   private readonly notifiedQuestions = new Set<string>()
+  private readonly sessionStatuses = new Map<string, ManagedSession['status']>()
 
   constructor(
     dataDirectory: string,
@@ -86,6 +88,19 @@ export class PushNotificationService {
   attach(manager: HubEventSource): void {
     this.manager = manager
     manager.on('event', this.handleEvent)
+    void manager
+      .listSessions?.()
+      .then((sessions) => {
+        for (const session of sessions) {
+          const key = this.sessionKey(session.computerId, session.id)
+          if (!this.sessionStatuses.has(key)) {
+            this.sessionStatuses.set(key, session.status)
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        console.warn('Unable to seed push notification session state:', error)
+      })
   }
 
   stop(): void {
@@ -142,6 +157,16 @@ export class PushNotificationService {
     return this.settings()
   }
 
+  async sendTestNotification(): Promise<{ sent: number }> {
+    const sent = await this.sendPayload({
+      title: 'Agentic Remote notifications work',
+      body: 'You will be notified when an agent asks or finishes.',
+      tag: 'agentic-remote-test',
+      data: { url: '/' },
+    })
+    return { sent }
+  }
+
   private readonly handleEvent = (event: HubEvent) => {
     if (event.type === 'computer.removed') {
       const prefix = `${event.computerId}:`
@@ -150,11 +175,19 @@ export class PushNotificationService {
           this.notifiedQuestions.delete(key)
         }
       }
+      for (const key of this.sessionStatuses.keys()) {
+        if (key.startsWith(prefix)) {
+          this.sessionStatuses.delete(key)
+        }
+      }
       this.removeMutedSessions(prefix, false)
       return
     }
     if (event.type === 'session.removed') {
       this.removeSessionQuestions(event.computerId, event.sessionId)
+      this.sessionStatuses.delete(
+        this.sessionKey(event.computerId, event.sessionId),
+      )
       this.removeMutedSessions(
         this.sessionKey(event.computerId, event.sessionId),
         true,
@@ -165,6 +198,9 @@ export class PushNotificationService {
       return
     }
     const session = event.session
+    const sessionKey = this.sessionKey(session.computerId, session.id)
+    const previousStatus = this.sessionStatuses.get(sessionKey)
+    this.sessionStatuses.set(sessionKey, session.status)
     const prefix = `${session.computerId}:${session.id}:`
     const requestId = session.pendingUserInput?.requestId
     for (const key of this.notifiedQuestions) {
@@ -172,24 +208,28 @@ export class PushNotificationService {
         this.notifiedQuestions.delete(key)
       }
     }
-    if (!requestId) {
-      return
+    const muted = this.requireState().mutedSessions.includes(sessionKey)
+    if (requestId && !muted) {
+      const key = `${prefix}${requestId}`
+      if (!this.notifiedQuestions.has(key)) {
+        this.notifiedQuestions.add(key)
+        void this.notifyQuestion(session).catch((error: unknown) => {
+          console.warn('Unable to send ask-user push notification:', error)
+        })
+      }
     }
     if (
-      this.requireState().mutedSessions.includes(
-        this.sessionKey(session.computerId, session.id),
-      )
+      !muted &&
+      previousStatus === 'running' &&
+      session.status === 'idle' &&
+      !session.pendingPermission &&
+      !session.pendingUserInput &&
+      !session.queuedCount
     ) {
-      return
+      void this.notifyCompletion(session).catch((error: unknown) => {
+        console.warn('Unable to send completion push notification:', error)
+      })
     }
-    const key = `${prefix}${requestId}`
-    if (this.notifiedQuestions.has(key)) {
-      return
-    }
-    this.notifiedQuestions.add(key)
-    void this.notifyQuestion(session).catch((error: unknown) => {
-      console.warn('Unable to send ask-user push notification:', error)
-    })
   }
 
   private removeSessionQuestions(computerId: string, sessionId: string): void {
@@ -220,11 +260,7 @@ export class PushNotificationService {
   }
 
   private async notifyQuestion(session: ManagedSession): Promise<void> {
-    const state = this.requireState()
-    if (state.subscriptions.length === 0) {
-      return
-    }
-    const payload = JSON.stringify({
+    await this.sendPayload({
       title: 'Agent needs your input',
       body: `${session.computerName} · ${session.title}`,
       tag: `agentic-question-${session.computerId}-${session.id}`,
@@ -232,11 +268,36 @@ export class PushNotificationService {
         url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
       },
     })
+  }
+
+  private async notifyCompletion(session: ManagedSession): Promise<void> {
+    await this.sendPayload({
+      title: 'Agent finished',
+      body: `${session.computerName} · ${session.title}`,
+      tag: `agentic-finished-${session.computerId}-${session.id}`,
+      data: {
+        url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
+      },
+    })
+  }
+
+  private async sendPayload(payload: {
+    title: string
+    body: string
+    tag: string
+    data: { url: string }
+  }): Promise<number> {
+    const state = this.requireState()
+    if (state.subscriptions.length === 0) {
+      return 0
+    }
     const expired = new Set<string>()
+    let sent = 0
     await Promise.all(
       state.subscriptions.map(async (subscription) => {
         try {
-          await this.sender(subscription, payload, { TTL: 300 })
+          await this.sender(subscription, JSON.stringify(payload), { TTL: 300 })
+          sent += 1
         } catch (error) {
           const statusCode = (error as { statusCode?: number }).statusCode
           if (statusCode === 404 || statusCode === 410) {
@@ -253,6 +314,7 @@ export class PushNotificationService {
       )
       await this.persist()
     }
+    return sent
   }
 
   private requireState(): PushState {

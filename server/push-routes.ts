@@ -21,6 +21,10 @@ const sessionMuteSchema = z.object({
   muted: z.boolean(),
 })
 
+const testNotificationSchema = z.object({
+  confirm: z.literal(true),
+})
+
 export async function registerPushRoutes(
   app: FastifyInstance,
   push: PushNotificationService,
@@ -45,5 +49,10 @@ export async function registerPushRoutes(
   app.put('/api/push/session-mute', async (request) => {
     const input = sessionMuteSchema.parse(request.body)
     return push.setSessionMuted(input.computerId, input.sessionId, input.muted)
+  })
+
+  app.post('/api/push/test', async (request) => {
+    testNotificationSchema.parse(request.body)
+    return push.sendTestNotification()
   })
 }

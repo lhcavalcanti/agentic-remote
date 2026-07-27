@@ -32,9 +32,11 @@ import {
   restartSession,
   replyUserInput,
   sendMessage,
+  sendTestPushNotification,
   setSessionNotificationsMuted,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
+import { PWA_UPDATE_EVENT } from './pwa'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
@@ -60,6 +62,7 @@ vi.mock('./api', () => ({
   deleteSession: vi.fn(),
   replyPermission: vi.fn(),
   replyUserInput: vi.fn(),
+  sendTestPushNotification: vi.fn(),
   setSessionNotificationsMuted: vi.fn(),
 }))
 
@@ -151,6 +154,43 @@ describe('App', () => {
     expect(composerMaximumHeight(false, 430)).toBe(180)
   })
 
+  it('tracks the visual viewport while the mobile keyboard is open', () => {
+    const originalVisualViewport = window.visualViewport
+    const visualViewport = new EventTarget() as VisualViewport
+    Object.defineProperties(visualViewport, {
+      height: { configurable: true, value: 844, writable: true },
+      offsetTop: { configurable: true, value: 0, writable: true },
+    })
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: visualViewport,
+    })
+
+    const rendered = render(<App />)
+    const shell = document.querySelector<HTMLElement>('.app-shell')
+    Object.defineProperty(visualViewport, 'height', {
+      configurable: true,
+      value: 510,
+      writable: true,
+    })
+    Object.defineProperty(visualViewport, 'offsetTop', {
+      configurable: true,
+      value: 42,
+      writable: true,
+    })
+    act(() => visualViewport.dispatchEvent(new Event('resize')))
+    expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+      '510px',
+    )
+    expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('42px')
+
+    rendered.unmount()
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: originalVisualViewport,
+    })
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
@@ -220,6 +260,7 @@ describe('App', () => {
     vi.mocked(setSessionNotificationsMuted).mockResolvedValue({
       mutedSessions: ['computer-1:session-1'],
     })
+    vi.mocked(sendTestPushNotification).mockResolvedValue({ sent: 1 })
     vi.mocked(renameSession).mockImplementation(
       async (_computerId, _sessionId, input) => ({
         ...session,
@@ -275,6 +316,31 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'App updates' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
+  })
+
+  it('dismisses the update toast without removing it from app settings', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const registration = {
+      waiting: { postMessage: vi.fn() },
+    } as unknown as ServiceWorkerRegistration
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(PWA_UPDATE_EVENT, { detail: registration }),
+      )
+    })
+    expect(
+      screen.getByText('A new Agentic Remote version is ready.'),
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss update' }))
+    expect(
+      screen.queryByText('A new Agentic Remote version is ready.'),
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument()
   })
 
   it('preserves a separate composer draft for each session', async () => {

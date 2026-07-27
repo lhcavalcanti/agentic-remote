@@ -457,6 +457,14 @@ export class TmuxTerminalSessionController
     if (!sessionName || !windowId) {
       throw new Error('tmux did not return the created window')
     }
+    await execFileAsync('tmux', [
+      'set-option',
+      '-w',
+      '-t',
+      windowId,
+      'automatic-rename',
+      'off',
+    ])
     for (let attempt = 0; attempt < 60; attempt += 1) {
       if (await this.target(sessionId)) {
         return { sessionName, windowId }

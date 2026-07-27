@@ -32,6 +32,8 @@ the composer unless another session was selected meanwhile.
 In the installed mobile app, swipe right from the left screen edge to open
 Sessions and swipe left to close it. Horizontal code/table scrolling is excluded;
 browser Safari keeps its native Back gesture and uses the menu button.
+When the on-screen keyboard opens, the app follows iOS's visual viewport so the
+conversation header remains below the Dynamic Island.
 
 UI-originated queued prompts appear above the composer. Remove deletes any
 selected queued prompt; Edit removes it and restores its text to the composer.
@@ -62,14 +64,16 @@ when the virtual keyboard reduces the viewport.
 Agentic Remote is an installable PWA. On iPhone or iPad, open the HTTPS site in
 Safari, choose **Share → Add to Home Screen**, then open the installed app.
 Open **App settings** from the Sessions panel to enable privacy-safe
-notifications for all sessions. The bell in a session header mutes or unmutes
-only that session. Notification text includes only the computer and session
-title; open the app to read the question and respond.
+notifications when any agent asks for input or finishes work. Use **Send test
+notification** to verify device delivery. The bell in a session header mutes or
+unmutes only that session. Notification text includes only the computer and
+session title; open the app for details.
 
 The installed app checks for new versions on launch, hourly while open, and when
 returning to the foreground. Closing and reopening activates updates
 automatically. App settings also provides **Check for updates**, **Update now**,
-and the web status-line preferences.
+and the web status-line preferences. The update toast can be dismissed without
+discarding the waiting update from App settings.
 
 For Copilot sessions running in tmux, Agentic Remote routes prompts, queued
 input, slash commands, and cancel actions into the owning terminal pane. This

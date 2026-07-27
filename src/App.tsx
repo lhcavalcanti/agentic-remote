@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
+  CSSProperties,
   FormEvent,
   KeyboardEvent,
   ReactNode,
@@ -92,6 +93,7 @@ import {
   replyPermission,
   replyUserInput,
   sendMessage,
+  sendTestPushNotification,
   setSessionNotificationsMuted,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
@@ -776,6 +778,8 @@ function AppSettingsDialog({
   const [error, setError] = useState<string>()
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateMessage, setUpdateMessage] = useState<string>()
+  const [testingNotification, setTestingNotification] = useState(false)
+  const [testMessage, setTestMessage] = useState<string>()
   const supported = pushNotificationsSupported()
   const ios =
     typeof navigator !== 'undefined' &&
@@ -854,6 +858,25 @@ function AppSettingsDialog({
     }
   }
 
+  async function testNotification() {
+    setTestingNotification(true)
+    setTestMessage(undefined)
+    try {
+      const result = await sendTestPushNotification()
+      setTestMessage(
+        result.sent > 0
+          ? `Test notification sent to ${result.sent} device${
+              result.sent === 1 ? '' : 's'
+            }.`
+          : 'No active notification subscriptions were found.',
+      )
+    } catch (caught) {
+      setTestMessage(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setTestingNotification(false)
+    }
+  }
+
   return (
     <DialogFrame
       className="app-settings-dialog"
@@ -880,8 +903,8 @@ function AppSettingsDialog({
         ) : (
           <>
             <p className="dialog-message">
-              Notify this device when any agent needs your input. Individual
-              sessions can be muted from their bell icon.
+              Notify this device when any agent needs your input or finishes
+              working. Individual sessions can be muted from their bell icon.
             </p>
             <button
               className={
@@ -901,6 +924,21 @@ function AppSettingsDialog({
                     ? 'Disable notifications'
                     : 'Enable notifications'}
             </button>
+            {enabled ? (
+              <button
+                className="secondary-button app-settings-section__action"
+                disabled={testingNotification}
+                onClick={() => void testNotification()}
+                type="button"
+              >
+                {testingNotification ? 'Sending…' : 'Send test notification'}
+              </button>
+            ) : null}
+            {testMessage ? (
+              <p className="app-settings-section__result" role="status">
+                {testMessage}
+              </p>
+            ) : null}
           </>
         )}
         {error ? <p className="form-error">{error}</p> : null}
@@ -1554,10 +1592,14 @@ function App() {
   const [updateRegistration, setUpdateRegistration] =
     useState<ServiceWorkerRegistration>()
   const [updatingApp, setUpdatingApp] = useState(false)
+  const [updateToastDismissed, setUpdateToastDismissed] = useState(false)
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === 'undefined'
       ? 800
       : window.visualViewport?.height || window.innerHeight,
+  )
+  const [viewportOffsetTop, setViewportOffsetTop] = useState(() =>
+    typeof window === 'undefined' ? 0 : window.visualViewport?.offsetTop || 0,
   )
   const [statusline, setStatusline] = useState<StatuslineSettings>(() =>
     ({
@@ -1674,12 +1716,16 @@ function App() {
     computers.find((computer) => computer.online)?.id
 
   useEffect(() => {
-    const updateViewport = () =>
+    const updateViewport = () => {
       setViewportHeight(window.visualViewport?.height || window.innerHeight)
+      setViewportOffsetTop(window.visualViewport?.offsetTop || 0)
+    }
     window.visualViewport?.addEventListener('resize', updateViewport)
+    window.visualViewport?.addEventListener('scroll', updateViewport)
     window.addEventListener('resize', updateViewport)
     return () => {
       window.visualViewport?.removeEventListener('resize', updateViewport)
+      window.visualViewport?.removeEventListener('scroll', updateViewport)
       window.removeEventListener('resize', updateViewport)
     }
   }, [])
@@ -1788,6 +1834,7 @@ function App() {
       setUpdateRegistration(
         (event as CustomEvent<ServiceWorkerRegistration>).detail,
       )
+      setUpdateToastDismissed(false)
     }
     window.addEventListener(PWA_UPDATE_EVENT, handleUpdate)
     return () => window.removeEventListener(PWA_UPDATE_EVENT, handleUpdate)
@@ -2535,6 +2582,12 @@ function App() {
       }}
       onTouchEnd={sidebarTouchEnd}
       onTouchStart={sidebarTouchStart}
+      style={
+        {
+          '--visual-viewport-height': `${viewportHeight}px`,
+          '--visual-viewport-top': `${viewportOffsetTop}px`,
+        } as CSSProperties
+      }
     >
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
         <div className="brand">
@@ -3104,7 +3157,7 @@ function App() {
         open={runtimeOpen}
         session={selected}
       />
-      {updateRegistration ? (
+      {updateRegistration && !updateToastDismissed ? (
         <div className="update-toast" role="status">
           <span>A new Agentic Remote version is ready.</span>
           <button
@@ -3114,6 +3167,14 @@ function App() {
             type="button"
           >
             {updatingApp ? 'Updating…' : 'Update now'}
+          </button>
+          <button
+            aria-label="Dismiss update"
+            className="update-toast__dismiss"
+            onClick={() => setUpdateToastDismissed(true)}
+            type="button"
+          >
+            <X size={16} />
           </button>
         </div>
       ) : null}

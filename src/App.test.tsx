@@ -300,6 +300,50 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('opens and closes the session panel with edge swipe gestures', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const shell = document.querySelector('.app-shell')
+    const sidebar = document.querySelector('.sidebar')
+    if (!shell || !sidebar) {
+      throw new Error('App shell or sidebar was not rendered')
+    }
+
+    fireEvent.touchStart(shell, {
+      touches: [{ clientX: 12, clientY: 300 }],
+    })
+    fireEvent.touchEnd(shell, {
+      changedTouches: [{ clientX: 110, clientY: 310 }],
+    })
+    expect(sidebar).toHaveClass('sidebar--open')
+
+    fireEvent.touchStart(shell, {
+      touches: [{ clientX: 250, clientY: 300 }],
+    })
+    fireEvent.touchEnd(shell, {
+      changedTouches: [{ clientX: 150, clientY: 305 }],
+    })
+    expect(sidebar).not.toHaveClass('sidebar--open')
+
+    fireEvent.touchStart(shell, {
+      touches: [{ clientX: 80, clientY: 300 }],
+    })
+    fireEvent.touchEnd(shell, {
+      changedTouches: [{ clientX: 180, clientY: 300 }],
+    })
+    expect(sidebar).not.toHaveClass('sidebar--open')
+
+    const code = document.createElement('pre')
+    shell.append(code)
+    fireEvent.touchStart(code, {
+      touches: [{ clientX: 12, clientY: 300 }],
+    })
+    fireEvent.touchEnd(code, {
+      changedTouches: [{ clientX: 110, clientY: 300 }],
+    })
+    expect(sidebar).not.toHaveClass('sidebar--open')
+  })
+
   it('opens the folder-first new session dialog', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

@@ -1,5 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
+import type {
+  FormEvent,
+  KeyboardEvent,
+  ReactNode,
+  TouchEvent as ReactTouchEvent,
+} from 'react'
 import {
   closestCenter,
   DndContext,
@@ -1452,6 +1457,15 @@ function App() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
+  const sidebarGestureRef = useRef<
+    | {
+        startX: number
+        startY: number
+        startedAt: number
+        action: 'open' | 'close'
+      }
+    | undefined
+  >(undefined)
 
   const visibleSessions = useMemo(
     () =>
@@ -1943,6 +1957,53 @@ function App() {
     setError(undefined)
   }
 
+  function sidebarTouchStart(event: ReactTouchEvent<HTMLDivElement>) {
+    if (event.touches.length !== 1) {
+      sidebarGestureRef.current = undefined
+      return
+    }
+    const touch = event.touches[0]
+    if (!sidebarOpen) {
+      const target = event.target
+      const horizontalScroller =
+        target instanceof Element &&
+        target.closest(
+          'pre, table, .web-statusline, .queued-prompts__list, .command-menu',
+        )
+      const ios =
+        /iPad|iPhone|iPod/.test(navigator.userAgent) && !installedAsApp()
+      if (touch.clientX > 24 || horizontalScroller || ios) {
+        sidebarGestureRef.current = undefined
+        return
+      }
+    }
+    sidebarGestureRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      startedAt: Date.now(),
+      action: sidebarOpen ? 'close' : 'open',
+    }
+  }
+
+  function sidebarTouchEnd(event: ReactTouchEvent<HTMLDivElement>) {
+    const gesture = sidebarGestureRef.current
+    sidebarGestureRef.current = undefined
+    const touch = event.changedTouches[0]
+    if (!gesture || !touch || Date.now() - gesture.startedAt > 750) {
+      return
+    }
+    const horizontal = touch.clientX - gesture.startX
+    const vertical = Math.abs(touch.clientY - gesture.startY)
+    if (vertical > 60 || Math.abs(horizontal) < 72) {
+      return
+    }
+    if (gesture.action === 'open' && horizontal > 0) {
+      setSidebarOpen(true)
+    } else if (gesture.action === 'close' && horizontal < 0) {
+      setSidebarOpen(false)
+    }
+  }
+
   function created(session: ManagedSession) {
     setSessions((current) => upsertSession(current, session))
     setSelectedKey(sessionKey(session))
@@ -2297,7 +2358,14 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      onTouchCancel={() => {
+        sidebarGestureRef.current = undefined
+      }}
+      onTouchEnd={sidebarTouchEnd}
+      onTouchStart={sidebarTouchStart}
+    >
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
         <div className="brand">
           <span className="brand__mark">

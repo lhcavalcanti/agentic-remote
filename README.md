@@ -29,6 +29,9 @@ Composer controls follow Copilot CLI conventions:
 Unsent composer text is stored separately for each computer/session and returns
 when switching back. After Enter sends or queues, focus and the caret return to
 the composer unless another session was selected meanwhile.
+In the installed mobile app, swipe right from the left screen edge to open
+Sessions and swipe left to close it. Horizontal code/table scrolling is excluded;
+browser Safari keeps its native Back gesture and uses the menu button.
 
 UI-originated queued prompts appear above the composer. Remove deletes any
 selected queued prompt; Edit removes it and restores its text to the composer.

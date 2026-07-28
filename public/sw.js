@@ -35,6 +35,24 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') {
     event.waitUntil(self.skipWaiting())
+  } else if (
+    event.data?.type === 'CLEAR_SESSION_NOTIFICATIONS' &&
+    Array.isArray(event.data.tags)
+  ) {
+    const tags = new Set(
+      event.data.tags.filter(
+        (tag) => typeof tag === 'string' && tag.length <= 1024,
+      ),
+    )
+    event.waitUntil(
+      self.registration.getNotifications().then((notifications) => {
+        for (const notification of notifications) {
+          if (tags.has(notification.tag)) {
+            notification.close()
+          }
+        }
+      }),
+    )
   }
 })
 

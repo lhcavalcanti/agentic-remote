@@ -100,6 +100,7 @@ import { composerMaximumHeight } from './composer-sizing'
 import {
   activatePwaUpdate,
   checkForPwaUpdate,
+  clearSessionPushNotifications,
   disablePushNotifications,
   enablePushNotifications,
   installedAsApp,
@@ -1939,6 +1940,41 @@ function App() {
       active = false
     }
   }, [selectedComputerId, selectedSessionId])
+
+  useEffect(() => {
+    if (!selectedComputerId || !selectedSessionId) {
+      return
+    }
+    const clearNotifications = () =>
+      void clearSessionPushNotifications(
+        selectedComputerId,
+        selectedSessionId,
+      ).catch((caught: unknown) => {
+        console.warn('Unable to clear opened session notifications:', caught)
+      })
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        clearNotifications()
+      }
+    }
+    clearNotifications()
+    const timers = [
+      window.setTimeout(clearNotifications, 500),
+      window.setTimeout(clearNotifications, 1_500),
+    ]
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility)
+      for (const timer of timers) {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [
+    selectedComputerId,
+    selectedSessionId,
+    selected?.pendingUserInput?.requestId,
+    selected?.status,
+  ])
 
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {

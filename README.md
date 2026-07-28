@@ -69,7 +69,8 @@ Open **App settings** from the Sessions panel to enable privacy-safe
 notifications when any agent asks for input or finishes work. Use **Send test
 notification** to verify device delivery. The bell in a session header mutes or
 unmutes only that session. Notification text includes only the computer and
-session title; open the app for details.
+session title; open the app for details. Opening the related chat clears that
+session's ask and completion notifications from the device notification center.
 
 The installed app checks for new versions on launch, hourly while open, and when
 returning to the foreground. Closing and reopening activates updates

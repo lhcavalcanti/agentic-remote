@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from 'vitest'
-import { activatePwaUpdate, checkForPwaUpdate } from './pwa'
+import {
+  activatePwaUpdate,
+  checkForPwaUpdate,
+  clearSessionPushNotifications,
+} from './pwa'
 
 describe('PWA updates', () => {
   it('asks the waiting worker to activate and reloads after controller change', async () => {
@@ -42,5 +46,27 @@ describe('PWA updates', () => {
 
     await expect(checkForPwaUpdate()).resolves.toBe(registration)
     expect(registration.update).toHaveBeenCalledOnce()
+  })
+
+  it('asks the worker to close notifications for an opened session', async () => {
+    const postMessage = vi.fn()
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        ready: Promise.resolve({
+          active: { postMessage },
+        }),
+      },
+    })
+
+    await clearSessionPushNotifications('computer', 'session')
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'CLEAR_SESSION_NOTIFICATIONS',
+      tags: [
+        'agentic-question-computer-session',
+        'agentic-finished-computer-session',
+      ],
+    })
   })
 })

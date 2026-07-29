@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { findActiveCopilotProcesses } from './active-sessions.js'
 import type {
   ConfigureRuntimeInput,
+  PendingPermission,
   PendingUserInput,
 } from '../shared/contracts.js'
 
@@ -31,6 +32,12 @@ export interface TerminalSessionController {
     clearState: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
+  pendingPermission?(sessionId: string): Promise<PendingPermission | undefined>
+  replyPermission?(
+    sessionId: string,
+    request: PendingPermission,
+    optionId: string,
+  ): Promise<boolean>
   pendingUserInput?(sessionId: string): Promise<PendingUserInput | undefined>
   replyUserInput?(
     sessionId: string,
@@ -91,6 +98,14 @@ export class TmuxTerminalSessionController
       if (currentName === windowName) {
         return true
       }
+      await execFileAsync('tmux', [
+        'set-option',
+        '-w',
+        '-t',
+        target,
+        'automatic-rename',
+        'off',
+      ])
       await execFileAsync('tmux', ['rename-window', '-t', target, windowName])
       return true
     })
@@ -210,6 +225,66 @@ export class TmuxTerminalSessionController
       ])
     ).stdout
     return parseTerminalUserInput(pane)
+  }
+
+  async pendingPermission(
+    sessionId: string,
+  ): Promise<PendingPermission | undefined> {
+    const target = await this.target(sessionId)
+    if (!target) {
+      return undefined
+    }
+    const pane = (
+      await execFileAsync('tmux', [
+        'capture-pane',
+        '-p',
+        '-t',
+        target,
+        '-S',
+        '-80',
+      ])
+    ).stdout
+    return parseTerminalPermission(pane)
+  }
+
+  async replyPermission(
+    sessionId: string,
+    request: PendingPermission,
+    optionId: string,
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        return false
+      }
+      const pane = (
+        await execFileAsync('tmux', [
+          'capture-pane',
+          '-p',
+          '-t',
+          owner.target,
+          '-S',
+          '-80',
+        ])
+      ).stdout
+      const current = parseTerminalPermission(pane)
+      if (!current || current.requestId !== request.requestId) {
+        throw new Error('The terminal permission request is no longer active')
+      }
+      if (optionId === 'terminal:stop') {
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Escape'])
+        return true
+      }
+      if (optionId !== 'terminal:allow') {
+        throw new Error('The selected permission option is not available')
+      }
+      for (let index = 0; index < (current.choiceCount || 2); index += 1) {
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Up'])
+        await new Promise((resolve) => setTimeout(resolve, 30))
+      }
+      await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
+      return true
+    })
   }
 
   async replyUserInput(
@@ -515,6 +590,7 @@ export function parseTerminalUserInput(
   if (questionHeader < 0) {
     return undefined
   }
+
   const questionLines: string[] = []
   const choices: string[] = []
   let allowFreeform = false
@@ -557,6 +633,66 @@ export function parseTerminalUserInput(
     question,
     choices,
     allowFreeform,
+  }
+}
+
+export function parseTerminalPermission(
+  pane: string,
+): PendingPermission | undefined {
+  const lines = pane.split('\n').map(cleanDialogLine)
+  const header = lines.findLastIndex((line) =>
+    /^Permission request(?:\s|$)/i.test(line),
+  )
+  if (header < 0) {
+    return undefined
+  }
+  const dialog = lines.slice(header)
+  const hasQuestion = dialog.some((line) =>
+    /^Do you want to run this command\?/i.test(line),
+  )
+  const choices = dialog.flatMap((line) => {
+    const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
+    return choice
+      ? [{ index: Number.parseInt(choice[1], 10), label: choice[2].trim() }]
+      : []
+  })
+  const hasYes = choices.some(
+    (choice) => choice.index === 1 && /^Yes\b/i.test(choice.label),
+  )
+  const hasNo = choices.some((choice) => /^No\b/i.test(choice.label))
+  if (!hasQuestion || !hasYes || !hasNo) {
+    return undefined
+  }
+  const title = dialog
+    .slice(1)
+    .find((line) => line && !/^[─━]+$/u.test(line))
+  if (!title) {
+    return undefined
+  }
+  const fingerprint = createHash('sha256')
+    .update(
+      dialog
+        .filter(
+          (line) =>
+            line &&
+            !(
+              /to navigate/i.test(line) &&
+              /enter to select/i.test(line)
+            ),
+        )
+        .join('\n'),
+    )
+    .digest('hex')
+    .slice(0, 24)
+  return {
+    requestId: `terminal-permission:${fingerprint}`,
+    title,
+    kind: 'terminal',
+    choiceCount: Math.max(...choices.map((choice) => choice.index)),
+    options: [
+      { optionId: 'terminal:allow', name: 'Yes', kind: 'allow_once' },
+      { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+    ],
   }
 }
 

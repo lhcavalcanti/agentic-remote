@@ -583,6 +583,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
   private readonly terminalUserInputChecks = new Map<string, number>()
+  private readonly answeredTerminalPermissions = new Map<
+    string,
+    { requestId: string; expiresAt: number }
+  >()
   private readonly answeredTerminalInputs = new Map<
     string,
     { requestId: string; expiresAt: number }
@@ -677,6 +681,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.userInputs.clear()
     this.terminalUserInputChecks.clear()
+    this.answeredTerminalPermissions.clear()
     this.answeredTerminalInputs.clear()
     const disconnected = await Promise.allSettled(
       [...this.sessions.values()].map((session) => session.disconnect()),
@@ -1087,6 +1092,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
       this.terminalUserInputChecks.delete(id)
+      this.answeredTerminalPermissions.delete(id)
       this.answeredTerminalInputs.delete(id)
       const cleared = await this.store.replaceWithClearedSession(
         id,
@@ -1490,6 +1496,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.queueOperations.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
+      this.answeredTerminalPermissions.delete(sessionId)
       this.answeredTerminalInputs.delete(sessionId)
       completed = true
       this.emit('event', { type: 'session.removed', sessionId })
@@ -1506,17 +1513,52 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     requestId: string,
     optionId: string,
   ): Promise<SessionDetail> {
-    const pending = this.permissions.get(requestId)
-    if (!pending || pending.sessionId !== sessionId) {
+    const stored = this.store.get(sessionId)
+    const request = stored?.pendingPermission
+    if (!stored || !request || request.requestId !== requestId) {
       throw new Error('Permission request is no longer pending')
     }
-
-    const result: PermissionRequestResult =
-      optionId === 'allow-once'
-        ? { kind: 'approve-once' }
-        : { kind: 'reject', feedback: 'Rejected from Agentic Remote' }
-    this.permissions.delete(requestId)
-    pending.resolve(result)
+    if (!request.options.some((option) => option.optionId === optionId)) {
+      throw new Error('The selected permission option is not available')
+    }
+    const sdkPending = this.permissions.get(requestId)
+    if (sdkPending) {
+      if (sdkPending.sessionId !== sessionId) {
+        throw new Error('Permission request belongs to another session')
+      }
+      const result: PermissionRequestResult =
+        optionId === 'allow-once'
+          ? { kind: 'approve-once' }
+          : { kind: 'reject', feedback: 'Rejected from Agentic Remote' }
+      this.permissions.delete(requestId)
+      sdkPending.resolve(result)
+    } else {
+      if (
+        !requestId.startsWith('terminal-permission:') ||
+        !this.terminalController.replyPermission
+      ) {
+        throw new Error('Terminal permission reply is not available')
+      }
+      this.answeredTerminalPermissions.set(sessionId, {
+        requestId,
+        expiresAt: Date.now() + 5_000,
+      })
+      let replied = false
+      try {
+        replied = await this.terminalController.replyPermission(
+          sessionId,
+          request,
+          optionId,
+        )
+      } catch (error) {
+        this.answeredTerminalPermissions.delete(sessionId)
+        throw error
+      }
+      if (!replied) {
+        this.answeredTerminalPermissions.delete(sessionId)
+        throw new Error('External terminal is no longer available')
+      }
+    }
 
     const updated = await this.store.update(sessionId, (session) => {
       session.pendingPermission = undefined
@@ -1875,7 +1917,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async syncTerminalUserInput(sessionId: string): Promise<void> {
-    if (!this.terminalController.pendingUserInput) {
+    if (
+      !this.terminalController.pendingUserInput &&
+      !this.terminalController.pendingPermission
+    ) {
       return
     }
     const stored = this.store.get(sessionId)
@@ -1884,11 +1929,46 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const now = Date.now()
     const lastCheck = this.terminalUserInputChecks.get(sessionId) || 0
-    if (!stored.pendingUserInput && now - lastCheck < 2_000) {
+    if (
+      !stored.pendingUserInput &&
+      !stored.pendingPermission &&
+      now - lastCheck < 2_000
+    ) {
       return
     }
     this.terminalUserInputChecks.set(sessionId, now)
-    const pending = await this.terminalController.pendingUserInput(sessionId)
+    const permission =
+      await this.terminalController.pendingPermission?.(sessionId)
+    if (permission) {
+      const answered = this.answeredTerminalPermissions.get(sessionId)
+      if (answered && answered.expiresAt <= now) {
+        this.answeredTerminalPermissions.delete(sessionId)
+      } else if (answered?.requestId === permission.requestId) {
+        return
+      }
+      if (stored.pendingPermission?.requestId === permission.requestId) {
+        return
+      }
+      const updated = await this.store.update(sessionId, (session) => {
+        session.pendingPermission = permission
+        session.pendingUserInput = undefined
+        session.status = 'waiting'
+        session.activity = permission.title
+      })
+      this.publish(updated)
+      return
+    }
+    if (
+      stored.pendingPermission?.requestId.startsWith('terminal-permission:')
+    ) {
+      const updated = await this.store.update(sessionId, (session) => {
+        session.pendingPermission = undefined
+        session.status = 'running'
+        session.activity = 'Continuing'
+      })
+      this.publish(updated)
+    }
+    const pending = await this.terminalController.pendingUserInput?.(sessionId)
     if (pending) {
       const answered = this.answeredTerminalInputs.get(sessionId)
       if (answered && answered.expiresAt <= now) {

@@ -1985,6 +1985,82 @@ describe('AgentService deletion', () => {
     )
     await service.stop()
   })
+
+  it('detects and answers terminal permission requests', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const request = {
+      requestId: 'terminal-permission:request',
+      title: 'Check DNS and credential presence',
+      kind: 'terminal',
+      options: [
+        { optionId: 'terminal:allow', name: 'Yes', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+      ],
+    }
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => request),
+      replyPermission: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+
+    expect(
+      service.store.get(client.session.sessionId)?.pendingPermission,
+    ).toEqual(request)
+    expect(service.store.get(client.session.sessionId)?.status).toBe('waiting')
+    const updated = await service.replyPermission(
+      client.session.sessionId,
+      request.requestId,
+      'terminal:allow',
+    )
+    expect(terminal.replyPermission).toHaveBeenCalledWith(
+      client.session.sessionId,
+      request,
+      'terminal:allow',
+    )
+    expect(updated.pendingPermission).toBeUndefined()
+    const checksAfterReply = terminal.pendingPermission.mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, 2_100))
+    await service.refreshTranscripts()
+    expect(
+      service.store.get(client.session.sessionId)?.pendingPermission,
+    ).toBeUndefined()
+    expect(terminal.pendingPermission.mock.calls.length).toBe(
+      checksAfterReply + 1,
+    )
+    await service.stop()
+  })
 })
 
 function messagesAsEvents(

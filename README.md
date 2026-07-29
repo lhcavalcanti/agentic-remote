@@ -92,6 +92,8 @@ remain hidden.
 `ask_user` questions appear as interactive cards with choice buttons and an
 optional freeform answer. SDK callbacks and tmux CLI dialogs are both supported
 across local and remote computers.
+Tmux-backed CLI permission dialogs also appear in the web UI with **Yes** and
+**Stop** actions, rather than leaving the session looking indefinitely busy.
 The status line can show the root agent's model, reasoning effort, context tier,
 and current context usage. A `~` prefix marks usage estimated from persisted CLI
 events when Copilot does not expose an exact live count.

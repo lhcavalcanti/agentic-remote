@@ -121,6 +121,33 @@ describe('SessionStore', () => {
     ])
   })
 
+  it('keeps pending terminal requests waiting during transcript sync', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-1',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'running',
+      messages: [],
+    })
+    await store.update('session-1', (session) => {
+      session.pendingPermission = {
+        requestId: 'terminal-permission:request',
+        title: 'Run command',
+        options: [],
+      }
+    })
+
+    await store.replaceTranscript('session-1', [], 'running', 'Bash')
+
+    expect(store.get('session-1')).toMatchObject({
+      status: 'waiting',
+      activity: 'Run command',
+      pendingPermission: { requestId: 'terminal-permission:request' },
+    })
+  })
+
   it('resets interrupted transient state when reloaded', async () => {
     const { directory, store } = await createStore()
     await store.create({

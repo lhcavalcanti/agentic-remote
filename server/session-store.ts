@@ -166,8 +166,14 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.messages = messages
-      session.status = status
-      session.activity = activity
+      session.status =
+        session.pendingPermission || session.pendingUserInput
+          ? 'waiting'
+          : status
+      session.activity =
+        session.pendingPermission?.title ||
+        session.pendingUserInput?.question ||
+        activity
       if (runtime) {
         session.runtime = runtime
       }

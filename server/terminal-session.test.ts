@@ -5,6 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  parseTerminalPermission,
   parseTerminalUserInput,
   TmuxTerminalSessionController,
 } from './terminal-session.js'
@@ -48,6 +49,7 @@ describe('TmuxTerminalSessionController', () => {
       choices: ['Production', 'Staging'],
       allowFreeform: true,
     })
+
     expect(
       parseTerminalUserInput(`
 │ Question                         │
@@ -73,6 +75,55 @@ describe('TmuxTerminalSessionController', () => {
       question: 'Describe your deployment plan.',
       choices: [],
       allowFreeform: true,
+    })
+  })
+
+  it('parses Copilot terminal permission dialogs', () => {
+    expect(
+      parseTerminalPermission(`
+Permission request (1 remaining)
+
+╭────────────────────────────────────────────────────────────╮
+│ Check DNS and credential presence                          │
+│ ────────────────────────────────────────────────────────── │
+│ printf 'files DNS: '; getent ahostsv4 files.example.test  │
+│                                                            │
+│ Do you want to run this command?                           │
+│                                                            │
+│ ❯ 1. Yes                                                   │
+│   2. No, and tell Copilot what to do differently           │
+│                                                            │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toMatchObject({
+      requestId: expect.stringMatching(/^terminal-permission:/),
+      title: 'Check DNS and credential presence',
+      kind: 'terminal',
+      choiceCount: 2,
+      options: [
+        { optionId: 'terminal:allow', name: 'Yes', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+      ],
+    })
+    expect(
+      parseTerminalPermission(`
+Permission request
+│ Query selected services
+│ SELECT name FROM services
+│ Do you want to run this command?
+│ ❯ 1. Yes
+│   2. Yes, and allow similar commands this session
+│   3. No, and tell Copilot what to do differently
+│ ↑/↓ to navigate · enter to select · esc to cancel
+      `),
+    ).toMatchObject({
+      title: 'Query selected services',
+      choiceCount: 3,
+      options: [
+        { optionId: 'terminal:allow', name: 'Yes' },
+        { optionId: 'terminal:stop', name: 'Stop' },
+      ],
     })
   })
 

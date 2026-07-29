@@ -21,6 +21,7 @@ export interface PendingPermission {
   requestId: string
   title: string
   kind?: string
+  choiceCount?: number
   options: PermissionOption[]
 }
 

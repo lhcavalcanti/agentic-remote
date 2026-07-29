@@ -334,7 +334,8 @@ describe('App', () => {
       ...session,
       status: 'running',
       messages: [
-        ...session.messages,
+        session.messages[0]!,
+        session.messages[1]!,
         {
           id: 'message-4',
           role: 'activity',
@@ -342,6 +343,7 @@ describe('App', () => {
           createdAt: '2026-07-22T00:00:02.000Z',
           activityStatus: 'running',
         },
+        session.messages[2]!,
       ],
     }
     vi.mocked(listSessions).mockResolvedValue([runningSession])
@@ -357,6 +359,12 @@ describe('App', () => {
     expect(document.querySelector('.tool-activity-slot')).toHaveTextContent(
       'Task · Review implementation',
     )
+    const stack = document.querySelector('.message-stack')
+    const runningTool = document.querySelector('.tool-activity-slot')
+    const response = screen.getByText('Ready.').closest('article')
+    expect(
+      [...(stack?.children || [])].indexOf(runningTool as Element),
+    ).toBeLessThan([...(stack?.children || [])].indexOf(response as Element))
   })
 
   it('opens app settings from the sessions panel', async () => {

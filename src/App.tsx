@@ -2899,11 +2899,14 @@ function App() {
           ) : (
             <div className="message-stack">
               {selected.messages
-                .filter((message) => message.id !== currentTool?.id)
                 .map((message) => (
                   message.role === 'activity' ? (
                     <article
-                      className="message message--activity tool-activity-history"
+                      className={`message message--activity ${
+                        message.id === currentTool?.id
+                          ? 'tool-activity-slot'
+                          : 'tool-activity-history'
+                      }`}
                       key={message.id}
                     >
                       <ActivityMessage
@@ -2939,17 +2942,6 @@ function App() {
                     </article>
                   )
                 ))}
-              {currentTool ? (
-                <article
-                  className="message message--activity tool-activity-slot"
-                  key={currentTool.id}
-                >
-                  <ActivityMessage
-                    content={currentTool.content}
-                    status={currentTool.activityStatus}
-                  />
-                </article>
-              ) : null}
             </div>
           )}
           {selected?.pendingPermission ? (

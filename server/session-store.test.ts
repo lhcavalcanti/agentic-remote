@@ -57,6 +57,7 @@ describe('SessionStore', () => {
       status: 'idle',
       messages: [],
     })
+
     await store.addMessage('session-1', {
       id: 'message-1',
       role: 'assistant',
@@ -73,6 +74,51 @@ describe('SessionStore', () => {
       content: 'Hello world',
       streaming: false,
     })
+  })
+
+  it('keeps completed tool activities in conversation history', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-1',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'running',
+      messages: [],
+    })
+    await store.startToolActivity(
+      'session-1',
+      'first',
+      'Bash\n$ pnpm test',
+      '2026-07-22T00:00:01.000Z',
+    )
+    await store.startToolActivity(
+      'session-1',
+      'second',
+      'View\n/tmp/source.ts',
+      '2026-07-22T00:00:02.000Z',
+    )
+    await store.finishToolActivity('session-1', 'second', false)
+    await store.addMessage('session-1', {
+      id: 'assistant',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-07-22T00:00:03.000Z',
+      streaming: true,
+    })
+    store.setMessageContent('session-1', 'assistant', 'Done')
+
+    expect(store.get('session-1')?.messages).toEqual([
+      expect.objectContaining({
+        id: 'tool:first',
+        activityStatus: 'completed',
+      }),
+      expect.objectContaining({
+        id: 'tool:second',
+        activityStatus: 'failed',
+      }),
+      expect.objectContaining({ id: 'assistant', content: 'Done' }),
+    ])
   })
 
   it('resets interrupted transient state when reloaded', async () => {

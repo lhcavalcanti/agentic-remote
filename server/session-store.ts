@@ -87,6 +87,12 @@ export class SessionStore {
       }
       for (const message of session.messages) {
         message.streaming = false
+        if (
+          message.role === 'activity' &&
+          message.activityStatus === 'running'
+        ) {
+          message.activityStatus = 'failed'
+        }
       }
     }
   }
@@ -380,9 +386,6 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const id = `tool:${toolCallId}`
-      session.messages = session.messages.filter(
-        (message) => message.role !== 'activity',
-      )
       session.messages.push({
         id,
         role: 'activity',
@@ -440,9 +443,14 @@ export class SessionStore {
         throw new Error(`Message ${messageId} does not exist`)
       }
       message.content = content
-      session.messages = session.messages.filter(
-        (entry) => entry.role !== 'activity',
-      )
+      for (const entry of session.messages) {
+        if (
+          entry.role === 'activity' &&
+          entry.activityStatus === 'running'
+        ) {
+          entry.activityStatus = 'completed'
+        }
+      }
       session.activity = undefined
       session.updatedAt = new Date().toISOString()
     })

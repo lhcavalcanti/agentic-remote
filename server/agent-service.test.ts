@@ -280,6 +280,50 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('keeps parallel tool states and fails leftovers when a turn aborts', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"start-a",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{"toolCallId":"a","toolName":"bash","arguments":{"command":"first"}}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"start-b",
+        "parentId":"start-a",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{"toolCallId":"b","toolName":"view","arguments":{"path":"/tmp/file"}}
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"complete-b",
+        "parentId":"start-b",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{"toolCallId":"b","success":true}
+      },
+      {
+        "type":"abort",
+        "id":"abort",
+        "parentId":"complete-b",
+        "timestamp":"2026-07-22T00:00:03.000Z",
+        "data":{}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:a',
+        activityStatus: 'failed',
+      }),
+      expect.objectContaining({
+        id: 'tool:b',
+        activityStatus: 'completed',
+      }),
+    ])
+  })
+
   it('extracts model, effort, tier, and estimated context usage', () => {
     const events = JSON.parse(`[
       {
@@ -1249,6 +1293,11 @@ describe('AgentService deletion', () => {
       expect.objectContaining({ role: 'user', content: 'hello' }),
       expect.objectContaining({
         role: 'activity',
+        content: 'Bash · Run checks\n$ pnpm test',
+        activityStatus: 'completed',
+      }),
+      expect.objectContaining({
+        role: 'activity',
         content: 'View\n/tmp/project.ts',
         activityStatus: 'failed',
       }),
@@ -1398,7 +1447,7 @@ describe('AgentService deletion', () => {
         service.store
           .get(created.id)
           ?.messages.filter((message) => message.role === 'activity'),
-      ).toHaveLength(1),
+      ).toHaveLength(2),
     )
 
     expect(
@@ -1406,6 +1455,11 @@ describe('AgentService deletion', () => {
         .get(created.id)
         ?.messages.filter((message) => message.role === 'activity'),
     ).toEqual([
+      expect.objectContaining({
+        id: 'tool:call-a',
+        content: 'Bash · Run unit tests\n$ pnpm test',
+        activityStatus: 'completed',
+      }),
       expect.objectContaining({
         id: 'tool:call-b',
         content: 'View\n/tmp/source.ts',

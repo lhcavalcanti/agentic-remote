@@ -86,8 +86,9 @@ follow Copilot CLI completion behavior: typing `/aa` expands to `/allow-all`
 before the canonical command is sent to Copilot.
 The current root-agent tool appears in one sticky timeline row with its name,
 concise description/command/path/query preview, and live completion status. The
-row transitions to the next tool and disappears after the final response. Raw
-tool output and subagent internals remain hidden.
+row transitions to the next tool; completed and failed tools remain as compact
+timeline history, including root-level agent launches. Raw tool output and
+subagent internals remain hidden.
 `ask_user` questions appear as interactive cards with choice buttons and an
 optional freeform answer. SDK callbacks and tmux CLI dialogs are both supported
 across local and remote computers.

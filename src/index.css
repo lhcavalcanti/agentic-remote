@@ -726,6 +726,10 @@ button {
   animation: tool-activity-change 180ms ease-out;
 }
 
+.tool-activity-history {
+  opacity: 0.78;
+}
+
 .message--notice {
   padding: 9px 12px;
   color: var(--muted-strong);

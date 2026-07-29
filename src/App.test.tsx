@@ -319,6 +319,7 @@ describe('App', () => {
     expect(screen.getByText('Hello agent')).toBeInTheDocument()
     expect(screen.getByText('Bash')).toBeInTheDocument()
     expect(screen.getByText('$ pnpm test')).toBeInTheDocument()
+    expect(document.querySelector('.tool-activity-history')).toBeInTheDocument()
     expect(screen.getByText('Ready.').tagName).toBe('STRONG')
     expect(screen.getByLabelText('Message')).toBeInTheDocument()
     expect(document.querySelector('.session-item')?.className).toMatch(
@@ -326,6 +327,36 @@ describe('App', () => {
     )
     expect(screen.getByLabelText('Reorder development')).toBeInTheDocument()
     expect(screen.getByLabelText('Reorder Project chat')).toBeInTheDocument()
+  })
+
+  it('keeps completed tools in history while the current tool stays sticky', async () => {
+    const runningSession: ManagedSession = {
+      ...session,
+      status: 'running',
+      messages: [
+        ...session.messages,
+        {
+          id: 'message-4',
+          role: 'activity',
+          content: 'Task · Review implementation\ncode-review',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'running',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([runningSession])
+    vi.mocked(getSession).mockResolvedValue(runningSession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelectorAll('.tool-activity-history')).toHaveLength(1)
+    expect(document.querySelector('.tool-activity-history')).toHaveTextContent(
+      'Bash',
+    )
+    expect(document.querySelector('.tool-activity-slot')).toHaveTextContent(
+      'Task · Review implementation',
+    )
   })
 
   it('opens app settings from the sessions panel', async () => {

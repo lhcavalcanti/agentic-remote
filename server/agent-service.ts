@@ -138,10 +138,16 @@ export interface AgentServiceEvents {
 
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
-  const clearToolActivity = () => {
-    const index = messages.findIndex((message) => message.role === 'activity')
-    if (index >= 0) {
-      messages.splice(index, 1)
+  const finishRunningActivities = (
+    activityStatus: 'completed' | 'failed' = 'completed',
+  ) => {
+    for (const message of messages) {
+      if (
+        message.role === 'activity' &&
+        message.activityStatus === 'running'
+      ) {
+        message.activityStatus = activityStatus
+      }
     }
   }
 
@@ -152,7 +158,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       const content = visibleUserContent(event.data.content)
       if (content) {
-        clearToolActivity()
+        finishRunningActivities()
         messages.push({
           id: event.id,
           role: 'user',
@@ -165,7 +171,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     if (event.type === 'assistant.message' && !event.agentId) {
       const content = event.data.content.trim()
       if (content) {
-        clearToolActivity()
+        finishRunningActivities()
         messages.push({
           id: event.data.messageId || event.id,
           role: 'assistant',
@@ -176,7 +182,6 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       continue
     }
     if (event.type === 'tool.execution_start' && !event.agentId) {
-      clearToolActivity()
       messages.push({
         id: `tool:${event.data.toolCallId}`,
         role: 'activity',
@@ -193,6 +198,18 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       if (message) {
         message.activityStatus = event.data.success ? 'completed' : 'failed'
       }
+    }
+    if (
+      event.type === 'assistant.turn_end' ||
+      event.type === 'session.idle' ||
+      event.type === 'abort' ||
+      event.type === 'session.error'
+    ) {
+      finishRunningActivities(
+        event.type === 'abort' || event.type === 'session.error'
+          ? 'failed'
+          : 'completed',
+      )
     }
   }
   return messages
@@ -250,7 +267,9 @@ function toolActivityContent(data: unknown): string {
     previewText(argumentsValue.file_path) ||
     previewText(argumentsValue.query) ||
     previewText(argumentsValue.pattern) ||
-    previewText(argumentsValue.url)
+    previewText(argumentsValue.url) ||
+    previewText(argumentsValue.agent_type) ||
+    previewText(argumentsValue.name)
   const title = `${readableToolName(toolName)}${
     description ? ` · ${description}` : ''
   }`
@@ -2069,6 +2088,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       await this.store.finishMessage(sessionId, assistantMessageId)
       const updated = await this.store.update(sessionId, (session) => {
+        for (const message of session.messages) {
+          if (
+            message.role === 'activity' &&
+            message.activityStatus === 'running'
+          ) {
+            message.activityStatus = 'completed'
+          }
+        }
         session.status = 'idle'
         session.activity = undefined
       })
@@ -2079,6 +2106,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const message = error instanceof Error ? error.message : String(error)
       const updated = await this.store.update(sessionId, (session) => {
+        for (const entry of session.messages) {
+          if (
+            entry.role === 'activity' &&
+            entry.activityStatus === 'running'
+          ) {
+            entry.activityStatus = 'failed'
+          }
+        }
         const assistant = session.messages.find(
           (entry) => entry.id === assistantMessageId,
         )

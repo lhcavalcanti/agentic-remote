@@ -108,9 +108,13 @@ Permission request (1 remaining)
     })
     expect(
       parseTerminalPermission(`
-Permission request
+────────────────────────────────────────────────────────────
 │ Query selected services
+│ ──────────────────────────────────────────────────────────
+│ ──────────────────────────────────────────────────────────
 │ SELECT name FROM services
+│ WHERE enabled = true
+│ ──────────────────────────────────────────────────────────
 │ Do you want to run this command?
 │ ❯ 1. Yes
 │   2. Yes, and allow similar commands this session

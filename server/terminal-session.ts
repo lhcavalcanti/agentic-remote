@@ -640,16 +640,39 @@ export function parseTerminalPermission(
   pane: string,
 ): PendingPermission | undefined {
   const lines = pane.split('\n').map(cleanDialogLine)
-  const header = lines.findLastIndex((line) =>
-    /^Permission request(?:\s|$)/i.test(line),
-  )
-  if (header < 0) {
-    return undefined
-  }
-  const dialog = lines.slice(header)
-  const hasQuestion = dialog.some((line) =>
+  const questionIndex = lines.findLastIndex((line) =>
     /^Do you want to run this command\?/i.test(line),
   )
+  if (questionIndex < 0) {
+    return undefined
+  }
+  const nonemptyBeforeQuestion = lines
+    .slice(Math.max(0, questionIndex - 40), questionIndex)
+    .flatMap((line, offset) =>
+      line ? [{ line, index: Math.max(0, questionIndex - 40) + offset }] : [],
+    )
+  let title: string | undefined
+  let dialogStart = Math.max(0, questionIndex - 40)
+  for (let index = 0; index < nonemptyBeforeQuestion.length - 2; index += 1) {
+    const first = nonemptyBeforeQuestion[index]
+    const second = nonemptyBeforeQuestion[index + 1]
+    const third = nonemptyBeforeQuestion[index + 2]
+    if (
+      first &&
+      second &&
+      third &&
+      /^[─━]+$/u.test(first.line) &&
+      !/^[─━]+$/u.test(second.line) &&
+      /^[─━]+$/u.test(third.line)
+    ) {
+      title = second.line
+      dialogStart = first.index
+    }
+  }
+  if (!title) {
+    return undefined
+  }
+  const dialog = lines.slice(dialogStart)
   const choices = dialog.flatMap((line) => {
     const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
     return choice
@@ -660,13 +683,7 @@ export function parseTerminalPermission(
     (choice) => choice.index === 1 && /^Yes\b/i.test(choice.label),
   )
   const hasNo = choices.some((choice) => /^No\b/i.test(choice.label))
-  if (!hasQuestion || !hasYes || !hasNo) {
-    return undefined
-  }
-  const title = dialog
-    .slice(1)
-    .find((line) => line && !/^[─━]+$/u.test(line))
-  if (!title) {
+  if (!hasYes || !hasNo) {
     return undefined
   }
   const fingerprint = createHash('sha256')

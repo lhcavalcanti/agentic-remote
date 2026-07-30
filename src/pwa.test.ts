@@ -31,6 +31,19 @@ describe('PWA updates', () => {
     expect(reload).toHaveBeenCalledOnce()
   })
 
+  it('reloads a bundle-only update when no worker is waiting', async () => {
+    const registration = {
+      waiting: null,
+      update: vi.fn(),
+    } as unknown as ServiceWorkerRegistration
+    const reload = vi.fn()
+
+    await activatePwaUpdate(registration, reload)
+
+    expect(registration.update).toHaveBeenCalledOnce()
+    expect(reload).toHaveBeenCalledOnce()
+  })
+
   it('reports a waiting app update after checking the registration', async () => {
     const registration = {
       installing: null,
@@ -43,9 +56,51 @@ describe('PWA updates', () => {
         getRegistration: vi.fn().mockResolvedValue(registration),
       },
     })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({ version: __APP_VERSION__ }),
+      ),
+    )
 
-    await expect(checkForPwaUpdate()).resolves.toBe(registration)
+    await expect(checkForPwaUpdate()).resolves.toEqual({
+      registration,
+      version: __APP_VERSION__,
+    })
     expect(registration.update).toHaveBeenCalledOnce()
+  })
+
+  it('detects a deployed bundle update when the worker bytes are unchanged', async () => {
+    const currentRegistration = {
+      installing: null,
+      waiting: null,
+      update: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as ServiceWorkerRegistration
+    const deployedRegistration = {
+      ...currentRegistration,
+      update: vi.fn(),
+    } as unknown as ServiceWorkerRegistration
+    const register = vi.fn().mockResolvedValue(deployedRegistration)
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        getRegistration: vi.fn().mockResolvedValue(currentRegistration),
+        register,
+      },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ version: '99.0.0' })),
+    )
+
+    await expect(checkForPwaUpdate()).resolves.toEqual({
+      registration: deployedRegistration,
+      version: '99.0.0',
+    })
+    expect(register).toHaveBeenCalledWith('/sw.js?v=99.0.0', { scope: '/' })
+    expect(deployedRegistration.update).toHaveBeenCalledOnce()
   })
 
   it('asks the worker to close notifications for an opened session', async () => {

@@ -847,7 +847,7 @@ function AppSettingsDialog({
     try {
       const registration = await checkForPwaUpdate()
       if (registration) {
-        onUpdateReady(registration)
+        onUpdateReady(registration.registration)
         setUpdateMessage('An update is ready to install.')
       } else {
         setUpdateMessage('Agentic Remote is up to date.')

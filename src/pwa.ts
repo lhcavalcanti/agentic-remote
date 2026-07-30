@@ -5,6 +5,7 @@ import {
 } from './api'
 
 export const PWA_UPDATE_EVENT = 'agentic-remote:update-ready'
+let announcedUpdateVersion: string | undefined
 
 function applicationServerKey(value: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (value.length % 4)) % 4)
@@ -113,7 +114,23 @@ export async function registerPwa(): Promise<void> {
       }
     })
   })
-  const update = () => void registration.update().catch(() => undefined)
+  const update = () =>
+    void checkForPwaUpdate()
+      .then((available) => {
+        if (
+          available &&
+          available.version !== announcedUpdateVersion
+        ) {
+          announcedUpdateVersion = available.version
+          window.dispatchEvent(
+            new CustomEvent(PWA_UPDATE_EVENT, {
+              detail: available.registration,
+            }),
+          )
+        }
+      })
+      .catch(() => undefined)
+  update()
   window.setInterval(update, 60 * 60 * 1_000)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
@@ -123,25 +140,43 @@ export async function registerPwa(): Promise<void> {
 }
 
 export async function checkForPwaUpdate(): Promise<
-  ServiceWorkerRegistration | undefined
+  { registration: ServiceWorkerRegistration; version: string } | undefined
 > {
   if (!('serviceWorker' in navigator)) {
     return undefined
   }
-  const registration = await navigator.serviceWorker.getRegistration()
+  const versionResponse = await fetch('/api/version', { cache: 'no-store' })
+  if (!versionResponse.ok) {
+    throw new Error(`Unable to check app version (${versionResponse.status})`)
+  }
+  const payload = (await versionResponse.json()) as { version?: unknown }
+  if (typeof payload.version !== 'string' || !payload.version.trim()) {
+    throw new Error('The server returned an invalid app version')
+  }
+  const deployedVersion = payload.version.trim()
+  let registration = await navigator.serviceWorker.getRegistration()
   if (!registration) {
     return undefined
   }
+  const bundleUpdate = deployedVersion !== __APP_VERSION__
+  if (bundleUpdate) {
+    registration = await navigator.serviceWorker.register(
+      `/sw.js?v=${encodeURIComponent(deployedVersion)}`,
+      { scope: '/' },
+    )
+  }
   await registration.update()
   if (registration.waiting) {
-    return registration
+    return { registration, version: deployedVersion }
   }
   const worker =
     registration.installing || (await waitForInstallingWorker(registration))
   if (worker) {
     await waitForWorkerInstalled(worker)
   }
-  return registration.waiting ? registration : undefined
+  return registration.waiting || bundleUpdate
+    ? { registration, version: deployedVersion }
+    : undefined
 }
 
 function waitForInstallingWorker(

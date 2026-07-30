@@ -1,8 +1,15 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { NodeInfo } from '../shared/contracts.js'
+
+const appVersion = (
+  JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { version: string }
+).version
 
 interface StoredNodeIdentity {
   version: 1
@@ -56,7 +63,7 @@ export class NodeIdentityStore {
     return {
       id: identity.id,
       name: identity.name,
-      version: '0.28.1',
+      version: appVersion,
     }
   }
 

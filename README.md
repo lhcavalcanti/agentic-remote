@@ -77,6 +77,8 @@ returning to the foreground. Closing and reopening activates updates
 automatically. App settings also provides **Check for updates**, **Update now**,
 and the web status-line preferences. The update toast can be dismissed without
 discarding the waiting update from App settings.
+Update checks compare the running bundle with the deployed version, so releases
+are detected even when the service-worker file itself is unchanged.
 
 For Copilot sessions running in tmux, Agentic Remote routes prompts, queued
 input, slash commands, and cancel actions into the owning terminal pane. This

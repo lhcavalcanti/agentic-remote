@@ -364,6 +364,14 @@ describe('multi-node hub', () => {
     let hubSocket: WebSocket | undefined
 
     try {
+      const version = await hub.app.inject({
+        method: 'GET',
+        url: '/api/version',
+      })
+      expect(version.statusCode).toBe(200)
+      expect(version.headers['cache-control']).toBe('no-store')
+      expect(version.json().version).toBe(hub.identity.info.version)
+
       const unauthorized = await remote.app.inject({
         method: 'GET',
         url: '/node-api/info',

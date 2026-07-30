@@ -66,6 +66,10 @@ export async function buildApp(
     pushService.attach(manager)
     await registerHubRoutes(app, manager)
     await registerPushRoutes(app, pushService)
+    app.get('/api/version', async (_request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return { version: identity.info.version }
+    })
   }
 
   app.get('/health', async () => ({

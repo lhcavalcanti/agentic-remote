@@ -461,7 +461,7 @@ describe('App', () => {
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('opens and closes the session panel with edge swipe gestures', async () => {
+  it('opens Sessions by swiping right anywhere and closes by swiping left', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     const shell = document.querySelector('.app-shell')
@@ -491,6 +491,14 @@ describe('App', () => {
     })
     fireEvent.touchEnd(shell, {
       changedTouches: [{ clientX: 180, clientY: 300 }],
+    })
+    expect(sidebar).toHaveClass('sidebar--open')
+
+    fireEvent.touchStart(shell, {
+      touches: [{ clientX: 250, clientY: 300 }],
+    })
+    fireEvent.touchEnd(shell, {
+      changedTouches: [{ clientX: 150, clientY: 300 }],
     })
     expect(sidebar).not.toHaveClass('sidebar--open')
 

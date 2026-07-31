@@ -2231,7 +2231,7 @@ function App() {
         )
       const ios =
         /iPad|iPhone|iPod/.test(navigator.userAgent) && !installedAsApp()
-      if (touch.clientX > 24 || horizontalScroller || ios) {
+      if (horizontalScroller || ios) {
         sidebarGestureRef.current = undefined
         return
       }

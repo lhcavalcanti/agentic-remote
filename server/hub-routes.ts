@@ -12,6 +12,7 @@ const addComputerSchema = z.object({
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
   terminalBacked: z.boolean().default(true),
+  allowAllPermissions: z.boolean().default(true),
 })
 
 const renameSessionSchema = z.object({

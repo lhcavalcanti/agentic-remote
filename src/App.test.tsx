@@ -532,6 +532,7 @@ describe('App', () => {
       expect(createSession).toHaveBeenCalledWith('computer-1', {
         cwd: '~/src',
         terminalBacked: true,
+        allowAllPermissions: true,
       }),
     )
   })
@@ -548,6 +549,64 @@ describe('App', () => {
       expect(createSession).toHaveBeenCalledWith('computer-1', {
         cwd: '~',
         terminalBacked: false,
+        allowAllPermissions: true,
+      }),
+    )
+  })
+
+  it('keeps every computer visible after creating a remote session', async () => {
+    const remoteSession: ManagedSession = {
+      ...session,
+      id: 'remote-session',
+      computerId: secondComputer.id,
+      computerName: secondComputer.name,
+      title: 'Remote chat',
+      messages: [],
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(createSession).mockResolvedValue({
+      ...remoteSession,
+      id: 'new-remote-session',
+      title: 'New remote chat',
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith(secondComputer.id, {
+        cwd: '~',
+        terminalBacked: true,
+        allowAllPermissions: true,
+      }),
+    )
+    const groups = [...document.querySelectorAll('.computer-session-group')]
+      .map((group) => group.textContent)
+      .join(' ')
+    expect(groups).toContain('development')
+    expect(groups).toContain('homelab-prod')
+  })
+
+  it('can create a session without allow-all permissions', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /Allow all permissions/ }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        terminalBacked: true,
+        allowAllPermissions: false,
       }),
     )
   })

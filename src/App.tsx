@@ -46,7 +46,6 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Server,
   Settings,
   SlidersHorizontal,
   Square,
@@ -313,6 +312,7 @@ function NewSessionDialog({
   const [loadingDirectories, setLoadingDirectories] = useState(false)
   const directoryRequest = useRef(0)
   const [terminalBacked, setTerminalBacked] = useState(true)
+  const [allowAllPermissions, setAllowAllPermissions] = useState(true)
   const [mode, setMode] = useState<'new' | 'previous'>('new')
   const [history, setHistory] = useState<ManagedSession[]>([])
   const [historyKey, setHistoryKey] = useState('')
@@ -330,6 +330,7 @@ function NewSessionDialog({
       setCwd('~')
       setDirectoryListing(undefined)
       setTerminalBacked(true)
+      setAllowAllPermissions(true)
       setMode('new')
       setHistoryKey('')
       setError(undefined)
@@ -405,7 +406,11 @@ function NewSessionDialog({
     try {
       if (mode === 'new') {
         onCreated(
-          await createSession(computerId, { cwd, terminalBacked }),
+          await createSession(computerId, {
+            cwd,
+            terminalBacked,
+            allowAllPermissions,
+          }),
         )
         setCwd('')
       } else {
@@ -538,6 +543,21 @@ function NewSessionDialog({
                 <strong>Create in tmux</strong>
                 <small>
                   Opens a new window that remains accessible from SSH.
+                </small>
+              </span>
+            </label>
+            <label className="tmux-session-option">
+              <input
+                checked={allowAllPermissions}
+                onChange={(event) =>
+                  setAllowAllPermissions(event.target.checked)
+                }
+                type="checkbox"
+              />
+              <span>
+                <strong>Allow all permissions</strong>
+                <small>
+                  Runs tools without asking for individual approval.
                 </small>
               </span>
             </label>
@@ -1565,7 +1585,6 @@ function RenameSessionForm({
 function App() {
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
-  const [computerFilter, setComputerFilter] = useState('all')
   const [selectedKey, setSelectedKey] = useState<string>()
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
@@ -1633,26 +1652,15 @@ function App() {
     | undefined
   >(undefined)
 
-  const visibleSessions = useMemo(
-    () =>
-      computerFilter === 'all'
-        ? sessions
-        : sessions.filter((session) => session.computerId === computerFilter),
-    [computerFilter, sessions],
-  )
   const orderedComputers = useMemo(() => {
     const rank = new Map(computerOrder.map((id, index) => [id, index]))
     return computers
-      .filter(
-        (computer) =>
-          computerFilter === 'all' || computer.id === computerFilter,
-      )
       .sort(
         (left, right) =>
           (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
           (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER),
       )
-  }, [computerFilter, computerOrder, computers])
+  }, [computerOrder, computers])
   const sessionsByComputer = useMemo(() => {
     const grouped = new Map<string, ManagedSession[]>()
     for (const computer of orderedComputers) {
@@ -1661,7 +1669,7 @@ function App() {
       )
       grouped.set(
         computer.id,
-        visibleSessions
+        sessions
           .filter((session) => session.computerId === computer.id)
           .sort(
             (left, right) =>
@@ -1671,7 +1679,7 @@ function App() {
       )
     }
     return grouped
-  }, [orderedComputers, sessionOrder, visibleSessions])
+  }, [orderedComputers, sessionOrder, sessions])
   const selected = useMemo(
     () => sessions.find((session) => sessionKey(session) === selectedKey),
     [selectedKey, sessions],
@@ -1710,11 +1718,11 @@ function App() {
   const showCommandMenu =
     commandSuggestions.length > 0 && !composer.slice(1).includes(' ')
   const defaultComputerId =
-    (computerFilter !== 'all' &&
+    (selectedComputerId &&
     computers.some(
-      (computer) => computer.id === computerFilter && computer.online,
+      (computer) => computer.id === selectedComputerId && computer.online,
     )
-      ? computerFilter
+      ? selectedComputerId
       : computers.find((computer) => computer.isLocal)?.id) ||
     computers.find((computer) => computer.online)?.id
 
@@ -2012,16 +2020,6 @@ function App() {
   }, [commandQuery])
 
   useEffect(() => {
-    if (
-      selected &&
-      computerFilter !== 'all' &&
-      selected.computerId !== computerFilter
-    ) {
-      setSelectedKey(visibleSessions[0] ? sessionKey(visibleSessions[0]) : undefined)
-    }
-  }, [computerFilter, selected, visibleSessions])
-
-  useEffect(() => {
     let socket: WebSocket | undefined
     let retry: number | undefined
     let stopped = false
@@ -2112,9 +2110,6 @@ function App() {
                 ([key]) => !key.startsWith(`${event.computerId}:`),
               ),
             ),
-          )
-          setComputerFilter((current) =>
-            current === event.computerId ? 'all' : current,
           )
         } else {
           setError(event.message)
@@ -2271,7 +2266,6 @@ function App() {
   function created(session: ManagedSession) {
     setSessions((current) => upsertSession(current, session))
     setSelectedKey(sessionKey(session))
-    setComputerFilter(session.computerId)
     setNewSessionOpen(false)
     setSidebarOpen(false)
   }
@@ -2547,10 +2541,7 @@ function App() {
         (session) => sessionKey(session) !== sessionKey(selected),
       )
       setSessions(remaining)
-      const next = remaining.find(
-        (session) =>
-          computerFilter === 'all' || session.computerId === computerFilter,
-      )
+      const next = remaining[0]
       setSelectedKey(next ? sessionKey(next) : undefined)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -2696,26 +2687,10 @@ function App() {
           </button>
         </div>
 
-        <label className="computer-filter">
-          <Server size={15} />
-          <select
-            aria-label="Computer"
-            onChange={(event) => setComputerFilter(event.target.value)}
-            value={computerFilter}
-          >
-            <option value="all">All computers</option>
-            {computers.map((computer) => (
-              <option key={computer.id} value={computer.id}>
-                {computer.name}{computer.online ? '' : ' (offline)'}
-              </option>
-            ))}
-          </select>
-        </label>
-
         <nav aria-label="Sessions" className="session-list">
           <p className="sidebar-label">Recent</p>
           {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
-          {!loading && visibleSessions.length === 0 ? (
+          {!loading && sessions.length === 0 ? (
             <p className="sidebar-message">No sessions here.</p>
           ) : null}
           <DndContext
@@ -2737,7 +2712,7 @@ function App() {
                     onSelectSession={selectSession}
                     selectedKey={selectedKey}
                     sessions={sessionsByComputer.get(computer.id) || []}
-                    showComputerHandle={computerFilter === 'all'}
+                    showComputerHandle
                   />
                 ))}
               </div>
@@ -3202,9 +3177,6 @@ function App() {
           setSessions((current) =>
             current.filter((session) => session.computerId !== computerId),
           )
-          if (computerFilter === computerId) {
-            setComputerFilter('all')
-          }
         }}
         open={computersOpen}
       />

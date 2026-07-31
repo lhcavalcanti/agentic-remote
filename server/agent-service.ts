@@ -820,16 +820,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async createSession(
     inputPath: string,
     terminalBacked = false,
+    allowAllPermissions = true,
   ): Promise<SessionDetail> {
     const cwd = await this.validateDirectory(inputPath)
     if (terminalBacked) {
-      return this.createTerminalSession(cwd)
+      return this.createTerminalSession(cwd, allowAllPermissions)
     }
     const sdkSession = await this.client.createSession({
       workingDirectory: cwd,
       streaming: true,
-      onPermissionRequest: (request, invocation) =>
-        this.requestPermission(invocation.sessionId, request),
+      onPermissionRequest: allowAllPermissions
+        ? async () => ({ kind: 'approve-once' })
+        : (request, invocation) =>
+            this.requestPermission(invocation.sessionId, request),
       onUserInputRequest: (request, invocation) =>
         this.requestUserInput(invocation.sessionId, request),
     })
@@ -847,6 +850,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         status: 'idle',
         isOpen: true,
         messages: [],
+        runtime: { allowAllPermissions },
       },
       { managedOpen: true },
     )
@@ -1048,8 +1052,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             streaming: true,
             model: runtime?.model,
             contextTier: runtime?.contextTier,
-            onPermissionRequest: (request, invocation) =>
-              this.requestPermission(invocation.sessionId, request),
+            onPermissionRequest: stored.runtime?.allowAllPermissions
+              ? async () => ({ kind: 'approve-once' })
+              : (request, invocation) =>
+                  this.requestPermission(invocation.sessionId, request),
             onUserInputRequest: (request, invocation) =>
               this.requestUserInput(invocation.sessionId, request),
           })
@@ -1110,7 +1116,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  private async createTerminalSession(cwd: string): Promise<SessionDetail> {
+  private async createTerminalSession(
+    cwd: string,
+    allowAllPermissions: boolean,
+  ): Promise<SessionDetail> {
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
     }
@@ -1119,7 +1128,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.launchingTerminalSessionIds.add(sessionId)
     this.discoveryGeneration += 1
     try {
-      await this.terminalController.create(sessionId, cwd, title)
+      await this.terminalController.create(
+        sessionId,
+        cwd,
+        title,
+        allowAllPermissions,
+      )
       const now = new Date().toISOString()
       const session = await this.store.create({
         id: sessionId,
@@ -1129,6 +1143,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         status: 'idle',
         isOpen: true,
         messages: [],
+        runtime: { allowAllPermissions },
       })
       this.externalSessionIds.add(sessionId)
       this.publish(session)
@@ -1658,8 +1673,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sdkSession = await this.client.resumeSession(sessionId, {
         workingDirectory: stored.cwd,
         streaming: true,
-        onPermissionRequest: (request, invocation) =>
-          this.requestPermission(invocation.sessionId, request),
+        onPermissionRequest: stored.runtime?.allowAllPermissions
+          ? async () => ({ kind: 'approve-once' })
+          : (request, invocation) =>
+              this.requestPermission(invocation.sessionId, request),
         onUserInputRequest: (request, invocation) =>
           this.requestUserInput(invocation.sessionId, request),
         suppressResumeEvent: true,
@@ -1672,8 +1689,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         workingDirectory: stored.cwd,
         streaming: true,
-        onPermissionRequest: (request, invocation) =>
-          this.requestPermission(invocation.sessionId, request),
+        onPermissionRequest: stored.runtime?.allowAllPermissions
+          ? async () => ({ kind: 'approve-once' })
+          : (request, invocation) =>
+              this.requestPermission(invocation.sessionId, request),
         onUserInputRequest: (request, invocation) =>
           this.requestUserInput(invocation.sessionId, request),
       })

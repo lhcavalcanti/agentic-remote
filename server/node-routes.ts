@@ -8,6 +8,7 @@ import type { SessionService } from './session-service.js'
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
   terminalBacked: z.boolean().default(true),
+  allowAllPermissions: z.boolean().default(true),
 })
 
 const renameSessionSchema = z.object({
@@ -118,6 +119,7 @@ export async function registerNodeRoutes(
             session: await service.createSession(
               input.cwd,
               input.terminalBacked,
+              input.allowAllPermissions,
             ),
           })
       })

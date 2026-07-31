@@ -4,14 +4,17 @@ A focused, mobile-first hub for GitHub Copilot CLI sessions across multiple
 computers. Each computer owns its Copilot process, files, and history; one hub
 serves the UI and routes commands to paired nodes.
 
-The sidebar contains only currently open sessions. Use **New session → Open
-previous** to browse persisted history by computer and resume a closed session.
+The sidebar contains all computers and their currently open sessions. Creating
+or selecting a session never hides the other computer groups. Use **New session
+→ Open previous** to browse persisted history by computer and resume a closed session.
 New sessions start at `~`; browse folders by tapping them instead of typing
 paths. Browsing is restricted to the selected computer's user home directory.
 By default, a new session opens Copilot in a new window of the preferred
 existing tmux session on that computer. Attach over SSH with `tmux attach`, then
 select the window named after the folder. Clear **Create in tmux** to use an
 SDK-only session instead.
+New sessions default to **Allow all permissions** for uninterrupted work. Clear
+that checkbox before creation when individual tool approvals are preferred.
 Computer groups and sessions can be reordered by dragging their handles; order
 is retained in the browser. Open transcripts synchronize from Copilot's event
 logs so terminal- and UI-originated messages stay consistent.

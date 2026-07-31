@@ -22,6 +22,7 @@ import type { SessionService } from './session-service.js'
 class FakeSessionService extends EventEmitter implements SessionService {
   private readonly sessions = new Map<string, SessionDetail>()
   lastCreateTerminalBacked?: boolean
+  lastCreateAllowAllPermissions?: boolean
 
   constructor(...sessions: SessionDetail[]) {
     super()
@@ -85,8 +86,10 @@ class FakeSessionService extends EventEmitter implements SessionService {
   async createSession(
     cwd: string,
     terminalBacked?: boolean,
+    allowAllPermissions?: boolean,
   ): Promise<SessionDetail> {
     this.lastCreateTerminalBacked = terminalBacked
+    this.lastCreateAllowAllPermissions = allowAllPermissions
     const session: SessionDetail = {
       id: randomUUID(),
       cwd,
@@ -445,6 +448,7 @@ describe('multi-node hub', () => {
       })
       expect(created.statusCode, created.body).toBe(201)
       expect(remoteService.lastCreateTerminalBacked).toBe(true)
+      expect(remoteService.lastCreateAllowAllPermissions).toBe(true)
 
       const detail = await hub.app.inject({
         method: 'GET',

@@ -703,6 +703,72 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('defaults new SDK sessions to allow all and can require approval', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    const allowAll = await service.createSession(directory)
+    const automaticHandler = client.createdConfigs.at(-1)?.onPermissionRequest
+    if (!automaticHandler) {
+      throw new Error('Permission handler was not configured')
+    }
+    expect(
+      await automaticHandler(
+        {
+          kind: 'shell',
+          fullCommandText: 'echo allowed',
+          intention: 'Run an allowed command',
+          commands: [],
+          possiblePaths: [],
+          possibleUrls: [],
+          hasWriteFileRedirection: false,
+          canOfferSessionApproval: false,
+        },
+        { sessionId: allowAll.id },
+      ),
+    ).toEqual({ kind: 'approve-once' })
+    expect(allowAll.runtime?.allowAllPermissions).toBe(true)
+
+    const guarded = await service.createSession(directory, false, false)
+    const guardedHandler = client.createdConfigs.at(-1)?.onPermissionRequest
+    if (!guardedHandler) {
+      throw new Error('Guarded permission handler was not configured')
+    }
+    const response = guardedHandler(
+      {
+        kind: 'shell',
+        fullCommandText: 'echo guarded',
+        intention: 'Run a guarded command',
+        commands: [],
+        possiblePaths: [],
+        possibleUrls: [],
+        hasWriteFileRedirection: false,
+        canOfferSessionApproval: false,
+      },
+      { sessionId: guarded.id },
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(guarded.id)?.pendingPermission).toBeDefined(),
+    )
+    const request = service.store.get(guarded.id)?.pendingPermission
+    if (!request) {
+      throw new Error('Permission request was not stored')
+    }
+    await service.replyPermission(guarded.id, request.requestId, 'allow-once')
+    await expect(response).resolves.toEqual({ kind: 'approve-once' })
+    expect(guarded.runtime?.allowAllPermissions).toBe(false)
+
+    await service.stop()
+  })
+
   it('does not restore a stale transcript after clearing', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -906,11 +972,19 @@ describe('AgentService deletion', () => {
       created.id,
       directory,
       path.basename(directory),
+      true,
     )
     expect(client.createdConfigs).toEqual([])
     expect(service.listSessions()).toEqual([
       expect.objectContaining({ id: created.id, isOpen: true }),
     ])
+    const guarded = await service.createSession(directory, true, false)
+    expect(terminal.create).toHaveBeenCalledWith(
+      guarded.id,
+      directory,
+      path.basename(directory),
+      false,
+    )
     const renamed = await service.renameSession(created.id, 'Renamed terminal')
     expect(renamed.title).toBe('Renamed terminal')
     expect(terminal.rename).toHaveBeenCalledWith(

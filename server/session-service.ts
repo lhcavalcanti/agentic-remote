@@ -17,7 +17,11 @@ export interface SessionService {
   getSession(id: string): SessionDetail | undefined
   openSession(id: string): Promise<SessionDetail>
   activateSession(id: string): Promise<SessionDetail>
-  createSession(cwd: string, terminalBacked?: boolean): Promise<SessionDetail>
+  createSession(
+    cwd: string,
+    terminalBacked?: boolean,
+    allowAllPermissions?: boolean,
+  ): Promise<SessionDetail>
   renameSession(id: string, title: string): Promise<SessionDetail>
   runtimeOptions(id: string): Promise<RuntimeOptions>
   configureRuntime(

@@ -129,6 +129,7 @@ export type HubEvent =
 export interface CreateSessionInput {
   cwd: string
   terminalBacked?: boolean
+  allowAllPermissions?: boolean
 }
 
 export interface SendMessageInput {

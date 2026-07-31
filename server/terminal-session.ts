@@ -17,6 +17,7 @@ export interface TerminalSessionController {
     sessionId: string,
     cwd: string,
     title: string,
+    allowAllPermissions?: boolean,
   ): Promise<{ sessionName: string; windowId: string }>
   rename?(sessionId: string, title: string): Promise<boolean>
   configure?(
@@ -64,9 +65,10 @@ export class TmuxTerminalSessionController
     sessionId: string,
     cwd: string,
     title: string,
+    allowAllPermissions = true,
   ): Promise<{ sessionName: string; windowId: string }> {
     const creation = this.creationQueue.then(() =>
-      this.createWindow(sessionId, cwd, title),
+      this.createWindow(sessionId, cwd, title, allowAllPermissions),
     )
     this.creationQueue = creation.then(
       () => undefined,
@@ -479,6 +481,7 @@ export class TmuxTerminalSessionController
     sessionId: string,
     cwd: string,
     title: string,
+    allowAllPermissions: boolean,
   ): Promise<{ sessionName: string; windowId: string }> {
     const sessions = await listTmuxSessions()
     const configured = process.env.AGENTIC_REMOTE_TMUX_SESSION?.trim()
@@ -494,6 +497,12 @@ export class TmuxTerminalSessionController
     const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
     const windowName = safeWindowName(title)
     const format = '#{session_name}\t#{window_id}'
+    const command = [
+      copilot,
+      ...(allowAllPermissions ? ['--yolo'] : []),
+      '--session-id',
+      sessionId,
+    ]
     const args = selected
       ? [
           'new-window',
@@ -507,9 +516,7 @@ export class TmuxTerminalSessionController
           windowName,
           '-c',
           cwd,
-          copilot,
-          '--session-id',
-          sessionId,
+          ...command,
         ]
       : [
           'new-session',
@@ -523,9 +530,7 @@ export class TmuxTerminalSessionController
           windowName,
           '-c',
           cwd,
-          copilot,
-          '--session-id',
-          sessionId,
+          ...command,
         ]
     const output = (await execFileAsync('tmux', args)).stdout.trim()
     const [sessionName, windowId] = output.split('\t', 2)

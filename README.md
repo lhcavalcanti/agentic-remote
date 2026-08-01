@@ -1,170 +1,74 @@
 # Agentic Remote
 
-A focused, mobile-first hub for GitHub Copilot CLI sessions across multiple
-computers. Each computer owns its Copilot process, files, and history; one hub
-serves the UI and routes commands to paired nodes.
+A mobile-first web interface for running and supervising GitHub Copilot CLI
+sessions across multiple computers.
 
-The sidebar contains all computers and their currently open sessions. Creating
-or selecting a session never hides the other computer groups. Use **New session
-→ Open previous** to browse persisted history by computer and resume a closed session.
-New sessions start at `~`; browse folders by tapping them instead of typing
-paths. Browsing is restricted to the selected computer's user home directory.
-By default, a new session opens Copilot in a new window of the preferred
-existing tmux session on that computer. Attach over SSH with `tmux attach`, then
-select the window named after the folder. Clear **Create in tmux** to use an
-SDK-only session instead.
-New sessions default to **Allow all permissions** for uninterrupted work. Clear
-that checkbox before creation when individual tool approvals are preferred.
-Computer groups and sessions can be reordered by dragging their handles; order
-is retained in the browser. Open transcripts synchronize from Copilot's event
-logs so terminal- and UI-originated messages stay consistent.
-Use the pencil action in the conversation header to rename a session; custom
-names persist across discovery refreshes and also rename tmux-backed windows.
+One **hub** serves the browser UI. Each paired computer keeps ownership of its
+Copilot processes, authentication, repositories, tools, and conversation
+history. Agentic Remote routes commands to the owning computer instead of
+copying projects or creating detached sessions.
 
-Composer controls follow Copilot CLI conventions:
+## Highlights
 
-- **Enter** sends
-- **Shift+Enter** inserts a newline
-- **Ctrl/Cmd+Enter** queues behind the active turn
-- Typing `/` opens autocomplete populated from the session's real Copilot
-  command list
+- Control local and remote Copilot CLI sessions from one responsive UI.
+- Create tmux-backed sessions that remain accessible through SSH.
+- Resume persisted Copilot conversations from any paired computer.
+- Send, queue, edit, remove, cancel, clear, restart, and rename sessions.
+- Answer `ask_user` questions and terminal permission prompts from the browser.
+- Follow running tools and retain completed tool and agent-launch history.
+- Configure model, reasoning effort, context tier, and status-line fields.
+- Install as an iPhone/iPad PWA with push notifications and in-app updates.
+- Deploy immutable releases with systemd, rollback, and automatic restart.
 
-Unsent composer text is stored separately for each computer/session and returns
-when switching back. After Enter sends or queues, focus and the caret return to
-the composer unless another session was selected meanwhile.
-In the installed mobile app, swipe right anywhere in the conversation to open
-Sessions and swipe left to close it. Horizontal code/table scrolling is excluded;
-browser Safari keeps its native Back gesture and uses the menu button.
-When the on-screen keyboard opens, the app follows iOS's visual viewport so the
-conversation header remains below the Dynamic Island, then restores the full
-screen when the keyboard closes. App dialogs also stay within the device safe
-areas.
+## How it works
 
-UI-originated queued prompts appear above the composer. Remove deletes any
-selected queued prompt; Edit removes it and restores its text to the composer.
-Agentic Remote owns these prompt queues because Copilot's native queue API only
-supports removing the most recent item. Items queued directly inside the CLI
-are not exposed for individual editing in the web UI.
+```text
+Browser / installed PWA
+          |
+          v
+       Hub server
+       /        \
+local sessions   authenticated node API
+                         |
+                         v
+                  remote Copilot sessions
+```
 
-Use `/clear` or the eraser action to remove the current Copilot context and
-Agentic Remote transcript while keeping an open session in the same folder and
-tmux window. Clear replaces the underlying Copilot session ID so deleted history
-cannot reappear.
-Use `/restart` or the restart action to restart the owning Copilot process while
-preserving the session ID, conversation, queue, title, folder, runtime settings,
-and tmux window.
-Tmux window names mirror the Agentic Remote session title and follow both manual
-renames and Copilot's automatic title updates.
-State-changing CLI commands synchronize back to the web UI: `/cwd` updates the
-sidebar/header/status path, title changes update UI and tmux, `/model` updates
-model/effort/context details, and mode/allow-all changes appear in the status
-line. External sessions use mtime-guarded `workspace.yaml` metadata when CLI
-events are ephemeral.
+- A **hub** serves the UI, owns local sessions, and stores the paired-computer
+  registry.
+- A **node** exposes only its authenticated machine API; it does not serve the
+  UI.
+- A hub is also a node, so local and remote sessions share the same routing
+  model.
+- Repositories, Copilot credentials, and execution remain on the computer that
+  owns each session.
 
-On phones, the composer grows to a compact maximum height and shrinks further
-when the virtual keyboard reduces the viewport.
-
-## Install as a phone web app
-
-Agentic Remote is an installable PWA. On iPhone or iPad, open the HTTPS site in
-Safari, choose **Share → Add to Home Screen**, then open the installed app.
-Open **App settings** from the Sessions panel to enable privacy-safe
-notifications when any agent asks for input or finishes work. Use **Send test
-notification** to verify device delivery. The bell in a session header mutes or
-unmutes only that session. Notification text includes only the computer and
-session title; open the app for details. Opening the related chat clears that
-session's ask and completion notifications from the device notification center.
-
-The installed app checks for new versions on launch, hourly while open, and when
-returning to the foreground. Closing and reopening activates updates
-automatically. App settings also provides **Check for updates**, **Update now**,
-and the web status-line preferences. The update toast can be dismissed without
-discarding the waiting update from App settings.
-Update checks compare the running bundle with the deployed version, so releases
-are detected even when the service-worker file itself is unchanged.
-
-For Copilot sessions running in tmux, Agentic Remote routes prompts, queued
-input, slash commands, and cancel actions into the owning terminal pane. This
-keeps the CLI and web timeline on the same agent instead of creating a detached
-SDK turn. `/statusline` configures the web status line. Command abbreviations
-follow Copilot CLI completion behavior: typing `/aa` expands to `/allow-all`
-before the canonical command is sent to Copilot.
-Root-agent tools flow through the timeline with their name, concise
-description/command/path/query preview, and live completion status. The running
-tool remains animated, while completed and failed tools stay as compact history,
-including root-level agent launches. Raw tool output and subagent internals
-remain hidden.
-`ask_user` questions appear as interactive cards with choice buttons and an
-optional freeform answer. SDK callbacks and tmux CLI dialogs are both supported
-across local and remote computers.
-Tmux-backed CLI permission dialogs also appear in the web UI with **Yes** and
-**Stop** actions, rather than leaving the session looking indefinitely busy.
-The status line can show the root agent's model, reasoning effort, context tier,
-and current context usage. A `~` prefix marks usage estimated from persisted CLI
-events when Copilot does not expose an exact live count.
-Tap the right-aligned runtime row below the composer to change model, effort,
-and context size together. SDK sessions switch live; tmux sessions restart the
-same pane and resume the same session ID with the selected CLI settings.
-
-## Why this architecture
-
-- **React + Vite** produces a small production bundle and fast responsive UI.
-- **Fastify** serves the API, WebSocket event stream, and production assets from
-  one local Node.js process.
-- **`@github/copilot-sdk`** is GitHub's supported Node SDK. It provides
-  structured session events, so the UI does not scrape terminal escape codes.
-- **Hub/node roles** keep execution on the computer that owns each session. The
-  hub stores paired node addresses and tokens, but never copies repositories.
-- Session metadata and rendered messages are stored in
-  `~/.agentic-remote/state.json` with user-only permissions.
-
-The server binds to `127.0.0.1` by default. Direct access is intended for a
-trusted LAN; use an upstream layer such as Cloudflare Access externally.
-
-See [Multi-computer architecture](docs/architecture.md) for ownership,
-authentication, routing, and failure semantics.
+See [Multi-computer architecture](docs/architecture.md) for routing,
+authentication, ownership, and failure behavior.
 
 ## Requirements
 
+- Linux with systemd user services for managed deployment
 - Node.js 22 or newer
 - pnpm
-- An authenticated GitHub Copilot CLI installation
+- tmux for terminal-backed sessions
+- An installed and authenticated GitHub Copilot CLI
 
-Check authentication with:
+Confirm that Copilot starts successfully before installing Agentic Remote:
 
 ```bash
 copilot
 ```
 
-## Development
+## Quick start
 
-```bash
-pnpm install
-pnpm dev
-```
-
-Open <http://127.0.0.1:4317>. Vite proxies API and WebSocket traffic to the
-Fastify server on port `4318`.
-
-## Production
-
-```bash
-pnpm build
-pnpm start
-```
-
-Open <http://127.0.0.1:4318>.
-
-## User service
-
-Run the management command directly from a fresh clone. On the computer that
-will serve the UI:
+Clone the repository on the computer that will serve the UI, then run:
 
 ```bash
 ./bin/agentic-remote setup --role hub --name development
 ```
 
-For LAN access:
+For access from a trusted LAN, bind to that computer's LAN address:
 
 ```bash
 ./bin/agentic-remote setup \
@@ -174,7 +78,20 @@ For LAN access:
   --port 4317
 ```
 
-On another computer:
+Setup:
+
+1. Installs dependencies.
+2. Builds the production app.
+3. Creates an immutable release.
+4. Installs and enables a systemd user service.
+5. Attempts to enable user lingering for startup at boot.
+6. Links `agentic-remote` into `~/.local/bin`.
+
+Open the URL printed by setup.
+
+## Add another computer
+
+On the remote computer:
 
 ```bash
 ./bin/agentic-remote setup \
@@ -186,23 +103,165 @@ On another computer:
 agentic-remote pair-info
 ```
 
-Setup installs dependencies, creates the production build, installs an enabled
-systemd user service, attempts to enable boot-time user lingering, and links the
-command to `~/.local/bin/agentic-remote`.
+On the hub:
 
-Production UI assets are copied into immutable release directories under
-`~/.config/agentic-remote/releases`. The running service never serves directly
-from the development `dist/` directory, so local builds cannot invalidate its
-hashed JavaScript or CSS assets. Backend source and dependencies are pinned in
-the same release. `agentic-remote rollback` atomically activates the previous
-release and restarts the service.
+1. Open **Sessions → Manage computers**.
+2. Enter the node URL.
+3. Paste the pairing token from `pair-info`.
 
-Use the URL and token from `pair-info` in the hub's **Computers** dialog. Pairing
-tokens grant control of Copilot sessions on that node and are stored with mode
-`0600`. The current transport is intended for a trusted LAN; use an encrypted
-network layer before exposing a node outside it.
+The Sessions sidebar always shows every configured computer and its open
+sessions. Selecting or creating a session does not hide the other computer
+groups.
 
-After setup:
+Pairing tokens grant control of Copilot sessions on that node. They are stored
+with user-only permissions and are intended for a trusted LAN. Use TLS, an
+encrypted overlay, or an upstream access layer before exposing either service
+outside the trusted network.
+
+## Sessions
+
+### Create a session
+
+Choose **New session**, select a computer, and browse from `~` to the desired
+folder. Directory browsing is restricted to that computer's home directory.
+
+New sessions use these defaults:
+
+- **Create in tmux**: enabled
+- **Allow all permissions**: enabled
+
+> [!CAUTION]
+> Allow-all runs tools without individual approval. Clear the checkbox when you
+> want the agent to ask before protected operations.
+
+A tmux-backed session opens a window in the preferred existing tmux session.
+Attach over SSH with:
+
+```bash
+tmux attach
+```
+
+Clear **Create in tmux** to create an SDK-only session.
+
+### Resume history
+
+Choose **New session → Open previous** to browse and reopen persisted sessions
+for a computer.
+
+### Rename, clear, restart, and close
+
+- **Rename** updates Agentic Remote, Copilot metadata, and the tmux window.
+- **Clear** (`/clear`) removes Copilot context and UI history while keeping the
+  folder, title, and tmux window. Internally it replaces the Copilot session ID
+  so deleted history cannot return.
+- **Restart** (`/restart`) restarts the owning process while preserving the
+  session ID, transcript, queue, title, folder, and runtime settings.
+- **Close** permanently deletes the Copilot session and its history from the
+  owning computer.
+
+## Chat and queue behavior
+
+Composer shortcuts follow Copilot CLI conventions:
+
+| Action | Shortcut |
+| --- | --- |
+| Send | `Enter` |
+| Insert newline | `Shift+Enter` |
+| Queue behind the active turn | `Ctrl+Enter` or `Cmd+Enter` |
+| Open command completion | Type `/` |
+
+Drafts are stored independently for each computer/session and return when you
+switch back.
+
+UI-originated queued prompts appear above the composer:
+
+- **Remove** deletes the selected queued prompt.
+- **Edit** removes it from the queue and restores it to the composer.
+
+Agentic Remote owns this FIFO queue. Prompts queued directly inside Copilot CLI
+cannot be edited individually from the web UI.
+
+## CLI synchronization
+
+For tmux-backed sessions, prompts, commands, queue dispatch, cancellation, and
+answers are sent to the owning terminal pane. The web UI and attached CLI
+therefore control the same process.
+
+State-changing CLI commands synchronize back to the browser:
+
+- `/cwd` updates the working directory shown in the sidebar, header, and status
+  line.
+- Copilot title changes update the UI and tmux window.
+- Model, effort, context, mode, and allow-all changes update runtime status.
+- `/statusline` opens the web status-line configuration.
+
+Command completion uses the session's real Copilot command list. Abbreviations
+follow CLI behavior; for example, `/aa` expands to `/allow-all`.
+
+## Tools, questions, and permissions
+
+- The running root-agent tool is animated in chronological chat flow.
+- Completed and failed tools remain as compact timeline history.
+- Root-level agent launches are logged without exposing subagent internals.
+- Raw tool output and hidden reasoning are not rendered.
+- SDK and tmux `ask_user` prompts support choices and freeform replies.
+- Ephemeral tmux permission dialogs appear with **Yes** and **Stop** actions.
+
+The runtime row below the composer configures model, reasoning effort, and
+context tier. SDK sessions switch live; tmux sessions restart the same pane and
+resume the same session ID.
+
+## Install as a phone app
+
+Agentic Remote is an installable PWA.
+
+On iPhone or iPad:
+
+1. Open the HTTPS hub URL in Safari.
+2. Choose **Share → Add to Home Screen**.
+3. Open Agentic Remote from the Home Screen.
+
+Mobile behavior includes:
+
+- Swipe right anywhere in the conversation to open Sessions.
+- Swipe left to close Sessions.
+- Horizontal code and table scrolling is excluded from the drawer gesture.
+- Browser Safari retains its native Back gesture.
+- Safe-area and visual-viewport handling keep controls clear of the Dynamic
+  Island and on-screen keyboard.
+
+## Notifications
+
+Open **Sessions → App settings** to enable push notifications.
+
+Agentic Remote can notify the installed app when:
+
+- An agent asks for input.
+- An agent finishes its current work.
+
+Use **Send test notification** to verify delivery. The bell in a session header
+mutes or unmutes that session without disabling global notifications. Opening a
+related chat clears its ask and completion notifications from Notification
+Center.
+
+Notification text contains only the computer and session title; open the app to
+view the actual question or result.
+
+## App updates
+
+The installed app checks for updates:
+
+- On launch
+- Hourly while open
+- When returning to the foreground
+- On demand through **App settings → Check for updates**
+
+Update detection compares the running bundle with the uncached deployed
+version, including releases where `sw.js` itself is unchanged. **Update now**
+activates or reloads into the new version. The update toast can be dismissed
+without discarding the update from App settings.
+
+## Service operations
 
 ```bash
 agentic-remote start
@@ -216,28 +275,113 @@ agentic-remote rollback
 agentic-remote uninstall
 ```
 
-The service restarts after failures. With systemd user lingering enabled, it
-also starts during boot without waiting for an interactive login. `uninstall`
-removes the service but preserves conversation data in `~/.agentic-remote`.
-`update` also migrates older service environments and backfills missing role
-settings.
+`update` pulls the current branch with fast-forward only, installs dependencies,
+builds an immutable release, and restarts the service.
+
+Releases are stored under:
+
+```text
+~/.config/agentic-remote/releases/
+```
+
+The active service never serves assets from the development `dist/` directory.
+`rollback` atomically activates the previous release. The current release plus
+two rollback candidates are retained.
+
+`uninstall` removes the service but preserves application data in
+`~/.agentic-remote`.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | HTTP bind address |
-| `PORT` | `4318` | HTTP port |
+| `PORT` | `4318` | HTTP port for direct/manual startup |
 | `COPILOT_BIN` | `/usr/local/bin/copilot` | Copilot CLI executable |
 | `AGENTIC_REMOTE_DATA_DIR` | `~/.agentic-remote` | Local application state |
-| `AGENTIC_REMOTE_ROLE` | `hub` | Run the UI hub or a headless node |
+| `AGENTIC_REMOTE_ROLE` | `hub` | `hub` or headless `node` |
 | `AGENTIC_REMOTE_NODE_NAME` | hostname | Friendly computer name |
-| `AGENTIC_REMOTE_VAPID_SUBJECT` | project URL | Web Push VAPID contact URL or `mailto:` address |
+| `AGENTIC_REMOTE_VAPID_SUBJECT` | project URL | Web Push contact URL or `mailto:` address |
 
-## Checks
+Managed setup defaults to port `4317` and writes its environment under
+`~/.config/agentic-remote`.
+
+## Development
+
+Install dependencies and start Fastify plus Vite:
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Open <http://127.0.0.1:4317>. Vite proxies API and WebSocket traffic to Fastify
+on port `4318`.
+
+Run all project checks:
 
 ```bash
 pnpm check
 ```
 
 This runs linting, unit tests, type checking, and the production build.
+
+For a direct production build without the management command:
+
+```bash
+pnpm build
+pnpm start
+```
+
+The direct server listens on <http://127.0.0.1:4318> by default.
+
+## Data and security
+
+Important local files include:
+
+| Path | Contents |
+| --- | --- |
+| `~/.agentic-remote/state.json` | Rendered session state and UI-managed queues |
+| `~/.agentic-remote/computers.json` | Paired node URLs and tokens on the hub |
+| `~/.agentic-remote/node.json` | Stable node identity and pairing token |
+| `~/.agentic-remote/push-notifications.json` | VAPID keys and push subscriptions |
+
+Sensitive state files use mode `0600`; the data directory uses mode `0700`.
+
+The hub UI relies on the trusted network or an upstream authentication layer.
+Remote `/node-api` REST and WebSocket routes additionally require the node's
+pairing token. Do not expose a node directly to the public internet.
+
+## Troubleshooting
+
+### A session looks stuck
+
+Check the UI for an `ask_user` card or permission prompt. For a tmux-backed
+session, inspect the owning pane:
+
+```bash
+tmux attach
+```
+
+Also inspect service logs:
+
+```bash
+agentic-remote logs
+```
+
+### A remote computer is offline
+
+Verify its service and health endpoint:
+
+```bash
+agentic-remote status
+curl http://NODE_ADDRESS:4317/health
+```
+
+The hub retains last-known summaries while a node is offline, but commands fail
+explicitly rather than being silently queued.
+
+### The installed app is stale
+
+Open **App settings → Check for updates**. If necessary, close and reopen the
+installed app so iOS reloads its active PWA window.

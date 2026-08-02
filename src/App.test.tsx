@@ -773,6 +773,38 @@ describe('App', () => {
     expect(screen.queryByText('Which environment?')).not.toBeInTheDocument()
   })
 
+  it('scrolls a newly received question into view', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            status: 'waiting',
+            pendingUserInput: {
+              requestId: 'new-question',
+              question: 'Choose the deployment target',
+              choices: ['Development', 'Production'],
+              allowFreeform: false,
+            },
+          },
+        }),
+      } as MessageEvent)
+    })
+
+    expect(
+      await screen.findByText('Choose the deployment target'),
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
+    )
+  })
+
   it('ignores stale folder responses after switching computers', async () => {
     let resolveStale:
       | ((value: {

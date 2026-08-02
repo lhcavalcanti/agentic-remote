@@ -1691,6 +1691,9 @@ function App() {
       message.role === 'activity' && message.activityStatus === 'running',
   )
   const hasRunningTool = currentTool?.activityStatus === 'running'
+  const pendingActionId =
+    selected?.pendingPermission?.requestId ||
+    selected?.pendingUserInput?.requestId
   const selectedComputerId = selected?.computerId
   const selectedSessionId = selected?.id
   const selectedNotificationsMuted = selected
@@ -2150,7 +2153,12 @@ function App() {
       bottomRef.current?.scrollIntoView({ block: 'end' })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [selectedKey, selected?.messages.length, latestContent])
+  }, [
+    selectedKey,
+    selected?.messages.length,
+    latestContent,
+    pendingActionId,
+  ])
 
   useLayoutEffect(() => {
     const textarea = composerRef.current

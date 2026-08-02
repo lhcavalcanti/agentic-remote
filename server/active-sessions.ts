@@ -313,7 +313,11 @@ async function processMatchesLock(
       return false
     }
     const lockDelay = lockMetadata.mtimeMs - processStart
-    return lockDelay >= -2_000 && lockDelay <= 30_000
+    if (lockDelay >= -2_000 && lockDelay <= 30_000) {
+      return true
+    }
+    const sessionId = path.basename(path.dirname(lockPath))
+    return (await openSessionIds(pid)).has(sessionId)
   } catch (error) {
     if (
       (error as NodeJS.ErrnoException).code === 'ENOENT' ||

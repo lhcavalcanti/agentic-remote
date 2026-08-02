@@ -232,10 +232,14 @@ describe('active Copilot processes', () => {
       10,
     )
     await new Promise((resolve) => setTimeout(resolve, 100))
+    const staleLock = path.join(staleDirectory, `inuse.${pid}.lock`)
+    const currentLock = path.join(currentDirectory, `inuse.${pid}.lock`)
     await Promise.all([
-      writeFile(path.join(staleDirectory, `inuse.${pid}.lock`), `${pid}\n`),
-      writeFile(path.join(currentDirectory, `inuse.${pid}.lock`), `${pid}\n`),
+      writeFile(staleLock, `${pid}\n`),
+      writeFile(currentLock, `${pid}\n`),
     ])
+    const delayedLockTime = new Date(Date.now() + 45_000)
+    await utimes(currentLock, delayedLockTime, delayedLockTime)
     vi.stubEnv('COPILOT_HOME', copilotHome)
 
     const processes = await findActiveCopilotProcesses()

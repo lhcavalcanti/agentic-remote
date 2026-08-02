@@ -119,6 +119,7 @@ describe('PWA updates', () => {
     expect(postMessage).toHaveBeenCalledWith({
       type: 'CLEAR_SESSION_NOTIFICATIONS',
       tags: [
+        'agentic-action-computer-session',
         'agentic-question-computer-session',
         'agentic-finished-computer-session',
       ],

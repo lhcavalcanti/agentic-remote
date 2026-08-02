@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import type { PushSubscription } from 'web-push'
+import type { PushSubscription, RequestOptions } from 'web-push'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HubEvent } from '../shared/contracts.js'
 import { PushNotificationService } from './push-notification-service.js'
@@ -18,13 +18,14 @@ afterEach(async () => {
 })
 
 describe('PushNotificationService', () => {
-  it('persists subscriptions and deduplicates ask-user notifications', async () => {
+  it('prioritizes action notifications and deduplicates requests', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'push-service-test-'))
     directories.push(directory)
     const sender = vi.fn(
       async (
         _subscription: PushSubscription,
         _payload?: string | Buffer | null,
+        _options?: RequestOptions,
       ) => ({
         statusCode: 201,
         headers: {},
@@ -75,14 +76,37 @@ describe('PushNotificationService', () => {
       data: { url: string }
     }
     expect(payload).toEqual({
-      title: 'Agent needs your input',
-      body: 'development · Project',
+      title: 'Action needed · Project',
+      body: 'development · Hidden question text',
       data: {
         url: '/?computer=computer&session=session',
       },
-      tag: 'agentic-question-computer-session',
+      priority: 'high',
+      tag: 'agentic-action-computer-session',
     })
-    expect(JSON.stringify(payload)).not.toContain('Hidden question text')
+    expect(sender.mock.calls[0]?.[2]).toEqual({
+      TTL: 3_600,
+      urgency: 'high',
+    })
+
+    events.emit('event', {
+      ...event,
+      session: {
+        ...event.session,
+        pendingUserInput: undefined,
+        pendingPermission: {
+          requestId: 'permission',
+          title: 'Run deployment command',
+          options: [],
+        },
+      },
+    })
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(2))
+    expect(JSON.parse(sender.mock.calls[1]?.[1] as string)).toMatchObject({
+      title: 'Action needed · Project',
+      body: 'development · Run deployment command',
+      priority: 'high',
+    })
 
     await service.setSessionMuted('computer', 'session', true)
     expect(service.settings()).toEqual({
@@ -99,7 +123,7 @@ describe('PushNotificationService', () => {
       },
     })
     await new Promise((resolve) => setImmediate(resolve))
-    expect(sender).toHaveBeenCalledOnce()
+    expect(sender).toHaveBeenCalledTimes(2)
 
     await service.setSessionMuted('computer', 'session', false)
     events.emit('event', {
@@ -112,11 +136,11 @@ describe('PushNotificationService', () => {
         },
       },
     })
-    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(3))
 
     events.emit('event', { type: 'computer.removed', computerId: 'computer' })
     events.emit('event', event)
-    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(4))
 
     events.emit('event', {
       ...event,
@@ -135,14 +159,19 @@ describe('PushNotificationService', () => {
         status: 'idle',
       },
     })
-    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(4))
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(5))
     const completionPayload = JSON.parse(
-      sender.mock.calls[3]?.[1] as string,
+      sender.mock.calls[4]?.[1] as string,
     ) as { title: string; body: string; data: { url: string } }
     expect(completionPayload).toMatchObject({
-      title: 'Agent finished',
-      body: 'development · Project',
+      title: 'Finished · Project',
+      body: 'development · No action needed',
+      priority: 'low',
       data: { url: '/?computer=computer&session=session' },
+    })
+    expect(sender.mock.calls[4]?.[2]).toEqual({
+      TTL: 900,
+      urgency: 'very-low',
     })
 
     events.emit('event', {
@@ -163,12 +192,17 @@ describe('PushNotificationService', () => {
       },
     })
     await new Promise((resolve) => setImmediate(resolve))
-    expect(sender).toHaveBeenCalledTimes(4)
+    expect(sender).toHaveBeenCalledTimes(5)
 
     await expect(service.sendTestNotification()).resolves.toEqual({ sent: 1 })
-    expect(JSON.parse(sender.mock.calls[4]?.[1] as string)).toMatchObject({
+    expect(JSON.parse(sender.mock.calls[5]?.[1] as string)).toMatchObject({
       title: 'Agentic Remote notifications work',
+      priority: 'normal',
       data: { url: '/' },
+    })
+    expect(sender.mock.calls[5]?.[2]).toEqual({
+      TTL: 900,
+      urgency: 'normal',
     })
 
     service.stop()

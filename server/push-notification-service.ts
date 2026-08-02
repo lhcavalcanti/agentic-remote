@@ -32,7 +32,7 @@ export class PushNotificationService {
   private state?: PushState
   private writeQueue: Promise<void> = Promise.resolve()
   private manager?: HubEventSource
-  private readonly notifiedQuestions = new Set<string>()
+  private readonly notifiedActions = new Set<string>()
   private readonly sessionStatuses = new Map<string, ManagedSession['status']>()
 
   constructor(
@@ -95,6 +95,9 @@ export class PushNotificationService {
           const key = this.sessionKey(session.computerId, session.id)
           if (!this.sessionStatuses.has(key)) {
             this.sessionStatuses.set(key, session.status)
+          }
+          if (session.pendingPermission || session.pendingUserInput) {
+            this.handleEvent({ type: 'session.upserted', session })
           }
         }
       })
@@ -160,8 +163,9 @@ export class PushNotificationService {
   async sendTestNotification(): Promise<{ sent: number }> {
     const sent = await this.sendPayload({
       title: 'Agentic Remote notifications work',
-      body: 'You will be notified when an agent asks or finishes.',
+      body: 'High priority for actions; low priority when work finishes.',
       tag: 'agentic-remote-test',
+      priority: 'normal',
       data: { url: '/' },
     })
     return { sent }
@@ -170,9 +174,9 @@ export class PushNotificationService {
   private readonly handleEvent = (event: HubEvent) => {
     if (event.type === 'computer.removed') {
       const prefix = `${event.computerId}:`
-      for (const key of this.notifiedQuestions) {
+      for (const key of this.notifiedActions) {
         if (key.startsWith(prefix)) {
-          this.notifiedQuestions.delete(key)
+          this.notifiedActions.delete(key)
         }
       }
       for (const key of this.sessionStatuses.keys()) {
@@ -202,19 +206,28 @@ export class PushNotificationService {
     const previousStatus = this.sessionStatuses.get(sessionKey)
     this.sessionStatuses.set(sessionKey, session.status)
     const prefix = `${session.computerId}:${session.id}:`
-    const requestId = session.pendingUserInput?.requestId
-    for (const key of this.notifiedQuestions) {
-      if (key.startsWith(prefix) && key !== `${prefix}${requestId}`) {
-        this.notifiedQuestions.delete(key)
+    const action = session.pendingPermission
+      ? {
+          key: `${prefix}permission:${session.pendingPermission.requestId}`,
+          brief: session.pendingPermission.title,
+        }
+      : session.pendingUserInput
+        ? {
+            key: `${prefix}question:${session.pendingUserInput.requestId}`,
+            brief: session.pendingUserInput.question,
+          }
+        : undefined
+    for (const key of this.notifiedActions) {
+      if (key.startsWith(prefix) && key !== action?.key) {
+        this.notifiedActions.delete(key)
       }
     }
     const muted = this.requireState().mutedSessions.includes(sessionKey)
-    if (requestId && !muted) {
-      const key = `${prefix}${requestId}`
-      if (!this.notifiedQuestions.has(key)) {
-        this.notifiedQuestions.add(key)
-        void this.notifyQuestion(session).catch((error: unknown) => {
-          console.warn('Unable to send ask-user push notification:', error)
+    if (action && !muted) {
+      if (!this.notifiedActions.has(action.key)) {
+        this.notifiedActions.add(action.key)
+        void this.notifyAction(session, action.brief).catch((error: unknown) => {
+          console.warn('Unable to send action-needed push notification:', error)
         })
       }
     }
@@ -234,9 +247,9 @@ export class PushNotificationService {
 
   private removeSessionQuestions(computerId: string, sessionId: string): void {
     const prefix = `${computerId}:${sessionId}:`
-    for (const key of this.notifiedQuestions) {
+    for (const key of this.notifiedActions) {
       if (key.startsWith(prefix)) {
-        this.notifiedQuestions.delete(key)
+        this.notifiedActions.delete(key)
       }
     }
   }
@@ -259,11 +272,15 @@ export class PushNotificationService {
     })
   }
 
-  private async notifyQuestion(session: ManagedSession): Promise<void> {
+  private async notifyAction(
+    session: ManagedSession,
+    action: string,
+  ): Promise<void> {
     await this.sendPayload({
-      title: 'Agent needs your input',
-      body: `${session.computerName} · ${session.title}`,
-      tag: `agentic-question-${session.computerId}-${session.id}`,
+      title: `Action needed · ${session.title}`,
+      body: `${session.computerName} · ${brief(action)}`,
+      tag: `agentic-action-${session.computerId}-${session.id}`,
+      priority: 'high',
       data: {
         url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
       },
@@ -272,9 +289,10 @@ export class PushNotificationService {
 
   private async notifyCompletion(session: ManagedSession): Promise<void> {
     await this.sendPayload({
-      title: 'Agent finished',
-      body: `${session.computerName} · ${session.title}`,
+      title: `Finished · ${session.title}`,
+      body: `${session.computerName} · No action needed`,
       tag: `agentic-finished-${session.computerId}-${session.id}`,
+      priority: 'low',
       data: {
         url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
       },
@@ -285,6 +303,7 @@ export class PushNotificationService {
     title: string
     body: string
     tag: string
+    priority: 'high' | 'normal' | 'low'
     data: { url: string }
   }): Promise<number> {
     const state = this.requireState()
@@ -296,7 +315,15 @@ export class PushNotificationService {
     await Promise.all(
       state.subscriptions.map(async (subscription) => {
         try {
-          await this.sender(subscription, JSON.stringify(payload), { TTL: 300 })
+          await this.sender(subscription, JSON.stringify(payload), {
+            TTL: payload.priority === 'high' ? 3_600 : 900,
+            urgency:
+              payload.priority === 'high'
+                ? 'high'
+                : payload.priority === 'low'
+                  ? 'very-low'
+                  : 'normal',
+          })
           sent += 1
         } catch (error) {
           const statusCode = (error as { statusCode?: number }).statusCode
@@ -304,6 +331,7 @@ export class PushNotificationService {
             expired.add(subscription.endpoint)
             return
           }
+
           throw error
         }
       }),
@@ -334,4 +362,11 @@ export class PushNotificationService {
     this.writeQueue = task.catch(() => undefined)
     return task
   }
+}
+
+function brief(value: string): string {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  return normalized.length > 140
+    ? `${normalized.slice(0, 139).trimEnd()}…`
+    : normalized
 }

@@ -107,6 +107,8 @@ self.addEventListener('push', (event) => {
         badge: '/icons/icon-192.png',
         tag: payload.tag || 'agentic-remote-question',
         data: payload.data || { url: '/' },
+        renotify: payload.priority === 'high',
+        requireInteraction: payload.priority === 'high',
       },
     ),
   )

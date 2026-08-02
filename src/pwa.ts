@@ -81,6 +81,7 @@ export async function clearSessionPushNotifications(
   registration.active?.postMessage({
     type: 'CLEAR_SESSION_NOTIFICATIONS',
     tags: [
+      `agentic-action-${computerId}-${sessionId}`,
       `agentic-question-${computerId}-${sessionId}`,
       `agentic-finished-${computerId}-${sessionId}`,
     ],

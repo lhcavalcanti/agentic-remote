@@ -15,6 +15,7 @@ import {
   type CopilotClientLike,
   type CopilotSessionLike,
   messagesFromHistory,
+  pendingUserInputFromEvents,
   runtimeInfoFromEvents,
 } from './agent-service.js'
 import { SessionStore } from './session-store.js'
@@ -322,6 +323,65 @@ describe('AgentService deletion', () => {
         activityStatus: 'completed',
       }),
     ])
+  })
+
+  it('reconstructs only unresolved root ask-user requests', () => {
+    const question = {
+      type: 'tool.execution_start',
+      id: 'ask-start',
+      parentId: null,
+      timestamp: '2026-07-22T00:00:00.000Z',
+      data: {
+        toolCallId: 'ask-call',
+        toolName: 'ask_user',
+        arguments: {
+          question: 'Which goal matters most?',
+          choices: ['Growth', 'Flexibility'],
+        },
+      },
+    }
+    expect(
+      pendingUserInputFromEvents(
+        JSON.parse(JSON.stringify([question])) as SessionEvent[],
+      ),
+    ).toEqual({
+      requestId: 'persisted-user-input:ask-call',
+      question: 'Which goal matters most?',
+      choices: ['Growth', 'Flexibility'],
+      allowFreeform: true,
+    })
+    expect(
+      pendingUserInputFromEvents(
+        JSON.parse(
+          JSON.stringify([
+            question,
+            {
+              type: 'tool.execution_complete',
+              id: 'ask-complete',
+              parentId: 'ask-start',
+              timestamp: '2026-07-22T00:00:01.000Z',
+              data: { toolCallId: 'ask-call', success: true },
+            },
+          ]),
+        ) as SessionEvent[],
+      ),
+    ).toBeUndefined()
+    expect(
+      pendingUserInputFromEvents(
+        JSON.parse(
+          JSON.stringify([
+            question,
+            {
+              type: 'user.message',
+              id: 'answer',
+              parentId: 'ask-start',
+              timestamp: '2026-07-22T00:00:01.000Z',
+              data: { content: 'Growth' },
+            },
+          ]),
+        ) as SessionEvent[],
+      ),
+    ).toBeUndefined()
   })
 
   it('extracts model, effort, tier, and estimated context usage', () => {
@@ -2056,6 +2116,67 @@ describe('AgentService deletion', () => {
     ).toBeUndefined()
     expect(terminal.pendingUserInput.mock.calls.length).toBe(
       checksAfterReply + 1,
+    )
+    await service.stop()
+  })
+
+  it('recovers and answers a persisted SDK ask-user request', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"user.message",
+        "id":"prompt",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{"content":"Help prioritize my goals"}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":"prompt",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "question":"Which goal matters most?",
+            "choices":["Growth","Flexibility"]
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => events,
+      async () => 'persisted-question-v1',
+    )
+
+    await service.start()
+    await service.createSession(directory)
+    await service.refreshTranscripts()
+
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      status: 'waiting',
+      pendingUserInput: {
+        requestId: 'persisted-user-input:ask-call',
+        question: 'Which goal matters most?',
+      },
+    })
+    const answered = await service.replyUserInput(
+      client.session.sessionId,
+      'persisted-user-input:ask-call',
+      { answer: 'Growth', wasFreeform: false },
+    )
+    expect(answered.pendingUserInput).toBeUndefined()
+    expect(client.session.sentPrompts).toEqual(['Growth'])
+    client.session.resolvePrompt()
+    await vi.waitFor(() =>
+      expect(service.store.get(client.session.sessionId)?.status).toBe('idle'),
     )
     await service.stop()
   })

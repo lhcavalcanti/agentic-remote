@@ -215,6 +215,71 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   return messages
 }
 
+export function pendingUserInputFromEvents(
+  events: SessionEvent[],
+): PendingUserInput | undefined {
+  let pending:
+    | {
+        toolCallId: string
+        input: PendingUserInput
+      }
+    | undefined
+  for (const event of events) {
+    if (event.agentId) {
+      continue
+    }
+    if (event.type === 'user.message') {
+      pending = undefined
+      continue
+    }
+    if (event.type === 'tool.execution_start') {
+      const data = recordValue(event.data)
+      const toolName = (stringValue(data.toolName) || '')
+        .toLowerCase()
+        .replaceAll('-', '_')
+      if (toolName !== 'ask_user') {
+        continue
+      }
+      const argumentsValue = recordValue(data.arguments)
+      const question = (stringValue(argumentsValue.question) || '').trim()
+      if (!question) {
+        continue
+      }
+      const choices = Array.isArray(argumentsValue.choices)
+        ? argumentsValue.choices.flatMap((choice) =>
+            typeof choice === 'string' && choice.trim()
+              ? [choice.trim()]
+              : [],
+          )
+        : []
+      const toolCallId = stringValue(data.toolCallId)
+      if (!toolCallId) {
+        continue
+      }
+      pending = {
+        toolCallId,
+        input: {
+          requestId: `persisted-user-input:${toolCallId}`,
+          question,
+          choices,
+          allowFreeform:
+            typeof argumentsValue.allowFreeform === 'boolean'
+              ? argumentsValue.allowFreeform
+              : true,
+        },
+      }
+      continue
+    }
+    if (
+      event.type === 'tool.execution_complete' &&
+      pending?.toolCallId === stringValue(recordValue(event.data).toolCallId)
+    ) {
+      pending = undefined
+    }
+  }
+  return pending?.input
+}
+
 function visibleUserContent(content: string): string {
   const direct = content.trim()
   if (direct) {
@@ -1611,6 +1676,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.userInputs.delete(requestId)
       sdkPending.resolve({ answer, wasFreeform: input.wasFreeform })
+    } else if (requestId.startsWith('persisted-user-input:')) {
+      const cleared = await this.store.update(sessionId, (session) => {
+        session.pendingUserInput = undefined
+        session.status = 'idle'
+        session.activity = undefined
+      })
+      this.publish(cleared)
+      return this.sendMessage(sessionId, answer, false)
     } else {
       if (!this.terminalController.replyUserInput) {
         throw new Error('Terminal user input is not available')
@@ -1852,6 +1925,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return
         }
         const stored = this.store.get(sessionId)
+        const syncedUserInput = this.externalSessionIds.has(sessionId)
+          ? undefined
+          : stored?.pendingUserInput ||
+            pendingUserInputFromEvents(events) ||
+            null
         const messages = [
           ...messagesFromHistory(events),
           ...(stored?.messages.filter((message) => message.role === 'notice') ||
@@ -1867,7 +1945,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.eventLogVersions.set(sessionId, version)
           return
         }
-        let status = this.store.get(sessionId)?.pendingUserInput
+        let status = syncedUserInput
           ? 'waiting'
           : statusFromEvents(events)
         const queueDispatchAt = this.store.queueDispatchAt(sessionId)
@@ -1919,6 +1997,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           runtime,
           cwd,
           contextCwd,
+          syncedUserInput,
         )
         this.eventLogFingerprints.set(sessionId, fingerprint)
         this.eventLogVersions.set(sessionId, version)

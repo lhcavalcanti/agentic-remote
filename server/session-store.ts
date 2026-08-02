@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   ChatMessage,
+  PendingUserInput,
   QueuedPrompt,
   SessionDetail,
   SessionRuntimeInfo,
@@ -163,9 +164,13 @@ export class SessionStore {
     runtime?: SessionRuntimeInfo,
     cwd?: string,
     contextCwd = false,
+    pendingUserInput?: PendingUserInput | null,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.messages = messages
+      if (pendingUserInput !== undefined) {
+        session.pendingUserInput = pendingUserInput || undefined
+      }
       session.status =
         session.pendingPermission || session.pendingUserInput
           ? 'waiting'

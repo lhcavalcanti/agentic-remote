@@ -977,6 +977,44 @@ describe('App', () => {
     })
   })
 
+  it('offers immediate send and queue buttons while the agent is running', async () => {
+    const runningSession: ManagedSession = {
+      ...session,
+      status: 'running',
+    }
+    vi.mocked(listSessions).mockResolvedValue([runningSession])
+    vi.mocked(getSession).mockResolvedValue(runningSession)
+    vi.mocked(sendMessage).mockResolvedValue(runningSession)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    fireEvent.change(textarea, { target: { value: 'send immediately' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        content: 'send immediately',
+        enqueue: false,
+      }),
+    )
+
+    await waitFor(() => expect(textarea).not.toBeDisabled())
+    vi.mocked(sendMessage).mockClear()
+    fireEvent.change(textarea, { target: { value: 'queue this instead' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Queue message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        content: 'queue this instead',
+        enqueue: true,
+      }),
+    )
+    expect(
+      screen.getByRole('button', { name: 'Send message' }),
+    ).toHaveAttribute('title', 'Send immediately')
+    expect(
+      screen.getByRole('button', { name: 'Stop response' }),
+    ).toBeInTheDocument()
+  })
+
   it('autocompletes and executes session slash commands', async () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')

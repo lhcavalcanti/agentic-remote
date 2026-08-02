@@ -1350,7 +1350,7 @@ button {
 }
 
 .composer--running {
-  grid-template-columns: minmax(0, 1fr) 40px 40px;
+  grid-template-columns: minmax(0, 1fr) 40px 40px 40px;
 }
 
 .composer:focus-within {
@@ -1907,7 +1907,7 @@ button {
   }
 
   .composer--running {
-    grid-template-columns: minmax(0, 1fr) 40px 40px 40px;
+    grid-template-columns: minmax(0, 1fr) 40px 40px 40px 40px;
   }
 
   .composer-newline-button {

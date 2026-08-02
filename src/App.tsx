@@ -2315,7 +2315,8 @@ function App() {
     const shouldEnqueue =
       enqueue ||
       (selected.status === 'running' &&
-        (!isCommand || !command?.allowDuringAgentExecution))
+        isCommand &&
+        !command?.allowDuringAgentExecution)
     setSending(true)
     setError(undefined)
     setComposer('')
@@ -3070,38 +3071,39 @@ function App() {
                 <CornerDownLeft size={17} />
               </button>
               {selected.status === 'running' ? (
-                <>
-                  <button
-                    aria-label="Queue message"
-                    className="send-button send-button--queue"
-                    disabled={!composer.trim() || sending}
-                    onClick={() => void submitMessage(true)}
-                    type="button"
-                  >
-                    <ListPlus size={17} />
-                  </button>
-                  <button
-                    aria-label="Stop response"
-                    className="send-button send-button--stop"
-                    onClick={() =>
-                      void cancelSession(selected.computerId, selected.id)
-                    }
-                    type="button"
-                  >
-                    <Square fill="currentColor" size={15} />
-                  </button>
-                </>
-              ) : (
                 <button
-                  aria-label="Send message"
-                  className="send-button"
+                  aria-label="Queue message"
+                  className="send-button send-button--queue"
                   disabled={!composer.trim() || sending}
-                  onClick={() => void submitMessage()}
+                  onClick={() => void submitMessage(true)}
+                  title="Queue behind the current response"
                   type="button"
                 >
-                  <ArrowUp size={19} strokeWidth={2.4} />
+                  <ListPlus size={17} />
                 </button>
-              )}
+              ) : null}
+              <button
+                aria-label="Send message"
+                className="send-button"
+                disabled={!composer.trim() || sending}
+                onClick={() => void submitMessage()}
+                title="Send immediately"
+                type="button"
+              >
+                <ArrowUp size={19} strokeWidth={2.4} />
+              </button>
+              {selected.status === 'running' ? (
+                <button
+                  aria-label="Stop response"
+                  className="send-button send-button--stop"
+                  onClick={() =>
+                    void cancelSession(selected.computerId, selected.id)
+                  }
+                  type="button"
+                >
+                  <Square fill="currentColor" size={15} />
+                </button>
+              ) : null}
             </div>
             {((statusline.model && selected.runtime?.model) ||
               (statusline.effort && selected.runtime?.reasoningEffort) ||

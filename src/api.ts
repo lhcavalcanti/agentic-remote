@@ -1,5 +1,6 @@
 import type {
   AddComputerInput,
+  AudioTranscription,
   ComputerSummary,
   ConfigureRuntimeInput,
   CreateSessionInput,
@@ -12,6 +13,7 @@ import type {
   RenameSessionInput,
   RuntimeOptions,
   SendMessageInput,
+  SessionFileUpload,
   SlashCommand,
   UserInputReplyInput,
 } from '../shared/contracts'
@@ -28,7 +30,11 @@ async function request<TResult>(
   init?: RequestInit,
 ): Promise<TResult> {
   const headers = new Headers(init?.headers)
-  if (init?.body != null && !headers.has('content-type')) {
+  if (
+    init?.body != null &&
+    !(init.body instanceof FormData) &&
+    !headers.has('content-type')
+  ) {
     headers.set('content-type', 'application/json')
   }
   const response = await fetch(path, {
@@ -234,6 +240,32 @@ export async function sendMessage(
     },
   )
   return response.session
+}
+
+export async function transcribeAudio(file: File): Promise<AudioTranscription> {
+  const body = new FormData()
+  body.append('audio', file, file.name)
+  return request<AudioTranscription>('/api/transcriptions', {
+    method: 'POST',
+    body,
+  })
+}
+
+export async function uploadSessionFile(
+  computerId: string,
+  sessionId: string,
+  file: File,
+): Promise<SessionFileUpload> {
+  const body = new FormData()
+  body.append('file', file, file.name)
+  const response = await request<{ file: SessionFileUpload }>(
+    `${sessionPath(computerId, sessionId)}/files`,
+    {
+      method: 'POST',
+      body,
+    },
+  )
+  return response.file
 }
 
 export async function executeCommand(

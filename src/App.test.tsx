@@ -34,6 +34,8 @@ import {
   sendMessage,
   sendTestPushNotification,
   setSessionNotificationsMuted,
+  transcribeAudio,
+  uploadSessionFile,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
 import { PWA_UPDATE_EVENT } from './pwa'
@@ -64,6 +66,8 @@ vi.mock('./api', () => ({
   replyUserInput: vi.fn(),
   sendTestPushNotification: vi.fn(),
   setSessionNotificationsMuted: vi.fn(),
+  transcribeAudio: vi.fn(),
+  uploadSessionFile: vi.fn(),
 }))
 
 class MockWebSocket {
@@ -282,6 +286,15 @@ describe('App', () => {
       },
     ])
     vi.mocked(sendMessage).mockResolvedValue(session)
+    vi.mocked(transcribeAudio).mockResolvedValue({
+      transcript: 'Transcribed walking idea',
+      durationSeconds: 12,
+    })
+    vi.mocked(uploadSessionFile).mockResolvedValue({
+      name: 'statement.pdf',
+      path: '/private/uploads/statement.pdf',
+      size: 14,
+    })
     vi.mocked(getPushSettings).mockResolvedValue({ mutedSessions: [] })
     vi.mocked(setSessionNotificationsMuted).mockResolvedValue({
       mutedSessions: ['computer-1:session-1'],
@@ -438,6 +451,115 @@ describe('App', () => {
         'computer-1:session-1': 'First session draft',
         'computer-1:session-2': 'Second session draft',
       }),
+    )
+  })
+
+  it('adds an audio transcript to the live draft without sending it', async () => {
+    let finishTranscription:
+      | ((value: { transcript: string; durationSeconds: number }) => void)
+      | undefined
+    vi.mocked(transcribeAudio).mockReturnValue(
+      new Promise((resolve) => {
+        finishTranscription = resolve
+      }),
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Existing thought' } })
+    const file = new File(['audio'], 'idea.m4a', { type: 'audio/x-m4a' })
+
+    fireEvent.change(screen.getByLabelText('File attachment'), {
+      target: { files: [file] },
+    })
+    expect(
+      screen.getByRole('button', { name: 'Transcribing audio' }),
+    ).toBeDisabled()
+    fireEvent.change(textarea, {
+      target: { value: 'Existing thought edited while waiting' },
+    })
+    finishTranscription?.({
+      transcript: 'Transcribed walking idea',
+      durationSeconds: 12,
+    })
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Existing thought edited while waiting\n\nTranscribed walking idea',
+      ),
+    )
+    expect(transcribeAudio).toHaveBeenCalledWith(file)
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('accepts a dropped audio recording', async () => {
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['audio'], 'idea.webm', { type: 'audio/webm' })
+    const composerElement = textarea.closest('.composer')!
+
+    fireEvent.drop(composerElement, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Transcribed walking idea'),
+    )
+    expect(transcribeAudio).toHaveBeenCalledWith(file)
+  })
+
+  it('uploads a document to the selected computer and appends its path', async () => {
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['financial data'], 'statement.pdf', {
+      type: 'application/pdf',
+    })
+
+    fireEvent.change(screen.getByLabelText('File attachment'), {
+      target: { files: [file] },
+    })
+
+    await waitFor(() =>
+      expect(uploadSessionFile).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        file,
+      ),
+    )
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/statement.pdf`',
+      ),
+    )
+    expect(transcribeAudio).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('preserves a transcript when an in-flight message send fails', async () => {
+    let failSend: ((reason: Error) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        failSend = reject
+      }),
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Original message' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+
+    const file = new File(['audio'], 'idea.m4a', { type: 'audio/x-m4a' })
+    fireEvent.change(screen.getByLabelText('File attachment'), {
+      target: { files: [file] },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Transcribed walking idea'),
+    )
+    failSend?.(new Error('Send failed'))
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Original message\n\nTranscribed walking idea',
+      ),
     )
   })
 

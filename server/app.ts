@@ -2,6 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { realpath } from 'node:fs/promises'
 import Fastify, { type FastifyInstance } from 'fastify'
+import fastifyMultipart from '@fastify/multipart'
 import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
@@ -16,6 +17,20 @@ import { PushNotificationService } from './push-notification-service.js'
 import { registerPushRoutes } from './push-routes.js'
 import { SessionStore } from './session-store.js'
 import type { SessionService } from './session-service.js'
+import {
+  LocalTranscriptionService,
+  localTranscriptionOptions,
+  TranscriptionError,
+  type TranscriptionService,
+} from './transcription-service.js'
+import {
+  FileUploadError,
+  registerFileUploadRoutes,
+} from './file-upload-routes.js'
+import {
+  registerTranscriptionRoutes,
+  transcriptionMultipartOptions,
+} from './transcription-routes.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -28,6 +43,15 @@ export interface BuildAppOptions {
   role?: ServerRole
   dataDirectory?: string
   pushService?: PushNotificationService
+  transcriptionService?: TranscriptionService
+}
+
+function errorStatusCode(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined
+  }
+  const statusCode = Reflect.get(error, 'statusCode')
+  return typeof statusCode === 'number' ? statusCode : undefined
 }
 
 export async function buildApp(
@@ -38,6 +62,7 @@ export async function buildApp(
   identity: NodeIdentityStore
   manager?: ComputerManager
   pushService?: PushNotificationService
+  transcriptionService?: TranscriptionService
 }> {
   const app = Fastify({ logger: options.logger ?? true })
   const role = options.role ?? 'hub'
@@ -51,6 +76,7 @@ export async function buildApp(
 
   let manager: ComputerManager | undefined
   let pushService: PushNotificationService | undefined
+  let transcriptionService: TranscriptionService | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -66,6 +92,13 @@ export async function buildApp(
     pushService.attach(manager)
     await registerHubRoutes(app, manager)
     await registerPushRoutes(app, pushService)
+    transcriptionService =
+      options.transcriptionService ??
+      new LocalTranscriptionService(localTranscriptionOptions(dataDirectory))
+    await transcriptionService.initialize()
+    await app.register(fastifyMultipart, transcriptionMultipartOptions)
+    await registerTranscriptionRoutes(app, transcriptionService)
+    await registerFileUploadRoutes(app, manager)
     app.get('/api/version', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
       return { version: identity.info.version }
@@ -85,6 +118,19 @@ export async function buildApp(
       })
     }
     app.log.error(error)
+    if (error instanceof TranscriptionError || error instanceof FileUploadError) {
+      return reply.code(error.statusCode).send({ error: error.message })
+    }
+    const explicitStatusCode = errorStatusCode(error)
+    if (
+      explicitStatusCode !== undefined &&
+      explicitStatusCode >= 400 &&
+      explicitStatusCode < 600
+    ) {
+      return reply.code(explicitStatusCode).send({
+        error: error instanceof Error ? error.message : 'Request failed',
+      })
+    }
     const message = error instanceof Error ? error.message : 'Unexpected server error'
     const lower = message.toLowerCase()
     const statusCode = lower.includes('not found')
@@ -120,8 +166,16 @@ export async function buildApp(
   app.addHook('onClose', async () => {
     manager?.stop()
     pushService?.stop()
+    await transcriptionService?.stop()
     await service.stop()
   })
 
-  return { app, service, identity, manager, pushService }
+  return {
+    app,
+    service,
+    identity,
+    manager,
+    pushService,
+    transcriptionService,
+  }
 }

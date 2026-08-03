@@ -15,6 +15,7 @@ import type {
   SlashCommand,
   UserInputReplyInput,
   RuntimeOptions,
+  SessionFileUpload,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import type { SessionService } from './session-service.js'
@@ -23,6 +24,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
   private readonly sessions = new Map<string, SessionDetail>()
   lastCreateTerminalBacked?: boolean
   lastCreateAllowAllPermissions?: boolean
+  lastUpload?: { sessionId: string; filename: string; data: Buffer }
 
   constructor(...sessions: SessionDetail[]) {
     super()
@@ -102,6 +104,19 @@ class FakeSessionService extends EventEmitter implements SessionService {
     this.sessions.set(session.id, session)
     this.emitEvent({ type: 'session.upserted', session })
     return structuredClone(session)
+  }
+
+  async uploadFile(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
+    this.lastUpload = { sessionId, filename, data }
+    return {
+      name: filename,
+      path: `/remote/uploads/${sessionId}/${filename}`,
+      size: data.length,
+    }
   }
 
   async renameSession(id: string, title: string): Promise<SessionDetail> {
@@ -284,6 +299,24 @@ function session(id: string, title: string, isOpen = true): SessionDetail {
   }
 }
 
+function multipartFile(filename: string, content: string) {
+  const boundary = 'agentic-remote-remote-file'
+  return {
+    boundary,
+    payload: Buffer.from(
+      [
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="file"; filename="${filename}"`,
+        'Content-Type: application/octet-stream',
+        '',
+        content,
+        `--${boundary}--`,
+        '',
+      ].join('\r\n'),
+    ),
+  }
+}
+
 const directories: string[] = []
 
 async function temporaryDirectory(label: string): Promise<string> {
@@ -449,6 +482,27 @@ describe('multi-node hub', () => {
       expect(created.statusCode, created.body).toBe(201)
       expect(remoteService.lastCreateTerminalBacked).toBe(true)
       expect(remoteService.lastCreateAllowAllPermissions).toBe(true)
+
+      const document = multipartFile('statement.pdf', 'financial data')
+      const uploaded = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/files`,
+        headers: {
+          'content-type': `multipart/form-data; boundary=${document.boundary}`,
+        },
+        payload: document.payload,
+      })
+      expect(uploaded.statusCode, uploaded.body).toBe(201)
+      expect(uploaded.json().file).toEqual({
+        name: 'statement.pdf',
+        path: '/remote/uploads/remote-session/statement.pdf',
+        size: 14,
+      })
+      expect(remoteService.lastUpload).toEqual({
+        sessionId: 'remote-session',
+        filename: 'statement.pdf',
+        data: Buffer.from('financial data'),
+      })
 
       const detail = await hub.app.inject({
         method: 'GET',

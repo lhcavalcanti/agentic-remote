@@ -14,6 +14,7 @@ import type {
   SendMessageInput,
   UserInputReplyInput,
   RuntimeOptions,
+  SessionFileUpload,
   ServerEvent,
   SessionDetail,
   SlashCommand,
@@ -212,6 +213,18 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
           )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)
+  }
+
+  async uploadFile(
+    computerId: string,
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.uploadFile(sessionId, filename, data)
+      : this.requireClient(computerId).uploadFile(sessionId, filename, data)
   }
 
   async activateSession(

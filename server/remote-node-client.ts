@@ -13,6 +13,7 @@ import type {
   SendMessageInput,
   ServerEvent,
   SessionDetail,
+  SessionFileUpload,
   SlashCommand,
   UserInputReplyInput,
 } from '../shared/contracts.js'
@@ -99,6 +100,26 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       },
     )
     return response.session
+  }
+
+  async uploadFile(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
+    const response = await this.request<{ file: SessionFileUpload }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/files`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/octet-stream',
+          'x-agentic-filename': Buffer.from(filename).toString('base64url'),
+        },
+        body: data,
+      },
+      120_000,
+    )
+    return response.file
   }
 
   async activateSession(sessionId: string): Promise<SessionDetail> {
@@ -305,10 +326,11 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   private async request<TResult = unknown>(
     path: string,
     init: RequestInit = {},
+    timeoutMs = 15_000,
   ): Promise<TResult> {
     const headers = new Headers(init.headers)
     headers.set('authorization', `Bearer ${this.computer.token}`)
-    if (init.body != null) {
+    if (init.body != null && !headers.has('content-type')) {
       headers.set('content-type', 'application/json')
     }
     let response: Response
@@ -316,7 +338,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       response = await fetch(`${this.computer.baseUrl}${path}`, {
         ...init,
         headers,
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(timeoutMs),
       })
     } catch (error) {
       this.setOnline(false)

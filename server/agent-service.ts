@@ -24,6 +24,7 @@ import type {
   RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
+  SessionFileUpload,
   SessionRuntimeInfo,
   UserInputReplyInput,
   RuntimeModelOption,
@@ -921,6 +922,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
     this.publish(session)
     return session
+  }
+
+  uploadFile(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
+    return this.store.saveUpload(sessionId, filename, data)
   }
 
   async renameSession(id: string, title: string): Promise<SessionDetail> {

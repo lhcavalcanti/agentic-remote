@@ -1,9 +1,11 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   ChatMessage,
   PendingUserInput,
   QueuedPrompt,
+  SessionFileUpload,
   SessionDetail,
   SessionRuntimeInfo,
   SessionStatus,
@@ -105,6 +107,9 @@ export class SessionStore {
   }
 
   get(id: string): SessionDetail | undefined {
+    if (!Object.hasOwn(this.state.sessions, id)) {
+      return undefined
+    }
     const session = this.state.sessions[id]
     return session ? cloneSession(session) : undefined
   }
@@ -315,6 +320,7 @@ export class SessionStore {
     delete this.state.sessions[sessionId]
     this.state.sessions[replacementId] = replacement
     await this.persist()
+    await this.removeUploads(sessionId)
     return cloneSession(replacement)
   }
 
@@ -380,6 +386,26 @@ export class SessionStore {
   async remove(sessionId: string): Promise<void> {
     delete this.state.sessions[sessionId]
     await this.persist()
+    await this.removeUploads(sessionId)
+  }
+
+  async saveUpload(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
+    this.requireSession(sessionId)
+    const uploads = path.join(this.directory, 'uploads', sessionId)
+    await mkdir(uploads, { recursive: true, mode: 0o700 })
+    const name = safeUploadName(filename)
+    const storedName = `${randomUUID()}-${name}`
+    const filePath = path.join(uploads, storedName)
+    await writeFile(filePath, data, { flag: 'wx', mode: 0o600 })
+    return {
+      name,
+      path: filePath,
+      size: data.length,
+    }
   }
 
   async addMessage(sessionId: string, message: ChatMessage): Promise<SessionDetail> {
@@ -536,4 +562,23 @@ export class SessionStore {
     this.writeQueue = task.catch(() => undefined)
     return task
   }
+
+  private removeUploads(sessionId: string): Promise<void> {
+    return rm(path.join(this.directory, 'uploads', sessionId), {
+      recursive: true,
+      force: true,
+    })
+  }
+}
+
+function safeUploadName(filename: string): string {
+  const basename = path.basename(filename.trim()) || 'upload'
+  const normalized = basename
+    .normalize('NFKC')
+    .replace(/[^a-zA-Z0-9._ -]/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120)
+  return normalized && normalized !== '.' && normalized !== '..'
+    ? normalized
+    : 'upload'
 }

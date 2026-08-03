@@ -2,6 +2,11 @@ import { timingSafeEqual } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ServerEvent } from '../shared/contracts.js'
+import {
+  FileUploadError,
+  MAX_SESSION_FILE_BYTES,
+  supportsSessionFile,
+} from './file-upload-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import type { SessionService } from './session-service.js'
 
@@ -73,6 +78,14 @@ export async function registerNodeRoutes(
 ): Promise<void> {
   await app.register(
     async (node) => {
+      node.addContentTypeParser(
+        'application/octet-stream',
+        {
+          parseAs: 'buffer',
+          bodyLimit: MAX_SESSION_FILE_BYTES,
+        },
+        (_request, body, done) => done(null, body),
+      )
       node.addHook('onRequest', async (request, reply) => {
         if (!tokenMatches(request.headers.authorization, identity.token)) {
           return reply.code(401).send({ error: 'Invalid node token' })
@@ -123,6 +136,39 @@ export async function registerNodeRoutes(
             ),
           })
       })
+
+      node.post<{
+        Params: { sessionId: string }
+        Body: Buffer
+      }>(
+        '/sessions/:sessionId/files',
+        { bodyLimit: MAX_SESSION_FILE_BYTES },
+        async (request, reply) => {
+          const encodedName = request.headers['x-agentic-filename']
+          if (typeof encodedName !== 'string') {
+            throw new FileUploadError('A file name is required', 400)
+          }
+          let filename: string
+          try {
+            filename = Buffer.from(encodedName, 'base64url').toString('utf8')
+          } catch {
+            throw new FileUploadError('The file name is invalid', 400)
+          }
+          if (!supportsSessionFile(filename)) {
+            throw new FileUploadError('This file type is not supported', 415)
+          }
+          if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
+            throw new FileUploadError('A file is required', 400)
+          }
+          return reply.code(201).send({
+            file: await service.uploadFile(
+              request.params.sessionId,
+              filename,
+              request.body,
+            ),
+          })
+        },
+      )
 
       node.post<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/open',

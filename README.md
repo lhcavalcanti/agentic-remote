@@ -211,6 +211,38 @@ The runtime row below the composer configures model, reasoning effort, and
 context tier. SDK sessions switch live; tmux sessions restart the same pane and
 resume the same session ID.
 
+## File attachments
+
+Use the paperclip to upload PDF, CSV/TSV, Excel, Word, text, Markdown, JSON,
+YAML, OFX/QFX, or common image files up to 25 MiB. The file is stored with
+user-private permissions on the computer that owns the selected session. Its
+absolute path is appended to the draft and is never sent automatically.
+
+Uploads live under `~/.agentic-remote/uploads/<session-id>/` on the owning
+computer. They are removed when the session is cleared or deleted. Treat
+uploaded financial documents as sensitive local data and avoid copying their
+paths into unrelated sessions.
+
+## Audio transcription
+
+The same paperclip transcribes audio instead of storing it as an attachment.
+You can also drop a file onto the composer on desktop. The development hub
+accepts AAC, FLAC, M4A,
+MP3, MP4, OGG, WAV, and WebM files up to 25 MiB and 15 minutes. It converts the
+recording with the packaged FFmpeg runtime and transcribes it with a local
+multilingual whisper.cpp model. The resulting text is appended to the draft
+that initiated the upload and is never sent automatically.
+
+Only the hub receives audio. Temporary source and converted files use
+user-private permissions and are deleted after every successful or failed job.
+Remote computers receive only text after the user presses Send. One recording
+is processed at a time to keep Copilot sessions responsive.
+
+The hub requires `whisper-cli` and `ggml-small.bin`. This homelab provisions
+their pinned releases with
+`~/homelab/development/install-agentic-transcription.sh`. Other installations
+can provide compatible paths through the configuration variables below.
+
 ## Install as a phone app
 
 Agentic Remote is an installable PWA.
@@ -237,6 +269,7 @@ Open **Sessions → App settings** to enable push notifications.
 Agentic Remote can notify the installed app when:
 
 - An agent asks for input.
+- An agent requests permission.
 - An agent finishes its current work.
 
 Use **Send test notification** to verify delivery. The bell in a session header
@@ -244,8 +277,9 @@ mutes or unmutes that session without disabling global notifications. Opening a
 related chat clears its ask and completion notifications from Notification
 Center.
 
-Notification text contains only the computer and session title; open the app to
-view the actual question or result.
+Questions and permissions are sent at high urgency with the computer, session
+title, and a concise action brief. Completion notices are low urgency and state
+that no action is needed.
 
 ## App updates
 
@@ -302,6 +336,11 @@ two rollback candidates are retained.
 | `AGENTIC_REMOTE_ROLE` | `hub` | `hub` or headless `node` |
 | `AGENTIC_REMOTE_NODE_NAME` | hostname | Friendly computer name |
 | `AGENTIC_REMOTE_VAPID_SUBJECT` | project URL | Web Push contact URL or `mailto:` address |
+| `AGENTIC_REMOTE_WHISPER_BIN` | `~/.local/bin/whisper-cli` | Absolute whisper.cpp CLI path |
+| `AGENTIC_REMOTE_WHISPER_MODEL` | `<data-dir>/models/ggml-small.bin` | Multilingual GGML model path |
+| `AGENTIC_REMOTE_WHISPER_THREADS` | `3` | CPU threads per transcription, from 1 through 16 |
+| `AGENTIC_REMOTE_FFMPEG_BIN` | packaged binary | Optional FFmpeg override |
+| `AGENTIC_REMOTE_FFPROBE_BIN` | packaged binary | Optional FFprobe override |
 
 Managed setup defaults to port `4317` and writes its environment under
 `~/.config/agentic-remote`.

@@ -131,6 +131,7 @@ describe('SessionStore', () => {
       status: 'running',
       messages: [],
     })
+
     await store.update('session-1', (session) => {
       session.pendingPermission = {
         requestId: 'terminal-permission:request',
@@ -146,6 +147,43 @@ describe('SessionStore', () => {
       activity: 'Run command',
       pendingPermission: { requestId: 'terminal-permission:request' },
     })
+  })
+
+  it('stores private session uploads and removes them on clear', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-1',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+
+    const upload = await store.saveUpload(
+      'session-1',
+      '../../statement.pdf',
+      Buffer.from('financial data'),
+    )
+
+    expect(upload.name).toBe('statement.pdf')
+    expect(await readFile(upload.path, 'utf8')).toBe('financial data')
+    expect((await stat(upload.path)).mode & 0o777).toBe(0o600)
+
+    await store.replaceWithClearedSession('session-1', 'session-2')
+    await expect(stat(upload.path)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    await expect(
+      store.saveUpload('__proto__', 'orphan.pdf', Buffer.from('data')),
+    ).rejects.toThrow('Session __proto__ does not exist')
+
+    const second = await store.saveUpload(
+      'session-2',
+      'second.pdf',
+      Buffer.from('data'),
+    )
+    await store.remove('session-2')
+    await expect(stat(second.path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('resets interrupted transient state when reloaded', async () => {

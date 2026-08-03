@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   CSSProperties,
+  ChangeEvent,
+  DragEvent as ReactDragEvent,
   FormEvent,
   KeyboardEvent,
   ReactNode,
@@ -43,6 +45,7 @@ import {
   Menu,
   MessageSquare,
   MonitorCog,
+  Paperclip,
   Pencil,
   Plus,
   RefreshCw,
@@ -94,6 +97,8 @@ import {
   sendMessage,
   sendTestPushNotification,
   setSessionNotificationsMuted,
+  transcribeAudio,
+  uploadSessionFile,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
 import {
@@ -110,6 +115,14 @@ import {
 
 function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string {
   return `${session.computerId}:${session.id}`
+}
+
+function isAudioFile(file: File): boolean {
+  return (
+    file.type.startsWith('audio/') ||
+    file.type === 'video/mp4' ||
+    /\.(?:aac|flac|m4a|mp3|mp4|ogg|wav|webm)$/i.test(file.name)
+  )
 }
 
 function computerTone(computerId: string): number {
@@ -1595,6 +1608,8 @@ function App() {
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+  const [uploadingFile, setUploadingFile] = useState(false)
   const [permissionBusy, setPermissionBusy] = useState(false)
   const [userInputBusy, setUserInputBusy] = useState(false)
   const [queueActionId, setQueueActionId] = useState<string>()
@@ -1641,6 +1656,7 @@ function App() {
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const audioInputRef = useRef<HTMLInputElement>(null)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
   const sidebarGestureRef = useRef<
     | {
@@ -2194,6 +2210,36 @@ function App() {
     })
   }
 
+  function prependComposerForKey(targetKey: string, value: string) {
+    setComposerDrafts((current) => {
+      const existing = current[targetKey] || ''
+      const separator = existing
+        ? value.endsWith('\n')
+          ? '\n'
+          : '\n\n'
+        : ''
+      return {
+        ...current,
+        [targetKey]: `${value}${separator}${existing}`,
+      }
+    })
+  }
+
+  function appendComposerForKey(targetKey: string, value: string) {
+    setComposerDrafts((current) => {
+      const existing = current[targetKey] || ''
+      const separator = existing
+        ? existing.endsWith('\n')
+          ? '\n'
+          : '\n\n'
+        : ''
+      return {
+        ...current,
+        [targetKey]: `${existing}${separator}${value}`,
+      }
+    })
+  }
+
   function moveComposerDraft(fromKey: string, toKey: string) {
     if (fromKey === toKey) {
       return
@@ -2340,12 +2386,107 @@ function App() {
           })
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
-      setComposerForKey(targetKey, content)
+      prependComposerForKey(targetKey, content)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setSending(false)
       focusComposer(targetKey)
     }
+  }
+
+  async function transcribeFile(file: File) {
+    if (!selected || transcribing) {
+      return
+    }
+    const targetKey = sessionKey(selected)
+    setTranscribing(true)
+    setError(undefined)
+    try {
+      const result = await transcribeAudio(file)
+      setComposerDrafts((current) => {
+        const existing = current[targetKey] || ''
+        const separator = existing
+          ? existing.endsWith('\n')
+            ? '\n'
+            : '\n\n'
+          : ''
+        return {
+          ...current,
+          [targetKey]: `${existing}${separator}${result.transcript}`,
+        }
+      })
+      if (
+        selectedRef.current &&
+        sessionKey(selectedRef.current) === targetKey
+      ) {
+        window.requestAnimationFrame(() => focusComposer(targetKey))
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setTranscribing(false)
+      if (audioInputRef.current) {
+        audioInputRef.current.value = ''
+      }
+    }
+
+  }
+
+  async function uploadFile(file: File) {
+    if (!selected || uploadingFile) {
+      return
+    }
+    const targetKey = sessionKey(selected)
+    setUploadingFile(true)
+    setError(undefined)
+    try {
+      const uploaded = await uploadSessionFile(
+        selected.computerId,
+        selected.id,
+        file,
+      )
+      appendComposerForKey(
+        targetKey,
+        `Attached file: \`${uploaded.path}\``,
+      )
+      if (
+        selectedRef.current &&
+        sessionKey(selectedRef.current) === targetKey
+      ) {
+        window.requestAnimationFrame(() => focusComposer(targetKey))
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setUploadingFile(false)
+      if (audioInputRef.current) {
+        audioInputRef.current.value = ''
+      }
+    }
+  }
+
+  function attachedFile(file: File) {
+    if (isAudioFile(file)) {
+      void transcribeFile(file)
+    } else {
+      void uploadFile(file)
+    }
+  }
+
+  function audioFileChanged(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (file) {
+      attachedFile(file)
+    }
+  }
+
+  function audioDropped(event: ReactDragEvent<HTMLDivElement>) {
+    const file = event.dataTransfer.files[0]
+    if (!file) {
+      return
+    }
+    event.preventDefault()
+    attachedFile(file)
   }
 
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
@@ -3059,6 +3200,12 @@ function App() {
               className={`composer ${
                 selected.status === 'running' ? 'composer--running' : ''
               }`}
+              onDragOver={(event) => {
+                if (event.dataTransfer.types.includes('Files')) {
+                  event.preventDefault()
+                }
+              }}
+              onDrop={audioDropped}
             >
               <textarea
                 aria-label="Message"
@@ -3070,6 +3217,36 @@ function App() {
                 rows={1}
                 value={composer}
               />
+              <input
+                accept="audio/*,.aac,.csv,.doc,.docx,.flac,.gif,.jpeg,.jpg,.json,.m4a,.md,.mp3,.mp4,.ofx,.ogg,.pdf,.png,.qfx,.tsv,.txt,.wav,.webm,.webp,.xls,.xlsx,.yaml,.yml"
+                aria-label="File attachment"
+                className="composer-audio-input"
+                onChange={audioFileChanged}
+                ref={audioInputRef}
+                type="file"
+              />
+              <button
+                aria-label={
+                  transcribing
+                    ? 'Transcribing audio'
+                    : uploadingFile
+                      ? 'Uploading file'
+                      : 'Attach file or audio recording'
+                }
+                className="send-button composer-attachment-button"
+                disabled={transcribing || uploadingFile}
+                onClick={() => audioInputRef.current?.click()}
+                type="button"
+              >
+                {transcribing || uploadingFile ? (
+                  <LoaderCircle
+                    className="activity-message__spinner"
+                    size={17}
+                  />
+                ) : (
+                  <Paperclip size={17} />
+                )}
+              </button>
               <button
                 aria-label="Insert newline"
                 className="send-button composer-newline-button"
@@ -3158,7 +3335,11 @@ function App() {
               </button>
             ) : null}
             <p className="composer-hint">
-              Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue
+              {transcribing
+                ? 'Transcribing audio…'
+                : uploadingFile
+                  ? 'Uploading file…'
+                : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue'}
               {selected.queuedCount
                 ? ` · ${selected.queuedCount} queued`
                 : ''}

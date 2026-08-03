@@ -2,6 +2,7 @@ import type {
   DirectoryListing,
   ConfigureRuntimeInput,
   RuntimeOptions,
+  SessionFileUpload,
   UserInputReplyInput,
   RemovedQueuedPrompt,
   ServerEvent,
@@ -22,6 +23,11 @@ export interface SessionService {
     terminalBacked?: boolean,
     allowAllPermissions?: boolean,
   ): Promise<SessionDetail>
+  uploadFile(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload>
   renameSession(id: string, title: string): Promise<SessionDetail>
   runtimeOptions(id: string): Promise<RuntimeOptions>
   configureRuntime(

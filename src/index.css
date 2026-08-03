@@ -1339,7 +1339,7 @@ button {
 
 .composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(0, 1fr) 40px 40px;
   gap: 10px;
   align-items: end;
   padding: 9px 9px 9px 15px;
@@ -1350,7 +1350,7 @@ button {
 }
 
 .composer--running {
-  grid-template-columns: minmax(0, 1fr) 40px 40px 40px;
+  grid-template-columns: minmax(0, 1fr) 40px 40px 40px 40px;
 }
 
 .composer:focus-within {
@@ -1403,6 +1403,21 @@ button {
 .send-button--queue {
   color: var(--text);
   border: 1px solid var(--border-strong);
+  background: var(--panel-soft);
+}
+
+.composer-audio-input {
+  display: none;
+}
+
+.composer-attachment-button {
+  color: var(--muted-strong);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+}
+
+.composer-attachment-button:hover:not(:disabled) {
+  color: var(--text);
   background: var(--panel-soft);
 }
 
@@ -1902,12 +1917,12 @@ button {
   }
 
   .composer {
-    grid-template-columns: minmax(0, 1fr) 40px 40px;
+    grid-template-columns: minmax(0, 1fr) 40px 40px 40px;
     border-radius: 15px;
   }
 
   .composer--running {
-    grid-template-columns: minmax(0, 1fr) 40px 40px 40px 40px;
+    grid-template-columns: minmax(0, 1fr) 40px 40px 40px 40px 40px;
   }
 
   .composer-newline-button {

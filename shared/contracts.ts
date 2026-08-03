@@ -137,6 +137,17 @@ export interface SendMessageInput {
   enqueue?: boolean
 }
 
+export interface AudioTranscription {
+  transcript: string
+  durationSeconds: number
+}
+
+export interface SessionFileUpload {
+  name: string
+  path: string
+  size: number
+}
+
 export interface RenameSessionInput {
   title: string
 }

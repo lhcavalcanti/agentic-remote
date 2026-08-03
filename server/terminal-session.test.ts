@@ -167,6 +167,7 @@ Permission request (1 remaining)
         model: 'gpt-test',
         reasoningEffort: 'high',
         contextTier: 'long_context',
+        mode: 'autopilot',
       }),
     ).toBe(true)
 
@@ -198,6 +199,7 @@ Permission request (1 remaining)
     expect(commandLine).toContain('--model gpt-test')
     expect(commandLine).toContain('--effort high')
     expect(commandLine).toContain('--context long_context')
+    expect(commandLine).toContain('--mode autopilot')
     expect(await controller.restart(sessionId, directory)).toBe(true)
     let cleared = false
     const replacementId = 'fedcba98-7654-3210-fedc-ba9876543210'
@@ -210,6 +212,7 @@ Permission request (1 remaining)
           model: 'gpt-test',
           reasoningEffort: 'high',
           contextTier: 'long_context',
+          mode: 'plan',
         },
         async () => {
           cleared = true

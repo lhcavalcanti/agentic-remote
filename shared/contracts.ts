@@ -1,4 +1,5 @@
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
+export type AgentMode = 'interactive' | 'plan' | 'autopilot'
 
 export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 
@@ -54,6 +55,10 @@ export interface RuntimeModelOption {
   name: string
   reasoningEfforts: string[]
   contextTiers: Array<'default' | 'long_context'>
+  contextTokenLimits?: {
+    default?: number
+    long_context?: number
+  }
 }
 
 export interface RuntimeOptions {
@@ -65,6 +70,7 @@ export interface ConfigureRuntimeInput {
   model: string
   reasoningEffort: string
   contextTier: 'default' | 'long_context'
+  mode?: AgentMode
 }
 
 export interface SessionSummary {

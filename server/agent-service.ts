@@ -17,6 +17,7 @@ import {
 } from '@github/copilot-sdk'
 import type {
   ChatMessage,
+  AgentMode,
   ConfigureRuntimeInput,
   PendingPermission,
   PendingUserInput,
@@ -84,6 +85,7 @@ export interface CopilotSessionLike {
     >
     name: Pick<CopilotSession['rpc']['name'], 'set'>
     model: Pick<CopilotSession['rpc']['model'], 'switchTo'>
+    mode: Pick<CopilotSession['rpc']['mode'], 'set'>
   }
 }
 
@@ -399,6 +401,12 @@ function recordValue(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function agentMode(value: unknown): AgentMode | undefined {
+  return value === 'interactive' || value === 'plan' || value === 'autopilot'
+    ? value
+    : undefined
 }
 
 function numberValue(value: unknown): number | undefined {
@@ -819,11 +827,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const billing = recordValue(value.billing)
       const tokenPrices = recordValue(billing.tokenPrices)
       const longContext = recordValue(tokenPrices.longContext)
-      this.modelPromptLimits.set(model.id, {
+      const limits = {
         default: numberValue(tokenPrices.maxPromptTokens),
         long: numberValue(longContext.maxPromptTokens),
         maximum: numberValue(capabilityLimits.max_prompt_tokens),
-      })
+      }
+      this.modelPromptLimits.set(model.id, limits)
       const supportedEfforts = Array.isArray(value.supportedReasoningEfforts)
         ? value.supportedReasoningEfforts.filter(
             (effort): effort is string => typeof effort === 'string',
@@ -840,6 +849,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           Object.keys(longContext).length > 0
             ? ['default', 'long_context']
             : ['default'],
+        contextTokenLimits: {
+          default: limits.default || limits.maximum,
+          long_context: limits.long || limits.maximum,
+        },
       })
     }
   }
@@ -980,11 +993,32 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!model.contextTiers.includes(input.contextTier)) {
       throw new Error('Selected context tier is not supported by this model')
     }
+    const mode = input.mode || agentMode(stored.runtime?.mode) || 'interactive'
+    const configuration: ConfigureRuntimeInput = { ...input, mode }
+    const limits = this.modelPromptLimits.get(input.model)
+    const persistRuntime = async (appliedMode: AgentMode | undefined) => {
+      const updated = await this.store.update(id, (session) => {
+        session.runtime = {
+          ...session.runtime,
+          model: input.model,
+          reasoningEffort: input.reasoningEffort,
+          contextTier: input.contextTier,
+          mode: appliedMode || agentMode(session.runtime?.mode),
+          contextTokenLimit:
+            input.contextTier === 'long_context'
+              ? limits?.long || limits?.maximum
+              : limits?.default || limits?.maximum,
+          contextEstimated: true,
+        }
+      })
+      this.publish(updated)
+      return updated
+    }
     if (this.externalSessionIds.has(id)) {
       if (!this.terminalController.configure) {
         throw new Error('Terminal runtime configuration is not available')
       }
-      if (!(await this.terminalController.configure(id, stored.cwd, input))) {
+      if (!(await this.terminalController.configure(id, stored.cwd, configuration))) {
         throw new Error('External terminal is no longer available')
       }
     } else {
@@ -994,23 +1028,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         reasoningEffort: input.reasoningEffort,
         contextTier: input.contextTier,
       })
-    }
-    const limits = this.modelPromptLimits.get(input.model)
-    const updated = await this.store.update(id, (session) => {
-      session.runtime = {
-        ...session.runtime,
-        model: input.model,
-        reasoningEffort: input.reasoningEffort,
-        contextTier: input.contextTier,
-        contextTokenLimit:
-          input.contextTier === 'long_context'
-            ? limits?.long || limits?.maximum
-            : limits?.default || limits?.maximum,
-        contextEstimated: true,
+      try {
+        await session.rpc.mode.set({ mode })
+      } catch (error) {
+        await persistRuntime(undefined)
+        throw error
       }
-    })
-    this.publish(updated)
-    return updated
+    }
+    return persistRuntime(mode)
   }
 
   async restartSession(id: string): Promise<SessionDetail> {
@@ -1071,6 +1096,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             model: stored.runtime.model,
             reasoningEffort: stored.runtime.reasoningEffort,
             contextTier: stored.runtime.contextTier,
+            mode: agentMode(stored.runtime.mode) || 'interactive',
           }
         : undefined
     const replacementId = randomUUID()
@@ -1148,6 +1174,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               reasoningEffort: runtime.reasoningEffort,
               contextTier: runtime.contextTier,
             })
+            .catch((error: unknown) =>
+              this.publishError(replacementId, error),
+            )
+          await fresh.rpc.mode
+            .set({ mode: runtime.mode || 'interactive' })
             .catch((error: unknown) =>
               this.publishError(replacementId, error),
             )

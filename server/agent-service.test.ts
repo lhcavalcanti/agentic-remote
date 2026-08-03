@@ -26,6 +26,8 @@ class DeferredSession implements CopilotSessionLike {
   disconnectCount = 0
   readonly invokedCommands: string[] = []
   readonly assignedNames: string[] = []
+  readonly modeSwitches: string[] = []
+  modeSetError?: Error
   readonly runtimeSwitches: Array<{
     modelId: string
     reasoningEffort?: string
@@ -49,6 +51,14 @@ class DeferredSession implements CopilotSessionLike {
     name: {
       set: async ({ name }: { name: string }) => {
         this.assignedNames.push(name)
+      },
+    },
+    mode: {
+      set: async ({ mode }: { mode: string }) => {
+        if (this.modeSetError) {
+          throw this.modeSetError
+        }
+        this.modeSwitches.push(mode)
       },
     },
     commands: {
@@ -1055,17 +1065,20 @@ describe('AgentService deletion', () => {
       model: 'gpt-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
+      mode: 'autopilot',
     })
     expect(terminal.configure).toHaveBeenCalledWith(created.id, directory, {
       model: 'gpt-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
+      mode: 'autopilot',
     })
     expect(configured.runtime).toMatchObject({
       model: 'gpt-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
       contextTokenLimit: 100_000,
+      mode: 'autopilot',
     })
     await service.store.addMessage(created.id, {
       id: 'terminal-history',
@@ -1087,6 +1100,7 @@ describe('AgentService deletion', () => {
         model: 'gpt-configurable',
         reasoningEffort: 'high',
         contextTier: 'long_context',
+        mode: 'autopilot',
       },
       expect.any(Function),
     )
@@ -1119,11 +1133,16 @@ describe('AgentService deletion', () => {
       id: 'gpt-configurable',
       reasoningEfforts: ['medium', 'high'],
       contextTiers: ['default', 'long_context'],
+      contextTokenLimits: {
+        default: 50_000,
+        long_context: 100_000,
+      },
     })
     const configured = await service.configureRuntime(created.id, {
       model: 'gpt-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
+      mode: 'plan',
     })
     expect(client.session.runtimeSwitches).toEqual([
       {
@@ -1132,7 +1151,25 @@ describe('AgentService deletion', () => {
         contextTier: 'long_context',
       },
     ])
+    expect(client.session.modeSwitches).toEqual(['plan'])
     expect(configured.runtime?.model).toBe('gpt-configurable')
+    expect(configured.runtime?.mode).toBe('plan')
+
+    client.session.modeSetError = new Error('Mode unavailable')
+    await expect(
+      service.configureRuntime(created.id, {
+        model: 'gpt-configurable',
+        reasoningEffort: 'medium',
+        contextTier: 'default',
+        mode: 'autopilot',
+      }),
+    ).rejects.toThrow('Mode unavailable')
+    expect(service.store.get(created.id)?.runtime).toMatchObject({
+      model: 'gpt-configurable',
+      reasoningEffort: 'medium',
+      contextTier: 'default',
+      mode: 'plan',
+    })
     await service.stop()
   })
 

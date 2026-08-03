@@ -54,6 +54,7 @@ const configureRuntimeSchema = z.object({
   model: z.string().trim().min(1).max(200),
   reasoningEffort: z.string().trim().min(1).max(50),
   contextTier: z.enum(['default', 'long_context']),
+  mode: z.enum(['interactive', 'plan', 'autopilot']).optional(),
 })
 
 const directoryQuerySchema = z.object({

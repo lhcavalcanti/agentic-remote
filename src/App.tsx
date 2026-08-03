@@ -193,7 +193,7 @@ const statuslineOptions: Array<{
   { key: 'sessionId', label: 'Session ID' },
   { key: 'model', label: 'Model' },
   { key: 'effort', label: 'Reasoning effort' },
-  { key: 'contextTier', label: 'Context tier' },
+  { key: 'contextTier', label: 'Context size' },
   { key: 'contextUsage', label: 'Context usage' },
   { key: 'mode', label: 'Agent mode' },
   { key: 'permissions', label: 'Permission mode' },
@@ -261,6 +261,14 @@ function compactTokens(value: number): string {
     return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`
   }
   return `${(value / 1_000_000).toFixed(1)}m`
+}
+
+function contextSizeLabel(
+  model: RuntimeOptions['models'][number],
+  tier: 'default' | 'long_context',
+): string {
+  const limit = model.contextTokenLimits?.[tier]
+  return limit ? `${compactTokens(limit)} tokens` : 'Automatic'
 }
 
 function DialogFrame({
@@ -1365,6 +1373,11 @@ function RuntimeDialog({
               model.contextTiers.includes('long_context')
                 ? 'long_context'
                 : 'default',
+            mode:
+              loaded.current.mode === 'plan' ||
+              loaded.current.mode === 'autopilot'
+                ? loaded.current.mode
+                : 'interactive',
           })
         }
       })
@@ -1443,6 +1456,7 @@ function RuntimeDialog({
                   contextTier: model.contextTiers.includes('long_context')
                     ? configuration.contextTier
                     : 'default',
+                  mode: configuration.mode,
                 })
               }}
               value={configuration.model}
@@ -1489,9 +1503,29 @@ function RuntimeDialog({
             >
               {selectedModel.contextTiers.map((tier) => (
                 <option key={tier} value={tier}>
-                  {tier === 'long_context' ? 'Long context' : 'Default context'}
+                  {contextSizeLabel(selectedModel, tier)}
                 </option>
               ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Agent mode</span>
+            <select
+              className="dialog-select"
+              onChange={(event) =>
+                setConfiguration({
+                  ...configuration,
+                  mode: event.target.value as
+                    | 'interactive'
+                    | 'plan'
+                    | 'autopilot',
+                })
+              }
+              value={configuration.mode || 'interactive'}
+            >
+              <option value="interactive">Interactive</option>
+              <option value="plan">Plan</option>
+              <option value="autopilot">Autopilot</option>
             </select>
           </label>
           <p className="runtime-dialog__hint">
@@ -3318,9 +3352,11 @@ function App() {
                 ) : null}
                 {statusline.contextTier && selected.runtime?.contextTier ? (
                   <span>
-                    {selected.runtime.contextTier === 'long_context'
-                      ? 'long context'
-                      : `${selected.runtime.contextTier} context`}
+                    {selected.runtime.contextTokenLimit
+                      ? `${compactTokens(
+                          selected.runtime.contextTokenLimit,
+                        )} context`
+                      : 'auto context'}
                   </span>
                 ) : null}
                 {statusline.contextUsage &&

@@ -247,6 +247,7 @@ describe('App', () => {
         model: 'gpt-5.6-sol',
         reasoningEffort: 'high',
         contextTier: 'long_context',
+        mode: 'plan',
       },
       models: [
         {
@@ -254,6 +255,10 @@ describe('App', () => {
           name: 'GPT-5.6 Sol',
           reasoningEfforts: ['medium', 'high', 'xhigh'],
           contextTiers: ['default', 'long_context'],
+          contextTokenLimits: {
+            default: 114_000,
+            long_context: 922_000,
+          },
         },
       ],
     })
@@ -1298,7 +1303,7 @@ describe('App', () => {
         'effort high',
       )
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
-        'long context',
+        '922k context',
       )
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'ctx ~200k/922k (22%)',
@@ -1328,6 +1333,12 @@ describe('App', () => {
       fireEvent.change(screen.getByLabelText('Context size'), {
         target: { value: 'default' },
       })
+      expect(screen.getByRole('option', { name: '114k tokens' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: '922k tokens' })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /long context/i })).not.toBeInTheDocument()
+      fireEvent.change(screen.getByLabelText('Agent mode'), {
+        target: { value: 'autopilot' },
+      })
       fireEvent.click(
         screen.getByRole('button', { name: 'Apply runtime settings' }),
       )
@@ -1339,6 +1350,7 @@ describe('App', () => {
             model: 'gpt-5.6-sol',
             reasoningEffort: 'xhigh',
             contextTier: 'default',
+            mode: 'autopilot',
           },
         ),
       )

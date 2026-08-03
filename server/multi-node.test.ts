@@ -142,6 +142,10 @@ class FakeSessionService extends EventEmitter implements SessionService {
           name: 'Remote model',
           reasoningEfforts: ['medium', 'high'],
           contextTiers: ['default', 'long_context'],
+          contextTokenLimits: {
+            default: 50_000,
+            long_context: 100_000,
+          },
         },
       ],
     }
@@ -159,6 +163,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
       model: input.model,
       reasoningEffort: input.reasoningEffort,
       contextTier: input.contextTier,
+      mode: input.mode,
     }
     this.emitEvent({ type: 'session.upserted', session })
     return structuredClone(session)
@@ -553,6 +558,7 @@ describe('multi-node hub', () => {
           model: 'remote-model',
           reasoningEffort: 'high',
           contextTier: 'long_context',
+          mode: 'autopilot',
         },
       })
       expect(configuredRuntime.json().session).toMatchObject({
@@ -561,6 +567,7 @@ describe('multi-node hub', () => {
           model: 'remote-model',
           reasoningEffort: 'high',
           contextTier: 'long_context',
+          mode: 'autopilot',
         },
       })
       const cleared = await hub.app.inject({

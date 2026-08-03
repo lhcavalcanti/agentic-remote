@@ -207,9 +207,10 @@ follow CLI behavior; for example, `/aa` expands to `/allow-all`.
 - SDK and tmux `ask_user` prompts support choices and freeform replies.
 - Ephemeral tmux permission dialogs appear with **Yes** and **Stop** actions.
 
-The runtime row below the composer configures model, reasoning effort, and
-context tier. SDK sessions switch live; tmux sessions restart the same pane and
-resume the same session ID.
+The runtime row below the composer configures model, reasoning effort, numeric
+context capacity, and agent mode (**Interactive**, **Plan**, or **Autopilot**).
+SDK sessions switch live; tmux sessions restart the same pane and resume the
+same session ID.
 
 ## File attachments
 

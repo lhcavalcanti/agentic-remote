@@ -789,12 +789,14 @@ async function copilotCommand(
     '--effort',
     '--reasoning-effort',
     '--context',
+    '--mode',
   ])
   const runtimeOptions = new Set([
     '--model',
     '--effort',
     '--reasoning-effort',
     '--context',
+    '--mode',
   ])
   for (let index = 1; index < original.length; index += 1) {
     const argument = original[index]
@@ -833,6 +835,7 @@ async function copilotCommand(
       runtime.reasoningEffort,
       '--context',
       runtime.contextTier,
+      ...(runtime.mode ? ['--mode', runtime.mode] : []),
     )
   }
   return result

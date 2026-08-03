@@ -217,6 +217,8 @@ Use the paperclip to upload PDF, CSV/TSV, Excel, Word, text, Markdown, JSON,
 YAML, OFX/QFX, or common image files up to 25 MiB. The file is stored with
 user-private permissions on the computer that owns the selected session. Its
 absolute path is appended to the draft and is never sent automatically.
+You can select or drop multiple files; they are processed sequentially in
+selection order.
 
 Uploads live under `~/.agentic-remote/uploads/<session-id>/` on the owning
 computer. They are removed when the session is cleared or deleted. Treat

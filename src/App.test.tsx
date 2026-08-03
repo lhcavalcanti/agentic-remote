@@ -534,6 +534,42 @@ describe('App', () => {
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
+  it('uploads multiple selected files in order', async () => {
+    vi.mocked(uploadSessionFile).mockImplementation(
+      async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }),
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const statement = new File(['statement'], 'statement.pdf', {
+      type: 'application/pdf',
+    })
+    const transactions = new File(['transactions'], 'transactions.csv', {
+      type: 'text/csv',
+    })
+
+    fireEvent.change(screen.getByLabelText('File attachment'), {
+      target: { files: [statement, transactions] },
+    })
+
+    await waitFor(() =>
+      expect(uploadSessionFile).toHaveBeenCalledTimes(2),
+    )
+    expect(vi.mocked(uploadSessionFile).mock.calls.map((call) => call[2])).toEqual(
+      [statement, transactions],
+    )
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/statement.pdf`\n\n' +
+          'Attached file: `/private/uploads/transactions.csv`',
+      ),
+    )
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it('preserves a transcript when an in-flight message send fails', async () => {
     let failSend: ((reason: Error) => void) | undefined
     vi.mocked(sendMessage).mockReturnValue(

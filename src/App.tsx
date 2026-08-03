@@ -2465,28 +2465,33 @@ function App() {
     }
   }
 
-  function attachedFile(file: File) {
-    if (isAudioFile(file)) {
-      void transcribeFile(file)
-    } else {
-      void uploadFile(file)
+  async function attachedFiles(files: File[]) {
+    if (transcribing || uploadingFile) {
+      return
+    }
+    for (const file of files) {
+      if (isAudioFile(file)) {
+        await transcribeFile(file)
+      } else {
+        await uploadFile(file)
+      }
     }
   }
 
   function audioFileChanged(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (file) {
-      attachedFile(file)
+    const files = Array.from(event.target.files || [])
+    if (files.length > 0) {
+      void attachedFiles(files)
     }
   }
 
   function audioDropped(event: ReactDragEvent<HTMLDivElement>) {
-    const file = event.dataTransfer.files[0]
-    if (!file) {
+    const files = Array.from(event.dataTransfer.files)
+    if (files.length === 0) {
       return
     }
     event.preventDefault()
-    attachedFile(file)
+    void attachedFiles(files)
   }
 
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
@@ -3223,6 +3228,7 @@ function App() {
                 className="composer-audio-input"
                 onChange={audioFileChanged}
                 ref={audioInputRef}
+                multiple
                 type="file"
               />
               <button

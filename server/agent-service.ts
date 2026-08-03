@@ -141,6 +141,7 @@ export interface AgentServiceEvents {
 
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
+  const taskCompletionSummaries = new Map<string, string>()
   const finishRunningActivities = (
     activityStatus: 'completed' | 'failed' = 'completed',
   ) => {
@@ -185,8 +186,20 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       continue
     }
     if (event.type === 'tool.execution_start' && !event.agentId) {
+      const toolCallId = event.data.toolCallId
+      const toolName = event.data.toolName
+        .toLowerCase()
+        .replaceAll('-', '_')
+      if (toolName === 'task_complete') {
+        const summary = stringValue(
+          recordValue(event.data.arguments).summary,
+        )?.trim()
+        if (summary) {
+          taskCompletionSummaries.set(toolCallId, summary)
+        }
+      }
       messages.push({
-        id: `tool:${event.data.toolCallId}`,
+        id: `tool:${toolCallId}`,
         role: 'activity',
         content: toolActivityContent(event.data),
         createdAt: event.timestamp,
@@ -195,11 +208,24 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       continue
     }
     if (event.type === 'tool.execution_complete' && !event.agentId) {
+      const toolCallId = event.data.toolCallId
       const message = messages.find(
-        (entry) => entry.id === `tool:${event.data.toolCallId}`,
+        (entry) => entry.id === `tool:${toolCallId}`,
       )
       if (message) {
         message.activityStatus = event.data.success ? 'completed' : 'failed'
+        const resultContent = stringValue(
+          recordValue(recordValue(event.data).result).content,
+        )?.trim()
+        const taskCompletionSummary =
+          resultContent || taskCompletionSummaries.get(toolCallId)
+        if (event.data.success && taskCompletionSummary) {
+          finishRunningActivities()
+          message.role = 'assistant'
+          message.content = taskCompletionSummary
+          message.createdAt = event.timestamp
+          message.activityStatus = undefined
+        }
       }
     }
     if (

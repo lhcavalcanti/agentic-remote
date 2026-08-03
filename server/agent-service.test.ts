@@ -335,6 +335,87 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('renders successful task completion summaries as agent messages', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"assistant.message",
+        "id":"empty-assistant",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{"messageId":"empty-assistant","content":""}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":"empty-assistant",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{"summary":"**Done.** The requested work is live."}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "success":true,
+          "result":{"content":"**Done.** The requested work is live."}
+        }
+      },
+      {
+        "type":"session.task_complete",
+        "id":"session-complete",
+        "parentId":"task-end",
+        "timestamp":"2026-07-22T00:00:02.100Z",
+        "data":{}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:task-call',
+        role: 'assistant',
+        content: '**Done.** The requested work is live.',
+        activityStatus: undefined,
+      }),
+    ])
+  })
+
+  it('keeps failed task completion calls as failed activity', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task_complete",
+          "arguments":{"summary":"This should not be presented as complete."}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"task-end",
+        "parentId":"task-start",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{"toolCallId":"task-call","success":false}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:task-call',
+        role: 'activity',
+        activityStatus: 'failed',
+      }),
+    ])
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',

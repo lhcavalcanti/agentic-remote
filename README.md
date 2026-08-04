@@ -262,8 +262,11 @@ skipping generated dependency/build directories. **Insert path** adds the
 absolute path to the draft; **Ask agent about file** adds a review prompt, but
 neither action sends automatically.
 
-Save useful files to **Sessions → Knowledge**. Bookmarks are stored privately
-on the hub and retain the computer, session, and relative file path. File
+Save the current folder or individual useful files to
+**Sessions → Knowledge**. Knowledge acts as central access to those paths across
+sessions and computers: folder bookmarks reopen directly in the read-only
+browser, while file bookmarks reopen the preview. Bookmarks are stored privately
+on the hub and retain the computer, session, type, and relative path. File
 content remains on the owning computer and is loaded only when opened.
 
 The hub requires `whisper-cli` and `ggml-small.bin`. This homelab provisions

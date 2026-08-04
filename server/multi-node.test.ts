@@ -553,6 +553,7 @@ describe('multi-node hub', () => {
           sessionId: 'remote-session',
           path: 'README.md',
           name: 'README.md',
+          kind: 'file',
         },
       })
       expect(savedKnowledge.statusCode, savedKnowledge.body).toBe(201)
@@ -561,6 +562,7 @@ describe('multi-node hub', () => {
         computerName: 'homelab-prod',
         sessionId: 'remote-session',
         path: 'README.md',
+        kind: 'file',
       })
       const bookmarkId = savedKnowledge.json().bookmark.id
       const knowledge = await hub.app.inject({

@@ -108,6 +108,7 @@ export async function addKnowledgeBookmark(input: {
   sessionId: string
   path: string
   name: string
+  kind: 'file' | 'folder'
 }): Promise<KnowledgeBookmark> {
   const response = await request<{ bookmark: KnowledgeBookmark }>(
     '/api/knowledge',

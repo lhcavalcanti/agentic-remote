@@ -73,6 +73,7 @@ const bookmarkSchema = z.object({
   sessionId: z.string().trim().min(1).max(200),
   path: z.string().trim().min(1).max(4096),
   name: z.string().trim().min(1).max(500),
+  kind: z.enum(['file', 'folder']),
 })
 
 interface SessionParams {

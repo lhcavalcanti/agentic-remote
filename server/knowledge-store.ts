@@ -21,6 +21,10 @@ export class KnowledgeStore {
     try {
       this.state = JSON.parse(await readFile(this.statePath, 'utf8')) as KnowledgeState
       this.state.bookmarks ??= []
+      this.state.bookmarks = this.state.bookmarks.map((bookmark) => ({
+        ...bookmark,
+        kind: bookmark.kind === 'folder' ? 'folder' : 'file',
+      }))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw error
@@ -40,7 +44,8 @@ export class KnowledgeStore {
       (entry) =>
         entry.computerId === bookmark.computerId &&
         entry.sessionId === bookmark.sessionId &&
-        entry.path === bookmark.path,
+        entry.path === bookmark.path &&
+        entry.kind === bookmark.kind,
     )
     if (existing) {
       return structuredClone(existing)

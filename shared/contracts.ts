@@ -241,6 +241,7 @@ export interface WorkspaceSearchResponse {
 
 export interface KnowledgeBookmark {
   id: string
+  kind: 'file' | 'folder'
   computerId: string
   computerName: string
   sessionId: string

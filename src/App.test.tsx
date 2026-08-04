@@ -240,23 +240,44 @@ describe('App', () => {
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
     vi.mocked(listKnowledgeBookmarks).mockResolvedValue([])
-    vi.mocked(listWorkspace).mockResolvedValue({
-      path: '.',
-      entries: [
-        {
-          name: 'README.md',
-          path: 'README.md',
-          kind: 'markdown',
-          size: 25,
-        },
-        {
-          name: 'guide.pdf',
-          path: 'guide.pdf',
-          kind: 'pdf',
-          size: 50,
-        },
-      ],
-    })
+    vi.mocked(listWorkspace).mockImplementation(
+      async (_computerId, _sessionId, path = '.') =>
+        path === 'docs'
+          ? {
+              path: 'docs',
+              parent: '.',
+              entries: [
+                {
+                  name: 'knowledge.md',
+                  path: 'docs/knowledge.md',
+                  kind: 'markdown',
+                  size: 20,
+                },
+              ],
+            }
+          : {
+              path: '.',
+              entries: [
+                {
+                  name: 'docs',
+                  path: 'docs',
+                  kind: 'directory',
+                },
+                {
+                  name: 'README.md',
+                  path: 'README.md',
+                  kind: 'markdown',
+                  size: 25,
+                },
+                {
+                  name: 'guide.pdf',
+                  path: 'guide.pdf',
+                  kind: 'pdf',
+                  size: 50,
+                },
+              ],
+            },
+    )
     vi.mocked(readWorkspaceFile).mockResolvedValue({
       name: 'README.md',
       path: 'README.md',
@@ -276,16 +297,13 @@ describe('App', () => {
       ],
       truncated: false,
     })
-    vi.mocked(addKnowledgeBookmark).mockResolvedValue({
-      id: 'bookmark-1',
-      computerId: computer.id,
+    vi.mocked(addKnowledgeBookmark).mockImplementation(async (input) => ({
+      id: `bookmark-${input.kind}-${input.path}`,
       computerName: computer.name,
-      sessionId: session.id,
       sessionTitle: session.title,
-      path: 'README.md',
-      name: 'README.md',
+      ...input,
       createdAt: '2026-08-04T00:00:00.000Z',
-    })
+    }))
     vi.mocked(deleteKnowledgeBookmark).mockResolvedValue()
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') =>
@@ -634,6 +652,53 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Knowledge' }))
     expect(await screen.findByText('README.md')).toBeInTheDocument()
     expect(screen.getAllByText(/Project chat/).length).toBeGreaterThan(0)
+  })
+
+  it('saves and reopens a central Knowledge folder', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        'docs',
+      ),
+    )
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Save current folder to Knowledge',
+      }),
+    )
+    await waitFor(() =>
+      expect(addKnowledgeBookmark).toHaveBeenCalledWith({
+        computerId: computer.id,
+        sessionId: session.id,
+        kind: 'folder',
+        name: 'docs',
+        path: 'docs',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Knowledge' }))
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Open docs folder',
+      }),
+    )
+    await waitFor(() =>
+      expect(document.querySelector('.workspace-dialog')).toBeInTheDocument(),
+    )
+    expect(listWorkspace).toHaveBeenLastCalledWith(
+      computer.id,
+      session.id,
+      'docs',
+    )
   })
 
   it('records microphone audio and transcribes it into the draft', async () => {

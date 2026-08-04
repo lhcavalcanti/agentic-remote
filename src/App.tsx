@@ -1743,7 +1743,14 @@ function PdfViewer({ file }: { file: WorkspaceFile }) {
   )
 }
 
+interface WorkspaceBookmarkTarget {
+  kind: 'file' | 'folder'
+  name: string
+  path: string
+}
+
 function WorkspaceDialog({
+  initialKind,
   initialPath,
   session,
   bookmarks,
@@ -1751,10 +1758,11 @@ function WorkspaceDialog({
   onClose,
   onInsert,
 }: {
+  initialKind?: 'file' | 'folder'
   initialPath?: string
   session: ManagedSession
   bookmarks: KnowledgeBookmark[]
-  onBookmark: (file: WorkspaceFile) => Promise<void>
+  onBookmark: (target: WorkspaceBookmarkTarget) => Promise<void>
   onClose: () => void
   onInsert: (file: WorkspaceFile, ask: boolean) => void
 }) {
@@ -1816,12 +1824,20 @@ function WorkspaceDialog({
   }
 
   useEffect(() => {
-    void openDirectory().then(() => {
-      if (initialPath) {
-        void openFile(initialPath)
+    void (async () => {
+      if (!initialPath) {
+        await openDirectory()
+        return
       }
-    })
-  }, [initialPath, openDirectory, openFile])
+      if (initialKind === 'folder') {
+        await openDirectory(initialPath)
+        return
+      }
+      const separator = initialPath.lastIndexOf('/')
+      await openDirectory(separator >= 0 ? initialPath.slice(0, separator) : '.')
+      await openFile(initialPath)
+    })()
+  }, [initialKind, initialPath, openDirectory, openFile])
 
   useEffect(() => {
     previewContentRef.current?.scrollTo({ top: 0 })
@@ -1832,9 +1848,23 @@ function WorkspaceDialog({
         (bookmark) =>
           bookmark.computerId === session.computerId &&
           bookmark.sessionId === session.id &&
-          bookmark.path === file.path,
+          bookmark.path === file.path &&
+          bookmark.kind === 'file',
       )
     : false
+  const folderBookmarked = listing
+    ? bookmarks.some(
+        (bookmark) =>
+          bookmark.computerId === session.computerId &&
+          bookmark.sessionId === session.id &&
+          bookmark.path === listing.path &&
+          bookmark.kind === 'folder',
+      )
+    : false
+  const folderName =
+    listing?.path === '.'
+      ? session.cwd.split('/').filter(Boolean).at(-1) || session.cwd
+      : listing?.path.split('/').filter(Boolean).at(-1) || listing?.path
 
   return (
     <DialogFrame
@@ -1865,17 +1895,38 @@ function WorkspaceDialog({
       >
         <aside className="workspace-tree">
           <div className="workspace-tree__path">
-            {results ? (
-              <button onClick={() => void openDirectory(listing?.path)}>
-                <ChevronLeft size={15} /> Files
+            <div>
+              {results ? (
+                <button onClick={() => void openDirectory(listing?.path)}>
+                  <ChevronLeft size={15} /> Files
+                </button>
+              ) : listing?.parent ? (
+                <button onClick={() => void openDirectory(listing.parent)}>
+                  <ChevronLeft size={15} /> {listing.path}
+                </button>
+              ) : (
+                <span>
+                  {listing?.path === '.' ? session.cwd : listing?.path}
+                </span>
+              )}
+            </div>
+            {listing && !results ? (
+              <button
+                aria-label="Save current folder to Knowledge"
+                disabled={folderBookmarked}
+                onClick={() =>
+                  void onBookmark({
+                    kind: 'folder',
+                    name: folderName || listing.path,
+                    path: listing.path,
+                  })
+                }
+                type="button"
+              >
+                <Bookmark size={14} />
+                {folderBookmarked ? 'Saved' : 'Save folder'}
               </button>
-            ) : listing?.parent ? (
-              <button onClick={() => void openDirectory(listing.parent)}>
-                <ChevronLeft size={15} /> {listing.path}
-              </button>
-            ) : (
-              <span>{listing?.path === '.' ? session.cwd : listing?.path}</span>
-            )}
+            ) : null}
           </div>
           {loading ? (
             <LoaderCircle className="activity-message__spinner" size={18} />
@@ -1952,7 +2003,13 @@ function WorkspaceDialog({
                 <button
                   aria-pressed={bookmarked}
                   disabled={bookmarked}
-                  onClick={() => void onBookmark(file)}
+                  onClick={() =>
+                    void onBookmark({
+                      kind: 'file',
+                      name: file.name,
+                      path: file.path,
+                    })
+                  }
                   type="button"
                 >
                   <Bookmark size={15} />
@@ -2003,20 +2060,29 @@ function KnowledgeDialog({
   return (
     <DialogFrame
       className="knowledge-dialog"
-      eyebrow="Saved workspace files"
+      eyebrow="Central workspace access"
       onClose={onClose}
       title="Knowledge"
     >
       {bookmarks.length === 0 ? (
         <p className="dialog-message">
-          Save useful Markdown, text, or PDF files from Session files.
+          Save folders or useful Markdown, text, and PDF files from Session
+          files for central access.
         </p>
       ) : (
         <div className="knowledge-list">
           {bookmarks.map((bookmark) => (
             <div className="knowledge-item" key={bookmark.id}>
-              <button onClick={() => onOpen(bookmark)} type="button">
-                <FileText size={17} />
+              <button
+                aria-label={`Open ${bookmark.name} ${bookmark.kind}`}
+                onClick={() => onOpen(bookmark)}
+                type="button"
+              >
+                {bookmark.kind === 'folder' ? (
+                  <FolderOpen size={17} />
+                ) : (
+                  <FileText size={17} />
+                )}
                 <span>
                   <strong>{bookmark.name}</strong>
                   <small>
@@ -2052,6 +2118,9 @@ function App() {
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [workspaceInitialPath, setWorkspaceInitialPath] = useState<string>()
+  const [workspaceInitialKind, setWorkspaceInitialKind] = useState<
+    'file' | 'folder'
+  >()
   const [knowledgeOpen, setKnowledgeOpen] = useState(false)
   const [bookmarks, setBookmarks] = useState<KnowledgeBookmark[]>([])
   const [commands, setCommands] = useState<SlashCommand[]>([])
@@ -3089,14 +3158,13 @@ function App() {
     void attachedFiles(files)
   }
 
-  async function bookmarkWorkspaceFile(file: WorkspaceFile) {
+  async function bookmarkWorkspaceTarget(target: WorkspaceBookmarkTarget) {
     if (!selected) return
     try {
       const bookmark = await addKnowledgeBookmark({
         computerId: selected.computerId,
         sessionId: selected.id,
-        path: file.path,
-        name: file.name,
+        ...target,
       })
       setBookmarks((current) =>
         current.some((entry) => entry.id === bookmark.id)
@@ -3120,6 +3188,7 @@ function App() {
     )
     setWorkspaceOpen(false)
     setWorkspaceInitialPath(undefined)
+    setWorkspaceInitialKind(undefined)
     window.requestAnimationFrame(() => focusComposer(targetKey))
   }
 
@@ -3145,6 +3214,7 @@ function App() {
       setSessions((current) => upsertSession(current, target))
       setSelectedKey(sessionKey(target))
       setWorkspaceInitialPath(bookmark.path)
+      setWorkspaceInitialKind(bookmark.kind)
       setKnowledgeOpen(false)
       setWorkspaceOpen(true)
     } catch (caught) {
@@ -3599,6 +3669,7 @@ function App() {
               className="icon-button"
               onClick={() => {
                 setWorkspaceInitialPath(undefined)
+                setWorkspaceInitialKind(undefined)
                 setWorkspaceOpen(true)
               }}
               type="button"
@@ -4158,11 +4229,13 @@ function App() {
       {workspaceOpen && selected ? (
         <WorkspaceDialog
           bookmarks={bookmarks}
+          initialKind={workspaceInitialKind}
           initialPath={workspaceInitialPath}
-          onBookmark={bookmarkWorkspaceFile}
+          onBookmark={bookmarkWorkspaceTarget}
           onClose={() => {
             setWorkspaceOpen(false)
             setWorkspaceInitialPath(undefined)
+            setWorkspaceInitialKind(undefined)
           }}
           onInsert={insertWorkspaceFile}
           session={selected}

@@ -27,6 +27,7 @@ describe('KnowledgeStore', () => {
       sessionTitle: 'Project',
       path: 'README.md',
       name: 'README.md',
+      kind: 'file' as const,
     }
     const first = await store.add(input)
     const duplicate = await store.add(input)

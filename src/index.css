@@ -1592,10 +1592,21 @@ button {
 }
 
 .workspace-tree__path {
+  display: flex;
   min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 4px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.workspace-tree__path > div {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-tree__path button {

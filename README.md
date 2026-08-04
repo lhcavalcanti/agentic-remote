@@ -268,6 +268,8 @@ sessions and computers: folder bookmarks reopen directly in the read-only
 browser, while file bookmarks reopen the preview. Bookmarks are stored privately
 on the hub and retain the computer, session, type, and relative path. File
 content remains on the owning computer and is loaded only when opened.
+Knowledge also lists each unique available session workspace folder
+automatically, so central browsing works before any path has been saved.
 
 The hub requires `whisper-cli` and `ggml-small.bin`. This homelab provisions
 their pinned releases with

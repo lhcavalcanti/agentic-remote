@@ -701,6 +701,28 @@ describe('App', () => {
     )
   })
 
+  it('shows session workspace folders before anything is saved', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Knowledge' }))
+
+    expect(
+      await screen.findByRole('heading', { name: 'Workspace folders' }),
+    ).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Open Project chat workspace folder',
+      }),
+    )
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        '.',
+      ),
+    )
+    expect(document.querySelector('.workspace-dialog')).toBeInTheDocument()
+  })
+
   it('records microphone audio and transcribes it into the draft', async () => {
     class MockMediaRecorder extends EventTarget {
       static isTypeSupported = vi.fn(() => true)

@@ -2051,12 +2051,62 @@ function KnowledgeDialog({
   onClose,
   onDelete,
   onOpen,
+  onOpenSession,
+  sessions,
 }: {
   bookmarks: KnowledgeBookmark[]
   onClose: () => void
   onDelete: (bookmark: KnowledgeBookmark) => Promise<void>
   onOpen: (bookmark: KnowledgeBookmark) => void
+  onOpenSession: (session: ManagedSession) => void
+  sessions: ManagedSession[]
 }) {
+  const workspaceSessions = [
+    ...new Map(
+      sessions.map((session) => [
+        `${session.computerId}:${session.cwd}`,
+        session,
+      ]),
+    ).values(),
+  ]
+  const savedFolders = bookmarks.filter(
+    (bookmark) => bookmark.kind === 'folder',
+  )
+  const savedFiles = bookmarks.filter((bookmark) => bookmark.kind === 'file')
+
+  function bookmarkItems(items: KnowledgeBookmark[]) {
+    return items.map((bookmark) => (
+      <div className="knowledge-item" key={bookmark.id}>
+        <button
+          aria-label={`Open ${bookmark.name} ${bookmark.kind}`}
+          onClick={() => onOpen(bookmark)}
+          type="button"
+        >
+          {bookmark.kind === 'folder' ? (
+            <FolderOpen size={17} />
+          ) : (
+            <FileText size={17} />
+          )}
+          <span>
+            <strong>{bookmark.name}</strong>
+            <small>
+              {bookmark.computerName} · {bookmark.sessionTitle} ·{' '}
+              {bookmark.path}
+            </small>
+          </span>
+        </button>
+        <button
+          aria-label={`Remove ${bookmark.name} bookmark`}
+          className="icon-button icon-button--danger"
+          onClick={() => void onDelete(bookmark)}
+          type="button"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    ))
+  }
+
   return (
     <DialogFrame
       className="knowledge-dialog"
@@ -2064,43 +2114,53 @@ function KnowledgeDialog({
       onClose={onClose}
       title="Knowledge"
     >
-      {bookmarks.length === 0 ? (
+      {workspaceSessions.length === 0 && bookmarks.length === 0 ? (
         <p className="dialog-message">
           Save folders or useful Markdown, text, and PDF files from Session
           files for central access.
         </p>
       ) : (
         <div className="knowledge-list">
-          {bookmarks.map((bookmark) => (
-            <div className="knowledge-item" key={bookmark.id}>
-              <button
-                aria-label={`Open ${bookmark.name} ${bookmark.kind}`}
-                onClick={() => onOpen(bookmark)}
-                type="button"
-              >
-                {bookmark.kind === 'folder' ? (
-                  <FolderOpen size={17} />
-                ) : (
-                  <FileText size={17} />
-                )}
-                <span>
-                  <strong>{bookmark.name}</strong>
-                  <small>
-                    {bookmark.computerName} · {bookmark.sessionTitle} ·{' '}
-                    {bookmark.path}
-                  </small>
-                </span>
-              </button>
-              <button
-                aria-label={`Remove ${bookmark.name} bookmark`}
-                className="icon-button icon-button--danger"
-                onClick={() => void onDelete(bookmark)}
-                type="button"
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-          ))}
+          {workspaceSessions.length ? (
+            <section className="knowledge-section">
+              <h3>Workspace folders</h3>
+              {workspaceSessions.map((session) => (
+                <div
+                  className="knowledge-item knowledge-item--workspace"
+                  key={`${session.computerId}:${session.cwd}`}
+                >
+                  <button
+                    aria-label={`Open ${session.title} workspace folder`}
+                    onClick={() => onOpenSession(session)}
+                    type="button"
+                  >
+                    <FolderOpen size={17} />
+                    <span>
+                      <strong>
+                        {session.cwd.split('/').filter(Boolean).at(-1) ||
+                          session.cwd}
+                      </strong>
+                      <small>
+                        {session.computerName} · {session.title} · {session.cwd}
+                      </small>
+                    </span>
+                  </button>
+                </div>
+              ))}
+            </section>
+          ) : null}
+          {savedFolders.length ? (
+            <section className="knowledge-section">
+              <h3>Saved folders</h3>
+              {bookmarkItems(savedFolders)}
+            </section>
+          ) : null}
+          {savedFiles.length ? (
+            <section className="knowledge-section">
+              <h3>Saved files</h3>
+              {bookmarkItems(savedFiles)}
+            </section>
+          ) : null}
         </div>
       )}
     </DialogFrame>
@@ -3222,6 +3282,14 @@ function App() {
     }
   }
 
+  function openSessionWorkspace(session: ManagedSession) {
+    setSelectedKey(sessionKey(session))
+    setWorkspaceInitialPath('.')
+    setWorkspaceInitialKind('folder')
+    setKnowledgeOpen(false)
+    setWorkspaceOpen(true)
+  }
+
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
     if (!selected || queueActionId) {
       return
@@ -3615,7 +3683,7 @@ function App() {
             <BookOpen size={18} />
             <span>
               <strong>Knowledge</strong>
-              <small>Saved Markdown, text, and PDF files</small>
+              <small>Workspace folders and saved paths</small>
             </span>
           </button>
           <button
@@ -4247,6 +4315,8 @@ function App() {
           onClose={() => setKnowledgeOpen(false)}
           onDelete={removeBookmark}
           onOpen={(bookmark) => void openBookmark(bookmark)}
+          onOpenSession={openSessionWorkspace}
+          sessions={sessions}
         />
       ) : null}
     </div>

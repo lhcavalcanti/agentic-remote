@@ -10,6 +10,7 @@ import { AgentService } from './agent-service.js'
 import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
+import { KnowledgeStore } from './knowledge-store.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
 import { resolveDataDirectory } from './paths.js'
@@ -44,6 +45,7 @@ export interface BuildAppOptions {
   dataDirectory?: string
   pushService?: PushNotificationService
   transcriptionService?: TranscriptionService
+  knowledgeStore?: KnowledgeStore
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -63,6 +65,7 @@ export async function buildApp(
   manager?: ComputerManager
   pushService?: PushNotificationService
   transcriptionService?: TranscriptionService
+  knowledgeStore?: KnowledgeStore
 }> {
   const app = Fastify({ logger: options.logger ?? true })
   const role = options.role ?? 'hub'
@@ -77,6 +80,7 @@ export async function buildApp(
   let manager: ComputerManager | undefined
   let pushService: PushNotificationService | undefined
   let transcriptionService: TranscriptionService | undefined
+  let knowledgeStore: KnowledgeStore | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -86,11 +90,13 @@ export async function buildApp(
         new ComputerRegistry(dataDirectory),
       )
     await manager.initialize()
+    knowledgeStore = options.knowledgeStore ?? new KnowledgeStore(dataDirectory)
+    await knowledgeStore.initialize()
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
     pushService.attach(manager)
-    await registerHubRoutes(app, manager)
+    await registerHubRoutes(app, manager, knowledgeStore)
     await registerPushRoutes(app, pushService)
     transcriptionService =
       options.transcriptionService ??
@@ -177,5 +183,6 @@ export async function buildApp(
     manager,
     pushService,
     transcriptionService,
+    knowledgeStore,
   }
 }

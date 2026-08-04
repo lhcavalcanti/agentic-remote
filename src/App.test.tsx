@@ -14,10 +14,12 @@ import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import App from './App'
 import {
   activateSession,
+  addKnowledgeBookmark,
   clearConversation,
   createSession,
   configureRuntime,
   deleteSession,
+  deleteKnowledgeBookmark,
   executeCommand,
   getPushSettings,
   getSession,
@@ -26,13 +28,17 @@ import {
   listComputers,
   listDirectories,
   listHistory,
+  listKnowledgeBookmarks,
   listSessions,
+  listWorkspace,
   removeQueuedPrompt,
   renameSession,
+  readWorkspaceFile,
   restartSession,
   replyUserInput,
   sendMessage,
   sendTestPushNotification,
+  searchWorkspace,
   setSessionNotificationsMuted,
   transcribeAudio,
   uploadSessionFile,
@@ -46,7 +52,13 @@ vi.mock('./api', () => ({
   removeQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
+  listKnowledgeBookmarks: vi.fn(),
+  addKnowledgeBookmark: vi.fn(),
+  deleteKnowledgeBookmark: vi.fn(),
   listDirectories: vi.fn(),
+  listWorkspace: vi.fn(),
+  readWorkspaceFile: vi.fn(),
+  searchWorkspace: vi.fn(),
   getSession: vi.fn(),
   listCommands: vi.fn(),
   addComputer: vi.fn(),
@@ -227,6 +239,54 @@ describe('App', () => {
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
+    vi.mocked(listKnowledgeBookmarks).mockResolvedValue([])
+    vi.mocked(listWorkspace).mockResolvedValue({
+      path: '.',
+      entries: [
+        {
+          name: 'README.md',
+          path: 'README.md',
+          kind: 'markdown',
+          size: 25,
+        },
+        {
+          name: 'guide.pdf',
+          path: 'guide.pdf',
+          kind: 'pdf',
+          size: 50,
+        },
+      ],
+    })
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      name: 'README.md',
+      path: 'README.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 25,
+      content: '# Workspace guide\n\nUseful knowledge.',
+    })
+    vi.mocked(searchWorkspace).mockResolvedValue({
+      results: [
+        {
+          name: 'README.md',
+          path: 'README.md',
+          kind: 'markdown',
+          snippet: 'Useful knowledge.',
+        },
+      ],
+      truncated: false,
+    })
+    vi.mocked(addKnowledgeBookmark).mockResolvedValue({
+      id: 'bookmark-1',
+      computerId: computer.id,
+      computerName: computer.name,
+      sessionId: session.id,
+      sessionTitle: session.title,
+      path: 'README.md',
+      name: 'README.md',
+      createdAt: '2026-08-04T00:00:00.000Z',
+    })
+    vi.mocked(deleteKnowledgeBookmark).mockResolvedValue()
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') =>
         path === '~'
@@ -510,6 +570,164 @@ describe('App', () => {
       expect(textarea).toHaveValue('Transcribed walking idea'),
     )
     expect(transcribeAudio).toHaveBeenCalledWith(file)
+  })
+
+  it('browses and renders Markdown workspace files', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Browse session files' }),
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    expect(await screen.findByRole('heading', { name: 'Workspace guide' }))
+      .toBeInTheDocument()
+    expect(screen.getByText('Useful knowledge.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Raw' }))
+    expect(screen.getByText(/# Workspace guide/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Insert path' }))
+    expect(screen.getByLabelText('Message')).toHaveValue(
+      'File: `/home/lcavalcanti/src/project/README.md`',
+    )
+  })
+
+  it('searches workspace files and saves knowledge bookmarks', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Browse session files' }),
+    )
+    const search = await screen.findByLabelText('Search workspace')
+    fireEvent.change(search, { target: { value: 'knowledge' } })
+    fireEvent.submit(search.closest('form')!)
+
+    await waitFor(() =>
+      expect(searchWorkspace).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        'knowledge',
+      ),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(addKnowledgeBookmark).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Knowledge' }))
+    expect(await screen.findByText('README.md')).toBeInTheDocument()
+    expect(screen.getAllByText(/Project chat/).length).toBeGreaterThan(0)
+  })
+
+  it('records microphone audio and transcribes it into the draft', async () => {
+    class MockMediaRecorder extends EventTarget {
+      static isTypeSupported = vi.fn(() => true)
+      state: RecordingState = 'inactive'
+      mimeType = 'audio/mp4'
+
+      start() {
+        this.state = 'recording'
+      }
+
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(
+          new BlobEvent('dataavailable', {
+            data: new Blob(['voice'], { type: this.mimeType }),
+          }),
+        )
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+    const stopTrack = vi.fn()
+    const getUserMedia = vi.fn(async () => ({
+      getTracks: () => [{ stop: stopTrack }],
+    }))
+    const originalMediaDevices = navigator.mediaDevices
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia },
+    })
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder)
+
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Start microphone recording',
+      }),
+    )
+    await waitFor(() =>
+      expect(document.querySelector('.recording-panel')).toHaveTextContent(
+        'Recording 0:00',
+      ),
+    )
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true })
+
+    fireEvent.click(screen.getByRole('button', { name: /Stop & transcribe/ }))
+
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    const recordedFile = vi.mocked(transcribeAudio).mock.calls[0][0]
+    expect(recordedFile.name).toBe('recording.m4a')
+    expect(recordedFile.type).toBe('audio/mp4')
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue(
+        'Transcribed walking idea',
+      ),
+    )
+    expect(stopTrack).toHaveBeenCalledOnce()
+
+    vi.unstubAllGlobals()
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: originalMediaDevices,
+    })
+  })
+
+  it('cancels microphone audio without transcribing it', async () => {
+    class MockMediaRecorder extends EventTarget {
+      static isTypeSupported = () => true
+      state: RecordingState = 'inactive'
+      mimeType = 'audio/webm'
+
+      start() {
+        this.state = 'recording'
+      }
+
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(
+          new BlobEvent('dataavailable', {
+            data: new Blob(['voice'], { type: this.mimeType }),
+          }),
+        )
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+    const originalMediaDevices = navigator.mediaDevices
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(async () => ({ getTracks: () => [] })),
+      },
+    })
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder)
+
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Start microphone recording',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Recording 0:00/)).not.toBeInTheDocument(),
+    )
+    expect(transcribeAudio).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: originalMediaDevices,
+    })
   })
 
   it('uploads a document to the selected computer and appends its path', async () => {

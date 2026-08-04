@@ -61,6 +61,12 @@ const configureRuntimeSchema = z.object({
 const directoryQuerySchema = z.object({
   path: z.string().trim().max(4096).optional(),
 })
+const workspaceFileQuerySchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+})
+const workspaceSearchQuerySchema = z.object({
+  query: z.string().trim().min(2).max(200),
+})
 
 function tokenMatches(actual: string | undefined, expected: string): boolean {
   const prefix = 'Bearer '
@@ -117,6 +123,33 @@ export async function registerNodeRoutes(
           commands: await service.listCommands(request.params.sessionId),
         }),
       )
+
+      node.get<{
+        Params: { sessionId: string }
+        Querystring: { path?: string }
+      }>('/sessions/:sessionId/workspace', async (request) => {
+        const query = directoryQuerySchema.parse(request.query)
+        return service.listWorkspace(request.params.sessionId, query.path)
+      })
+
+      node.get<{
+        Params: { sessionId: string }
+        Querystring: { path: string }
+      }>('/sessions/:sessionId/workspace/file', async (request) => {
+        const query = workspaceFileQuerySchema.parse(request.query)
+        return service.readWorkspaceFile(request.params.sessionId, query.path)
+      })
+
+      node.get<{
+        Params: { sessionId: string }
+        Querystring: { query: string }
+      }>('/sessions/:sessionId/workspace/search', async (request) => {
+        const query = workspaceSearchQuerySchema.parse(request.query)
+        return service.searchWorkspace(
+          request.params.sessionId,
+          query.query,
+        )
+      })
 
       node.get<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId',

@@ -7,6 +7,7 @@ import type {
   DirectoryListing,
   ExecuteCommandInput,
   ManagedSession,
+  KnowledgeBookmark,
   PushSettings,
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
@@ -16,6 +17,9 @@ import type {
   SessionFileUpload,
   SlashCommand,
   UserInputReplyInput,
+  WorkspaceFile,
+  WorkspaceListing,
+  WorkspaceSearchResponse,
 } from '../shared/contracts'
 
 async function responseError(response: Response): Promise<Error> {
@@ -92,12 +96,73 @@ export async function listHistory(): Promise<ManagedSession[]> {
   return response.sessions
 }
 
+export async function listKnowledgeBookmarks(): Promise<KnowledgeBookmark[]> {
+  const response = await request<{ bookmarks: KnowledgeBookmark[] }>(
+    '/api/knowledge',
+  )
+  return response.bookmarks
+}
+
+export async function addKnowledgeBookmark(input: {
+  computerId: string
+  sessionId: string
+  path: string
+  name: string
+}): Promise<KnowledgeBookmark> {
+  const response = await request<{ bookmark: KnowledgeBookmark }>(
+    '/api/knowledge',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  )
+  return response.bookmark
+}
+
+export async function deleteKnowledgeBookmark(
+  bookmarkId: string,
+): Promise<void> {
+  await requestVoid(`/api/knowledge/${encodeURIComponent(bookmarkId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export async function listDirectories(
   computerId: string,
   path = '~',
 ): Promise<DirectoryListing> {
   return request<DirectoryListing>(
     `/api/computers/${encodeURIComponent(computerId)}/directories?path=${encodeURIComponent(path)}`,
+  )
+}
+
+export async function listWorkspace(
+  computerId: string,
+  sessionId: string,
+  path = '.',
+): Promise<WorkspaceListing> {
+  return request<WorkspaceListing>(
+    `${sessionPath(computerId, sessionId)}/workspace?path=${encodeURIComponent(path)}`,
+  )
+}
+
+export async function readWorkspaceFile(
+  computerId: string,
+  sessionId: string,
+  path: string,
+): Promise<WorkspaceFile> {
+  return request<WorkspaceFile>(
+    `${sessionPath(computerId, sessionId)}/workspace/file?path=${encodeURIComponent(path)}`,
+  )
+}
+
+export async function searchWorkspace(
+  computerId: string,
+  sessionId: string,
+  query: string,
+): Promise<WorkspaceSearchResponse> {
+  return request<WorkspaceSearchResponse>(
+    `${sessionPath(computerId, sessionId)}/workspace/search?query=${encodeURIComponent(query)}`,
   )
 }
 

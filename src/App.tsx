@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type {
   CSSProperties,
   ChangeEvent,
@@ -30,6 +37,8 @@ import {
   ArrowUp,
   Bell,
   BellOff,
+  BookOpen,
+  Bookmark,
   Bot,
   CheckCircle2,
   ChevronLeft,
@@ -38,17 +47,21 @@ import {
   Eraser,
   Folder,
   FolderOpen,
+  File as FileIcon,
+  FileText,
   GripVertical,
   History,
   LoaderCircle,
   ListPlus,
   Menu,
   MessageSquare,
+  Mic,
   MonitorCog,
   Paperclip,
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Settings,
   SlidersHorizontal,
   Square,
@@ -66,19 +79,25 @@ import type {
   DirectoryListing,
   HubEvent,
   ManagedSession,
+  KnowledgeBookmark,
   PendingPermission,
   PendingUserInput,
   RuntimeOptions,
   SlashCommand,
+  WorkspaceFile,
+  WorkspaceListing,
+  WorkspaceSearchResult,
 } from '../shared/contracts'
 import {
   activateSession,
+  addKnowledgeBookmark,
   addComputer,
   cancelSession,
   clearConversation,
   configureRuntime,
   createSession,
   deleteSession,
+  deleteKnowledgeBookmark,
   executeCommand,
   getPushSettings,
   getSession,
@@ -86,16 +105,20 @@ import {
   listComputers,
   listCommands,
   listHistory,
+  listKnowledgeBookmarks,
   listDirectories,
   listSessions,
+  listWorkspace,
   removeComputer,
   removeQueuedPrompt,
   renameSession,
+  readWorkspaceFile,
   restartSession,
   replyPermission,
   replyUserInput,
   sendMessage,
   sendTestPushNotification,
+  searchWorkspace,
   setSessionNotificationsMuted,
   transcribeAudio,
   uploadSessionFile,
@@ -123,6 +146,11 @@ function isAudioFile(file: File): boolean {
     file.type === 'video/mp4' ||
     /\.(?:aac|flac|m4a|mp3|mp4|ogg|wav|webm)$/i.test(file.name)
   )
+}
+
+function recordingDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
 }
 
 function computerTone(computerId: string): number {
@@ -1629,6 +1657,367 @@ function RenameSessionForm({
   )
 }
 
+function PdfViewer({ file }: { file: WorkspaceFile }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [page, setPage] = useState(1)
+  const [pageCount, setPageCount] = useState(0)
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    if (!file.base64) {
+      return
+    }
+    let active = true
+    let cancelRender: (() => void) | undefined
+    let destroyDocument: (() => Promise<void>) | undefined
+    setError(undefined)
+    const data = Uint8Array.from(atob(file.base64), (character) =>
+      character.charCodeAt(0),
+    )
+    void import('pdfjs-dist')
+      .then(async (pdfjs) => {
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+          'pdfjs-dist/build/pdf.worker.min.mjs',
+          import.meta.url,
+        ).toString()
+        const loadingTask = pdfjs.getDocument({ data })
+        destroyDocument = () => loadingTask.destroy()
+        const document = await loadingTask.promise
+        if (!active) return
+        setPageCount(document.numPages)
+        const pdfPage = await document.getPage(page)
+        if (!active || !canvasRef.current) return
+        const viewport = pdfPage.getViewport({ scale: 1.25 })
+        const canvas = canvasRef.current
+        const context = canvas.getContext('2d')
+        if (!context) {
+          throw new Error('Canvas rendering is not available')
+        }
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        const renderTask = pdfPage.render({
+          canvas,
+          canvasContext: context,
+          viewport,
+        })
+        cancelRender = () => renderTask.cancel()
+        await renderTask.promise
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+    return () => {
+      active = false
+      cancelRender?.()
+      void destroyDocument?.()
+    }
+  }, [file.base64, page])
+
+  useEffect(() => {
+    setPage(1)
+  }, [file.path])
+
+  return (
+    <div className="pdf-viewer">
+      {error ? <p className="form-error">{error}</p> : null}
+      <canvas ref={canvasRef} />
+      {pageCount > 1 ? (
+        <div className="pdf-viewer__controls">
+          <button disabled={page <= 1} onClick={() => setPage(page - 1)}>
+            Previous
+          </button>
+          <span>
+            Page {page} of {pageCount}
+          </span>
+          <button
+            disabled={page >= pageCount}
+            onClick={() => setPage(page + 1)}
+          >
+            Next
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function WorkspaceDialog({
+  initialPath,
+  session,
+  bookmarks,
+  onBookmark,
+  onClose,
+  onInsert,
+}: {
+  initialPath?: string
+  session: ManagedSession
+  bookmarks: KnowledgeBookmark[]
+  onBookmark: (file: WorkspaceFile) => Promise<void>
+  onClose: () => void
+  onInsert: (file: WorkspaceFile, ask: boolean) => void
+}) {
+  const [listing, setListing] = useState<WorkspaceListing>()
+  const [file, setFile] = useState<WorkspaceFile>()
+  const [raw, setRaw] = useState(false)
+  const [search, setSearch] = useState('')
+  const [results, setResults] = useState<WorkspaceSearchResult[]>()
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string>()
+
+  const openDirectory = useCallback(async (path = '.') => {
+    setLoading(true)
+    setError(undefined)
+    setFile(undefined)
+    setResults(undefined)
+    try {
+      setListing(await listWorkspace(session.computerId, session.id, path))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setLoading(false)
+    }
+  }, [session.computerId, session.id])
+
+  const openFile = useCallback(async (path: string) => {
+    setLoading(true)
+    setError(undefined)
+    try {
+      setFile(await readWorkspaceFile(session.computerId, session.id, path))
+      setRaw(false)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setLoading(false)
+    }
+  }, [session.computerId, session.id])
+
+  async function submitSearch(event: FormEvent) {
+    event.preventDefault()
+    if (search.trim().length < 2) return
+    setLoading(true)
+    setError(undefined)
+    setFile(undefined)
+    try {
+      const response = await searchWorkspace(
+        session.computerId,
+        session.id,
+        search,
+      )
+      setResults(response.results)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void openDirectory().then(() => {
+      if (initialPath) {
+        void openFile(initialPath)
+      }
+    })
+  }, [initialPath, openDirectory, openFile])
+
+  const bookmarked = file
+    ? bookmarks.some(
+        (bookmark) =>
+          bookmark.computerId === session.computerId &&
+          bookmark.sessionId === session.id &&
+          bookmark.path === file.path,
+      )
+    : false
+
+  return (
+    <DialogFrame
+      className="workspace-dialog"
+      eyebrow={`${session.computerName} · ${shortPath(session.cwd)}`}
+      onClose={onClose}
+      title="Session files"
+    >
+      <form className="workspace-search" onSubmit={submitSearch}>
+        <Search size={16} />
+        <input
+          aria-label="Search workspace"
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search files and text"
+          value={search}
+        />
+        <button disabled={search.trim().length < 2} type="submit">
+          Search
+        </button>
+      </form>
+      {error ? <p className="form-error">{error}</p> : null}
+      <div className="workspace-layout">
+        <aside className="workspace-tree">
+          <div className="workspace-tree__path">
+            {results ? (
+              <button onClick={() => void openDirectory(listing?.path)}>
+                <ChevronLeft size={15} /> Files
+              </button>
+            ) : listing?.parent ? (
+              <button onClick={() => void openDirectory(listing.parent)}>
+                <ChevronLeft size={15} /> {listing.path}
+              </button>
+            ) : (
+              <span>{listing?.path || '.'}</span>
+            )}
+          </div>
+          {loading ? (
+            <LoaderCircle className="activity-message__spinner" size={18} />
+          ) : results ? (
+            results.map((result) => (
+              <button
+                className="workspace-entry"
+                key={result.path}
+                onClick={() => void openFile(result.path)}
+                type="button"
+              >
+                <FileText size={15} />
+                <span>
+                  <strong>{result.name}</strong>
+                  <small>{result.snippet || result.path}</small>
+                </span>
+              </button>
+            ))
+          ) : (
+            listing?.entries.map((entry) => (
+              <button
+                className="workspace-entry"
+                key={entry.path}
+                onClick={() =>
+                  entry.kind === 'directory'
+                    ? void openDirectory(entry.path)
+                    : void openFile(entry.path)
+                }
+                type="button"
+              >
+                {entry.kind === 'directory' ? (
+                  <Folder size={15} />
+                ) : entry.kind === 'markdown' ? (
+                  <FileText size={15} />
+                ) : (
+                  <FileIcon size={15} />
+                )}
+                <span>
+                  <strong>{entry.name}</strong>
+                  {entry.size !== undefined ? (
+                    <small>{Math.max(1, Math.ceil(entry.size / 1024))} KiB</small>
+                  ) : null}
+                </span>
+              </button>
+            ))
+          )}
+        </aside>
+        <section className="workspace-preview">
+          {!file ? (
+            <div className="workspace-preview__empty">
+              <BookOpen size={24} />
+              <p>Select a Markdown, text, or PDF file.</p>
+            </div>
+          ) : (
+            <>
+              <div className="workspace-preview__header">
+                <div>
+                  <strong>{file.name}</strong>
+                  <small>{file.path}</small>
+                </div>
+                {file.kind === 'markdown' ? (
+                  <button onClick={() => setRaw(!raw)} type="button">
+                    {raw ? 'Rendered' : 'Raw'}
+                  </button>
+                ) : null}
+                <button
+                  aria-pressed={bookmarked}
+                  disabled={bookmarked}
+                  onClick={() => void onBookmark(file)}
+                  type="button"
+                >
+                  <Bookmark size={15} />
+                  {bookmarked ? 'Saved' : 'Save'}
+                </button>
+              </div>
+              <div className="workspace-preview__actions">
+                <button onClick={() => onInsert(file, false)} type="button">
+                  Insert path
+                </button>
+                <button onClick={() => onInsert(file, true)} type="button">
+                  Ask agent about file
+                </button>
+              </div>
+              <div className="workspace-preview__content">
+                {file.kind === 'pdf' ? (
+                  <PdfViewer file={file} />
+                ) : file.kind === 'markdown' && !raw ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {file.content || ''}
+                  </ReactMarkdown>
+                ) : (
+                  <pre>{file.content}</pre>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+    </DialogFrame>
+  )
+}
+
+function KnowledgeDialog({
+  bookmarks,
+  onClose,
+  onDelete,
+  onOpen,
+}: {
+  bookmarks: KnowledgeBookmark[]
+  onClose: () => void
+  onDelete: (bookmark: KnowledgeBookmark) => Promise<void>
+  onOpen: (bookmark: KnowledgeBookmark) => void
+}) {
+  return (
+    <DialogFrame
+      className="knowledge-dialog"
+      eyebrow="Saved workspace files"
+      onClose={onClose}
+      title="Knowledge"
+    >
+      {bookmarks.length === 0 ? (
+        <p className="dialog-message">
+          Save useful Markdown, text, or PDF files from Session files.
+        </p>
+      ) : (
+        <div className="knowledge-list">
+          {bookmarks.map((bookmark) => (
+            <div className="knowledge-item" key={bookmark.id}>
+              <button onClick={() => onOpen(bookmark)} type="button">
+                <FileText size={17} />
+                <span>
+                  <strong>{bookmark.name}</strong>
+                  <small>
+                    {bookmark.computerName} · {bookmark.sessionTitle} ·{' '}
+                    {bookmark.path}
+                  </small>
+                </span>
+              </button>
+              <button
+                aria-label={`Remove ${bookmark.name} bookmark`}
+                className="icon-button icon-button--danger"
+                onClick={() => void onDelete(bookmark)}
+                type="button"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </DialogFrame>
+  )
+}
+
 function App() {
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
@@ -1638,12 +2027,18 @@ function App() {
   )
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
+  const [workspaceOpen, setWorkspaceOpen] = useState(false)
+  const [workspaceInitialPath, setWorkspaceInitialPath] = useState<string>()
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false)
+  const [bookmarks, setBookmarks] = useState<KnowledgeBookmark[]>([])
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [uploadingFile, setUploadingFile] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [permissionBusy, setPermissionBusy] = useState(false)
   const [userInputBusy, setUserInputBusy] = useState(false)
   const [queueActionId, setQueueActionId] = useState<string>()
@@ -1691,6 +2086,13 @@ function App() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
+  const recordingStreamRef = useRef<MediaStream | undefined>(undefined)
+  const recordingChunksRef = useRef<Blob[]>([])
+  const recordingSessionRef = useRef<ManagedSession | undefined>(undefined)
+  const recordingTimerRef = useRef<number | undefined>(undefined)
+  const recordingStartedAtRef = useRef(0)
+  const discardRecordingRef = useRef(false)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
   const sidebarGestureRef = useRef<
     | {
@@ -1840,6 +2242,31 @@ function App() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    void listKnowledgeBookmarks()
+      .then(setBookmarks)
+      .catch((caught: unknown) =>
+        setError(caught instanceof Error ? caught.message : String(caught)),
+      )
+  }, [])
+
+  useEffect(
+    () => () => {
+      discardRecordingRef.current = true
+      if (recordingTimerRef.current !== undefined) {
+        window.clearInterval(recordingTimerRef.current)
+      }
+      const recorder = mediaRecorderRef.current
+      if (recorder && recorder.state !== 'inactive') {
+        recorder.stop()
+      }
+      for (const track of recordingStreamRef.current?.getTracks() || []) {
+        track.stop()
+      }
+    },
+    [],
+  )
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, {
@@ -2428,11 +2855,14 @@ function App() {
     }
   }
 
-  async function transcribeFile(file: File) {
-    if (!selected || transcribing) {
+  async function transcribeFile(
+    file: File,
+    targetSession: ManagedSession | undefined = selected,
+  ) {
+    if (!targetSession || transcribing) {
       return
     }
-    const targetKey = sessionKey(selected)
+    const targetKey = sessionKey(targetSession)
     setTranscribing(true)
     setError(undefined)
     try {
@@ -2463,7 +2893,115 @@ function App() {
         audioInputRef.current.value = ''
       }
     }
+  }
 
+  function releaseRecording() {
+    if (recordingTimerRef.current !== undefined) {
+      window.clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = undefined
+    }
+    for (const track of recordingStreamRef.current?.getTracks() || []) {
+      track.stop()
+    }
+    recordingStreamRef.current = undefined
+    mediaRecorderRef.current = undefined
+    setRecording(false)
+    setRecordingSeconds(0)
+  }
+
+  async function startRecording() {
+    if (
+      !selected ||
+      recording ||
+      transcribing ||
+      uploadingFile ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === 'undefined'
+    ) {
+      if (
+        !navigator.mediaDevices?.getUserMedia ||
+        typeof MediaRecorder === 'undefined'
+      ) {
+        setError('Microphone recording is not supported in this browser')
+      }
+      return
+    }
+    setError(undefined)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const preferredType = [
+        'audio/mp4',
+        'audio/webm;codecs=opus',
+        'audio/webm',
+      ].find((type) => MediaRecorder.isTypeSupported(type))
+      const recorder = new MediaRecorder(
+        stream,
+        preferredType ? { mimeType: preferredType } : undefined,
+      )
+      recordingStreamRef.current = stream
+      mediaRecorderRef.current = recorder
+      recordingChunksRef.current = []
+      recordingSessionRef.current = selected
+      discardRecordingRef.current = false
+      recorder.addEventListener('dataavailable', (event) => {
+        if (event.data.size > 0) {
+          recordingChunksRef.current.push(event.data)
+        }
+      })
+      recorder.addEventListener('stop', () => {
+        const chunks = recordingChunksRef.current
+        const targetSession = recordingSessionRef.current
+        const discarded = discardRecordingRef.current
+        const mimeType = recorder.mimeType || chunks[0]?.type || 'audio/webm'
+        releaseRecording()
+        recordingChunksRef.current = []
+        recordingSessionRef.current = undefined
+        if (discarded || chunks.length === 0) {
+          return
+        }
+        const extension = mimeType.includes('mp4') ? 'm4a' : 'webm'
+        const file = new File(chunks, `recording.${extension}`, {
+          type: mimeType,
+        })
+        void transcribeFile(file, targetSession)
+      })
+      recorder.addEventListener('error', () => {
+        releaseRecording()
+        setError('The microphone recording failed')
+      })
+      recorder.start(1_000)
+      recordingStartedAtRef.current = Date.now()
+      setRecording(true)
+      setRecordingSeconds(0)
+      recordingTimerRef.current = window.setInterval(() => {
+        const elapsed = Math.floor(
+          (Date.now() - recordingStartedAtRef.current) / 1_000,
+        )
+        setRecordingSeconds(elapsed)
+        if (elapsed >= 15 * 60 && recorder.state !== 'inactive') {
+          recorder.stop()
+        }
+      }, 250)
+    } catch (caught) {
+      releaseRecording()
+      setError(
+        caught instanceof DOMException && caught.name === 'NotAllowedError'
+          ? 'Microphone permission was denied'
+          : caught instanceof Error
+            ? caught.message
+            : String(caught),
+      )
+    }
+  }
+
+  function stopRecording(discard = false) {
+    const recorder = mediaRecorderRef.current
+    if (!recorder || recorder.state === 'inactive') {
+      releaseRecording()
+      return
+    }
+    discardRecordingRef.current = discard
+    recorder.stop()
   }
 
   async function uploadFile(file: File) {
@@ -2500,7 +3038,7 @@ function App() {
   }
 
   async function attachedFiles(files: File[]) {
-    if (transcribing || uploadingFile) {
+    if (recording || transcribing || uploadingFile) {
       return
     }
     for (const file of files) {
@@ -2526,6 +3064,69 @@ function App() {
     }
     event.preventDefault()
     void attachedFiles(files)
+  }
+
+  async function bookmarkWorkspaceFile(file: WorkspaceFile) {
+    if (!selected) return
+    try {
+      const bookmark = await addKnowledgeBookmark({
+        computerId: selected.computerId,
+        sessionId: selected.id,
+        path: file.path,
+        name: file.name,
+      })
+      setBookmarks((current) =>
+        current.some((entry) => entry.id === bookmark.id)
+          ? current
+          : [bookmark, ...current],
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }
+
+  function insertWorkspaceFile(file: WorkspaceFile, ask: boolean) {
+    if (!selected) return
+    const targetKey = sessionKey(selected)
+    const absolutePath = `${selected.cwd.replace(/\/$/, '')}/${file.path}`
+    appendComposerForKey(
+      targetKey,
+      ask
+        ? `Please review \`${absolutePath}\` and help me with it.`
+        : `File: \`${absolutePath}\``,
+    )
+    setWorkspaceOpen(false)
+    setWorkspaceInitialPath(undefined)
+    window.requestAnimationFrame(() => focusComposer(targetKey))
+  }
+
+  async function removeBookmark(bookmark: KnowledgeBookmark) {
+    try {
+      await deleteKnowledgeBookmark(bookmark.id)
+      setBookmarks((current) =>
+        current.filter((entry) => entry.id !== bookmark.id),
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }
+
+  async function openBookmark(bookmark: KnowledgeBookmark) {
+    try {
+      const target =
+        sessions.find(
+          (entry) =>
+            entry.computerId === bookmark.computerId &&
+            entry.id === bookmark.sessionId,
+        ) || (await getSession(bookmark.computerId, bookmark.sessionId))
+      setSessions((current) => upsertSession(current, target))
+      setSelectedKey(sessionKey(target))
+      setWorkspaceInitialPath(bookmark.path)
+      setKnowledgeOpen(false)
+      setWorkspaceOpen(true)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
   }
 
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
@@ -2910,6 +3511,21 @@ function App() {
         </nav>
         <div className="sidebar-settings">
           <button
+            aria-label="Knowledge"
+            className="sidebar-settings__button"
+            onClick={() => {
+              setSidebarOpen(false)
+              setKnowledgeOpen(true)
+            }}
+            type="button"
+          >
+            <BookOpen size={18} />
+            <span>
+              <strong>Knowledge</strong>
+              <small>Saved Markdown, text, and PDF files</small>
+            </span>
+          </button>
+          <button
             aria-label="App settings"
             className="sidebar-settings__button"
             onClick={() => {
@@ -2954,6 +3570,19 @@ function App() {
                 : 'Ready when you are'}
             </span>
           </div>
+          {selected ? (
+            <button
+              aria-label="Browse session files"
+              className="icon-button"
+              onClick={() => {
+                setWorkspaceInitialPath(undefined)
+                setWorkspaceOpen(true)
+              }}
+              type="button"
+            >
+              <FolderOpen size={18} />
+            </button>
+          ) : null}
           {selected ? (
             <button
               aria-label="Restart session"
@@ -3235,6 +3864,29 @@ function App() {
                 ))}
               </div>
             ) : null}
+            {recording ? (
+              <div className="recording-panel" role="status">
+                <span className="recording-panel__status">
+                  <i />
+                  Recording {recordingDuration(recordingSeconds)}
+                </span>
+                <button
+                  className="recording-panel__cancel"
+                  onClick={() => stopRecording(true)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="recording-panel__stop"
+                  onClick={() => stopRecording()}
+                  type="button"
+                >
+                  <Square fill="currentColor" size={12} />
+                  Stop & transcribe
+                </button>
+              </div>
+            ) : null}
             <div
               className={`composer ${
                 selected.status === 'running' ? 'composer--running' : ''
@@ -3274,7 +3926,7 @@ function App() {
                       : 'Attach file or audio recording'
                 }
                 className="send-button composer-attachment-button"
-                disabled={transcribing || uploadingFile}
+                disabled={recording || transcribing || uploadingFile}
                 onClick={() => audioInputRef.current?.click()}
                 type="button"
               >
@@ -3286,6 +3938,16 @@ function App() {
                 ) : (
                   <Paperclip size={17} />
                 )}
+              </button>
+              <button
+                aria-label="Start microphone recording"
+                className="send-button composer-record-button"
+                disabled={recording || transcribing || uploadingFile}
+                onClick={() => void startRecording()}
+                title="Record and transcribe"
+                type="button"
+              >
+                <Mic size={17} />
               </button>
               <button
                 aria-label="Insert newline"
@@ -3377,7 +4039,9 @@ function App() {
               </button>
             ) : null}
             <p className="composer-hint">
-              {transcribing
+              {recording
+                ? `Recording ${recordingDuration(recordingSeconds)}…`
+                : transcribing
                 ? 'Transcribing audio…'
                 : uploadingFile
                   ? 'Uploading file…'
@@ -3468,6 +4132,27 @@ function App() {
         open={renameOpen}
         session={selected}
       />
+      {workspaceOpen && selected ? (
+        <WorkspaceDialog
+          bookmarks={bookmarks}
+          initialPath={workspaceInitialPath}
+          onBookmark={bookmarkWorkspaceFile}
+          onClose={() => {
+            setWorkspaceOpen(false)
+            setWorkspaceInitialPath(undefined)
+          }}
+          onInsert={insertWorkspaceFile}
+          session={selected}
+        />
+      ) : null}
+      {knowledgeOpen ? (
+        <KnowledgeDialog
+          bookmarks={bookmarks}
+          onClose={() => setKnowledgeOpen(false)}
+          onDelete={removeBookmark}
+          onOpen={(bookmark) => void openBookmark(bookmark)}
+        />
+      ) : null}
     </div>
   )
 }

@@ -200,3 +200,52 @@ export interface DirectoryListing {
     path: string
   }>
 }
+
+export type WorkspaceEntryKind = 'directory' | 'markdown' | 'pdf' | 'file'
+
+export interface WorkspaceEntry {
+  name: string
+  path: string
+  kind: WorkspaceEntryKind
+  size?: number
+}
+
+export interface WorkspaceListing {
+  path: string
+  parent?: string
+  entries: WorkspaceEntry[]
+}
+
+export interface WorkspaceFile {
+  name: string
+  path: string
+  kind: Exclude<WorkspaceEntryKind, 'directory'>
+  mimeType: string
+  size: number
+  content?: string
+  base64?: string
+}
+
+export interface WorkspaceSearchResult {
+  name: string
+  path: string
+  kind: Exclude<WorkspaceEntryKind, 'directory'>
+  line?: number
+  snippet?: string
+}
+
+export interface WorkspaceSearchResponse {
+  results: WorkspaceSearchResult[]
+  truncated: boolean
+}
+
+export interface KnowledgeBookmark {
+  id: string
+  computerId: string
+  computerName: string
+  sessionId: string
+  sessionTitle: string
+  path: string
+  name: string
+  createdAt: string
+}

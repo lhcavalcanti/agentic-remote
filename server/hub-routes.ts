@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { HubEvent } from '../shared/contracts.js'
 import { ComputerManager } from './computer-manager.js'
+import { KnowledgeStore } from './knowledge-store.js'
 
 const addComputerSchema = z.object({
   baseUrl: z.string().trim().url().max(2048),
@@ -60,6 +61,18 @@ const configureRuntimeSchema = z.object({
 const directoryQuerySchema = z.object({
   path: z.string().trim().max(4096).optional(),
 })
+const workspaceFileQuerySchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+})
+const workspaceSearchQuerySchema = z.object({
+  query: z.string().trim().min(2).max(200),
+})
+const bookmarkSchema = z.object({
+  computerId: z.string().trim().min(1).max(200),
+  sessionId: z.string().trim().min(1).max(200),
+  path: z.string().trim().min(1).max(4096),
+  name: z.string().trim().min(1).max(500),
+})
 
 interface SessionParams {
   computerId: string
@@ -69,6 +82,7 @@ interface SessionParams {
 export async function registerHubRoutes(
   app: FastifyInstance,
   manager: ComputerManager,
+  knowledge: KnowledgeStore,
 ): Promise<void> {
   app.get('/api/health', async () => ({ ok: true }))
 
@@ -98,6 +112,31 @@ export async function registerHubRoutes(
     sessions: await manager.listHistory(),
   }))
 
+  app.get('/api/knowledge', async () => ({
+    bookmarks: knowledge.list(),
+  }))
+
+  app.post('/api/knowledge', async (request, reply) => {
+    const input = bookmarkSchema.parse(request.body)
+    const session = await manager.getSession(input.computerId, input.sessionId)
+    const bookmark = await knowledge.add({
+      ...input,
+      computerName: session.computerName,
+      sessionTitle: session.title,
+    })
+    return reply.code(201).send({ bookmark })
+  })
+
+  app.delete<{ Params: { bookmarkId: string } }>(
+    '/api/knowledge/:bookmarkId',
+    async (request, reply) => {
+      if (!(await knowledge.remove(request.params.bookmarkId))) {
+        return reply.code(404).send({ error: 'Bookmark not found' })
+      }
+      return reply.code(204).send()
+    },
+  )
+
   app.get<{
     Params: { computerId: string }
     Querystring: { path?: string }
@@ -117,6 +156,51 @@ export async function registerHubRoutes(
         request.params.sessionId,
       ),
     }),
+  )
+
+  app.get<{
+    Params: SessionParams
+    Querystring: { path?: string }
+  }>(
+    '/api/computers/:computerId/sessions/:sessionId/workspace',
+    async (request) => {
+      const query = directoryQuerySchema.parse(request.query)
+      return manager.listWorkspace(
+        request.params.computerId,
+        request.params.sessionId,
+        query.path,
+      )
+    },
+  )
+
+  app.get<{
+    Params: SessionParams
+    Querystring: { path: string }
+  }>(
+    '/api/computers/:computerId/sessions/:sessionId/workspace/file',
+    async (request) => {
+      const query = workspaceFileQuerySchema.parse(request.query)
+      return manager.readWorkspaceFile(
+        request.params.computerId,
+        request.params.sessionId,
+        query.path,
+      )
+    },
+  )
+
+  app.get<{
+    Params: SessionParams
+    Querystring: { query: string }
+  }>(
+    '/api/computers/:computerId/sessions/:sessionId/workspace/search',
+    async (request) => {
+      const query = workspaceSearchQuerySchema.parse(request.query)
+      return manager.searchWorkspace(
+        request.params.computerId,
+        request.params.sessionId,
+        query.query,
+      )
+    },
   )
 
   app.get<{ Params: SessionParams }>(

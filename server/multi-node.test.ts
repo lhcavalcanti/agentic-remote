@@ -16,6 +16,9 @@ import type {
   UserInputReplyInput,
   RuntimeOptions,
   SessionFileUpload,
+  WorkspaceFile,
+  WorkspaceListing,
+  WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import type { SessionService } from './session-service.js'
@@ -60,6 +63,49 @@ class FakeSessionService extends EventEmitter implements SessionService {
         path === '~'
           ? [{ name: 'src', path: '~/src' }]
           : [],
+    }
+  }
+
+  async listWorkspace(
+    _sessionId: string,
+    path = '.',
+  ): Promise<WorkspaceListing> {
+    return {
+      path,
+      entries: [
+        { name: 'README.md', path: 'README.md', kind: 'markdown', size: 12 },
+      ],
+    }
+  }
+
+  async readWorkspaceFile(
+    _sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFile> {
+    return {
+      name: path,
+      path,
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 12,
+      content: '# Project',
+    }
+  }
+
+  async searchWorkspace(
+    _sessionId: string,
+    query: string,
+  ): Promise<WorkspaceSearchResponse> {
+    return {
+      results: [
+        {
+          name: 'README.md',
+          path: 'README.md',
+          kind: 'markdown',
+          snippet: query,
+        },
+      ],
+      truncated: false,
     }
   }
 
@@ -468,6 +514,64 @@ describe('multi-node hub', () => {
         path: '~',
         directories: [{ name: 'src', path: '~/src' }],
       })
+
+      const workspace = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/workspace?path=.`,
+      })
+      expect(workspace.statusCode, workspace.body).toBe(200)
+      expect(workspace.json()).toMatchObject({
+        path: '.',
+        entries: [{ name: 'README.md', kind: 'markdown' }],
+      })
+
+      const workspaceFile = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/workspace/file?path=README.md`,
+      })
+      expect(workspaceFile.statusCode, workspaceFile.body).toBe(200)
+      expect(workspaceFile.json()).toMatchObject({
+        path: 'README.md',
+        content: '# Project',
+      })
+
+      const workspaceSearch = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/workspace/search?query=Project`,
+      })
+      expect(workspaceSearch.statusCode, workspaceSearch.body).toBe(200)
+      expect(workspaceSearch.json()).toMatchObject({
+        results: [{ path: 'README.md', snippet: 'Project' }],
+      })
+
+      const savedKnowledge = await hub.app.inject({
+        method: 'POST',
+        url: '/api/knowledge',
+        payload: {
+          computerId: remoteComputerId,
+          sessionId: 'remote-session',
+          path: 'README.md',
+          name: 'README.md',
+        },
+      })
+      expect(savedKnowledge.statusCode, savedKnowledge.body).toBe(201)
+      expect(savedKnowledge.json().bookmark).toMatchObject({
+        computerId: remoteComputerId,
+        computerName: 'homelab-prod',
+        sessionId: 'remote-session',
+        path: 'README.md',
+      })
+      const bookmarkId = savedKnowledge.json().bookmark.id
+      const knowledge = await hub.app.inject({
+        method: 'GET',
+        url: '/api/knowledge',
+      })
+      expect(knowledge.json().bookmarks).toHaveLength(1)
+      const removedKnowledge = await hub.app.inject({
+        method: 'DELETE',
+        url: `/api/knowledge/${bookmarkId}`,
+      })
+      expect(removedKnowledge.statusCode).toBe(204)
 
       const sessions = await hub.app.inject({
         method: 'GET',

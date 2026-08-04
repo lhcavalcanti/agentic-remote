@@ -16,6 +16,9 @@ import type {
   SessionFileUpload,
   SlashCommand,
   UserInputReplyInput,
+  WorkspaceFile,
+  WorkspaceListing,
+  WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 
@@ -74,6 +77,35 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   async listDirectories(path = '~'): Promise<DirectoryListing> {
     return this.request<DirectoryListing>(
       `/node-api/directories?path=${encodeURIComponent(path)}`,
+    )
+  }
+
+  async listWorkspace(
+    sessionId: string,
+    path = '.',
+  ): Promise<WorkspaceListing> {
+    return this.request<WorkspaceListing>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/workspace?path=${encodeURIComponent(path)}`,
+    )
+  }
+
+  async readWorkspaceFile(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFile> {
+    return this.request<WorkspaceFile>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/workspace/file?path=${encodeURIComponent(path)}`,
+    )
+  }
+
+  async searchWorkspace(
+    sessionId: string,
+    query: string,
+  ): Promise<WorkspaceSearchResponse> {
+    return this.request<WorkspaceSearchResponse>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/workspace/search?query=${encodeURIComponent(query)}`,
+      {},
+      30_000,
     )
   }
 

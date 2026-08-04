@@ -18,6 +18,9 @@ import type {
   ServerEvent,
   SessionDetail,
   SlashCommand,
+  WorkspaceFile,
+  WorkspaceListing,
+  WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import {
   ComputerRegistry,
@@ -179,6 +182,39 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return computerId === this.identity.info.id
       ? this.localService.listDirectories(path)
       : this.requireClient(computerId).listDirectories(path)
+  }
+
+  async listWorkspace(
+    computerId: string,
+    sessionId: string,
+    path?: string,
+  ): Promise<WorkspaceListing> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.listWorkspace(sessionId, path)
+      : this.requireClient(computerId).listWorkspace(sessionId, path)
+  }
+
+  async readWorkspaceFile(
+    computerId: string,
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFile> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.readWorkspaceFile(sessionId, path)
+      : this.requireClient(computerId).readWorkspaceFile(sessionId, path)
+  }
+
+  async searchWorkspace(
+    computerId: string,
+    sessionId: string,
+    query: string,
+  ): Promise<WorkspaceSearchResponse> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.searchWorkspace(sessionId, query)
+      : this.requireClient(computerId).searchWorkspace(sessionId, query)
   }
 
   async getSession(computerId: string, sessionId: string): Promise<ManagedSession> {

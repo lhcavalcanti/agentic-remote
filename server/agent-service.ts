@@ -32,6 +32,9 @@ import type {
   RuntimeOptions,
   SessionStatus,
   SlashCommand,
+  WorkspaceFile,
+  WorkspaceListing,
+  WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import { SessionStore, type DiscoveredSession } from './session-store.js'
 import {
@@ -45,6 +48,11 @@ import {
   sessionWorkspaceVersion,
 } from './event-log.js'
 import { listHomeDirectories } from './directory-browser.js'
+import {
+  listWorkspace,
+  readWorkspaceFile,
+  searchWorkspace,
+} from './workspace-browser.js'
 import {
   TmuxTerminalSessionController,
   type TerminalSessionController,
@@ -835,6 +843,41 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   listDirectories(path?: string) {
     return listHomeDirectories(path)
+  }
+
+  listWorkspace(
+    sessionId: string,
+    requestedPath?: string,
+  ): Promise<WorkspaceListing> {
+    return listWorkspace(
+      this.requireWorkspaceRoot(sessionId),
+      requestedPath,
+    )
+  }
+
+  readWorkspaceFile(
+    sessionId: string,
+    requestedPath: string,
+  ): Promise<WorkspaceFile> {
+    return readWorkspaceFile(
+      this.requireWorkspaceRoot(sessionId),
+      requestedPath,
+    )
+  }
+
+  searchWorkspace(
+    sessionId: string,
+    query: string,
+  ): Promise<WorkspaceSearchResponse> {
+    return searchWorkspace(this.requireWorkspaceRoot(sessionId), query)
+  }
+
+  private requireWorkspaceRoot(sessionId: string): string {
+    const session = this.store.get(sessionId)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    return session.cwd
   }
 
   private async loadModelPromptLimits(): Promise<void> {

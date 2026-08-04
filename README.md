@@ -17,6 +17,8 @@ copying projects or creating detached sessions.
 - Answer `ask_user` questions and terminal permission prompts from the browser.
 - Follow running tools and retain completed tool and agent-launch history.
 - Configure model, reasoning effort, context tier, and status-line fields.
+- Record microphone audio directly into a private local transcription.
+- Browse session files with Markdown, PDF, search, and saved Knowledge views.
 - Install as an iPhone/iPad PWA with push notifications and in-app updates.
 - Deploy immutable releases with systemd, rollback, and automatic restart.
 
@@ -228,8 +230,13 @@ paths into unrelated sessions.
 
 ## Audio transcription
 
-The same paperclip transcribes audio instead of storing it as an attachment.
-You can also drop a file onto the composer on desktop. The development hub
+Use the microphone button to record directly in the installed app. **Cancel**
+discards the browser-memory recording; **Stop & transcribe** sends it to the
+same private transcription service and appends only the resulting text to the
+draft. The app does not save a phone-side recording.
+
+The paperclip also transcribes selected audio instead of storing it as an
+attachment. You can drop a file onto the composer on desktop. The development hub
 accepts AAC, FLAC, M4A,
 MP3, MP4, OGG, WAV, and WebM files up to 25 MiB and 15 minutes. It converts the
 recording with the packaged FFmpeg runtime and transcribes it with a local
@@ -240,6 +247,24 @@ Only the hub receives audio. Temporary source and converted files use
 user-private permissions and are deleted after every successful or failed job.
 Remote computers receive only text after the user presses Send. One recording
 is processed at a time to keep Copilot sessions responsive.
+
+## Session files and Knowledge
+
+Use the folder button in a session header to browse that session's working
+directory without granting write access. Hidden files are omitted, symlinks
+cannot escape the session directory, text previews are limited to 2 MiB, and
+PDF previews are limited to 25 MiB. Remote-session browsing and search execute
+on the owning computer through its authenticated node API.
+
+Markdown files support rendered and raw views. PDF files render locally in the
+browser with PDF.js. Search checks filenames and bounded text content while
+skipping generated dependency/build directories. **Insert path** adds the
+absolute path to the draft; **Ask agent about file** adds a review prompt, but
+neither action sends automatically.
+
+Save useful files to **Sessions → Knowledge**. Bookmarks are stored privately
+on the hub and retain the computer, session, and relative file path. File
+content remains on the owning computer and is loaded only when opened.
 
 The hub requires `whisper-cli` and `ggml-small.bin`. This homelab provisions
 their pinned releases with

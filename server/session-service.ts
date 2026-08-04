@@ -3,6 +3,9 @@ import type {
   ConfigureRuntimeInput,
   RuntimeOptions,
   SessionFileUpload,
+  WorkspaceFile,
+  WorkspaceListing,
+  WorkspaceSearchResponse,
   UserInputReplyInput,
   RemovedQueuedPrompt,
   ServerEvent,
@@ -66,4 +69,16 @@ export interface SessionService {
   on(event: 'event', listener: (event: ServerEvent) => void): unknown
   off(event: 'event', listener: (event: ServerEvent) => void): unknown
   listDirectories(path?: string): Promise<DirectoryListing>
+  listWorkspace(
+    sessionId: string,
+    path?: string,
+  ): Promise<WorkspaceListing>
+  readWorkspaceFile(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFile>
+  searchWorkspace(
+    sessionId: string,
+    query: string,
+  ): Promise<WorkspaceSearchResponse>
 }

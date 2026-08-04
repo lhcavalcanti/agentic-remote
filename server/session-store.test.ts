@@ -121,6 +121,48 @@ describe('SessionStore', () => {
     ])
   })
 
+  it('moves a live task completion after its tool activity', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-1',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'running',
+      messages: [],
+    })
+    await store.addMessage('session-1', {
+      id: 'assistant',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-07-22T00:00:01.000Z',
+      streaming: true,
+    })
+    await store.startToolActivity(
+      'session-1',
+      'task',
+      'Task Complete',
+      '2026-07-22T00:00:02.000Z',
+    )
+    await store.finishTaskCompletion(
+      'session-1',
+      'task',
+      '**Done.**',
+      '2026-07-22T00:00:03.000Z',
+      'assistant',
+    )
+
+    expect(store.get('session-1')?.messages).toEqual([
+      {
+        id: 'assistant',
+        role: 'assistant',
+        content: '**Done.**',
+        createdAt: '2026-07-22T00:00:03.000Z',
+        streaming: false,
+      },
+    ])
+  })
+
   it('keeps pending terminal requests waiting during transcript sync', async () => {
     const { store } = await createStore()
     await store.create({

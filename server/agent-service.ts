@@ -217,8 +217,9 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
         const resultContent = stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim()
-        const taskCompletionSummary =
-          resultContent || taskCompletionSummaries.get(toolCallId)
+        const taskCompletionSummary = taskCompletionSummaries.has(toolCallId)
+          ? resultContent || taskCompletionSummaries.get(toolCallId)
+          : undefined
         if (event.data.success && taskCompletionSummary) {
           finishRunningActivities()
           message.role = 'assistant'
@@ -702,6 +703,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly eventLogVersions = new Map<string, string>()
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
+  private readonly liveTaskCompletionSummaries = new Map<string, string>()
   private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
   private readonly runtimeModels = new Map<string, RuntimeModelOption>()
   private readonly externalCommandCache = new Map<
@@ -2282,6 +2284,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
+      const toolName = event.data.toolName
+        .toLowerCase()
+        .replaceAll('-', '_')
+      if (toolName === 'task_complete') {
+        this.liveTaskCompletionSummaries.set(
+          `${sessionId}:${event.data.toolCallId}`,
+          stringValue(recordValue(event.data.arguments).summary)?.trim() || '',
+        )
+      }
       void this.store
         .startToolActivity(
           sessionId,
@@ -2298,12 +2309,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
-      void this.store
-        .finishToolActivity(
-          sessionId,
-          event.data.toolCallId,
-          event.data.success,
-        )
+      const completionKey = `${sessionId}:${event.data.toolCallId}`
+      const isTaskCompletion =
+        this.liveTaskCompletionSummaries.has(completionKey)
+      const fallbackSummary =
+        this.liveTaskCompletionSummaries.get(completionKey) || ''
+      this.liveTaskCompletionSummaries.delete(completionKey)
+      const resultContent =
+        stringValue(
+          recordValue(recordValue(event.data).result).content,
+        )?.trim() || fallbackSummary
+      const update =
+        isTaskCompletion && event.data.success && resultContent
+          ? this.store.finishTaskCompletion(
+              sessionId,
+              event.data.toolCallId,
+              resultContent,
+              event.timestamp,
+              activePrompt?.assistantMessageId,
+            )
+          : this.store.finishToolActivity(
+              sessionId,
+              event.data.toolCallId,
+              event.data.success,
+            )
+      void update
         .then((stored) => this.publish(stored))
         .catch((error: unknown) => this.publishError(sessionId, error))
     }

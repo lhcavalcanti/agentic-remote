@@ -416,6 +416,42 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('keeps successful non-completion tool results as activity', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"bash-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{
+          "toolCallId":"bash-call",
+          "toolName":"bash",
+          "arguments":{"command":"pnpm test"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"bash-end",
+        "parentId":"bash-start",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"bash-call",
+          "success":true,
+          "result":{"content":"All tests passed"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:bash-call',
+        role: 'activity',
+        content: 'Bash\n$ pnpm test',
+        activityStatus: 'completed',
+      }),
+    ])
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',
@@ -1718,6 +1754,44 @@ describe('AgentService deletion', () => {
         activityStatus: 'failed',
       }),
     ])
+
+    await service.sendMessage(created.id, 'finish the task')
+    client.session.emit(
+      start('task-call', 'task_complete', {
+        summary: '**Complete.** The live result is visible.',
+      }),
+    )
+    client.session.emit(
+      JSON.parse(
+        JSON.stringify({
+          type: 'tool.execution_complete',
+          id: 'complete-task-call',
+          parentId: 'start-task-call',
+          timestamp: new Date().toISOString(),
+          data: {
+            toolCallId: 'task-call',
+            success: true,
+            result: {
+              content: '**Complete.** The live result is visible.',
+            },
+          },
+        }),
+      ) as SessionEvent,
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(created.id)?.messages.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: '**Complete.** The live result is visible.',
+        streaming: false,
+      }),
+    )
+    expect(
+      service.store
+        .get(created.id)
+        ?.messages.some((message) => message.id === 'tool:task-call'),
+    ).toBe(false)
+    client.session.resolvePrompt()
+
     client.session.emit(
       JSON.parse(`{
         "type":"session.context_changed",

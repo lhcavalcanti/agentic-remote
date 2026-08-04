@@ -458,6 +458,48 @@ export class SessionStore {
     })
   }
 
+  async finishTaskCompletion(
+    sessionId: string,
+    toolCallId: string,
+    content: string,
+    completedAt: string,
+    assistantMessageId?: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const activityId = `tool:${toolCallId}`
+      const activity = session.messages.find(
+        (message) => message.id === activityId,
+      )
+      const assistant = assistantMessageId
+        ? session.messages.find(
+            (message) => message.id === assistantMessageId,
+          )
+        : undefined
+
+      for (const message of session.messages) {
+        if (
+          message.role === 'activity' &&
+          message.activityStatus === 'running'
+        ) {
+          message.activityStatus = 'completed'
+        }
+      }
+
+      session.messages = session.messages.filter(
+        (message) => message !== activity && message !== assistant,
+      )
+      session.messages.push({
+        id: assistant?.id || activityId,
+        role: 'assistant',
+        content,
+        createdAt: completedAt,
+        streaming: false,
+      })
+      session.activity = undefined
+      session.updatedAt = completedAt
+    })
+  }
+
   streamMessage(sessionId: string, messageId: string, chunk: string): SessionDetail {
     return this.mutateInMemory(sessionId, (session) => {
       const message = session.messages.find((entry) => entry.id === messageId)

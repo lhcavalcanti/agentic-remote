@@ -210,11 +210,12 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     sessionId: string,
     query: string,
+    path?: string,
   ): Promise<WorkspaceSearchResponse> {
     this.requireComputer(computerId)
     return computerId === this.identity.info.id
-      ? this.localService.searchWorkspace(sessionId, query)
-      : this.requireClient(computerId).searchWorkspace(sessionId, query)
+      ? this.localService.searchWorkspace(sessionId, query, path)
+      : this.requireClient(computerId).searchWorkspace(sessionId, query, path)
   }
 
   async getSession(computerId: string, sessionId: string): Promise<ManagedSession> {

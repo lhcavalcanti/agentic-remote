@@ -160,9 +160,10 @@ export async function searchWorkspace(
   computerId: string,
   sessionId: string,
   query: string,
+  path = '.',
 ): Promise<WorkspaceSearchResponse> {
   return request<WorkspaceSearchResponse>(
-    `${sessionPath(computerId, sessionId)}/workspace/search?query=${encodeURIComponent(query)}`,
+    `${sessionPath(computerId, sessionId)}/workspace/search?query=${encodeURIComponent(query)}&path=${encodeURIComponent(path)}`,
   )
 }
 

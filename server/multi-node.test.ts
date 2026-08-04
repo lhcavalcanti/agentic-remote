@@ -95,6 +95,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
   async searchWorkspace(
     _sessionId: string,
     query: string,
+    _path?: string,
   ): Promise<WorkspaceSearchResponse> {
     return {
       results: [

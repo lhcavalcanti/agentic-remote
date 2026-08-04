@@ -605,6 +605,7 @@ describe('App', () => {
         computer.id,
         session.id,
         'knowledge',
+        '.',
       ),
     )
     fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))

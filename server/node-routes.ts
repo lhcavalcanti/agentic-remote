@@ -66,6 +66,7 @@ const workspaceFileQuerySchema = z.object({
 })
 const workspaceSearchQuerySchema = z.object({
   query: z.string().trim().min(2).max(200),
+  path: z.string().trim().max(4096).optional(),
 })
 
 function tokenMatches(actual: string | undefined, expected: string): boolean {
@@ -148,6 +149,7 @@ export async function registerNodeRoutes(
         return service.searchWorkspace(
           request.params.sessionId,
           query.query,
+          query.path,
         )
       })
 

@@ -868,8 +868,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   searchWorkspace(
     sessionId: string,
     query: string,
+    requestedPath?: string,
   ): Promise<WorkspaceSearchResponse> {
-    return searchWorkspace(this.requireWorkspaceRoot(sessionId), query)
+    return searchWorkspace(
+      this.requireWorkspaceRoot(sessionId),
+      query,
+      requestedPath,
+    )
   }
 
   private requireWorkspaceRoot(sessionId: string): string {

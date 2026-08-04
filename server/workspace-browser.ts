@@ -137,6 +137,7 @@ export async function readWorkspaceFile(
 export async function searchWorkspace(
   rootPath: string,
   query: string,
+  requestedPath = '.',
 ): Promise<WorkspaceSearchResponse> {
   const normalizedQuery = query.trim().toLocaleLowerCase()
   if (normalizedQuery.length < 2) {
@@ -146,6 +147,10 @@ export async function searchWorkspace(
     )
   }
   const root = await realpath(rootPath)
+  const searchRoot = await resolveWorkspacePath(root, requestedPath)
+  if (!(await stat(searchRoot)).isDirectory()) {
+    throw new WorkspaceBrowserError('Search path must be a folder', 400)
+  }
   const results: WorkspaceSearchResult[] = []
   const visitedDirectories = new Set<string>()
   let visitedFiles = 0
@@ -230,7 +235,7 @@ export async function searchWorkspace(
     }
   }
 
-  await visit(root)
+  await visit(searchRoot)
   return { results, truncated }
 }
 

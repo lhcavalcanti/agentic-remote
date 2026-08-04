@@ -101,9 +101,10 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   async searchWorkspace(
     sessionId: string,
     query: string,
+    path = '.',
   ): Promise<WorkspaceSearchResponse> {
     return this.request<WorkspaceSearchResponse>(
-      `/node-api/sessions/${encodeURIComponent(sessionId)}/workspace/search?query=${encodeURIComponent(query)}`,
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/workspace/search?query=${encodeURIComponent(query)}&path=${encodeURIComponent(path)}`,
       {},
       30_000,
     )

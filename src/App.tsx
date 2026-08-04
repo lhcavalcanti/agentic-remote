@@ -1804,6 +1804,7 @@ function WorkspaceDialog({
         session.computerId,
         session.id,
         search,
+        listing?.path,
       )
       setResults(response.results)
     } catch (caught) {

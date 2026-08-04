@@ -66,6 +66,7 @@ const workspaceFileQuerySchema = z.object({
 })
 const workspaceSearchQuerySchema = z.object({
   query: z.string().trim().min(2).max(200),
+  path: z.string().trim().max(4096).optional(),
 })
 const bookmarkSchema = z.object({
   computerId: z.string().trim().min(1).max(200),
@@ -199,6 +200,7 @@ export async function registerHubRoutes(
         request.params.computerId,
         request.params.sessionId,
         query.query,
+        query.path,
       )
     },
   )

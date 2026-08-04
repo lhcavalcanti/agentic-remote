@@ -80,5 +80,6 @@ export interface SessionService {
   searchWorkspace(
     sessionId: string,
     query: string,
+    path?: string,
   ): Promise<WorkspaceSearchResponse>
 }

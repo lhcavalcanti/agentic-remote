@@ -1765,6 +1765,7 @@ function WorkspaceDialog({
   const [results, setResults] = useState<WorkspaceSearchResult[]>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
+  const previewContentRef = useRef<HTMLDivElement>(null)
 
   const openDirectory = useCallback(async (path = '.') => {
     setLoading(true)
@@ -1822,6 +1823,10 @@ function WorkspaceDialog({
     })
   }, [initialPath, openDirectory, openFile])
 
+  useEffect(() => {
+    previewContentRef.current?.scrollTo({ top: 0 })
+  }, [file?.path])
+
   const bookmarked = file
     ? bookmarks.some(
         (bookmark) =>
@@ -1833,7 +1838,9 @@ function WorkspaceDialog({
 
   return (
     <DialogFrame
-      className="workspace-dialog"
+      className={`workspace-dialog ${
+        file ? 'workspace-dialog--previewing' : ''
+      }`}
       eyebrow={`${session.computerName} · ${shortPath(session.cwd)}`}
       onClose={onClose}
       title="Session files"
@@ -1851,7 +1858,11 @@ function WorkspaceDialog({
         </button>
       </form>
       {error ? <p className="form-error">{error}</p> : null}
-      <div className="workspace-layout">
+      <div
+        className={`workspace-layout ${
+          file ? 'workspace-layout--previewing' : ''
+        }`}
+      >
         <aside className="workspace-tree">
           <div className="workspace-tree__path">
             {results ? (
@@ -1863,7 +1874,7 @@ function WorkspaceDialog({
                 <ChevronLeft size={15} /> {listing.path}
               </button>
             ) : (
-              <span>{listing?.path || '.'}</span>
+              <span>{listing?.path === '.' ? session.cwd : listing?.path}</span>
             )}
           </div>
           {loading ? (
@@ -1921,6 +1932,14 @@ function WorkspaceDialog({
           ) : (
             <>
               <div className="workspace-preview__header">
+                <button
+                  aria-label="Back to files"
+                  className="workspace-preview__back"
+                  onClick={() => setFile(undefined)}
+                  type="button"
+                >
+                  <ChevronLeft size={16} />
+                </button>
                 <div>
                   <strong>{file.name}</strong>
                   <small>{file.path}</small>
@@ -1948,7 +1967,10 @@ function WorkspaceDialog({
                   Ask agent about file
                 </button>
               </div>
-              <div className="workspace-preview__content">
+              <div
+                className="workspace-preview__content"
+                ref={previewContentRef}
+              >
                 {file.kind === 'pdf' ? (
                   <PdfViewer file={file} />
                 ) : file.kind === 'markdown' && !raw ? (
@@ -3573,7 +3595,7 @@ function App() {
           </div>
           {selected ? (
             <button
-              aria-label="Browse session files"
+              aria-label="Browse current session folder"
               className="icon-button"
               onClick={() => {
                 setWorkspaceInitialPath(undefined)

@@ -575,12 +575,28 @@ describe('App', () => {
   it('browses and renders Markdown workspace files', async () => {
     render(<App />)
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Browse session files' }),
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
     )
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        '.',
+      ),
+    )
+    expect(screen.getByText(session.cwd)).toBeInTheDocument()
 
     fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
     expect(await screen.findByRole('heading', { name: 'Workspace guide' }))
       .toBeInTheDocument()
+    expect(document.querySelector('.workspace-dialog')).toHaveClass(
+      'workspace-dialog--previewing',
+    )
+    expect(
+      screen.getByRole('button', { name: 'Back to files' }),
+    ).toBeInTheDocument()
     expect(screen.getByText('Useful knowledge.')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Raw' }))
@@ -594,7 +610,9 @@ describe('App', () => {
   it('searches workspace files and saves knowledge bookmarks', async () => {
     render(<App />)
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Browse session files' }),
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
     )
     const search = await screen.findByLabelText('Search workspace')
     fireEvent.change(search, { target: { value: 'knowledge' } })

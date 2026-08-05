@@ -765,6 +765,10 @@ describe('App', () => {
         'Recording 0:00',
       ),
     )
+    expect(document.querySelector('.composer-actions')).not.toBeInTheDocument()
+    expect(
+      document.querySelector('.composer')?.lastElementChild,
+    ).toHaveClass('recording-panel')
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true })
 
     fireEvent.click(screen.getByRole('button', { name: /Stop & transcribe/ }))
@@ -1459,6 +1463,11 @@ describe('App', () => {
   it('supports send, newline, and queue keyboard controls', async () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
+    expect(textarea.closest('.composer-text-panel')).toBeInTheDocument()
+    expect(document.querySelector('.composer-actions')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Insert newline' }),
+    ).not.toBeInTheDocument()
     Object.defineProperty(textarea, 'scrollHeight', {
       configurable: true,
       value: 96,
@@ -1483,8 +1492,23 @@ describe('App', () => {
 
     fireEvent.change(textarea, { target: { value: 'firstsecond' } })
     ;(textarea as HTMLTextAreaElement).setSelectionRange(5, 5)
-    fireEvent.click(screen.getByRole('button', { name: 'Insert newline' }))
+    const originalMatchMedia = window.matchMedia
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: vi.fn(() => ({
+        matches: true,
+        media: '(pointer: coarse)',
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
     expect(textarea).toHaveValue('first\nsecond')
+    expect(sendMessage).not.toHaveBeenCalled()
 
     fireEvent.change(textarea, { target: { value: 'queue this' } })
     fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
@@ -1493,6 +1517,10 @@ describe('App', () => {
         content: 'queue this',
         enqueue: true,
       })
+    })
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: originalMatchMedia,
     })
   })
 

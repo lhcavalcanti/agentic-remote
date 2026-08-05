@@ -167,8 +167,10 @@ Composer shortcuts follow Copilot CLI conventions:
 
 | Action | Shortcut |
 | --- | --- |
-| Send | `Enter` |
-| Insert newline | `Shift+Enter` |
+| Send on desktop | `Enter` |
+| Insert newline on desktop | `Shift+Enter` |
+| Insert newline on phone | Keyboard Return/Enter |
+| Send on phone | Send button |
 | Queue behind the active turn | `Ctrl+Enter` or `Cmd+Enter` |
 | Open command completion | Type `/` |
 
@@ -234,6 +236,9 @@ Use the microphone button to record directly in the installed app. **Cancel**
 discards the browser-memory recording; **Stop & transcribe** sends it to the
 same private transcription service and appends only the resulting text to the
 draft. The app does not save a phone-side recording.
+The text field and action toolbar use separate panels. While recording, the
+bottom action toolbar becomes a compact **Cancel · timer · Stop & transcribe**
+strip without covering the text field.
 
 The paperclip also transcribes selected audio instead of storing it as an
 attachment. You can drop a file onto the composer on desktop. The development hub

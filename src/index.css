@@ -1340,22 +1340,25 @@ button {
 }
 
 .composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px 40px 40px;
-  gap: 10px;
-  align-items: end;
-  padding: 9px 9px 9px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.composer-text-panel,
+.composer-actions,
+.recording-panel {
   border: 1px solid var(--border-strong);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--panel-raised);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
 }
 
-.composer--running {
-  grid-template-columns: minmax(0, 1fr) 40px 40px 40px 40px 40px;
+.composer-text-panel {
+  padding: 7px 14px;
 }
 
-.composer:focus-within {
+.composer-text-panel:focus-within {
   border-color: #59634c;
   box-shadow: 0 0 0 3px rgba(184, 243, 107, 0.055);
 }
@@ -1364,7 +1367,7 @@ button {
   width: 100%;
   max-height: 180px;
   min-height: 38px;
-  padding: 9px 0 7px;
+  padding: 7px 0;
   resize: none;
   color: var(--text);
   border: 0;
@@ -1376,6 +1379,18 @@ button {
 
 .composer textarea::placeholder {
   color: #73776d;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.composer-actions__spacer {
+  min-width: 8px;
+  flex: 1;
 }
 
 .send-button {
@@ -1435,14 +1450,13 @@ button {
 }
 
 .recording-panel {
-  display: flex;
   align-items: center;
+  display: flex;
   gap: 10px;
-  width: min(100%, 800px);
-  margin: 0 auto 8px;
-  padding: 8px 10px;
-  border: 1px solid rgba(218, 90, 90, 0.35);
-  border-radius: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 7px 8px;
+  border-color: rgba(218, 90, 90, 0.35);
   background: rgba(98, 32, 32, 0.28);
 }
 
@@ -1450,7 +1464,8 @@ button {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-right: auto;
+  flex: 1;
+  justify-content: center;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -1483,13 +1498,6 @@ button {
   color: #fff;
   border: 1px solid #b94b4b;
   background: #963d3d;
-}
-
-.composer-newline-button {
-  display: none;
-  color: var(--muted-strong);
-  border: 1px solid var(--border-strong);
-  background: transparent;
 }
 
 .composer-hint {
@@ -2318,17 +2326,10 @@ button {
     font-size: 9px;
   }
 
-  .composer {
-    grid-template-columns: minmax(0, 1fr) 40px 40px 40px 40px;
-    border-radius: 15px;
-  }
-
-  .composer--running {
-    grid-template-columns: minmax(0, 1fr) 40px 40px 40px 40px 40px 40px;
-  }
-
-  .composer-newline-button {
-    display: grid;
+  .composer-text-panel,
+  .composer-actions,
+  .recording-panel {
+    border-radius: 13px;
   }
 
   .composer textarea {

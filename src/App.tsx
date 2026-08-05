@@ -43,7 +43,6 @@ import {
   CheckCircle2,
   ChevronLeft,
   Command,
-  CornerDownLeft,
   Eraser,
   Folder,
   FolderOpen,
@@ -151,6 +150,13 @@ function isAudioFile(file: File): boolean {
 function recordingDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
+}
+
+function phoneEnterCreatesNewline(): boolean {
+  return (
+    window.matchMedia?.('(pointer: coarse)').matches ||
+    window.innerWidth <= 960
+  )
 }
 
 function computerTone(computerId: string): number {
@@ -3424,9 +3430,22 @@ function App() {
       selectCommand(selectedSuggestion)
       return
     }
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key !== 'Enter') {
+      return
+    }
+    if (event.metaKey || event.ctrlKey) {
       event.preventDefault()
-      void submitMessage(event.metaKey || event.ctrlKey)
+      void submitMessage(true)
+      return
+    }
+    if (phoneEnterCreatesNewline()) {
+      event.preventDefault()
+      insertComposerNewline()
+      return
+    }
+    if (!event.shiftKey) {
+      event.preventDefault()
+      void submitMessage()
     }
   }
 
@@ -4026,29 +4045,6 @@ function App() {
                 ))}
               </div>
             ) : null}
-            {recording ? (
-              <div className="recording-panel" role="status">
-                <span className="recording-panel__status">
-                  <i />
-                  Recording {recordingDuration(recordingSeconds)}
-                </span>
-                <button
-                  className="recording-panel__cancel"
-                  onClick={() => stopRecording(true)}
-                  type="button"
-                >
-                  Cancel
-                </button>
-                <button
-                  className="recording-panel__stop"
-                  onClick={() => stopRecording()}
-                  type="button"
-                >
-                  <Square fill="currentColor" size={12} />
-                  Stop & transcribe
-                </button>
-              </div>
-            ) : null}
             <div
               className={`composer ${
                 selected.status === 'running' ? 'composer--running' : ''
@@ -4060,16 +4056,18 @@ function App() {
               }}
               onDrop={audioDropped}
             >
-              <textarea
-                aria-label="Message"
-                disabled={sending}
-                onChange={(event) => setComposer(event.target.value)}
-                onKeyDown={composerKeyDown}
-                placeholder={`Message agent on ${selected.computerName}…`}
-                ref={composerRef}
-                rows={1}
-                value={composer}
-              />
+              <div className="composer-text-panel">
+                <textarea
+                  aria-label="Message"
+                  disabled={sending}
+                  onChange={(event) => setComposer(event.target.value)}
+                  onKeyDown={composerKeyDown}
+                  placeholder={`Message agent on ${selected.computerName}…`}
+                  ref={composerRef}
+                  rows={1}
+                  value={composer}
+                />
+              </div>
               <input
                 accept="audio/*,.aac,.csv,.doc,.docx,.flac,.gif,.jpeg,.jpg,.json,.m4a,.md,.mp3,.mp4,.ofx,.ogg,.pdf,.png,.qfx,.tsv,.txt,.wav,.webm,.webp,.xls,.xlsx,.yaml,.yml"
                 aria-label="File attachment"
@@ -4079,80 +4077,99 @@ function App() {
                 multiple
                 type="file"
               />
-              <button
-                aria-label={
-                  transcribing
-                    ? 'Transcribing audio'
-                    : uploadingFile
-                      ? 'Uploading file'
-                      : 'Attach file or audio recording'
-                }
-                className="send-button composer-attachment-button"
-                disabled={recording || transcribing || uploadingFile}
-                onClick={() => audioInputRef.current?.click()}
-                type="button"
-              >
-                {transcribing || uploadingFile ? (
-                  <LoaderCircle
-                    className="activity-message__spinner"
-                    size={17}
-                  />
-                ) : (
-                  <Paperclip size={17} />
-                )}
-              </button>
-              <button
-                aria-label="Start microphone recording"
-                className="send-button composer-record-button"
-                disabled={recording || transcribing || uploadingFile}
-                onClick={() => void startRecording()}
-                title="Record and transcribe"
-                type="button"
-              >
-                <Mic size={17} />
-              </button>
-              <button
-                aria-label="Insert newline"
-                className="send-button composer-newline-button"
-                onClick={insertComposerNewline}
-                type="button"
-              >
-                <CornerDownLeft size={17} />
-              </button>
-              {selected.status === 'running' ? (
-                <button
-                  aria-label="Queue message"
-                  className="send-button send-button--queue"
-                  disabled={!composer.trim() || sending}
-                  onClick={() => void submitMessage(true)}
-                  title="Queue behind the current response"
-                  type="button"
-                >
-                  <ListPlus size={17} />
-                </button>
-              ) : null}
-              <button
-                aria-label="Send message"
-                className="send-button"
-                disabled={!composer.trim() || sending}
-                onClick={() => void submitMessage()}
-                title="Send immediately"
-                type="button"
-              >
-                <ArrowUp size={19} strokeWidth={2.4} />
-              </button>
-              {selected.status === 'running' ? (
-                <button
-                  aria-label="Stop response"
-                  className="send-button send-button--stop"
-                  onClick={() =>
-                    void cancelSession(selected.computerId, selected.id)
-                  }
-                  type="button"
-                >
-                  <Square fill="currentColor" size={15} />
-                </button>
-              ) : null}
+              {recording ? (
+                <div className="recording-panel" role="status">
+                  <button
+                    className="recording-panel__cancel"
+                    onClick={() => stopRecording(true)}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <span className="recording-panel__status">
+                    <i />
+                    Recording {recordingDuration(recordingSeconds)}
+                  </span>
+                  <button
+                    className="recording-panel__stop"
+                    onClick={() => stopRecording()}
+                    type="button"
+                  >
+                    <Square fill="currentColor" size={12} />
+                    Stop & transcribe
+                  </button>
+                </div>
+              ) : (
+                <div className="composer-actions">
+                  <button
+                    aria-label={
+                      transcribing
+                        ? 'Transcribing audio'
+                        : uploadingFile
+                          ? 'Uploading file'
+                          : 'Attach file or audio recording'
+                    }
+                    className="send-button composer-attachment-button"
+                    disabled={transcribing || uploadingFile}
+                    onClick={() => audioInputRef.current?.click()}
+                    type="button"
+                  >
+                    {transcribing || uploadingFile ? (
+                      <LoaderCircle
+                        className="activity-message__spinner"
+                        size={17}
+                      />
+                    ) : (
+                      <Paperclip size={17} />
+                    )}
+                  </button>
+                  <button
+                    aria-label="Start microphone recording"
+                    className="send-button composer-record-button"
+                    disabled={transcribing || uploadingFile}
+                    onClick={() => void startRecording()}
+                    title="Record and transcribe"
+                    type="button"
+                  >
+                    <Mic size={17} />
+                  </button>
+                  <span className="composer-actions__spacer" />
+                  {selected.status === 'running' ? (
+                    <button
+                      aria-label="Queue message"
+                      className="send-button send-button--queue"
+                      disabled={!composer.trim() || sending}
+                      onClick={() => void submitMessage(true)}
+                      title="Queue behind the current response"
+                      type="button"
+                    >
+                      <ListPlus size={17} />
+                    </button>
+                  ) : null}
+                  <button
+                    aria-label="Send message"
+                    className="send-button"
+                    disabled={!composer.trim() || sending}
+                    onClick={() => void submitMessage()}
+                    title="Send immediately"
+                    type="button"
+                  >
+                    <ArrowUp size={19} strokeWidth={2.4} />
+                  </button>
+                  {selected.status === 'running' ? (
+                    <button
+                      aria-label="Stop response"
+                      className="send-button send-button--stop"
+                      onClick={() =>
+                        void cancelSession(selected.computerId, selected.id)
+                      }
+                      type="button"
+                    >
+                      <Square fill="currentColor" size={15} />
+                    </button>
+                  ) : null}
+                </div>
+              )}
             </div>
             {((statusline.model && selected.runtime?.model) ||
               (statusline.effort && selected.runtime?.reasoningEffort) ||

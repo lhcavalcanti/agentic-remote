@@ -47,6 +47,8 @@ local sessions   authenticated node API
 
 See [Multi-computer architecture](docs/architecture.md) for routing,
 authentication, ownership, and failure behavior.
+See [Application specification](docs/app-spec.md) for the durable product,
+mobile UX, privacy, lifecycle, and release contracts.
 
 ## Requirements
 

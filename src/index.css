@@ -57,6 +57,7 @@ button {
 }
 
 .app-shell {
+  --app-safe-area-top: env(safe-area-inset-top, 0px);
   display: grid;
   position: relative;
   grid-template-columns: 286px minmax(0, 1fr);
@@ -2126,7 +2127,7 @@ button {
   }
 
   .dialog-backdrop {
-    padding: max(8px, env(safe-area-inset-top)) 0 0;
+    padding: max(8px, var(--app-safe-area-top)) 0 0;
     align-items: end;
     justify-items: stretch;
   }
@@ -2212,8 +2213,8 @@ button {
   }
 
   .brand {
-    height: calc(74px + env(safe-area-inset-top));
-    padding-top: env(safe-area-inset-top);
+    height: calc(74px + var(--app-safe-area-top));
+    padding-top: var(--app-safe-area-top);
   }
 
   .sidebar--open {
@@ -2242,10 +2243,10 @@ button {
   }
 
   .conversation-header {
-    height: calc(58px + env(safe-area-inset-top));
-    min-height: calc(58px + env(safe-area-inset-top));
+    height: calc(58px + var(--app-safe-area-top));
+    min-height: calc(58px + var(--app-safe-area-top));
     gap: 2px;
-    padding: env(safe-area-inset-top)
+    padding: var(--app-safe-area-top)
       max(6px, env(safe-area-inset-right)) 0
       max(6px, env(safe-area-inset-left));
   }
@@ -2363,6 +2364,14 @@ button {
     bottom: max(8px, env(safe-area-inset-bottom));
     left: max(8px, env(safe-area-inset-left));
     max-width: none;
+  }
+}
+
+@media (display-mode: standalone) and (max-width: 500px) {
+  @supports (-webkit-touch-callout: none) {
+    .app-shell {
+      --app-safe-area-top: max(env(safe-area-inset-top, 0px), 59px);
+    }
   }
 }
 

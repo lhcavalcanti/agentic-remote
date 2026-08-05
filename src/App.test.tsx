@@ -1267,6 +1267,12 @@ describe('App', () => {
   it('scrolls a newly received question into view', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
     const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
     scrollIntoView.mockClear()
 

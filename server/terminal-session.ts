@@ -8,6 +8,7 @@ import type {
   ConfigureRuntimeInput,
   PendingPermission,
   PendingUserInput,
+  SessionRuntimeInfo,
 } from '../shared/contracts.js'
 
 const execFileAsync = promisify(execFile)
@@ -18,6 +19,7 @@ export interface TerminalSessionController {
     cwd: string,
     title: string,
     allowAllPermissions?: boolean,
+    runtime?: SessionRuntimeInfo,
   ): Promise<{ sessionName: string; windowId: string }>
   rename?(sessionId: string, title: string): Promise<boolean>
   configure?(
@@ -66,9 +68,16 @@ export class TmuxTerminalSessionController
     cwd: string,
     title: string,
     allowAllPermissions = true,
+    runtime?: SessionRuntimeInfo,
   ): Promise<{ sessionName: string; windowId: string }> {
     const creation = this.creationQueue.then(() =>
-      this.createWindow(sessionId, cwd, title, allowAllPermissions),
+      this.createWindow(
+        sessionId,
+        cwd,
+        title,
+        allowAllPermissions,
+        runtime,
+      ),
     )
     this.creationQueue = creation.then(
       () => undefined,
@@ -482,6 +491,7 @@ export class TmuxTerminalSessionController
     cwd: string,
     title: string,
     allowAllPermissions: boolean,
+    runtime?: SessionRuntimeInfo,
   ): Promise<{ sessionName: string; windowId: string }> {
     const sessions = await listTmuxSessions()
     const configured = process.env.AGENTIC_REMOTE_TMUX_SESSION?.trim()
@@ -502,6 +512,12 @@ export class TmuxTerminalSessionController
       ...(allowAllPermissions ? ['--yolo'] : []),
       '--session-id',
       sessionId,
+      ...(runtime?.model ? ['--model', runtime.model] : []),
+      ...(runtime?.reasoningEffort
+        ? ['--effort', runtime.reasoningEffort]
+        : []),
+      ...(runtime?.contextTier ? ['--context', runtime.contextTier] : []),
+      ...(runtime?.mode ? ['--mode', runtime.mode] : []),
     ]
     const args = selected
       ? [

@@ -84,6 +84,24 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Delete MUST close the owning Copilot process/session after confirmation and
   remove Agentic Remote state and session uploads.
 
+### 3.4 Host reboot and power-loss recovery
+
+- Each owning computer MUST persist whether an open session is SDK- or
+  tmux-backed.
+- Actively discovered tmux Copilot sessions MUST be migrated into the persisted
+  terminal recovery set.
+- After host boot, missing previously open terminal sessions MUST be recreated
+  in tmux with the same Copilot session ID, cwd, title, allow-all setting, model,
+  effort, context tier, and agent mode.
+- Existing live tmux sessions MUST be detected and MUST NOT be duplicated.
+- SDK sessions MUST remain visible and MAY resume lazily when opened.
+- Closed or deleted sessions MUST NOT be recreated.
+- One failed terminal recovery MUST surface an error for that session and MUST
+  NOT prevent the service or other sessions from recovering.
+- Recovery state MUST remain on persistent local storage on the owning
+  computer. NFS MUST NOT be required for repositories, credentials, or Copilot
+  session state.
+
 ## 4. Conversation timeline
 
 - User messages, assistant messages, notices, and tool activity MUST remain in
@@ -332,6 +350,7 @@ Persistent state MUST NOT include:
 Every material release SHOULD preserve:
 
 - All computers visible and paired node online
+- Previously open tmux sessions restored after a simulated host reboot
 - Active tmux and SDK session discovery
 - Immediate Send, editable Queue, and Stop semantics
 - Phone Enter newline and desktop Enter send

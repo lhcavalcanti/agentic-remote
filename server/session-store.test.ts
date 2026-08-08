@@ -47,6 +47,68 @@ describe('SessionStore', () => {
     expect(contents.sessions['session-1']).toBeDefined()
   })
 
+  it('persists terminal ownership for boot recovery', async () => {
+    const { directory, store } = await createStore()
+    await store.create(
+      {
+        id: 'terminal-session',
+        cwd: '/tmp/terminal-project',
+        title: 'Terminal project',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.create(
+      {
+        id: 'sdk-session',
+        cwd: '/tmp/sdk-project',
+        title: 'SDK project',
+        updatedAt: '2026-07-22T00:00:01.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+
+    const restored = new SessionStore(directory)
+    await restored.initialize()
+
+    expect(restored.terminalRecoverySessions()).toEqual([
+      expect.objectContaining({
+        id: 'terminal-session',
+        isOpen: true,
+      }),
+    ])
+  })
+
+  it('migrates active terminal sessions into boot recovery', async () => {
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'legacy-terminal',
+      cwd: '/tmp/legacy-project',
+      title: 'Legacy terminal',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      isOpen: false,
+      messages: [],
+    })
+
+    await store.syncBackends(['legacy-terminal'], [])
+    const restored = new SessionStore(directory)
+    await restored.initialize()
+
+    expect(restored.terminalRecoverySessions()).toEqual([
+      expect.objectContaining({
+        id: 'legacy-terminal',
+        isOpen: true,
+      }),
+    ])
+  })
+
   it('streams and finishes an assistant message', async () => {
     const { store } = await createStore()
     await store.create({

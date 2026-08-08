@@ -1227,6 +1227,180 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('recreates previously open terminal sessions during boot', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = 'abcdef12-3456-7890-abcd-ef1234567890'
+    const stateDirectory = path.join(directory, 'state')
+    const store = new SessionStore(stateDirectory)
+    await store.initialize()
+    await store.create(
+      {
+        id: sessionId,
+        cwd: directory,
+        title: 'Recovered terminal',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+        runtime: {
+          allowAllPermissions: false,
+          model: 'gpt-configurable',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+          mode: 'autopilot',
+        },
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Recovered terminal',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    let terminalActive = false
+    const terminal = {
+      create: vi.fn(async () => {
+        terminalActive = true
+        return { sessionName: 'agentic-remote', windowId: '@20' }
+      }),
+      has: vi.fn(async () => terminalActive),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      rename: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      store,
+      client,
+      async () =>
+        terminalActive
+          ? [
+              {
+                id: sessionId,
+                cwd: directory,
+                title: 'Recovered terminal',
+                updatedAt: new Date().toISOString(),
+              },
+            ]
+          : [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+
+    expect(terminal.create).toHaveBeenCalledWith(
+      sessionId,
+      directory,
+      'Recovered terminal',
+      false,
+      expect.objectContaining({
+        model: 'gpt-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      }),
+    )
+    expect(client.resumedSessionIds).toEqual([])
+    expect(service.listSessions()).toEqual([
+      expect.objectContaining({
+        id: sessionId,
+        isOpen: true,
+        status: 'idle',
+      }),
+    ])
+    await service.stop()
+  })
+
+  it('continues boot recovery when one terminal probe fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const store = new SessionStore(stateDirectory)
+    await store.initialize()
+    const firstId = '11111111-1111-1111-1111-111111111111'
+    const secondId = '22222222-2222-2222-2222-222222222222'
+    for (const [id, title, updatedAt] of [
+      [firstId, 'Broken terminal', '2026-07-22T00:00:00.000Z'],
+      [secondId, 'Healthy terminal', '2026-07-22T00:00:01.000Z'],
+    ]) {
+      await store.create(
+        {
+          id,
+          cwd: directory,
+          title,
+          updatedAt,
+          status: 'idle',
+          isOpen: true,
+          messages: [],
+        },
+        { managedOpen: true, backend: 'terminal' },
+      )
+    }
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([])
+    const active = new Set<string>()
+    const terminal = {
+      create: vi.fn(async (sessionId: string) => {
+        active.add(sessionId)
+        return { sessionName: 'agentic-remote', windowId: '@21' }
+      }),
+      has: vi.fn(async (sessionId: string) => {
+        if (sessionId === firstId) {
+          throw new Error('tmux probe failed')
+        }
+        return active.has(sessionId)
+      }),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      rename: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      store,
+      client,
+      async () =>
+        [...active].map((id) => ({
+          id,
+          cwd: directory,
+          title: id === firstId ? 'Broken terminal' : 'Healthy terminal',
+          updatedAt: new Date().toISOString(),
+        })),
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await expect(service.start()).resolves.toBeUndefined()
+
+    expect(terminal.create).toHaveBeenCalledTimes(1)
+    expect(terminal.create).toHaveBeenCalledWith(
+      secondId,
+      directory,
+      'Healthy terminal',
+      true,
+      undefined,
+    )
+    expect(service.store.get(firstId)).toMatchObject({
+      status: 'error',
+      activity: 'Boot recovery failed',
+    })
+    expect(service.store.get(secondId)).toMatchObject({
+      status: 'idle',
+      isOpen: true,
+    })
+    await service.stop()
+  })
+
   it('renames SDK sessions through Copilot and persists the title', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

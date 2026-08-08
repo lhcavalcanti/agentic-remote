@@ -352,6 +352,31 @@ agentic-remote uninstall
 `update` pulls the current branch with fast-forward only, installs dependencies,
 builds an immutable release, and restarts the service.
 
+### Host reboot and power-loss recovery
+
+Agentic Remote persists session metadata under `~/.agentic-remote/state.json`
+on each owning computer. The state records whether an open session is SDK- or
+tmux-backed, together with its Copilot session ID, working directory, title,
+permission mode, runtime configuration, transcript cache, and prompt queue.
+
+tmux processes cannot survive a host power loss. When the systemd user service
+starts after reboot, Agentic Remote:
+
+1. Discovers any Copilot processes already running in tmux.
+2. Recreates only previously open tmux-backed sessions that are missing.
+3. Launches them with their original Copilot session IDs and runtime flags so
+   Copilot resumes its persisted history.
+4. Republishes them to the Sessions UI on the hub or paired node.
+
+Active legacy tmux sessions are migrated into this recovery set automatically
+on the first discovery after upgrading. SDK-backed sessions stay visible and
+resume lazily when opened. Deleted/closed sessions are not recreated.
+
+No NFS share is required or recommended. Session state, repositories, Copilot
+authentication, and `~/.copilot/session-state/` remain on the owning computer's
+persistent local disk. Ensure the host filesystem is persistent, the service is
+enabled, and user lingering reports `yes`.
+
 Releases are stored under:
 
 ```text

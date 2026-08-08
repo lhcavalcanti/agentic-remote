@@ -751,6 +751,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.client.start()
     await this.loadModelPromptLimits()
     await this.discoverSessions()
+    const recoveredTerminalSessions = await this.recoverTerminalSessions()
+    if (recoveredTerminalSessions > 0) {
+      await this.discoverSessions()
+    }
     await this.refreshTranscripts()
     await Promise.all(
       this.store
@@ -1007,7 +1011,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         messages: [],
         runtime: { allowAllPermissions },
       },
-      { managedOpen: true },
+      { managedOpen: true, backend: 'sdk' },
     )
     this.publish(session)
     return session
@@ -1316,16 +1320,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         allowAllPermissions,
       )
       const now = new Date().toISOString()
-      const session = await this.store.create({
-        id: sessionId,
-        cwd,
-        title,
-        updatedAt: now,
-        status: 'idle',
-        isOpen: true,
-        messages: [],
-        runtime: { allowAllPermissions },
-      })
+      const session = await this.store.create(
+        {
+          id: sessionId,
+          cwd,
+          title,
+          updatedAt: now,
+          status: 'idle',
+          isOpen: true,
+          messages: [],
+          runtime: { allowAllPermissions },
+        },
+        { managedOpen: true, backend: 'terminal' },
+      )
       this.externalSessionIds.add(sessionId)
       this.publish(session)
       return session
@@ -1891,6 +1898,65 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return sdkSession
   }
 
+  private async recoverTerminalSessions(): Promise<number> {
+    if (!this.terminalController.create) {
+      return 0
+    }
+    let recovered = 0
+    for (const session of this.store.terminalRecoverySessions()) {
+      let launching = false
+      try {
+        if (await this.terminalController.has(session.id)) {
+          this.externalSessionIds.add(session.id)
+          continue
+        }
+        this.launchingTerminalSessionIds.add(session.id)
+        this.discoveryGeneration += 1
+        launching = true
+        await this.terminalController.create(
+          session.id,
+          session.cwd,
+          session.title,
+          session.runtime?.allowAllPermissions ?? true,
+          session.runtime,
+        )
+        this.externalSessionIds.add(session.id)
+        recovered += 1
+        const restored = await this.store.update(session.id, (stored) => {
+          stored.status = 'idle'
+          stored.activity = undefined
+        })
+        this.publish(restored)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (this.store.get(session.id)) {
+          try {
+            const failed = await this.store.update(session.id, (stored) => {
+              stored.status = 'error'
+              stored.activity = 'Boot recovery failed'
+            })
+            this.publish(failed)
+          } catch (storeError) {
+            console.warn(
+              `Unable to persist terminal recovery failure for ${session.id}:`,
+              storeError,
+            )
+          }
+        }
+        this.publishError(
+          session.id,
+          new Error(`Unable to recover terminal session: ${message}`),
+        )
+      } finally {
+        if (launching) {
+          this.launchingTerminalSessionIds.delete(session.id)
+          this.discoveryGeneration += 1
+        }
+      }
+    }
+    return recovered
+  }
+
   private async hydrateSession(sessionId: string): Promise<SessionDetail> {
     const session = await this.ensureLoaded(sessionId)
     const hydrated = await this.store.replaceMessages(
@@ -1962,6 +2028,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             title: path.basename(session.cwd) || session.title,
           })),
       ],
+    )
+    await this.store.syncBackends(
+      activeSessions.map((session) => session.id),
+      indexedSessions.map((session) => session.id),
     )
     const renameTerminal = this.terminalController.rename?.bind(
       this.terminalController,

@@ -26,6 +26,7 @@ interface StoredState {
 
 interface StoredSession extends SessionDetail {
   managedOpen?: boolean
+  backend?: 'sdk' | 'terminal'
   customTitle?: boolean
   queueDispatchAt?: string
   contextCwd?: boolean
@@ -35,6 +36,7 @@ interface StoredSession extends SessionDetail {
 function cloneSession(session: StoredSession): SessionDetail {
   const {
     managedOpen: _managedOpen,
+    backend: _backend,
     customTitle: _customTitle,
     queueDispatchAt: _queueDispatchAt,
     contextCwd: _contextCwd,
@@ -116,11 +118,15 @@ export class SessionStore {
 
   async create(
     session: SessionDetail,
-    options: { managedOpen?: boolean } = {},
+    options: {
+      managedOpen?: boolean
+      backend?: 'sdk' | 'terminal'
+    } = {},
   ): Promise<SessionDetail> {
     this.state.sessions[session.id] = {
       ...cloneSession(session),
       managedOpen: options.managedOpen,
+      backend: options.backend,
     }
     await this.persist()
     return cloneSession(session)
@@ -202,6 +208,34 @@ export class SessionStore {
       session.isOpen = session.managedOpen === true || active.has(session.id)
     }
     await this.persist()
+  }
+
+  async syncBackends(
+    terminalSessionIds: string[],
+    sdkSessionIds: string[],
+  ): Promise<void> {
+    const activeTerminal = new Set(terminalSessionIds)
+    const knownSdk = new Set(sdkSessionIds)
+    for (const session of Object.values(this.state.sessions)) {
+      if (activeTerminal.has(session.id)) {
+        session.backend = 'terminal'
+        session.managedOpen = true
+        session.isOpen = true
+      } else if (!session.backend && knownSdk.has(session.id)) {
+        session.backend = 'sdk'
+      }
+    }
+    await this.persist()
+  }
+
+  terminalRecoverySessions(): SessionDetail[] {
+    return Object.values(this.state.sessions)
+      .filter(
+        (session) =>
+          session.backend === 'terminal' && session.managedOpen === true,
+      )
+      .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
+      .map(cloneSession)
   }
 
   async setOpen(

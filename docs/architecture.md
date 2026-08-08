@@ -59,6 +59,13 @@ over WebSocket; the hub adds computer identity and forwards them to browsers.
 - Commands against an offline node fail explicitly; they are not queued.
 - The systemd user service restarts after failure and starts at boot when user
   lingering is enabled.
+- Each node persists open-session backend ownership in
+  `~/.agentic-remote/state.json`.
+- A service restart reuses existing tmux processes. A full host reboot
+  recreates missing previously open tmux windows with the same Copilot session
+  IDs, allowing Copilot to resume from its local session database.
+- Repositories, credentials, and Copilot session databases remain on the
+  owning computer's persistent local filesystem; recovery does not use NFS.
 
 ## Pairing flow
 

@@ -160,7 +160,32 @@ Permission request (1 remaining)
       sessionId,
       directory,
       'Project workspace',
+      true,
+      {
+        model: 'gpt-boot',
+        reasoningEffort: 'medium',
+        contextTier: 'default',
+        mode: 'plan',
+      },
     )
+    const initialPanePid = (
+      await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        location.windowId,
+        '#{pane_pid}',
+      ])
+    ).stdout.trim()
+    const initialCommandLine = (
+      await readFile(`/proc/${initialPanePid}/cmdline`, 'utf8')
+    )
+      .replaceAll('\0', ' ')
+      .trim()
+    expect(initialCommandLine).toContain('--model gpt-boot')
+    expect(initialCommandLine).toContain('--effort medium')
+    expect(initialCommandLine).toContain('--context default')
+    expect(initialCommandLine).toContain('--mode plan')
     expect(await controller.rename(sessionId, 'Renamed project')).toBe(true)
     expect(
       await controller.configure(sessionId, directory, {

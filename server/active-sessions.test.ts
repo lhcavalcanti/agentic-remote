@@ -82,9 +82,75 @@ describe('active Copilot processes', () => {
       10,
     )
 
+    expect(
+      (await findActiveCopilotProcesses()).filter(
+        (processInfo) => processInfo.sessionId === sessionId,
+      ),
+    ).toEqual([{ pid, sessionId, source: 'argument' }])
+
     await stopActiveCopilotSession(sessionId)
 
     expect(await waitForProcessExit(pid)).toBe(true)
+  })
+
+  it('selects the nested Copilot process instead of its argument wrapper', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    const wrapper = path.join(directory, 'copilot-wrapper.cjs')
+    const childPidFile = path.join(directory, 'child.pid')
+    await writeFile(
+      wrapper,
+      [
+        "const { spawn } = require('node:child_process')",
+        "const { writeFileSync } = require('node:fs')",
+        'const sessionId = process.argv[3]',
+        'const child = spawn(process.execPath, [',
+        "  '-e',",
+        "  'setTimeout(() => {}, 60_000)',",
+        "  '--',",
+        "  '--session-id',",
+        '  sessionId,',
+        "], { stdio: 'ignore' })",
+        'writeFileSync(process.argv[4], String(child.pid))',
+        'setTimeout(() => {}, 60_000)',
+      ].join('\n'),
+    )
+    const sessionId = 'abababab-1234-1234-1234-123456789abc'
+    const tmuxSession = `agentic-wrapper-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      process.execPath,
+      wrapper,
+      '--session-id',
+      sessionId,
+      childPidFile,
+    ])
+    let childPid = 0
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        childPid = Number.parseInt(await readFile(childPidFile, 'utf8'), 10)
+        break
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+    }
+    expect(childPid).toBeGreaterThan(0)
+
+    expect(
+      (await findActiveCopilotProcesses()).filter(
+        (processInfo) => processInfo.sessionId === sessionId,
+      ),
+    ).toEqual([{ pid: childPid, sessionId, source: 'argument' }])
+
+    await stopActiveCopilotSession(sessionId)
+    expect(await waitForProcessExit(childPid)).toBe(true)
   })
 
   it('terminates a lock-discovered external Copilot process', async () => {

@@ -43,7 +43,7 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
     return []
   }
 
-  const processes: ActiveProcess[] = []
+  const argumentCandidates: ActiveProcess[] = []
   const argumentPids = new Set<number>()
   for (const line of output.split('\n')) {
     const match = line.match(sessionPattern)
@@ -55,9 +55,16 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
       continue
     }
     if (!(await isDescendantOf(pid, process.pid))) {
-      processes.push({ pid, sessionId: match[1], source: 'argument' })
-      argumentPids.add(pid)
+      argumentCandidates.push({
+        pid,
+        sessionId: match[1],
+        source: 'argument',
+      })
     }
+  }
+  const processes = await removeArgumentWrappers(argumentCandidates)
+  for (const processInfo of processes) {
+    argumentPids.add(processInfo.pid)
   }
   const lockCandidates: LockCandidate[] = []
   try {
@@ -139,6 +146,28 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
     })
   }
   return processes
+}
+
+async function removeArgumentWrappers(
+  candidates: ActiveProcess[],
+): Promise<ActiveProcess[]> {
+  const selected: ActiveProcess[] = []
+  for (const candidate of candidates) {
+    const wrapsMatchingProcess = (
+      await Promise.all(
+        candidates.map(
+          async (other) =>
+            other.pid !== candidate.pid &&
+            other.sessionId === candidate.sessionId &&
+            (await isDescendantOf(other.pid, candidate.pid)),
+        ),
+      )
+    ).some(Boolean)
+    if (!wrapsMatchingProcess) {
+      selected.push(candidate)
+    }
+  }
+  return selected
 }
 
 function groupLockCandidates(

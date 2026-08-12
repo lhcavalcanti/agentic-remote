@@ -755,6 +755,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (recoveredTerminalSessions > 0) {
       await this.discoverSessions()
     }
+    await this.reconcileUntrackedTerminalDispatches()
     await this.refreshTranscripts()
     await Promise.all(
       this.store
@@ -1362,12 +1363,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return this.enqueueTerminalPrompt(sessionId, content)
     }
-    if (await this.terminalController.send(sessionId, content, false)) {
-      const delivered = await this.store.update(sessionId, (session) => {
-        session.activity = 'Sent to terminal'
-      })
+    const nativeEnqueue = this.shouldUseNativeTerminalQueue(sessionId, enqueue)
+    const dispatchedAt = new Date().toISOString()
+    if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
+      if (nativeEnqueue) {
+        const queued = await this.store.update(sessionId, (session) => {
+          session.activity = 'Queued in terminal'
+        })
+        this.publish(queued)
+        return queued
+      }
+      const delivered = await this.store.markTerminalPromptDispatched(
+        sessionId,
+        dispatchedAt,
+        'Sent to terminal',
+      )
       this.publish(delivered)
-      return delivered
+      if (await this.waitForTerminalEventLog(sessionId)) {
+        return this.store.get(sessionId) || delivered
+      }
+      const untracked = await this.store.clearUntrackedTerminalDispatch(
+        sessionId,
+        dispatchedAt,
+      )
+      this.publish(untracked)
+      return untracked
     }
     if (
       this.activePrompts.has(sessionId) ||
@@ -1432,14 +1452,54 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
   ): Promise<boolean> {
     const status = this.store.get(sessionId)?.status
-    if (
+    const eligible =
+      status === 'idle' ||
       status === 'running' ||
       status === 'waiting' ||
       this.drainingSessions.has(sessionId)
-    ) {
-      return true
+    return eligible && Boolean(await this.sessionEventVersion(sessionId))
+  }
+
+  private shouldUseNativeTerminalQueue(
+    sessionId: string,
+    enqueue: boolean,
+  ): boolean {
+    const status = this.store.get(sessionId)?.status
+    return (
+      enqueue &&
+      (status === 'running' ||
+        status === 'waiting' ||
+        this.drainingSessions.has(sessionId))
+    )
+  }
+
+  private async waitForTerminalEventLog(sessionId: string): Promise<boolean> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (await this.sessionEventVersion(sessionId)) {
+        return true
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
     }
-    return status === 'idle' && Boolean(await this.sessionEventVersion(sessionId))
+    return false
+  }
+
+  private async reconcileUntrackedTerminalDispatches(): Promise<void> {
+    await Promise.all(
+      this.store.list().map(async (session) => {
+        const dispatchedAt = this.store.queueDispatchAt(session.id)
+        if (
+          !dispatchedAt ||
+          (await this.sessionEventVersion(session.id))
+        ) {
+          return
+        }
+        const reconciled = await this.store.clearUntrackedTerminalDispatch(
+          session.id,
+          dispatchedAt,
+        )
+        this.publish(reconciled)
+      }),
+    )
   }
 
   private async startMessage(
@@ -1594,7 +1654,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return this.enqueueTerminalPrompt(sessionId, canonicalCommand)
     }
-    if (await this.terminalController.send(sessionId, canonicalCommand, false)) {
+    const nativeEnqueue =
+      !catalog.session &&
+      this.shouldUseNativeTerminalQueue(sessionId, enqueue)
+    if (
+      await this.terminalController.send(
+        sessionId,
+        canonicalCommand,
+        nativeEnqueue,
+      )
+    ) {
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
         role: 'notice',
@@ -2612,7 +2681,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (!prompt) {
           return
         }
-        const running = await this.store.markQueueDispatched(
+        const running = await this.store.markTerminalPromptDispatched(
           sessionId,
           dispatchedAt,
         )

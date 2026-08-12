@@ -450,7 +450,7 @@ describe('SessionStore', () => {
     })
 
     const removed = await store.removeQueuedPrompt('queued-session', 'first')
-    await store.markQueueDispatched(
+    await store.markTerminalPromptDispatched(
       'queued-session',
       '2026-07-25T01:00:03.000Z',
     )
@@ -466,6 +466,18 @@ describe('SessionStore', () => {
     expect(reloaded.queueDispatchAt('queued-session')).toBe(
       '2026-07-25T01:00:03.000Z',
     )
+
+    await reloaded.clearUntrackedTerminalDispatch(
+      'queued-session',
+      'older-dispatch',
+    )
+    expect(reloaded.get('queued-session')?.status).toBe('running')
+    await reloaded.clearUntrackedTerminalDispatch(
+      'queued-session',
+      '2026-07-25T01:00:03.000Z',
+    )
+    expect(reloaded.get('queued-session')?.status).toBe('idle')
+    expect(reloaded.queueDispatchAt('queued-session')).toBeUndefined()
   })
 
   it('keeps only currently active sessions open', async () => {

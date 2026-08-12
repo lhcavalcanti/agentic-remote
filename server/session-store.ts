@@ -400,20 +400,34 @@ export class SessionStore {
     return this.state.sessions[sessionId]?.queueDispatchAt
   }
 
-  async markQueueDispatched(
+  async markTerminalPromptDispatched(
     sessionId: string,
     dispatchedAt: string,
+    activity = 'Sent queued prompt',
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.queueDispatchAt = dispatchedAt
       session.status = 'running'
-      session.activity = 'Sent queued prompt'
+      session.activity = activity
     })
   }
 
   async clearQueueDispatch(sessionId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.queueDispatchAt = undefined
+    })
+  }
+
+  async clearUntrackedTerminalDispatch(
+    sessionId: string,
+    dispatchedAt: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (session.queueDispatchAt !== dispatchedAt) {
+        return
+      }
+      session.queueDispatchAt = undefined
+      session.status = 'idle'
     })
   }
 

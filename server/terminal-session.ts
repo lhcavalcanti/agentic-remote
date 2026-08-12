@@ -431,7 +431,7 @@ export class TmuxTerminalSessionController
           'tmux',
           enqueue
             ? ['send-keys', '-t', target, '-H', '11']
-            : ['send-keys', '-t', target, '-H', '0d'],
+            : ['send-keys', '-t', target, 'Enter'],
         )
       } finally {
         if (restoreIxon && paneTty) {

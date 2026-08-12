@@ -2255,7 +2255,10 @@ describe('AgentService deletion', () => {
     )
     await service.start()
 
-    await service.sendMessage(client.session.sessionId, 'hello terminal')
+    const sent = await service.sendMessage(
+      client.session.sessionId,
+      'hello terminal',
+    )
     await service.executeCommand(
       client.session.sessionId,
       '/aa on',
@@ -2263,11 +2266,6 @@ describe('AgentService deletion', () => {
     await service.executeCommand(
       client.session.sessionId,
       '/usage',
-      true,
-    )
-    await service.sendMessage(
-      client.session.sessionId,
-      'queued while idle',
       true,
     )
 
@@ -2289,16 +2287,238 @@ describe('AgentService deletion', () => {
       '/usage',
       false,
     )
-    expect(terminal.send).toHaveBeenNthCalledWith(
-      4,
-      client.session.sessionId,
-      'queued while idle',
-      false,
-    )
+    expect(sent).toMatchObject({
+      activity: 'Sent to terminal',
+    })
     expect(
       service.store.get(client.session.sessionId)?.queuedCount ?? 0,
     ).toBe(0)
     expect(client.session.sentPrompts).toEqual([])
+    await service.stop()
+  })
+
+  it('sends an explicit enqueue immediately when an idle terminal has no event log', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const sent = await service.sendMessage(
+      client.session.sessionId,
+      'send while idle',
+      true,
+    )
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'send while idle',
+      false,
+    )
+    expect(sent).toMatchObject({
+      status: 'idle',
+      activity: 'Sent to terminal',
+    })
+    expect(sent.queuedCount ?? 0).toBe(0)
+    await service.stop()
+  })
+
+  it('marks a direct terminal prompt running when completion events are trackable', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-v1',
+      terminal,
+    )
+    await service.start()
+
+    const sent = await service.sendMessage(
+      client.session.sessionId,
+      'send with tracking',
+    )
+
+    expect(sent).toMatchObject({
+      status: 'running',
+      activity: 'Sent to terminal',
+    })
+    expect(service.store.queueDispatchAt(client.session.sessionId)).toBeDefined()
+    await service.stop()
+  })
+
+  it('clears an untracked terminal dispatch after service restart', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const store = new SessionStore(stateDirectory)
+    await store.initialize()
+    await store.create({
+      id: 'untracked-terminal',
+      cwd: directory,
+      title: 'Untracked terminal',
+      updatedAt: new Date().toISOString(),
+      status: 'idle',
+      isOpen: true,
+      messages: [],
+    })
+    await store.markTerminalPromptDispatched(
+      'untracked-terminal',
+      new Date().toISOString(),
+    )
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([])
+    const service = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      async () => [
+        {
+          id: 'untracked-terminal',
+          cwd: directory,
+          title: 'Untracked terminal',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      {
+        has: async () => true,
+        send: async () => true,
+        cancel: async () => true,
+      },
+    )
+
+    await service.start()
+
+    expect(service.store.get('untracked-terminal')?.status).toBe('idle')
+    expect(service.store.queueDispatchAt('untracked-terminal')).toBeUndefined()
+    await service.stop()
+  })
+
+  it('uses the terminal queue when an untracked dispatch is still resolving', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const first = service.sendMessage(
+      client.session.sessionId,
+      'first direct prompt',
+    )
+    await vi.waitFor(() =>
+      expect(service.store.get(client.session.sessionId)?.status).toBe(
+        'running',
+      ),
+    )
+    const queued = await service.sendMessage(
+      client.session.sessionId,
+      'native queued prompt',
+      true,
+    )
+
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      1,
+      client.session.sessionId,
+      'first direct prompt',
+      false,
+    )
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      2,
+      client.session.sessionId,
+      'native queued prompt',
+      true,
+    )
+    expect(queued.queuedCount ?? 0).toBe(0)
+    expect(queued.activity).toBe('Queued in terminal')
+    expect((await first).status).toBe('idle')
     await service.stop()
   })
 
@@ -2316,7 +2536,7 @@ describe('AgentService deletion', () => {
         context: { workingDirectory: directory },
       },
     ])
-    let eventVersion: string | undefined
+    let eventVersion: string | undefined = 'events-v0'
     let events: SessionEvent[] = []
     const terminal = {
       has: vi.fn(async () => true),

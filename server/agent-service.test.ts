@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -1666,7 +1667,7 @@ describe('AgentService deletion', () => {
   it('synchronizes new persisted messages and tool activity', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
-    const sessionId = 'abcdef12-3456-7890-abcd-ef1234567890'
+    const sessionId = randomUUID()
     const client = new FakeCopilotClient()
     client.nextSessionList = Promise.resolve([
       {
@@ -1748,6 +1749,11 @@ describe('AgentService deletion', () => {
       async () => undefined,
       async () => events,
       async () => `events-${events.length}-${events.at(-1)?.id}`,
+      {
+        has: async () => false,
+        send: async () => false,
+        cancel: async () => false,
+      },
     )
     await service.start()
 
@@ -2259,6 +2265,11 @@ describe('AgentService deletion', () => {
       '/usage',
       true,
     )
+    await service.sendMessage(
+      client.session.sessionId,
+      'queued while idle',
+      true,
+    )
 
     expect(terminal.send).toHaveBeenNthCalledWith(
       1,
@@ -2276,6 +2287,12 @@ describe('AgentService deletion', () => {
       3,
       client.session.sessionId,
       '/usage',
+      false,
+    )
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      4,
+      client.session.sessionId,
+      'queued while idle',
       false,
     )
     expect(
@@ -2340,7 +2357,8 @@ describe('AgentService deletion', () => {
     )
     expect(terminal.send).not.toHaveBeenCalled()
 
-    const firstIdleAt = new Date().toISOString()
+    const firstIdleAt = queued.queuedPrompts?.[0]?.createdAt
+    expect(firstIdleAt).toBeDefined()
     events = JSON.parse(
       JSON.stringify([
         {
@@ -2403,6 +2421,101 @@ describe('AgentService deletion', () => {
     expect(terminal.send).toHaveBeenLastCalledWith(
       client.session.sessionId,
       '/usage',
+      false,
+    )
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      status: 'running',
+      queuedCount: 0,
+      queuedPrompts: [],
+    })
+    await service.stop()
+  })
+
+  it('keeps explicit terminal enqueue requests in the app when status is stale-idle', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    let eventVersion: string | undefined = 'events-v1'
+    let events = JSON.parse(
+      JSON.stringify([
+        {
+          type: 'session.idle',
+          id: 'stale-idle-event',
+          parentId: null,
+          timestamp: new Date(Date.now() - 1_000).toISOString(),
+          data: {},
+        },
+      ]),
+    ) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => eventVersion,
+      terminal,
+    )
+    await service.start()
+    await service.store.updateStatus(client.session.sessionId, 'running')
+
+    const queued = await service.sendMessage(
+      client.session.sessionId,
+      'queued during stale idle',
+      true,
+    )
+    expect(queued.queuedPrompts?.map((prompt) => prompt.content)).toEqual([
+      'queued during stale idle',
+    ])
+    expect(terminal.send).not.toHaveBeenCalled()
+
+    await service.refreshTranscripts()
+    expect(terminal.send).not.toHaveBeenCalled()
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      queuedCount: 1,
+      queuedPrompts: [{ content: 'queued during stale idle' }],
+    })
+
+    events = JSON.parse(
+      JSON.stringify([
+        ...events,
+        {
+          type: 'session.idle',
+          id: 'fresh-idle-event',
+          parentId: null,
+          timestamp: new Date(Date.now() + 1_000).toISOString(),
+          data: {},
+        },
+      ]),
+    ) as SessionEvent[]
+    eventVersion = 'events-v2'
+    await service.refreshTranscripts()
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'queued during stale idle',
       false,
     )
     expect(service.store.get(client.session.sessionId)).toMatchObject({

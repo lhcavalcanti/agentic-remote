@@ -144,7 +144,9 @@ export async function buildApp(
       : lower.includes('not registered')
         ? 400
         : 500
-    return reply.code(statusCode).send({ error: message })
+    return reply.code(statusCode).send({
+      error: statusCode === 500 ? 'Unexpected server error' : message,
+    })
   })
 
   if (role === 'hub' && options.serveStatic) {

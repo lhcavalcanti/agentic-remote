@@ -77,6 +77,7 @@ export class SessionStore {
     }
 
     for (const session of Object.values(this.state.sessions)) {
+      session.revision ??= 0
       session.isOpen = session.managedOpen === true
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
@@ -116,6 +117,10 @@ export class SessionStore {
     return session ? cloneSession(session) : undefined
   }
 
+  backend(id: string): StoredSession['backend'] | undefined {
+    return this.state.sessions[id]?.backend
+  }
+
   async create(
     session: SessionDetail,
     options: {
@@ -125,6 +130,7 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     this.state.sessions[session.id] = {
       ...cloneSession(session),
+      revision: session.revision ?? 1,
       managedOpen: options.managedOpen,
       backend: options.backend,
     }
@@ -176,20 +182,24 @@ export class SessionStore {
     cwd?: string,
     contextCwd = false,
     pendingUserInput?: PendingUserInput | null,
+    observedQueueDispatchAt?: string,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.messages = messages
       if (pendingUserInput !== undefined) {
         session.pendingUserInput = pendingUserInput || undefined
       }
-      session.status =
-        session.pendingPermission || session.pendingUserInput
-          ? 'waiting'
+      const newerTerminalDispatch =
+        session.queueDispatchAt &&
+        session.queueDispatchAt !== observedQueueDispatchAt
+      session.status = session.pendingPermission || session.pendingUserInput
+        ? 'waiting'
+        : newerTerminalDispatch
+          ? 'running'
           : status
-      session.activity =
-        session.pendingPermission?.title ||
+      session.activity = session.pendingPermission?.title ||
         session.pendingUserInput?.question ||
-        activity
+        (newerTerminalDispatch ? session.activity : activity)
       if (runtime) {
         session.runtime = runtime
       }
@@ -205,7 +215,9 @@ export class SessionStore {
   async syncOpen(sessionIds: string[]): Promise<void> {
     const active = new Set(sessionIds)
     for (const session of Object.values(this.state.sessions)) {
-      session.isOpen = session.managedOpen === true || active.has(session.id)
+      session.isOpen =
+        active.has(session.id) ||
+        (session.managedOpen === true && session.backend !== 'terminal')
     }
     await this.persist()
   }
@@ -333,6 +345,7 @@ export class SessionStore {
     const replacement: StoredSession = {
       ...existing,
       id: replacementId,
+      revision: (existing.revision ?? 0) + 1,
       messages: [],
       status: 'idle',
       isOpen: true,
@@ -412,9 +425,14 @@ export class SessionStore {
     })
   }
 
-  async clearQueueDispatch(sessionId: string): Promise<SessionDetail> {
+  async clearQueueDispatch(
+    sessionId: string,
+    dispatchedAt: string,
+  ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      session.queueDispatchAt = undefined
+      if (session.queueDispatchAt === dispatchedAt) {
+        session.queueDispatchAt = undefined
+      }
     })
   }
 
@@ -622,6 +640,7 @@ export class SessionStore {
       throw new Error(`Session ${sessionId} does not exist`)
     }
     mutation(session)
+    session.revision = (session.revision ?? 0) + 1
     return cloneSession(session)
   }
 

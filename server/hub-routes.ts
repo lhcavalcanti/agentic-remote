@@ -81,11 +81,56 @@ interface SessionParams {
   sessionId: string
 }
 
+function configuredOrigins(): Set<string> {
+  return new Set(
+    (process.env.AGENTIC_REMOTE_ALLOWED_ORIGINS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => new URL(value).origin),
+  )
+}
+
+function hostAllowed(host: string | undefined, origins: Set<string>): boolean {
+  if (!host || origins.size === 0) {
+    return false
+  }
+  return [...origins].some((origin) => new URL(origin).host === host)
+}
+
+function originAllowed(
+  origin: string,
+  host: string | undefined,
+  origins: Set<string>,
+): boolean {
+  if (!hostAllowed(host, origins)) {
+    return false
+  }
+  try {
+    return origins.has(new URL(origin).origin)
+  } catch {
+    return false
+  }
+}
+
 export async function registerHubRoutes(
   app: FastifyInstance,
   manager: ComputerManager,
   knowledge: KnowledgeStore,
 ): Promise<void> {
+  const origins = configuredOrigins()
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = request.headers.origin
+    if (
+      request.url.startsWith('/api/') &&
+      origins.size > 0 &&
+      (!hostAllowed(request.headers.host, origins) ||
+        (origin && !originAllowed(origin, request.headers.host, origins)))
+    ) {
+      return reply.code(403).send({ error: 'Origin is not allowed' })
+    }
+  })
+
   app.get('/api/health', async () => ({ ok: true }))
 
   app.get('/api/computers', async () => ({

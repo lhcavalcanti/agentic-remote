@@ -253,6 +253,63 @@ describe('SessionStore', () => {
     })
   })
 
+  it('preserves a terminal dispatch that starts during transcript replacement', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-1',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+    const before = store.get('session-1')
+    await store.markTerminalPromptDispatched(
+      'session-1',
+      '2026-07-22T00:00:02.000Z',
+      'Sent to terminal',
+    )
+
+    const updated = await store.replaceTranscript(
+      'session-1',
+      [],
+      'idle',
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+    )
+
+    expect(updated).toMatchObject({
+      status: 'running',
+      activity: 'Sent to terminal',
+    })
+    expect(updated.revision).toBeGreaterThan(before?.revision || 0)
+  })
+
+  it('does not clear a newer terminal dispatch with an older completion', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-1',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+    const older = '2026-07-22T00:00:01.000Z'
+    const newer = '2026-07-22T00:00:02.000Z'
+    await store.markTerminalPromptDispatched('session-1', older)
+    await store.markTerminalPromptDispatched('session-1', newer)
+
+    const updated = await store.clearQueueDispatch('session-1', older)
+
+    expect(store.queueDispatchAt('session-1')).toBe(newer)
+    expect(updated.status).toBe('running')
+  })
+
   it('stores private session uploads and removes them on clear', async () => {
     const { store } = await createStore()
     await store.create({
@@ -319,29 +376,44 @@ describe('SessionStore', () => {
     })
   })
 
-  it('keeps managed sessions open when reloaded and synchronized', async () => {
+  it('keeps managed SDK sessions open but closes missing terminal sessions', async () => {
     const { directory, store } = await createStore()
     await store.create(
       {
-        id: 'managed-session',
+        id: 'managed-sdk-session',
         cwd: '/tmp/project',
-        title: 'Managed project',
+        title: 'Managed SDK project',
         updatedAt: '2026-07-22T00:00:00.000Z',
         status: 'idle',
         isOpen: true,
         messages: [],
       },
-      { managedOpen: true },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    await store.create(
+      {
+        id: 'managed-terminal-session',
+        cwd: '/tmp/project',
+        title: 'Managed terminal project',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
     )
 
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
     await reloaded.syncOpen([])
 
-    expect(reloaded.get('managed-session')).toMatchObject({
+    expect(reloaded.get('managed-sdk-session')).toMatchObject({
       isOpen: true,
     })
-    expect(reloaded.get('managed-session')).not.toHaveProperty('managedOpen')
+    expect(reloaded.get('managed-terminal-session')).toMatchObject({
+      isOpen: false,
+    })
+    expect(reloaded.get('managed-sdk-session')).not.toHaveProperty('managedOpen')
   })
 
   it('discovers sessions without replacing locally stored history', async () => {

@@ -75,6 +75,7 @@ export interface ConfigureRuntimeInput {
 
 export interface SessionSummary {
   id: string
+  revision?: number
   cwd: string
   title: string
   updatedAt: string

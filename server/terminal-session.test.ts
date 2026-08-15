@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -153,7 +154,16 @@ Permission request (1 remaining)
     ])
     vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
     vi.stubEnv('COPILOT_BIN', executable)
-    const sessionId = '01234567-89ab-cdef-0123-456789abcdef'
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const sessionId = randomUUID()
 
     const controller = new TmuxTerminalSessionController()
     const location = await controller.create(
@@ -225,9 +235,18 @@ Permission request (1 remaining)
     expect(commandLine).toContain('--effort high')
     expect(commandLine).toContain('--context long_context')
     expect(commandLine).toContain('--mode autopilot')
+    await expect(
+      controller.configure(sessionId, path.join(directory, 'missing'), {
+        model: 'gpt-broken',
+        reasoningEffort: 'low',
+        contextTier: 'default',
+        mode: 'interactive',
+      }),
+    ).rejects.toThrow()
+    expect(await controller.has(sessionId)).toBe(true)
     expect(await controller.restart(sessionId, directory)).toBe(true)
     let cleared = false
-    const replacementId = 'fedcba98-7654-3210-fedc-ba9876543210'
+    const replacementId = randomUUID()
     expect(
       await controller.reset(
         sessionId,

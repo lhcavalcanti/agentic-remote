@@ -34,18 +34,35 @@ class DeferredSession implements CopilotSessionLike {
     reasoningEffort?: string
     contextTier?: string
   }> = []
+  currentRuntime: {
+    modelId: string
+    reasoningEffort?: string
+    contextTier?: 'default' | 'long_context'
+  } = {
+    modelId: 'gpt-default',
+    reasoningEffort: 'medium',
+    contextTier: 'default' as const,
+  }
   private readonly responseResolvers: Array<
     (value: AssistantMessageEvent | undefined) => void
   > = []
   private readonly eventHandlers: Array<(event: SessionEvent) => void> = []
   readonly rpc = {
     model: {
+      getCurrent: async () => ({ ...this.currentRuntime }),
       switchTo: async (input: {
         modelId: string
         reasoningEffort?: string
         contextTier?: string
       }) => {
         this.runtimeSwitches.push(input)
+        this.currentRuntime = {
+          modelId: input.modelId,
+          reasoningEffort:
+            input.reasoningEffort || this.currentRuntime.reasoningEffort,
+          contextTier:
+            input.contextTier === 'long_context' ? 'long_context' : 'default',
+        }
         return { modelId: input.modelId }
       },
     },
@@ -1322,6 +1339,53 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('closes a terminal session when boot recovery fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const sessionId = 'abcdef12-3456-7890-abcd-ef1234567891'
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: sessionId,
+        cwd: directory,
+        title: 'Missing terminal',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    const terminal = {
+      create: vi.fn(async () => {
+        throw new Error('tmux pane could not be restored')
+      }),
+      has: vi.fn(async () => false),
+      send: vi.fn(async () => false),
+      cancel: vi.fn(async () => false),
+    }
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+
+    expect(service.listSessions()).toEqual([])
+    expect(store.get(sessionId)).toMatchObject({
+      isOpen: false,
+      status: 'error',
+      activity: 'Boot recovery failed',
+    })
+    await service.stop()
+  })
+
   it('continues boot recovery when one terminal probe fails', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -1458,9 +1522,56 @@ describe('AgentService deletion', () => {
     ).rejects.toThrow('Mode unavailable')
     expect(service.store.get(created.id)?.runtime).toMatchObject({
       model: 'gpt-configurable',
-      reasoningEffort: 'medium',
-      contextTier: 'default',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
       mode: 'plan',
+    })
+    expect(client.session.runtimeSwitches.at(-1)).toEqual({
+      modelId: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
+    await service.stop()
+  })
+
+  it('restores the live SDK model when the first runtime change fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    client.session.modeSetError = new Error('Initial mode unavailable')
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+
+    await expect(
+      service.configureRuntime(created.id, {
+        model: 'gpt-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'autopilot',
+      }),
+    ).rejects.toThrow('Initial mode unavailable')
+
+    expect(client.session.runtimeSwitches).toEqual([
+      {
+        modelId: 'gpt-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      },
+      {
+        modelId: 'gpt-default',
+        reasoningEffort: 'medium',
+        contextTier: 'default',
+      },
+    ])
+    expect(service.store.get(created.id)?.runtime).toEqual({
+      allowAllPermissions: true,
     })
     await service.stop()
   })
@@ -1598,7 +1709,7 @@ describe('AgentService deletion', () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
-    const sessionId = '87654321-4321-4321-4321-cba987654321'
+    const sessionId = randomUUID()
     client.nextSessionList = Promise.resolve([
       {
         sessionId,
@@ -1621,6 +1732,13 @@ describe('AgentService deletion', () => {
         },
       ],
       async () => undefined,
+      async () => [],
+      async () => undefined,
+      {
+        has: async () => true,
+        send: async () => true,
+        cancel: async () => true,
+      },
     )
 
     await service.start()
@@ -2770,9 +2888,20 @@ describe('AgentService deletion', () => {
       has: vi.fn(async () => true),
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
-      pendingUserInput: vi.fn(async () => request),
+      pendingUserInput: vi.fn(
+        async (): Promise<typeof request | undefined> => request,
+      ),
       replyUserInput: vi.fn(async () => true),
     }
+    let events = JSON.parse(`[
+      {
+        "type":"assistant.turn_end",
+        "id":"completed-turn",
+        "parentId":null,
+        "timestamp":"2026-08-12T14:17:35.730Z",
+        "data":{}
+      }
+    ]`) as SessionEvent[]
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
@@ -2785,8 +2914,8 @@ describe('AgentService deletion', () => {
         },
       ],
       async () => undefined,
-      async () => [],
-      async () => undefined,
+      async () => events,
+      async () => `completed-events-${events.length}`,
       terminal,
     )
 
@@ -2807,6 +2936,21 @@ describe('AgentService deletion', () => {
       false,
     )
     expect(updated.pendingUserInput).toBeUndefined()
+    expect(updated).toMatchObject({
+      status: 'running',
+      activity: 'Continuing',
+    })
+    terminal.pendingUserInput.mockResolvedValue(undefined)
+    events = [
+      ...events,
+      {
+        type: 'assistant.turn_end',
+        id: 'fresh-completed-turn',
+        parentId: null,
+        timestamp: new Date(Date.now() + 1_000).toISOString(),
+        data: {},
+      },
+    ] as SessionEvent[]
     const checksAfterReply = terminal.pendingUserInput.mock.calls.length
     await new Promise((resolve) => setTimeout(resolve, 2_100))
     await service.refreshTranscripts()
@@ -2816,6 +2960,10 @@ describe('AgentService deletion', () => {
     expect(terminal.pendingUserInput.mock.calls.length).toBe(
       checksAfterReply + 1,
     )
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      status: 'idle',
+      activity: undefined,
+    })
     await service.stop()
   })
 

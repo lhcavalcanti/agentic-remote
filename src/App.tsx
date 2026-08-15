@@ -235,6 +235,12 @@ const statuslineOptions: Array<{
 
 const webCommands: SlashCommand[] = [
   {
+    name: 'cwd',
+    description: 'Change the session working directory',
+    inputHint: '[path]',
+    allowDuringAgentExecution: false,
+  },
+  {
     name: 'statusline',
     aliases: ['footer'],
     description: 'Configure the Agentic Remote status line',
@@ -264,6 +270,15 @@ function upsertSession(
   session: ManagedSession,
 ): ManagedSession[] {
   const key = sessionKey(session)
+  const existing = sessions.find((entry) => sessionKey(entry) === key)
+  if (
+    existing &&
+    existing.revision !== undefined &&
+    session.revision !== undefined &&
+    existing.revision > session.revision
+  ) {
+    return sessions
+  }
   return sortSessions([
     session,
     ...sessions.filter((entry) => sessionKey(entry) !== key),
@@ -658,6 +673,178 @@ function NewSessionDialog({
             : mode === 'new'
               ? 'Create session'
               : 'Open session'}
+        </button>
+      </form>
+    </DialogFrame>
+  )
+}
+
+function workspaceAbsolutePath(cwd: string, relativePath: string): string {
+  if (relativePath === '.') {
+    return cwd
+  }
+  return `${cwd === '/' ? '' : cwd.replace(/\/+$/, '')}/${relativePath}`
+}
+
+function ChangeDirectoryDialog({
+  onChanged,
+  onClose,
+  session,
+}: {
+  onChanged: (session: ManagedSession) => void
+  onClose: () => void
+  session: ManagedSession
+}) {
+  const [listing, setListing] = useState<WorkspaceListing>()
+  const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string>()
+  const directoryRequest = useRef(0)
+
+  useEffect(() => {
+    let active = true
+    const request = ++directoryRequest.current
+    setLoading(true)
+    setError(undefined)
+    void listWorkspace(session.computerId, session.id, '.')
+      .then((nextListing) => {
+        if (active && request === directoryRequest.current) {
+          setListing(nextListing)
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active && request === directoryRequest.current) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+      .finally(() => {
+        if (active && request === directoryRequest.current) {
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [session.computerId, session.id])
+
+  async function browseDirectory(path: string) {
+    const request = ++directoryRequest.current
+    setLoading(true)
+    setError(undefined)
+    try {
+      const nextListing = await listWorkspace(
+        session.computerId,
+        session.id,
+        path,
+      )
+      if (request === directoryRequest.current) {
+        setListing(nextListing)
+      }
+    } catch (caught) {
+      if (request === directoryRequest.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    } finally {
+      if (request === directoryRequest.current) {
+        setLoading(false)
+      }
+    }
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (!listing) {
+      return
+    }
+    const nextCwd = workspaceAbsolutePath(session.cwd, listing.path)
+    if (/[\r\n]/.test(nextCwd)) {
+      setError('Folder paths cannot contain line breaks')
+      return
+    }
+    setSubmitting(true)
+    setError(undefined)
+    try {
+      onChanged(
+        await executeCommand(session.computerId, session.id, {
+          command: `/cwd ${nextCwd}`,
+          enqueue: false,
+        }),
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const directories =
+    listing?.entries.filter((entry) => entry.kind === 'directory') || []
+  const selectedPath = workspaceAbsolutePath(
+    session.cwd,
+    listing?.path || '.',
+  )
+
+  return (
+    <DialogFrame
+      eyebrow={`${session.computerName} · ${shortPath(session.cwd)}`}
+      onClose={onClose}
+      title="Change working directory"
+    >
+      <form onSubmit={submit}>
+        <div className="folder-picker">
+          <div className="folder-picker__toolbar">
+            <button
+              aria-label="Parent folder"
+              className="icon-button"
+              disabled={!listing?.parent || loading}
+              onClick={() => void browseDirectory(listing?.parent || '.')}
+              type="button"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <div className="folder-picker__path">
+              <Folder size={15} />
+              <strong>{shortPath(selectedPath)}</strong>
+            </div>
+          </div>
+          <div
+            aria-label="Folders"
+            className="folder-picker__list"
+            role="listbox"
+          >
+            {loading ? (
+              <p>Loading folders…</p>
+            ) : directories.length ? (
+              directories.map((directory) => (
+                <button
+                  key={directory.path}
+                  onClick={() => void browseDirectory(directory.path)}
+                  role="option"
+                  type="button"
+                >
+                  <FolderOpen size={17} />
+                  <span>{directory.name}</span>
+                  <ChevronLeft
+                    className="folder-picker__chevron"
+                    size={15}
+                  />
+                </button>
+              ))
+            ) : (
+              <p>No subfolders here.</p>
+            )}
+          </div>
+          <p className="folder-picker__hint">
+            Copilot will continue in <strong>{shortPath(selectedPath)}</strong>.
+          </p>
+        </div>
+        {error ? <p className="form-error">{error}</p> : null}
+        <button
+          className="primary-button dialog__submit"
+          disabled={loading || !listing || submitting}
+          type="submit"
+        >
+          {submitting ? 'Changing…' : 'Change directory'}
         </button>
       </form>
     </DialogFrame>
@@ -1444,6 +1631,10 @@ function RuntimeDialog({
     if (!configuration) {
       return
     }
+    if (targetSession.status !== 'idle') {
+      setError('Runtime settings can only change while the session is idle')
+      return
+    }
     setSubmitting(true)
     setError(undefined)
     try {
@@ -1569,7 +1760,7 @@ function RuntimeDialog({
           {error ? <p className="form-error">{error}</p> : null}
           <button
             className="primary-button dialog__submit"
-            disabled={submitting}
+            disabled={submitting || targetSession.status !== 'idle'}
             type="submit"
           >
             {submitting ? 'Applying…' : 'Apply runtime settings'}
@@ -2182,6 +2373,7 @@ function App() {
   )
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
+  const [cwdOpen, setCwdOpen] = useState(false)
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [workspaceInitialPath, setWorkspaceInitialPath] = useState<string>()
   const [workspaceInitialKind, setWorkspaceInitialKind] = useState<
@@ -2193,6 +2385,7 @@ function App() {
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [uploadingFile, setUploadingFile] = useState(false)
   const [recording, setRecording] = useState(false)
@@ -2252,6 +2445,9 @@ function App() {
   const recordingStartedAtRef = useRef(0)
   const discardRecordingRef = useRef(false)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
+  const eventSequenceRef = useRef(0)
+  const sessionEventSequenceRef = useRef(new Map<string, number>())
+  const computerEventSequenceRef = useRef(new Map<string, number>())
   const sidebarGestureRef = useRef<
     | {
         startX: number
@@ -2525,7 +2721,13 @@ function App() {
         if (!active) {
           return
         }
-        setSessions(sortSessions(loadedSessions))
+        setSessions((current) => {
+          let reconciled = sortSessions(loadedSessions)
+          for (const existing of current) {
+            reconciled = upsertSession(reconciled, existing)
+          }
+          return reconciled
+        })
         setComputers(loadedComputers)
         const parameters = new URLSearchParams(window.location.search)
         const requestedComputer = parameters.get('computer')
@@ -2559,6 +2761,19 @@ function App() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    if (loading) {
+      return
+    }
+    setSelectedKey((current) =>
+      current && sessions.some((session) => sessionKey(session) === current)
+        ? current
+        : sessions[0]
+          ? sessionKey(sessions[0])
+          : undefined,
+    )
+  }, [loading, sessions])
 
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
@@ -2664,6 +2879,7 @@ function App() {
     let reconnectDelay = 1_000
 
     const refreshSnapshot = async () => {
+      const startedAtSequence = eventSequenceRef.current
       const [loadedSessions, loadedComputers, pushSettings] = await Promise.all([
         listSessions(),
         listComputers(),
@@ -2672,37 +2888,66 @@ function App() {
           return undefined
         }),
       ])
-      setSessions((current) =>
-        sortSessions(
-          loadedSessions.map((summary) => {
-            const existing = current.find(
-              (session) => sessionKey(session) === sessionKey(summary),
-            )
-            return existing
-              ? { ...summary, messages: existing.messages }
-              : summary
-          }),
-        ),
+      const snapshotSessions = loadedSessions.filter(
+        (session) =>
+          (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) <=
+            startedAtSequence &&
+          (computerEventSequenceRef.current.get(session.computerId) || 0) <=
+            startedAtSequence,
       )
-      setComputers(loadedComputers)
+      const snapshotComputers = loadedComputers.filter(
+        (computer) =>
+          (computerEventSequenceRef.current.get(computer.id) || 0) <=
+          startedAtSequence,
+      )
+      setSessions((current) => {
+        let reconciled = sortSessions(snapshotSessions)
+        for (const existing of current) {
+          const changedAt =
+            sessionEventSequenceRef.current.get(sessionKey(existing)) || 0
+          if (changedAt > startedAtSequence) {
+            reconciled = upsertSession(reconciled, existing)
+          }
+        }
+        return reconciled
+      })
+      setComputers((current) => {
+        let reconciled = snapshotComputers
+        for (const existing of current) {
+          const changedAt =
+            computerEventSequenceRef.current.get(existing.id) || 0
+          if (changedAt > startedAtSequence) {
+            reconciled = upsertComputer(reconciled, existing)
+          }
+        }
+        return reconciled
+      })
       if (pushSettings) {
         setMutedSessions(pushSettings.mutedSessions)
       }
       const selectedAtRefresh = selectedRef.current
       const selectedStillExists =
         selectedAtRefresh &&
-        loadedSessions.some(
+        snapshotSessions.some(
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
         )
       if (selectedAtRefresh && selectedStillExists) {
+        const detailStartedAtSequence = eventSequenceRef.current
         const detail = await getSession(
           selectedAtRefresh.computerId,
           selectedAtRefresh.id,
         )
+        const detailKey = sessionKey(detail)
+        if (
+          (sessionEventSequenceRef.current.get(detailKey) || 0) >
+          detailStartedAtSequence
+        ) {
+          return
+        }
         setSessions((current) => upsertSession(current, detail))
       } else if (selectedAtRefresh) {
         setSelectedKey(
-          loadedSessions[0] ? sessionKey(loadedSessions[0]) : undefined,
+          snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined,
         )
       }
     }
@@ -2719,9 +2964,19 @@ function App() {
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as HubEvent
         if (event.type === 'session.upserted') {
+          eventSequenceRef.current += 1
+          sessionEventSequenceRef.current.set(
+            sessionKey(event.session),
+            eventSequenceRef.current,
+          )
           setSessions((current) => upsertSession(current, event.session))
         } else if (event.type === 'session.removed') {
           const removedKey = `${event.computerId}:${event.sessionId}`
+          eventSequenceRef.current += 1
+          sessionEventSequenceRef.current.set(
+            removedKey,
+            eventSequenceRef.current,
+          )
           setComposerDrafts((current) => {
             const { [removedKey]: _removed, ...remaining } = current
             return remaining
@@ -2734,8 +2989,18 @@ function App() {
             ),
           )
         } else if (event.type === 'computer.updated') {
+          eventSequenceRef.current += 1
+          computerEventSequenceRef.current.set(
+            event.computer.id,
+            eventSequenceRef.current,
+          )
           setComputers((current) => upsertComputer(current, event.computer))
         } else if (event.type === 'computer.removed') {
+          eventSequenceRef.current += 1
+          computerEventSequenceRef.current.set(
+            event.computerId,
+            eventSequenceRef.current,
+          )
           setComputers((current) =>
             current.filter((computer) => computer.id !== event.computerId),
           )
@@ -2983,6 +3248,14 @@ function App() {
       setComposer('')
       await restartSelectedSession()
       focusComposer(targetKey)
+      return
+    }
+    if (
+      commandName === 'cwd' &&
+      !content.slice(commandName.length + 1).trim()
+    ) {
+      setComposer('')
+      setCwdOpen(true)
       return
     }
     const shouldEnqueue =
@@ -3489,6 +3762,23 @@ function App() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setUserInputBusy(false)
+    }
+  }
+
+  async function stopSelectedSession() {
+    if (!selected || cancelling) {
+      return
+    }
+    setCancelling(true)
+    setError(undefined)
+    try {
+      await cancelSession(selected.computerId, selected.id)
+      const updated = await getSession(selected.computerId, selected.id)
+      setSessions((current) => upsertSession(current, updated))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -4160,9 +4450,8 @@ function App() {
                     <button
                       aria-label="Stop response"
                       className="send-button send-button--stop"
-                      onClick={() =>
-                        void cancelSession(selected.computerId, selected.id)
-                      }
+                      disabled={cancelling}
+                      onClick={() => void stopSelectedSession()}
                       type="button"
                     >
                       <Square fill="currentColor" size={15} />
@@ -4311,6 +4600,16 @@ function App() {
         open={renameOpen}
         session={selected}
       />
+      {cwdOpen && selected ? (
+        <ChangeDirectoryDialog
+          onChanged={(session) => {
+            setSessions((current) => upsertSession(current, session))
+            setCwdOpen(false)
+          }}
+          onClose={() => setCwdOpen(false)}
+          session={selected}
+        />
+      ) : null}
       {workspaceOpen && selected ? (
         <WorkspaceDialog
           bookmarks={bookmarks}

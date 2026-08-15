@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { findActiveCopilotProcesses } from './active-sessions.js'
@@ -128,21 +128,48 @@ export class TmuxTerminalSessionController
     input: ConfigureRuntimeInput,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      const resolvedCwd = await realpath(cwd)
+      if (!(await stat(resolvedCwd)).isDirectory()) {
+        throw new Error('Terminal working directory is not a folder')
+      }
       const owner = await this.owner(sessionId)
       if (!owner) {
         return false
       }
+      const originalCommand = await processCommand(owner.pid)
+      const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, sessionId, input)
-      await execFileAsync('tmux', [
-        'respawn-pane',
-        '-k',
-        '-t',
-        owner.target,
-        '-c',
-        cwd,
-        ...command,
-      ])
-      await this.waitForNewOwner(sessionId, owner.pid)
+      try {
+        await execFileAsync('tmux', [
+          'respawn-pane',
+          '-k',
+          '-t',
+          owner.target,
+          '-c',
+          resolvedCwd,
+          ...command,
+        ])
+        await this.waitForNewOwner(sessionId, owner.pid)
+      } catch (error) {
+        try {
+          await execFileAsync('tmux', [
+            'respawn-pane',
+            '-k',
+            '-t',
+            owner.target,
+            '-c',
+            originalCwd,
+            ...originalCommand,
+          ])
+          await this.waitForNewOwner(sessionId, owner.pid)
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            'Runtime configuration failed and the terminal session could not be restored',
+          )
+        }
+        throw error
+      }
       return true
     })
   }

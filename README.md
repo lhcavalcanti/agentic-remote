@@ -195,11 +195,16 @@ therefore control the same process.
 
 State-changing CLI commands synchronize back to the browser:
 
-- `/cwd` updates the working directory shown in the sidebar, header, and status
-  line.
+- Opening `/cwd` in the web composer shows folders rooted at the terminal's
+  current directory. Choosing one runs the command and updates the working
+  directory shown in the sidebar, header, and status line.
 - Copilot title changes update the UI and tmux window.
 - Model, effort, context, mode, and allow-all changes update runtime status.
 - `/statusline` opens the web status-line configuration.
+
+Terminal-backed sessions remain open only while their tmux pane is active. If
+a pane exits and cannot be recovered at service startup, the stale session is
+removed from the active session list instead of remaining unusable in the UI.
 
 Command completion uses the session's real Copilot command list. Abbreviations
 follow CLI behavior; for example, `/aa` expands to `/allow-all`.
@@ -452,9 +457,18 @@ Important local files include:
 
 Sensitive state files use mode `0600`; the data directory uses mode `0700`.
 
-The hub UI relies on the trusted network or an upstream authentication layer.
+The hub is a trusted-administrator interface: every admitted user can control
+host tools, files, permissions, sessions, and paired computers. It is not a
+multi-tenant service and MUST NOT be exposed anonymously. Protect every hub
+path, including WebSocket upgrades, with TLS and a deny-by-default
+authentication gateway such as Cloudflare Access. Set
+`AGENTIC_REMOTE_ALLOWED_ORIGINS` to the comma-separated, exact browser origins
+that may access the API, including scheme and port. When configured, API
+requests with any other `Host` or browser `Origin` are rejected.
+
 Remote `/node-api` REST and WebSocket routes additionally require the node's
-pairing token. Do not expose a node directly to the public internet.
+pairing token. Firewall nodes from the public internet and expose them only to
+the paired hub over a trusted LAN or encrypted overlay.
 
 ## Troubleshooting
 

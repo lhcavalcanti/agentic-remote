@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import type {
   ConfigureRuntimeInput,
@@ -400,6 +400,7 @@ function waitForEvent(
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
@@ -408,6 +409,59 @@ afterEach(async () => {
 })
 
 describe('multi-node hub', () => {
+  it('rejects untrusted hub hosts and origins', async () => {
+    vi.stubEnv(
+      'AGENTIC_REMOTE_ALLOWED_ORIGINS',
+      'https://agentic.example.test',
+    )
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-origin'),
+      logger: false,
+      role: 'hub',
+      service,
+    })
+    try {
+      const rejectedOrigin = await hub.app.inject({
+        method: 'GET',
+        url: '/api/sessions',
+        headers: {
+          host: 'agentic.example.test',
+          origin: 'https://attacker.example.test',
+        },
+      })
+      expect(rejectedOrigin.statusCode).toBe(403)
+      const rejectedPort = await hub.app.inject({
+        method: 'GET',
+        url: '/api/sessions',
+        headers: {
+          host: 'agentic.example.test',
+          origin: 'https://agentic.example.test:444',
+        },
+      })
+      expect(rejectedPort.statusCode).toBe(403)
+      const rejectedHost = await hub.app.inject({
+        method: 'GET',
+        url: '/api/sessions',
+        headers: {
+          host: 'attacker.example.test',
+        },
+      })
+      expect(rejectedHost.statusCode).toBe(403)
+      const acceptedOrigin = await hub.app.inject({
+        method: 'GET',
+        url: '/api/sessions',
+        headers: {
+          host: 'agentic.example.test',
+          origin: 'https://agentic.example.test',
+        },
+      })
+      expect(acceptedOrigin.statusCode).toBe(200)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
   it('registers, aggregates, routes, and deletes remote sessions', async () => {
     const remoteSession = session('remote-session', 'Remote')
     remoteSession.queuedCount = 1

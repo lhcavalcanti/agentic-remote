@@ -15,6 +15,7 @@ import App from './App'
 import {
   activateSession,
   addKnowledgeBookmark,
+  cancelSession,
   clearConversation,
   createSession,
   configureRuntime,
@@ -231,6 +232,7 @@ describe('App', () => {
       configurable: true,
       value: originalVisualViewport,
     })
+
   })
 
   beforeEach(() => {
@@ -349,6 +351,12 @@ describe('App', () => {
     vi.mocked(restartSession).mockResolvedValue(session)
     vi.mocked(replyUserInput).mockResolvedValue(session)
     vi.mocked(listCommands).mockResolvedValue([
+      {
+        name: 'cwd',
+        description: 'Change working directory',
+        inputHint: '[path]',
+        allowDuringAgentExecution: false,
+      },
       {
         name: 'model',
         description: 'Select model',
@@ -1432,6 +1440,226 @@ describe('App', () => {
     })
   })
 
+  it('does not let a delayed detail response overwrite a newer event', async () => {
+    let resolveDetail!: (value: ManagedSession) => void
+    vi.mocked(listSessions).mockResolvedValue([{ ...session, revision: 1 }])
+    vi.mocked(getSession).mockReturnValue(
+      new Promise((resolve) => {
+        resolveDetail = resolve
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(getSession).toHaveBeenCalled())
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            revision: 3,
+            messages: [
+              ...session.messages,
+              {
+                id: 'fresh-event',
+                role: 'assistant',
+                content: 'Fresh event state',
+                createdAt: '2026-07-22T00:00:03.000Z',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(await screen.findByText('Fresh event state')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveDetail({
+        ...session,
+        revision: 2,
+        messages: [
+          ...session.messages,
+          {
+            id: 'stale-detail',
+            role: 'assistant',
+            content: 'Stale detail state',
+            createdAt: '2026-07-22T00:00:02.000Z',
+          },
+        ],
+      })
+    })
+    expect(screen.getByText('Fresh event state')).toBeInTheDocument()
+    expect(screen.queryByText('Stale detail state')).not.toBeInTheDocument()
+  })
+
+  it('does not resurrect a session removed during reconnect detail loading', async () => {
+    let resolveDetail!: (value: ManagedSession) => void
+    vi.mocked(listSessions).mockResolvedValue([{ ...session, revision: 1 }])
+    vi.mocked(getSession)
+      .mockResolvedValueOnce({ ...session, revision: 1 })
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveDetail = resolve
+        }),
+      )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    MockWebSocket.instances[0]?.onopen?.()
+    await waitFor(() => expect(getSession).toHaveBeenCalledTimes(2))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: session.id,
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      resolveDetail({ ...session, revision: 1 })
+    })
+
+    await waitFor(() =>
+      expect(document.querySelector('.conversation-header__title')).toHaveTextContent(
+        'Agentic Remote',
+      ),
+    )
+    expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+  })
+
+  it('replaces stale tool history from the reconnect snapshot', async () => {
+    const stale = {
+      ...session,
+      revision: 1,
+      status: 'running' as const,
+      messages: [
+        ...session.messages,
+        {
+          id: 'tool:stale',
+          role: 'activity' as const,
+          content: 'Bash\n$ long task',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'running' as const,
+        },
+      ],
+    }
+    const current = {
+      ...stale,
+      revision: 2,
+      status: 'idle' as const,
+      messages: stale.messages.map((message) =>
+        message.id === 'tool:stale'
+          ? { ...message, activityStatus: 'completed' as const }
+          : message,
+      ),
+    }
+    vi.mocked(listSessions)
+      .mockResolvedValueOnce([stale])
+      .mockResolvedValue([current])
+    vi.mocked(getSession)
+      .mockResolvedValueOnce(stale)
+      .mockResolvedValue(current)
+    render(<App />)
+    await screen.findByRole('button', { name: 'Stop response' })
+
+    MockWebSocket.instances[0]?.onopen?.()
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Stop response' }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(document.querySelector('.tool-activity-history')).toBeInTheDocument()
+  })
+
+  it('selects another session when the selected session is removed', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: session.id,
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(document.querySelector('.conversation-header__title')).toHaveTextContent(
+        'Second chat',
+      ),
+    )
+  })
+
+  it('does not resurrect a computer removed during snapshot refresh', async () => {
+    let resolveComputers!: (value: ComputerSummary[]) => void
+    vi.mocked(listComputers)
+      .mockResolvedValueOnce([computer])
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveComputers = resolve
+        }),
+      )
+    vi.mocked(listSessions).mockResolvedValue([{ ...session, revision: 1 }])
+    vi.mocked(getSession).mockResolvedValue({ ...session, revision: 1 })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    MockWebSocket.instances[0]?.onopen?.()
+    await waitFor(() => expect(listComputers).toHaveBeenCalledTimes(2))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'computer.removed',
+          computerId: computer.id,
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      resolveComputers([computer])
+    })
+
+    await waitFor(() =>
+      expect(document.querySelector('.conversation-header__title')).toHaveTextContent(
+        'Agentic Remote',
+      ),
+    )
+    expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+  })
+
+  it('converges after cancelling even when no event arrives', async () => {
+    const running = {
+      ...session,
+      revision: 1,
+      status: 'running' as const,
+    }
+    const stopped = {
+      ...running,
+      revision: 2,
+      status: 'idle' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([running])
+    vi.mocked(getSession)
+      .mockResolvedValueOnce(running)
+      .mockResolvedValueOnce(stopped)
+    vi.mocked(cancelSession).mockResolvedValue()
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop response' }))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Stop response' }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(cancelSession).toHaveBeenCalledWith(computer.id, session.id)
+  })
+
   it('does not persist unchanged ordering on transcript updates', async () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
     render(<App />)
@@ -1635,6 +1863,58 @@ describe('App', () => {
     })
   })
 
+  it('opens a folder picker for /cwd at the terminal directory', async () => {
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(listCommands).toHaveBeenCalled())
+
+    fireEvent.change(textarea, { target: { value: '/cwd' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+
+    expect(
+      await screen.findByRole('heading', { name: 'Change working directory' }),
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        '.',
+      ),
+    )
+    expect(screen.getByText(/Copilot will continue in/)).toHaveTextContent(
+      '~/src/project',
+    )
+
+    fireEvent.click(screen.getByRole('option', { name: 'docs' }))
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'docs',
+      ),
+    )
+    expect(screen.getByText(/Copilot will continue in/)).toHaveTextContent(
+      '~/src/project/docs',
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Change directory' }),
+    )
+    await waitFor(() =>
+      expect(executeCommand).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          command: '/cwd /home/lcavalcanti/src/project/docs',
+          enqueue: false,
+        },
+      ),
+    )
+    expect(
+      screen.queryByRole('heading', { name: 'Change working directory' }),
+    ).not.toBeInTheDocument()
+  })
+
   it('supports command abbreviations and configures the web status line', async () => {
       const runtimeSession = {
         ...session,
@@ -1727,5 +2007,31 @@ describe('App', () => {
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
         '~/src/project',
       )
+  })
+
+  it('prevents runtime changes while the session is active', async () => {
+    const runningSession = {
+      ...session,
+      status: 'running' as const,
+      runtime: {
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'plan',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([runningSession])
+    vi.mocked(getSession).mockResolvedValue(runningSession)
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Configure model, effort, and context',
+      }),
+    )
+
+    expect(
+      await screen.findByRole('button', { name: 'Apply runtime settings' }),
+    ).toBeDisabled()
   })
 })

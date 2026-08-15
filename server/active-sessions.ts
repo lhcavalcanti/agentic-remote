@@ -43,6 +43,7 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
     return []
   }
 
+  const tmuxPanePids = await listTmuxPanePids()
   const argumentCandidates: ActiveProcess[] = []
   const argumentPids = new Set<number>()
   for (const line of output.split('\n')) {
@@ -54,7 +55,11 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
     if (!Number.isInteger(pid)) {
       continue
     }
-    if (!(await isDescendantOf(pid, process.pid))) {
+    if (
+      (await processRunsInTmux(pid, tmuxPanePids)) &&
+      (await processUsesSessionState(pid)) &&
+      (await isCopilotProcess(pid))
+    ) {
       argumentCandidates.push({
         pid,
         sessionId: match[1],
@@ -86,7 +91,6 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
         const pid = Number.parseInt(lock[1], 10)
         if (
           !Number.isInteger(pid) ||
-          (await isDescendantOf(pid, process.pid)) ||
           argumentPids.has(pid) ||
           processes.some(
             (processInfo) => processInfo.sessionId === sessionDirectory.name,
@@ -105,6 +109,7 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
           )
           if (
             commandLine.toLowerCase().includes('copilot') &&
+            (await processRunsInTmux(pid, tmuxPanePids)) &&
             (await processMatchesLock(pid, lockPath))
           ) {
             lockCandidates.push({
@@ -146,6 +151,91 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
     })
   }
   return processes
+}
+
+async function processUsesSessionState(pid: number): Promise<boolean> {
+  try {
+    const environment = (await readFile(`/proc/${pid}/environ`, 'utf8')).split(
+      '\0',
+    )
+    const configuredHome = environment
+      .find((entry) => entry.startsWith('COPILOT_HOME='))
+      ?.slice('COPILOT_HOME='.length)
+      .trim()
+    const processHome = environment
+      .find((entry) => entry.startsWith('HOME='))
+      ?.slice('HOME='.length)
+      .trim()
+    const configured =
+      configuredHome || (processHome ? path.join(processHome, '.copilot') : '')
+    if (!configured) {
+      return false
+    }
+    return (
+      path.resolve(configured, 'session-state') ===
+      path.resolve(sessionStateDirectory())
+    )
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (error as NodeJS.ErrnoException).code === 'ESRCH' ||
+      (error as NodeJS.ErrnoException).code === 'EACCES' ||
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    ) {
+      return false
+    }
+    throw error
+  }
+}
+
+async function isCopilotProcess(pid: number): Promise<boolean> {
+  try {
+    const command = (await readFile(`/proc/${pid}/cmdline`, 'utf8'))
+      .split('\0')
+      .filter(Boolean)
+    return command.some((argument) =>
+      path.basename(argument).toLowerCase().includes('copilot'),
+    )
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
+      (error as NodeJS.ErrnoException).code === 'ESRCH' ||
+      (error as NodeJS.ErrnoException).code === 'EACCES' ||
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    ) {
+      return false
+    }
+    throw error
+  }
+}
+
+async function listTmuxPanePids(): Promise<number[]> {
+  try {
+    const { stdout } = await execFileAsync('tmux', [
+      'list-panes',
+      '-a',
+      '-F',
+      '#{pane_pid}',
+    ])
+    return stdout
+      .split('\n')
+      .map((value) => Number.parseInt(value, 10))
+      .filter(Number.isInteger)
+  } catch {
+    return []
+  }
+}
+
+async function processRunsInTmux(
+  pid: number,
+  panePids: number[],
+): Promise<boolean> {
+  for (const panePid of panePids) {
+    if (pid === panePid || (await isDescendantOf(pid, panePid))) {
+      return true
+    }
+  }
+  return false
 }
 
 async function removeArgumentWrappers(

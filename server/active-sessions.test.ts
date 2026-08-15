@@ -54,7 +54,13 @@ describe('active Copilot processes', () => {
   })
 
   it('terminates a tmux process carrying a matching session argument', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
     const sessionId = '12345678-1234-1234-1234-123456789abc'
+    const executable = path.join(directory, 'copilot-argument-test.cjs')
+    await writeFile(executable, 'setTimeout(() => {}, 60_000)\n')
     const tmuxSession = `agentic-argument-${process.pid}`
     tmuxSessions.push(tmuxSession)
     await execFileAsync('tmux', [
@@ -62,10 +68,10 @@ describe('active Copilot processes', () => {
       '-d',
       '-s',
       tmuxSession,
-      process.execPath,
       '-e',
-      'setTimeout(() => {}, 60_000)',
-      '--',
+      `COPILOT_HOME=${copilotHome}`,
+      process.execPath,
+      executable,
       '--session-id',
       sessionId,
     ])
@@ -96,8 +102,12 @@ describe('active Copilot processes', () => {
   it('selects the nested Copilot process instead of its argument wrapper', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
     directories.push(directory)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
     const wrapper = path.join(directory, 'copilot-wrapper.cjs')
+    const childScript = path.join(directory, 'copilot-child.cjs')
     const childPidFile = path.join(directory, 'child.pid')
+    await writeFile(childScript, 'setTimeout(() => {}, 60_000)\n')
     await writeFile(
       wrapper,
       [
@@ -105,9 +115,7 @@ describe('active Copilot processes', () => {
         "const { writeFileSync } = require('node:fs')",
         'const sessionId = process.argv[3]',
         'const child = spawn(process.execPath, [',
-        "  '-e',",
-        "  'setTimeout(() => {}, 60_000)',",
-        "  '--',",
+        `  ${JSON.stringify(childScript)},`,
         "  '--session-id',",
         '  sessionId,',
         "], { stdio: 'ignore' })",
@@ -123,6 +131,8 @@ describe('active Copilot processes', () => {
       '-d',
       '-s',
       tmuxSession,
+      '-e',
+      `COPILOT_HOME=${copilotHome}`,
       process.execPath,
       wrapper,
       '--session-id',
@@ -151,6 +161,33 @@ describe('active Copilot processes', () => {
 
     await stopActiveCopilotSession(sessionId)
     expect(await waitForProcessExit(childPid)).toBe(true)
+  })
+
+  it('ignores unrelated tmux processes carrying a session-shaped argument', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+    const sessionId = 'acacacac-1234-1234-1234-123456789abc'
+    const executable = path.join(directory, 'unrelated-process.cjs')
+    await writeFile(executable, 'setTimeout(() => {}, 60_000)\n')
+    const tmuxSession = `agentic-unrelated-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      process.execPath,
+      executable,
+      '--session-id',
+      sessionId,
+    ])
+
+    expect(
+      (await findActiveCopilotProcesses()).some(
+        (processInfo) => processInfo.sessionId === sessionId,
+      ),
+    ).toBe(false)
   })
 
   it('terminates a lock-discovered external Copilot process', async () => {

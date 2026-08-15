@@ -92,7 +92,7 @@ export interface CopilotSessionLike {
       'list' | 'invoke' | 'enqueue'
     >
     name: Pick<CopilotSession['rpc']['name'], 'set'>
-    model: Pick<CopilotSession['rpc']['model'], 'switchTo'>
+    model: Pick<CopilotSession['rpc']['model'], 'getCurrent' | 'switchTo'>
     mode: Pick<CopilotSession['rpc']['mode'], 'set'>
   }
 }
@@ -405,6 +405,9 @@ function stripAnsi(value: string): string {
 function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
   for (const event of events) {
+    if (event.agentId) {
+      continue
+    }
     switch (event.type) {
       case 'assistant.turn_start':
         status = 'running'
@@ -694,11 +697,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly terminalUserInputChecks = new Map<string, number>()
   private readonly answeredTerminalPermissions = new Map<
     string,
-    { requestId: string; expiresAt: number }
+    { requestId: string; expiresAt: number; repliedAt: string }
   >()
   private readonly answeredTerminalInputs = new Map<
     string,
-    { requestId: string; expiresAt: number }
+    { requestId: string; expiresAt: number; repliedAt: string }
   >()
   private discoveryTimer?: NodeJS.Timeout
   private discoveryInFlight?: Promise<void>
@@ -953,6 +956,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.hydratedSessions.has(id)) {
       return stored
     }
+    if (this.store.backend(id) === 'terminal') {
+      const closed = await this.store.setOpen(id, false, true)
+      this.publish(closed)
+      throw new Error('Terminal session is no longer available')
+    }
 
     const inFlight = this.hydratingSessions.get(id)
     if (inFlight) {
@@ -1104,6 +1112,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     } else {
       const session = await this.ensureLoaded(id)
+      const previousRuntime = await session.rpc.model.getCurrent()
       await session.rpc.model.switchTo({
         modelId: input.model,
         reasoningEffort: input.reasoningEffort,
@@ -1112,7 +1121,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       try {
         await session.rpc.mode.set({ mode })
       } catch (error) {
-        await persistRuntime(undefined)
+        if (
+          previousRuntime.modelId
+        ) {
+          try {
+            await session.rpc.model.switchTo({
+              modelId: previousRuntime.modelId,
+              reasoningEffort: previousRuntime.reasoningEffort,
+              contextTier: previousRuntime.contextTier,
+            })
+          } catch (rollbackError) {
+            throw new AggregateError(
+              [error, rollbackError],
+              'Runtime configuration failed and the previous model could not be restored',
+            )
+          }
+        }
         throw error
       }
     }
@@ -1745,6 +1769,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored) {
       throw new Error('Session not found')
     }
+    const terminalBacked = this.store.backend(sessionId) === 'terminal'
 
     this.deletingSessions.add(sessionId)
     this.deletedSessionIds.add(sessionId)
@@ -1773,11 +1798,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }
 
-      try {
-        await this.client.deleteSession(sessionId)
-      } catch (error) {
-        if (!isMissingSessionError(error)) {
-          throw error
+      if (terminalBacked) {
+        await removeCopilotSessionFiles(sessionId)
+      } else {
+        try {
+          await this.client.deleteSession(sessionId)
+        } catch (error) {
+          if (!isMissingSessionError(error)) {
+            throw error
+          }
         }
       }
       await this.store.remove(sessionId)
@@ -1815,6 +1844,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('The selected permission option is not available')
     }
     const sdkPending = this.permissions.get(requestId)
+    let terminalReplied = false
     if (sdkPending) {
       if (sdkPending.sessionId !== sessionId) {
         throw new Error('Permission request belongs to another session')
@@ -1832,9 +1862,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ) {
         throw new Error('Terminal permission reply is not available')
       }
+      const repliedAt = new Date().toISOString()
       this.answeredTerminalPermissions.set(sessionId, {
         requestId,
         expiresAt: Date.now() + 5_000,
+        repliedAt,
       })
       let replied = false
       try {
@@ -1851,12 +1883,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.answeredTerminalPermissions.delete(sessionId)
         throw new Error('External terminal is no longer available')
       }
+      terminalReplied = true
+      this.liveTranscriptWatermarks.set(sessionId, repliedAt)
     }
 
+    const continuation = terminalReplied
+      ? await this.terminalContinuationState(
+          sessionId,
+          this.answeredTerminalPermissions.get(sessionId)?.repliedAt,
+        )
+      : { status: 'running' as const, activity: 'Continuing' }
     const updated = await this.store.update(sessionId, (session) => {
       session.pendingPermission = undefined
-      session.status = 'running'
-      session.activity = 'Continuing'
+      session.status = continuation.status
+      session.activity = continuation.activity
     })
     this.publish(updated)
     return updated
@@ -1883,6 +1923,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('The selected answer is not available')
     }
     const sdkPending = this.userInputs.get(requestId)
+    let terminalReplied = false
     if (sdkPending) {
       if (sdkPending.sessionId !== sessionId) {
         throw new Error('User input request belongs to another session')
@@ -1901,9 +1942,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!this.terminalController.replyUserInput) {
         throw new Error('Terminal user input is not available')
       }
+      const repliedAt = new Date().toISOString()
       this.answeredTerminalInputs.set(sessionId, {
         requestId,
         expiresAt: Date.now() + 5_000,
+        repliedAt,
       })
       let replied = false
       try {
@@ -1921,11 +1964,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.answeredTerminalInputs.delete(sessionId)
         throw new Error('External terminal is no longer available')
       }
+      terminalReplied = true
+      this.liveTranscriptWatermarks.set(sessionId, repliedAt)
     }
+    const continuation = terminalReplied
+      ? await this.terminalContinuationState(
+          sessionId,
+          this.answeredTerminalInputs.get(sessionId)?.repliedAt,
+        )
+      : { status: 'running' as const, activity: 'Continuing' }
     const updated = await this.store.update(sessionId, (session) => {
       session.pendingUserInput = undefined
-      session.status = 'running'
-      session.activity = 'Continuing'
+      session.status = continuation.status
+      session.activity = continuation.activity
     })
     this.publish(updated)
     return updated
@@ -2021,6 +2072,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const message = error instanceof Error ? error.message : String(error)
         if (this.store.get(session.id)) {
           try {
+            await this.store.setOpen(session.id, false, true)
             const failed = await this.store.update(session.id, (stored) => {
               stored.status = 'error'
               stored.activity = 'Boot recovery failed'
@@ -2236,7 +2288,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                 event.type === 'abort'),
           )
           if (completion) {
-            await this.store.clearQueueDispatch(sessionId)
+            await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
           } else {
             status = 'running'
           }
@@ -2274,6 +2326,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           cwd,
           contextCwd,
           syncedUserInput,
+          queueDispatchAt,
         )
         this.eventLogFingerprints.set(sessionId, fingerprint)
         this.eventLogVersions.set(sessionId, version)
@@ -2345,10 +2398,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       stored.pendingPermission?.requestId.startsWith('terminal-permission:')
     ) {
+      const continuation = await this.terminalContinuationState(
+        sessionId,
+        this.answeredTerminalPermissions.get(sessionId)?.repliedAt,
+      )
       const updated = await this.store.update(sessionId, (session) => {
         session.pendingPermission = undefined
-        session.status = 'running'
-        session.activity = 'Continuing'
+        session.status = continuation.status
+        session.activity = continuation.activity
       })
       this.publish(updated)
     }
@@ -2372,12 +2429,54 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     if (stored.pendingUserInput?.requestId.startsWith('terminal:')) {
+      const continuation = await this.terminalContinuationState(
+        sessionId,
+        this.answeredTerminalInputs.get(sessionId)?.repliedAt,
+      )
       const updated = await this.store.update(sessionId, (session) => {
         session.pendingUserInput = undefined
-        session.status = 'running'
-        session.activity = 'Continuing'
+        session.status = continuation.status
+        session.activity = continuation.activity
       })
       this.publish(updated)
+    }
+  }
+
+  private async terminalContinuationState(
+    sessionId: string,
+    since?: string,
+  ): Promise<{ status: SessionStatus; activity?: string }> {
+    try {
+      const events = await this.sessionEventReader(sessionId)
+      const relevant = since
+        ? events.filter(
+            (event) =>
+              !event.agentId &&
+              Date.parse(event.timestamp) >= Date.parse(since),
+          )
+        : events
+      const hasLifecycleEvent = relevant.some((event) =>
+        [
+          'assistant.turn_start',
+          'permission.requested',
+          'permission.completed',
+          'session.error',
+          'assistant.turn_end',
+          'session.idle',
+          'abort',
+        ].includes(event.type),
+      )
+      if (!hasLifecycleEvent) {
+        return { status: 'running', activity: 'Continuing' }
+      }
+      const status = statusFromEvents(relevant)
+      if (status === 'waiting' || status === 'running') {
+        return { status: 'running', activity: 'Continuing' }
+      }
+      return { status }
+    } catch (error) {
+      console.warn('Unable to derive terminal continuation state:', error)
+      return { status: 'running', activity: 'Continuing' }
     }
   }
 

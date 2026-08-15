@@ -31,9 +31,11 @@ rendered-history cache, and emits a removal event.
 
 ## Transport and authentication
 
-The browser communicates only with the hub. Hub pages and REST routes rely on
-the trusted LAN or an upstream access layer such as Cloudflare Access. Node REST
-and WebSocket routes retain a separate random pairing token.
+The browser communicates only with the hub. The hub is a single trusted-admin
+control plane, not a multi-tenant boundary. Every page, REST route, and
+WebSocket upgrade must remain behind TLS and a deny-by-default upstream access
+layer such as Cloudflare Access. Node REST and WebSocket routes retain a
+separate random pairing token and must not be publicly reachable.
 
 Pairing credentials are generated locally and displayed only by explicit
 management commands. Use Cloudflare Access, an encrypted overlay, or TLS before

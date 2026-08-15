@@ -169,7 +169,7 @@ enable_linger() {
 }
 
 setup_service() {
-  local host="" port="" role="" name="" data_directory=""
+  local host="" port="" role="" name="" data_directory="" allowed_origins=""
   while (($# > 0)); do
     case "$1" in
       --host)
@@ -209,6 +209,7 @@ setup_service() {
   role="${role:-$(config_value AGENTIC_REMOTE_ROLE)}"
   name="${name:-$(config_value AGENTIC_REMOTE_NODE_NAME)}"
   data_directory="$(config_value AGENTIC_REMOTE_DATA_DIR)"
+  allowed_origins="${AGENTIC_REMOTE_ALLOWED_ORIGINS:-$(config_value AGENTIC_REMOTE_ALLOWED_ORIGINS)}"
   host="${host:-127.0.0.1}"
   port="${port:-4317}"
   role="${role:-hub}"
@@ -235,6 +236,9 @@ setup_service() {
     "AGENTIC_REMOTE_RELEASE_DIR=$CONFIG_DIR/releases/current/dist" >"$environment_tmp"
   if [[ -n "$data_directory" ]]; then
     printf 'AGENTIC_REMOTE_DATA_DIR=%s\n' "$data_directory" >>"$environment_tmp"
+  fi
+  if [[ -n "$allowed_origins" ]]; then
+    printf 'AGENTIC_REMOTE_ALLOWED_ORIGINS=%s\n' "$allowed_origins" >>"$environment_tmp"
   fi
   install -m 0600 "$environment_tmp" "$ENV_FILE"
   rm -f -- "$environment_tmp"

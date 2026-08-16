@@ -110,7 +110,8 @@ Environment=PORT=4317
 Environment=$(systemd_quote "PATH=$runtime_path")
 Environment=$(systemd_quote "COPILOT_BIN=$copilot_bin")
 EnvironmentFile=-$ENV_FILE
-ExecStart=$(systemd_quote "$pnpm_bin") --dir $CONFIG_DIR/releases/current start
+ExecStart=$(systemd_quote "$node_bin") --import tsx server/index.ts
+KillMode=process
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

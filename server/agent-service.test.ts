@@ -2325,6 +2325,12 @@ describe('AgentService deletion', () => {
     }
     expect(client.session.sentPrompts).toEqual(['first', 'third'])
     client.session.resolvePrompt()
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (service.store.get(client.session.sessionId)?.status === 'idle') {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
     await service.stop()
   })
 

@@ -357,6 +357,10 @@ agentic-remote uninstall
 `update` pulls the current branch with fast-forward only, installs dependencies,
 builds an immutable release, and restarts the service.
 
+Managed service restarts stop only the Agentic Remote server process. Terminal
+sessions remain owned by tmux and continue running across updates; the
+replacement server reconnects to them during discovery.
+
 ### Host reboot and power-loss recovery
 
 Agentic Remote persists session metadata under `~/.agentic-remote/state.json`

@@ -241,10 +241,13 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       event.type === 'assistant.turn_end' ||
       event.type === 'session.idle' ||
       event.type === 'abort' ||
-      event.type === 'session.error'
+      event.type === 'session.error' ||
+      event.type === 'session.shutdown'
     ) {
       finishRunningActivities(
-        event.type === 'abort' || event.type === 'session.error'
+        event.type === 'abort' ||
+          event.type === 'session.error' ||
+          event.type === 'session.shutdown'
           ? 'failed'
           : 'completed',
       )
@@ -311,6 +314,12 @@ export function pendingUserInputFromEvents(
     if (
       event.type === 'tool.execution_complete' &&
       pending?.toolCallId === stringValue(recordValue(event.data).toolCallId)
+    ) {
+      pending = undefined
+    } else if (
+      event.type === 'abort' ||
+      event.type === 'session.error' ||
+      event.type === 'session.shutdown'
     ) {
       pending = undefined
     }
@@ -424,6 +433,7 @@ function statusFromEvents(events: SessionEvent[]): SessionStatus {
       case 'assistant.turn_end':
       case 'session.idle':
       case 'abort':
+      case 'session.shutdown':
         status = 'idle'
         break
     }
@@ -2285,7 +2295,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               (event.type === 'assistant.turn_end' ||
                 event.type === 'session.idle' ||
                 event.type === 'session.error' ||
-                event.type === 'abort'),
+                event.type === 'abort' ||
+                event.type === 'session.shutdown'),
           )
           if (completion) {
             await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
@@ -2337,7 +2348,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             event.type === 'assistant.turn_end' ||
             event.type === 'session.idle' ||
             event.type === 'session.error' ||
-            event.type === 'abort',
+            event.type === 'abort' ||
+            event.type === 'session.shutdown',
         )?.timestamp
         const firstQueuedAt = updated.queuedPrompts?.[0]?.createdAt
         if (
@@ -2464,6 +2476,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           'assistant.turn_end',
           'session.idle',
           'abort',
+          'session.shutdown',
         ].includes(event.type),
       )
       if (!hasLifecycleEvent) {

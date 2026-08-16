@@ -353,6 +353,39 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('fails unfinished tools when a session shuts down', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"assistant.turn_start",
+        "id":"turn-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{"turnId":"turn"}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"tool-start",
+        "parentId":"turn-start",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{"toolCallId":"call","toolName":"bash","arguments":{"command":"pnpm build"}}
+      },
+      {
+        "type":"session.shutdown",
+        "id":"shutdown",
+        "parentId":"tool-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{"shutdownType":"routine"}
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:call',
+        activityStatus: 'failed',
+      }),
+    ])
+  })
+
   it('renders successful task completion summaries as agent messages', () => {
     const events = JSON.parse(`[
       {
@@ -2567,6 +2600,98 @@ describe('AgentService deletion', () => {
 
     expect(service.store.get('untracked-terminal')?.status).toBe('idle')
     expect(service.store.queueDispatchAt('untracked-terminal')).toBeUndefined()
+    await service.stop()
+  })
+
+  it('restores a shut down terminal session as idle', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const stateDirectory = path.join(directory, 'state')
+    const store = new SessionStore(stateDirectory)
+    await store.initialize()
+    await store.create({
+      id: client.session.sessionId,
+      cwd: directory,
+      title: 'Interrupted terminal session',
+      updatedAt: '2026-07-21T23:59:59.000Z',
+      status: 'idle',
+      isOpen: true,
+      messages: [],
+    })
+    await store.markTerminalPromptDispatched(
+      client.session.sessionId,
+      '2026-07-21T23:59:59.500Z',
+    )
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Interrupted terminal session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const events = JSON.parse(`[
+      {
+        "type":"assistant.turn_start",
+        "id":"turn-start",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{"turnId":"turn"}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"tool-start",
+        "parentId":"turn-start",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{"toolCallId":"call","toolName":"bash","arguments":{"command":"pnpm build"}}
+      },
+      {
+        "type":"session.shutdown",
+        "id":"shutdown",
+        "parentId":"tool-start",
+        "timestamp":"2026-07-22T00:00:02.000Z",
+        "data":{"shutdownType":"routine"}
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Interrupted terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'events-v1',
+      {
+        has: async () => true,
+        send: async () => true,
+        cancel: async () => true,
+      },
+    )
+
+    await service.start()
+
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      status: 'idle',
+      activity: undefined,
+      messages: [
+        expect.objectContaining({
+          id: 'tool:call',
+          activityStatus: 'failed',
+        }),
+      ],
+    })
+    expect(
+      service.store.queueDispatchAt(client.session.sessionId),
+    ).toBeUndefined()
     await service.stop()
   })
 

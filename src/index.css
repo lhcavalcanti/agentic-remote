@@ -1603,7 +1603,7 @@ button {
 .workspace-tree__path {
   display: flex;
   min-height: 32px;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   padding: 4px;
@@ -1611,7 +1611,19 @@ button {
   font-size: 11px;
 }
 
-.workspace-tree__path > div {
+.workspace-tree__navigation,
+.workspace-tree__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-tree__navigation {
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-tree__navigation span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1624,6 +1636,21 @@ button {
   gap: 5px;
   color: var(--muted-strong);
   background: transparent;
+}
+
+.workspace-tree__path button:disabled {
+  opacity: 0.45;
+}
+
+.workspace-tree__navigation button {
+  min-width: 26px;
+  justify-content: center;
+  padding: 4px;
+}
+
+.workspace-tree__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .workspace-entry {

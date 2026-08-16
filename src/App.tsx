@@ -42,6 +42,7 @@ import {
   Bot,
   CheckCircle2,
   ChevronLeft,
+  ChevronRight,
   Command,
   Eraser,
   Folder,
@@ -1954,6 +1955,7 @@ function WorkspaceDialog({
   onBookmark,
   onClose,
   onInsert,
+  onMoved,
 }: {
   initialKind?: 'file' | 'folder'
   initialPath?: string
@@ -1962,6 +1964,7 @@ function WorkspaceDialog({
   onBookmark: (target: WorkspaceBookmarkTarget) => Promise<void>
   onClose: () => void
   onInsert: (file: WorkspaceFile, ask: boolean) => void
+  onMoved: (session: ManagedSession) => void
 }) {
   const [listing, setListing] = useState<WorkspaceListing>()
   const [file, setFile] = useState<WorkspaceFile>()
@@ -1969,39 +1972,120 @@ function WorkspaceDialog({
   const [search, setSearch] = useState('')
   const [results, setResults] = useState<WorkspaceSearchResult[]>()
   const [loading, setLoading] = useState(true)
+  const [moving, setMoving] = useState(false)
   const [error, setError] = useState<string>()
+  const [directoryHistory, setDirectoryHistory] = useState<string[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
   const previewContentRef = useRef<HTMLDivElement>(null)
+  const workspaceRequest = useRef(0)
+  const directoryHistoryRef = useRef<string[]>([])
+  const historyIndexRef = useRef(-1)
 
-  const openDirectory = useCallback(async (path = '.') => {
-    setLoading(true)
-    setError(undefined)
-    setFile(undefined)
-    setResults(undefined)
-    try {
-      setListing(await listWorkspace(session.computerId, session.id, path))
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setLoading(false)
-    }
-  }, [session.computerId, session.id])
+  const updateDirectoryHistory = useCallback(
+    (history: string[], index: number) => {
+      directoryHistoryRef.current = history
+      historyIndexRef.current = index
+      setDirectoryHistory(history)
+      setHistoryIndex(index)
+    },
+    [],
+  )
 
-  const openFile = useCallback(async (path: string) => {
-    setLoading(true)
-    setError(undefined)
-    try {
-      setFile(await readWorkspaceFile(session.computerId, session.id, path))
-      setRaw(false)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setLoading(false)
+  const openDirectory = useCallback(
+    async (
+      path = '.',
+      navigation:
+        | { kind: 'history'; index: number }
+        | { kind: 'push' | 'refresh' | 'reset' } = { kind: 'push' },
+    ) => {
+      const request = ++workspaceRequest.current
+      setLoading(true)
+      setError(undefined)
+      setFile(undefined)
+      setResults(undefined)
+      try {
+        const nextListing = await listWorkspace(
+          session.computerId,
+          session.id,
+          path,
+        )
+        if (request !== workspaceRequest.current) {
+          return false
+        }
+        setListing(nextListing)
+        if (navigation.kind === 'reset') {
+          updateDirectoryHistory([nextListing.path], 0)
+        } else if (navigation.kind === 'history') {
+          updateDirectoryHistory(
+            directoryHistoryRef.current,
+            navigation.index,
+          )
+        } else if (navigation.kind === 'push') {
+          const current = directoryHistoryRef.current
+          const currentIndex = historyIndexRef.current
+          if (current[currentIndex] !== nextListing.path) {
+            const next = [
+              ...current.slice(0, currentIndex + 1),
+              nextListing.path,
+            ]
+            updateDirectoryHistory(next, next.length - 1)
+          }
+        }
+        return true
+      } catch (caught) {
+        if (request === workspaceRequest.current) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+        return false
+      } finally {
+        if (request === workspaceRequest.current) {
+          setLoading(false)
+        }
+      }
+    },
+    [session.computerId, session.id, updateDirectoryHistory],
+  )
+
+  const openFile = useCallback(
+    async (path: string) => {
+      const request = ++workspaceRequest.current
+      setLoading(true)
+      setError(undefined)
+      try {
+        const nextFile = await readWorkspaceFile(
+          session.computerId,
+          session.id,
+          path,
+        )
+        if (request === workspaceRequest.current) {
+          setFile(nextFile)
+          setRaw(false)
+        }
+      } catch (caught) {
+        if (request === workspaceRequest.current) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      } finally {
+        if (request === workspaceRequest.current) {
+          setLoading(false)
+        }
+      }
+    },
+    [session.computerId, session.id],
+  )
+
+  function navigateHistory(index: number) {
+    const path = directoryHistoryRef.current[index]
+    if (!path || loading) {
+      return
     }
-  }, [session.computerId, session.id])
+    void openDirectory(path, { kind: 'history', index })
+  }
 
   async function submitSearch(event: FormEvent) {
     event.preventDefault()
     if (search.trim().length < 2) return
+    const request = ++workspaceRequest.current
     setLoading(true)
     setError(undefined)
     setFile(undefined)
@@ -2012,29 +2096,50 @@ function WorkspaceDialog({
         search,
         listing?.path,
       )
-      setResults(response.results)
+      if (request === workspaceRequest.current) {
+        setResults(response.results)
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      if (request === workspaceRequest.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
     } finally {
-      setLoading(false)
+      if (request === workspaceRequest.current) {
+        setLoading(false)
+      }
     }
   }
 
   useEffect(() => {
+    updateDirectoryHistory([], -1)
     void (async () => {
       if (!initialPath) {
-        await openDirectory()
+        await openDirectory('.', { kind: 'reset' })
         return
       }
       if (initialKind === 'folder') {
-        await openDirectory(initialPath)
+        await openDirectory(initialPath, { kind: 'reset' })
         return
       }
       const separator = initialPath.lastIndexOf('/')
-      await openDirectory(separator >= 0 ? initialPath.slice(0, separator) : '.')
-      await openFile(initialPath)
+      const opened = await openDirectory(
+        separator >= 0 ? initialPath.slice(0, separator) : '.',
+        { kind: 'reset' },
+      )
+      if (opened) {
+        await openFile(initialPath)
+      }
     })()
-  }, [initialKind, initialPath, openDirectory, openFile])
+    return () => {
+      workspaceRequest.current += 1
+    }
+  }, [
+    initialKind,
+    initialPath,
+    openDirectory,
+    openFile,
+    updateDirectoryHistory,
+  ])
 
   useEffect(() => {
     previewContentRef.current?.scrollTo({ top: 0 })
@@ -2062,6 +2167,36 @@ function WorkspaceDialog({
     listing?.path === '.'
       ? session.cwd.split('/').filter(Boolean).at(-1) || session.cwd
       : listing?.path.split('/').filter(Boolean).at(-1) || listing?.path
+  const selectedFolder = workspaceAbsolutePath(
+    session.cwd,
+    listing?.path || '.',
+  )
+  const sessionBusy =
+    session.status === 'running' || session.status === 'waiting'
+
+  async function moveHere() {
+    if (!listing || sessionBusy) {
+      return
+    }
+    if (/[\r\n]/.test(selectedFolder)) {
+      setError('Folder paths cannot contain line breaks')
+      return
+    }
+    setMoving(true)
+    setError(undefined)
+    try {
+      onMoved(
+        await executeCommand(session.computerId, session.id, {
+          command: `/cwd ${selectedFolder}`,
+          enqueue: false,
+        }),
+      )
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setMoving(false)
+    }
+  }
 
   return (
     <DialogFrame
@@ -2092,38 +2227,82 @@ function WorkspaceDialog({
       >
         <aside className="workspace-tree">
           <div className="workspace-tree__path">
-            <div>
-              {results ? (
-                <button onClick={() => void openDirectory(listing?.path)}>
-                  <ChevronLeft size={15} /> Files
-                </button>
-              ) : listing?.parent ? (
-                <button onClick={() => void openDirectory(listing.parent)}>
-                  <ChevronLeft size={15} /> {listing.path}
-                </button>
-              ) : (
-                <span>
-                  {listing?.path === '.' ? session.cwd : listing?.path}
-                </span>
-              )}
-            </div>
-            {listing && !results ? (
+            <div className="workspace-tree__navigation">
               <button
-                aria-label="Save current folder to Knowledge"
-                disabled={folderBookmarked}
+                aria-label="Back folder"
+                disabled={historyIndex <= 0 || loading}
+                onClick={() => navigateHistory(historyIndex - 1)}
+                type="button"
+              >
+                <ChevronLeft size={15} />
+              </button>
+              <button
+                aria-label="Forward folder"
+                disabled={
+                  historyIndex < 0 ||
+                  historyIndex >= directoryHistory.length - 1 ||
+                  loading
+                }
+                onClick={() => navigateHistory(historyIndex + 1)}
+                type="button"
+              >
+                <ChevronRight size={15} />
+              </button>
+              <button
+                aria-label="Parent folder"
+                disabled={!listing?.parent || loading}
                 onClick={() =>
-                  void onBookmark({
-                    kind: 'folder',
-                    name: folderName || listing.path,
-                    path: listing.path,
-                  })
+                  void openDirectory(listing?.parent || '.', { kind: 'push' })
                 }
                 type="button"
               >
-                <Bookmark size={14} />
-                {folderBookmarked ? 'Saved' : 'Save folder'}
+                <ArrowUp size={15} />
               </button>
-            ) : null}
+              <span title={selectedFolder}>{selectedFolder}</span>
+            </div>
+            <div className="workspace-tree__actions">
+              {results ? (
+                <button
+                  onClick={() =>
+                    void openDirectory(listing?.path, { kind: 'refresh' })
+                  }
+                  type="button"
+                >
+                  <ChevronLeft size={15} /> Files
+                </button>
+              ) : listing ? (
+                <>
+                  <button
+                    disabled={loading || moving || sessionBusy}
+                    onClick={() => void moveHere()}
+                    title={
+                      sessionBusy
+                        ? 'Wait for the current agent turn to finish'
+                        : `Move chat to ${selectedFolder}`
+                    }
+                    type="button"
+                  >
+                    <FolderOpen size={14} />
+                    {moving ? 'Moving…' : 'Move here'}
+                  </button>
+                  <button
+                    aria-label="Save current folder to Knowledge"
+                    disabled={folderBookmarked}
+                    onClick={() =>
+                      void onBookmark({
+                        kind: 'folder',
+                        name: folderName || listing.path,
+                        path: listing.path,
+                      })
+                    }
+                    type="button"
+                  >
+                    <Bookmark size={14} />
+                    {folderBookmarked ? 'Saved' : 'Save folder'}
+                  </button>
+                </>
+              ) : null}
+            </div>
           </div>
           {loading ? (
             <LoaderCircle className="activity-message__spinner" size={18} />
@@ -4622,6 +4801,12 @@ function App() {
             setWorkspaceInitialKind(undefined)
           }}
           onInsert={insertWorkspaceFile}
+          onMoved={(session) => {
+            setSessions((current) => upsertSession(current, session))
+            setWorkspaceOpen(false)
+            setWorkspaceInitialPath(undefined)
+            setWorkspaceInitialKind(undefined)
+          }}
           session={selected}
         />
       ) : null}

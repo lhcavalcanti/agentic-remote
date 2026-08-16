@@ -10,7 +10,11 @@ import {
   waitFor,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ComputerSummary, ManagedSession } from '../shared/contracts'
+import type {
+  ComputerSummary,
+  ManagedSession,
+  WorkspaceListing,
+} from '../shared/contracts'
 import App from './App'
 import {
   activateSession,
@@ -631,6 +635,166 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue(
       'File: `/home/lcavalcanti/src/project/README.md`',
     )
+  })
+
+  it('navigates workspace folder history and truncates forward history', async () => {
+    vi.mocked(listWorkspace).mockImplementation(
+      async (_computerId, _sessionId, path = '.') => {
+        if (path === 'docs') {
+          return {
+            path: 'docs',
+            parent: '.',
+            entries: [],
+          }
+        }
+        if (path === 'src') {
+          return {
+            path: 'src',
+            parent: '.',
+            entries: [],
+          }
+        }
+        return {
+          path: '.',
+          entries: [
+            { name: 'docs', path: 'docs', kind: 'directory' },
+            { name: 'src', path: 'src', kind: 'directory' },
+          ],
+        }
+      },
+    )
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'docs' }))
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenLastCalledWith(
+        computer.id,
+        session.id,
+        'docs',
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back folder' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Forward folder' }))
+        .toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Forward folder' }))
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenLastCalledWith(
+        computer.id,
+        session.id,
+        'docs',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Back folder' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'src' }))
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenLastCalledWith(
+        computer.id,
+        session.id,
+        'src',
+      ),
+    )
+    expect(screen.getByRole('button', { name: 'Forward folder' }))
+      .toBeDisabled()
+  })
+
+  it('keeps the newest workspace folder when requests finish out of order', async () => {
+    let resolveDocs: (listing: WorkspaceListing) => void = () => undefined
+    const docsListing = new Promise<WorkspaceListing>((resolve) => {
+      resolveDocs = resolve
+    })
+    vi.mocked(listWorkspace).mockImplementation(
+      async (_computerId, _sessionId, path = '.') => {
+        if (path === 'docs') {
+          return docsListing
+        }
+        if (path === 'src') {
+          return {
+            path: 'src',
+            parent: '.',
+            entries: [],
+          }
+        }
+        return {
+          path: '.',
+          entries: [
+            { name: 'docs', path: 'docs', kind: 'directory' },
+            { name: 'src', path: 'src', kind: 'directory' },
+          ],
+        }
+      },
+    )
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    const docs = await screen.findByRole('button', { name: 'docs' })
+    const src = screen.getByRole('button', { name: 'src' })
+    act(() => {
+      docs.click()
+      src.click()
+    })
+
+    expect(
+      await screen.findByTitle('/home/lcavalcanti/src/project/src'),
+    ).toBeInTheDocument()
+    await act(async () => {
+      resolveDocs({
+        path: 'docs',
+        parent: '.',
+        entries: [],
+      })
+      await docsListing
+    })
+    expect(
+      screen.getByTitle('/home/lcavalcanti/src/project/src'),
+    ).toBeInTheDocument()
+  })
+
+  it('moves the chat to the displayed workspace folder', async () => {
+    vi.mocked(executeCommand).mockImplementation(
+      async (_computerId, _sessionId, input) => ({
+        ...session,
+        cwd: input.command.slice('/cwd '.length),
+      }),
+    )
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenLastCalledWith(
+        computer.id,
+        session.id,
+        'docs',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Move here' }))
+
+    await waitFor(() =>
+      expect(executeCommand).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        {
+          command: '/cwd /home/lcavalcanti/src/project/docs',
+          enqueue: false,
+        },
+      ),
+    )
+    expect(
+      screen.queryByRole('heading', { name: 'Session files' }),
+    ).not.toBeInTheDocument()
   })
 
   it('searches workspace files and saves knowledge bookmarks', async () => {

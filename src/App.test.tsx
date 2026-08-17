@@ -1354,6 +1354,7 @@ describe('App', () => {
     }
     vi.mocked(listSessions).mockResolvedValue([claudeSession])
     vi.mocked(getSession).mockResolvedValue(claudeSession)
+    vi.mocked(listCommands).mockResolvedValue([])
     vi.mocked(sendMessage).mockResolvedValue(claudeSession)
     render(<App />)
 

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import {
   deleteSession as deleteClaudeSession,
+  getSessionInfo as getClaudeSessionInfo,
   query,
   renameSession as renameClaudeSession,
   type EffortLevel,
@@ -42,9 +43,32 @@ import {
 
 const execFileAsync = promisify(execFile)
 
+function isMissingClaudeSessionError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.toLowerCase().includes('session') &&
+    (error.message.toLowerCase().includes('not found') ||
+      error.message.toLowerCase().includes('no conversation'))
+  )
+}
+
+function isClaudeAuthenticationError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  const message = error.message.toLowerCase()
+  return (
+    message.includes('authentication') ||
+    message.includes('oauth') ||
+    message.includes('not logged in') ||
+    message.includes('unauthorized')
+  )
+}
+
 export interface ClaudeSdk {
   query: typeof query
   deleteSession: typeof deleteClaudeSession
+  getSessionInfo: typeof getClaudeSessionInfo
   renameSession: typeof renameClaudeSession
 }
 
@@ -102,6 +126,7 @@ export class ClaudeAgentService
     private readonly sdk: ClaudeSdk = {
       query,
       deleteSession: deleteClaudeSession,
+      getSessionInfo: getClaudeSessionInfo,
       renameSession: renameClaudeSession,
     },
     private readonly authStatus: AuthStatusRunner = async (executable) => {
@@ -129,6 +154,17 @@ export class ClaudeAgentService
   async start(): Promise<void> {
     await this.store.initialize()
     await this.detectAvailability()
+    if (this.available) {
+      await Promise.all(
+        this.store
+          .list()
+          .filter(
+            (session) =>
+              session.status === 'idle' && session.queuedPrompts?.length,
+          )
+          .map((session) => this.drainQueue(session.id)),
+      )
+    }
   }
 
   async stop(): Promise<void> {
@@ -228,7 +264,13 @@ export class ClaudeAgentService
 
   async renameSession(id: string, title: string): Promise<SessionDetail> {
     const session = this.requireSession(id)
-    await this.sdk.renameSession(id, title, { dir: session.cwd })
+    try {
+      await this.sdk.renameSession(id, title, { dir: session.cwd })
+    } catch (error) {
+      if (!isMissingClaudeSessionError(error)) {
+        throw error
+      }
+    }
     const renamed = await this.store.renameSession(id, title)
     this.publish(renamed)
     return renamed
@@ -318,7 +360,13 @@ export class ClaudeAgentService
 
   async clearConversation(id: string): Promise<SessionDetail> {
     const session = this.requireIdle(id)
-    await this.sdk.deleteSession(id, { dir: session.cwd })
+    try {
+      await this.sdk.deleteSession(id, { dir: session.cwd })
+    } catch (error) {
+      if (!isMissingClaudeSessionError(error)) {
+        throw error
+      }
+    }
     const replacementId = randomUUID()
     const cleared = await this.store.replaceWithClearedSession(id, replacementId)
     this.emit('event', { type: 'session.removed', sessionId: id })
@@ -350,6 +398,7 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
   ): Promise<SessionDetail> {
+    await this.refreshAuthentication()
     const session = this.requireSession(sessionId)
     if (session.status === 'running' || session.status === 'waiting') {
       if (!enqueue) {
@@ -411,9 +460,19 @@ export class ClaudeAgentService
     const session = this.requireSession(sessionId)
     this.active.get(sessionId)?.abortController.abort()
     this.resolvePending(sessionId, 'Session was deleted')
-    await this.sdk.deleteSession(sessionId, { dir: session.cwd })
+    let cleanupError: unknown
+    try {
+      await this.sdk.deleteSession(sessionId, { dir: session.cwd })
+    } catch (error) {
+      if (!isMissingClaudeSessionError(error)) {
+        cleanupError = error
+      }
+    }
     await this.store.remove(sessionId)
     this.emit('event', { type: 'session.removed', sessionId })
+    if (cleanupError) {
+      throw cleanupError
+    }
   }
 
   async replyPermission(
@@ -490,6 +549,29 @@ export class ClaudeAgentService
     }
   }
 
+  private async refreshAuthentication(): Promise<void> {
+    try {
+      const status = await this.authStatus(this.executable)
+      if (!status.loggedIn) {
+        this.available = false
+        this.unavailableReason = 'Run claude auth login on this computer'
+        throw new Error(this.unavailableReason)
+      }
+      this.available = true
+      this.unavailableReason = ''
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'Run claude auth login on this computer'
+      ) {
+        throw error
+      }
+      this.available = false
+      this.unavailableReason = 'Claude authentication check failed'
+      throw new Error(this.unavailableReason, { cause: error })
+    }
+  }
+
   private async loadModels(): Promise<RuntimeModelOption[]> {
     async function* emptyPrompt() {}
     const abortController = new AbortController()
@@ -529,36 +611,38 @@ export class ClaudeAgentService
     assistantId: string,
   ): Promise<void> {
     const session = this.requireSession(sessionId)
-    const hasPriorTurn =
-      session.messages.filter((message) => message.role === 'user').length > 1
     const abortController = new AbortController()
     const runtime = session.runtime
-    const activeQuery = this.sdk.query({
-      prompt,
-      options: {
-        abortController,
-        allowDangerouslySkipPermissions:
-          runtime?.allowAllPermissions === true,
-        canUseTool: (toolName, input) =>
-          this.canUseTool(sessionId, toolName, input),
-        cwd: session.cwd,
-        effort: this.effort(runtime?.reasoningEffort),
-        includePartialMessages: true,
-        model: runtime?.model,
-        pathToClaudeCodeExecutable: this.executable,
-        permissionMode: this.permissionMode(
-          runtime?.mode,
-          runtime?.allowAllPermissions,
-        ),
-        ...(hasPriorTurn ? { resume: sessionId } : { sessionId }),
-      },
-    })
-    this.active.set(sessionId, {
-      abortController,
-      query: activeQuery,
-    })
     const toolIds = new Set<string>()
+    let aborted = false
     try {
+      const hasProviderSession = Boolean(
+        await this.sdk.getSessionInfo(sessionId, { dir: session.cwd }),
+      )
+      const activeQuery = this.sdk.query({
+        prompt,
+        options: {
+          abortController,
+          allowDangerouslySkipPermissions:
+            runtime?.allowAllPermissions === true,
+          canUseTool: (toolName, input) =>
+            this.canUseTool(sessionId, toolName, input),
+          cwd: session.cwd,
+          effort: this.effort(runtime?.reasoningEffort),
+          includePartialMessages: true,
+          model: runtime?.model,
+          pathToClaudeCodeExecutable: this.executable,
+          permissionMode: this.permissionMode(
+            runtime?.mode,
+            runtime?.allowAllPermissions,
+          ),
+          ...(hasProviderSession ? { resume: sessionId } : { sessionId }),
+        },
+      })
+      this.active.set(sessionId, {
+        abortController,
+        query: activeQuery,
+      })
       for await (const message of activeQuery) {
         if (!this.store.get(sessionId)) {
           return
@@ -583,7 +667,11 @@ export class ClaudeAgentService
       if (!this.store.get(sessionId)) {
         return
       }
-      const aborted = abortController.signal.aborted
+      aborted = abortController.signal.aborted
+      if (isClaudeAuthenticationError(error)) {
+        this.available = false
+        this.unavailableReason = 'Run claude auth login on this computer'
+      }
       await this.store.finishMessage(sessionId, assistantId).catch(() => undefined)
       const failed = await this.store.update(sessionId, (stored) => {
         stored.status = aborted ? 'idle' : 'error'
@@ -596,13 +684,19 @@ export class ClaudeAgentService
         this.emit('event', {
           type: 'error',
           sessionId,
-          message: error instanceof Error ? error.message : String(error),
+          message: isClaudeAuthenticationError(error)
+            ? this.unavailableReason
+            : error instanceof Error
+              ? error.message
+              : String(error),
         })
       }
     } finally {
       this.active.delete(sessionId)
       this.resolvePending(sessionId, 'Claude Agent stopped')
-      await this.drainQueue(sessionId)
+      if (!aborted) {
+        await this.drainQueue(sessionId)
+      }
     }
   }
 
@@ -635,6 +729,9 @@ export class ClaudeAgentService
       return
     }
     if (message.type === 'assistant') {
+      if (message.error) {
+        throw new Error(`Claude request failed: ${message.error}`)
+      }
       for (const block of message.message.content) {
         if (block.type === 'tool_use') {
           await this.startTool(sessionId, block.id, block.name, toolIds)
@@ -663,6 +760,13 @@ export class ClaudeAgentService
       return
     }
     if (message.type === 'result') {
+      if (message.subtype !== 'success' || message.is_error) {
+        throw new Error(
+          'errors' in message && message.errors.length > 0
+            ? message.errors.join('; ')
+            : `Claude request failed: ${message.subtype}`,
+        )
+      }
       const usage = Object.values(message.modelUsage || {})
       const contextTokens = usage.reduce(
         (total, model) =>

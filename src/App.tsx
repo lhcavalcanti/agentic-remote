@@ -3516,14 +3516,16 @@ function App() {
     const commandName = isCommand
       ? content.slice(1).split(/\s+/, 1)[0].toLowerCase()
       : ''
-    const command = commands.find(
-      (candidate) =>
-        candidate.name.toLowerCase() === commandName ||
-        slashShortcut(candidate.name) === commandName ||
-        candidate.aliases?.some(
-          (alias) => alias.toLowerCase() === commandName,
-        ),
-    )
+    const command = isCommand
+      ? commands.find(
+          (candidate) =>
+            candidate.name.toLowerCase() === commandName ||
+            slashShortcut(candidate.name) === commandName ||
+            candidate.aliases?.some(
+              (alias) => alias.toLowerCase() === commandName,
+            ),
+        )
+      : undefined
     if (command?.name === 'statusline') {
       const input = content.slice(commandName.length + 1).trim().toLowerCase()
       if (input === 'off') {

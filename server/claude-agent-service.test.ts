@@ -50,19 +50,32 @@ async function fixture(
   const directory = await mkdtemp(path.join(tmpdir(), 'claude-service-test-'))
   directories.push(directory)
   const queryCalls: Options[] = []
+  let runCount = 0
   const deleteSession = vi.fn(async () => undefined)
+  const getSessionInfo = vi.fn(async (sessionId: string) =>
+    runCount > 0
+      ? {
+          sessionId,
+          summary: 'Claude session',
+          lastModified: Date.now(),
+        }
+      : undefined,
+  )
   const renameSession = vi.fn(async () => undefined)
   const queryMock = vi.fn(
     ({ prompt, options = {} }: { prompt: unknown; options?: Options }) => {
       queryCalls.push(options)
-      return typeof prompt === 'string'
-        ? queryHandle(() => run(options))
-        : queryHandle(async function* () {})
+      if (typeof prompt === 'string') {
+        runCount += 1
+        return queryHandle(() => run(options))
+      }
+      return queryHandle(async function* () {})
     },
   )
   const sdk: ClaudeSdk = {
     query: queryMock as ClaudeSdk['query'],
     deleteSession,
+    getSessionInfo,
     renameSession,
   }
   const service = new ClaudeAgentService(
@@ -75,6 +88,7 @@ async function fixture(
   return {
     deleteSession,
     directory,
+    getSessionInfo,
     queryCalls,
     renameSession,
     service,
@@ -269,5 +283,81 @@ describe('ClaudeAgentService', () => {
       wasFreeform: false,
     })
     await waitForIdle(service, sessionId)
+  })
+
+  it('handles rename, clear, and delete before Claude creates a transcript', async () => {
+    const fixtureResult = await fixture(async function* () {})
+    const {
+      deleteSession,
+      directory,
+      renameSession,
+      service,
+    } = fixtureResult
+    const created = await service.createSession(
+      directory,
+      false,
+      true,
+      'claude',
+    )
+
+    renameSession.mockRejectedValueOnce(
+      new Error('Session not found in any project directory'),
+    )
+    const renamed = await service.renameSession(created.id, 'Fresh Claude')
+    expect(renamed.title).toBe('Fresh Claude')
+
+    deleteSession.mockRejectedValueOnce(new Error('Session not found'))
+    const cleared = await service.clearConversation(created.id)
+    expect(cleared.id).not.toBe(created.id)
+    expect(cleared.messages).toEqual([])
+
+    deleteSession.mockRejectedValueOnce(new Error('Session not found'))
+    await service.deleteSession(cleared.id)
+    expect(service.getSession(cleared.id)).toBeUndefined()
+  })
+
+  it('starts a new provider session after a failed first turn', async () => {
+    let sessionId = ''
+    let turn = 0
+    const fixtureResult = await fixture(async function* () {
+      turn += 1
+      if (turn === 1) {
+        yield {
+          type: 'result',
+          subtype: 'error_during_execution',
+          is_error: true,
+          errors: ['First turn failed'],
+          modelUsage: {},
+          session_id: sessionId,
+        } as unknown as SDKMessage
+        return
+      }
+      yield* textResult(sessionId)
+    })
+    const { directory, getSessionInfo, queryCalls, service } = fixtureResult
+    getSessionInfo.mockResolvedValue(undefined)
+    const created = await service.createSession(
+      directory,
+      false,
+      true,
+      'claude',
+    )
+    sessionId = created.id
+
+    await service.sendMessage(sessionId, 'first')
+    await vi.waitFor(() =>
+      expect(service.getSession(sessionId)?.status).toBe('error'),
+    )
+    await service.sendMessage(sessionId, 'retry')
+    await waitForIdle(service, sessionId)
+
+    const runOptions = queryCalls.filter(
+      (options) => options.sessionId || options.resume,
+    )
+    expect(runOptions).toHaveLength(2)
+    expect(runOptions[0]).toMatchObject({ sessionId })
+    expect(runOptions[0].resume).toBeUndefined()
+    expect(runOptions[1]).toMatchObject({ sessionId })
+    expect(runOptions[1].resume).toBeUndefined()
   })
 })

@@ -138,6 +138,7 @@ const session: ManagedSession = {
   id: 'session-1',
   computerId: computer.id,
   computerName: computer.name,
+  executionMode: 'tmux',
   cwd: '/home/lcavalcanti/src/project',
   title: 'Project chat',
   updatedAt: '2026-07-22T00:00:00.000Z',
@@ -454,6 +455,9 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByLabelText('Claude Agent available on development'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('tmux', { selector: '.session-mode-badge' }),
     ).toBeInTheDocument()
   })
 
@@ -1344,6 +1348,7 @@ describe('App', () => {
       ...session,
       id: 'claude-session',
       provider: 'claude',
+      executionMode: 'sdk',
       title: 'Claude project',
       messages: [],
     }
@@ -1370,6 +1375,9 @@ describe('App', () => {
     )
     expect(
       screen.getByText('Tap ↑ to send · Return adds a line'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('SDK', { selector: '.session-mode-badge' }),
     ).toBeInTheDocument()
   })
 

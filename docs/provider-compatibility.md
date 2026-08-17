@@ -35,7 +35,8 @@ history is not transferred between providers.
 - Provider availability is advertised per computer before creation. A legacy
   node that does not advertise capabilities is treated as Copilot-only.
 - Claude Agent is SDK-only. The UI hides the tmux option and does not claim SSH
-  visibility or terminal recovery.
+  visibility or terminal recovery. Session badges and the header identify
+  whether each session is **tmux** or **SDK**.
 - Claude model and effort changes apply to the next turn. Claude controls its
   context window, so it does not advertise a long-context tier.
 - Copilot supplies its native slash-command catalog. Claude exposes only the

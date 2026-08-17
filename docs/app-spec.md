@@ -63,6 +63,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   provider.
 - Provider capability indicators MUST distinguish available from unavailable
   and MUST remain compact, accessible, and safe within the phone drawer.
+- Every open session MUST identify whether it is tmux-backed or SDK-only. The
+  UI MUST NOT imply that SDK-only sessions are available through `tmux attach`.
 - Active tmux sessions MUST be discovered from the Copilot session actually
   opened by the process.
 - A late or ambiguous lock MAY be accepted only when `/proc/<pid>/fd` proves

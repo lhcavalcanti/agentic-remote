@@ -547,6 +547,12 @@ button {
   letter-spacing: 0.03em;
 }
 
+.session-mode-badge {
+  color: var(--computer-accent);
+  border-color: color-mix(in srgb, var(--computer-accent) 45%, var(--border));
+  text-transform: none;
+}
+
 .session-item small {
   color: #74786d;
   font-size: 10.5px;

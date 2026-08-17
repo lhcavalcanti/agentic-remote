@@ -1,6 +1,7 @@
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
 export type AgentProvider = 'copilot' | 'claude'
+export type SessionExecutionMode = 'tmux' | 'sdk'
 
 export interface AgentProviderCapability {
   id: AgentProvider
@@ -86,6 +87,7 @@ export interface SessionSummary {
   id: string
   revision?: number
   provider?: AgentProvider
+  executionMode?: SessionExecutionMode
   cwd: string
   title: string
   updatedAt: string

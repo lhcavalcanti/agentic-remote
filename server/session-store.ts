@@ -36,14 +36,18 @@ interface StoredSession extends SessionDetail {
 function cloneSession(session: StoredSession): SessionDetail {
   const {
     managedOpen: _managedOpen,
-    backend: _backend,
+    backend,
     customTitle: _customTitle,
     queueDispatchAt: _queueDispatchAt,
     contextCwd: _contextCwd,
     workspaceTitle: _workspaceTitle,
+    executionMode: _executionMode,
     ...detail
   } = structuredClone(session)
-  return detail
+  return {
+    ...detail,
+    executionMode: backend === 'terminal' ? 'tmux' : 'sdk',
+  }
 }
 
 export class SessionStore {
@@ -134,6 +138,7 @@ export class SessionStore {
       provider: session.provider || 'copilot',
       revision: session.revision ?? 1,
       managedOpen: options.managedOpen,
+      executionMode: undefined,
       backend: options.backend,
     }
     await this.persist()

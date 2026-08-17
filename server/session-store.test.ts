@@ -80,9 +80,13 @@ describe('SessionStore', () => {
     expect(restored.terminalRecoverySessions()).toEqual([
       expect.objectContaining({
         id: 'terminal-session',
+        executionMode: 'tmux',
         isOpen: true,
       }),
     ])
+    expect(restored.get('sdk-session')).toMatchObject({
+      executionMode: 'sdk',
+    })
   })
 
   it('migrates active terminal sessions into boot recovery', async () => {

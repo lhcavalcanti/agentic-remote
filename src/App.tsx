@@ -312,6 +312,16 @@ function providerName(provider: AgentProvider | undefined): string {
   return provider === 'claude' ? 'Claude Agent' : 'GitHub Copilot'
 }
 
+function executionModeName(
+  executionMode: ManagedSession['executionMode'],
+): string | undefined {
+  return executionMode === 'tmux'
+    ? 'tmux'
+    : executionMode === 'sdk'
+      ? 'SDK'
+      : undefined
+}
+
 function computerProviders(
   computer: ComputerSummary | undefined,
 ): AgentProviderCapability[] {
@@ -1518,6 +1528,11 @@ function SortableSessionItem({
           <em className="provider-badge">
             {session.provider === 'claude' ? 'Claude' : 'Copilot'}
           </em>
+          {executionModeName(session.executionMode) ? (
+            <em className="provider-badge session-mode-badge">
+              {executionModeName(session.executionMode)}
+            </em>
+          ) : null}
         </strong>
         <small>{shortPath(session.cwd)}</small>
       </span>
@@ -4318,7 +4333,11 @@ function App() {
             <strong>{selected?.title || 'Agentic Remote'}</strong>
             <span>
               {selected
-                ? `${providerName(selected.provider)} · ${selected.computerName} · ${shortPath(selected.cwd)}`
+                ? `${providerName(selected.provider)}${
+                    executionModeName(selected.executionMode)
+                      ? ` · ${executionModeName(selected.executionMode)}`
+                      : ''
+                  } · ${selected.computerName} · ${shortPath(selected.cwd)}`
                 : 'Ready when you are'}
             </span>
           </div>
@@ -4531,6 +4550,9 @@ function App() {
             {statusline.provider ? (
               <span className="web-statusline__provider">
                 {providerName(selected.provider)}
+                {executionModeName(selected.executionMode)
+                  ? ` · ${executionModeName(selected.executionMode)}`
+                  : ''}
               </span>
             ) : null}
             {statusline.path ? <span>{shortPath(selected.cwd)}</span> : null}
@@ -4764,7 +4786,12 @@ function App() {
               >
                 <SlidersHorizontal aria-hidden="true" size={12} />
                 {statusline.provider ? (
-                  <span>{providerName(selected.provider)}</span>
+                  <span>
+                    {providerName(selected.provider)}
+                    {executionModeName(selected.executionMode)
+                      ? ` · ${executionModeName(selected.executionMode)}`
+                      : ''}
+                  </span>
                 ) : null}
                 {statusline.model && selected.runtime?.model ? (
                   <span>{selected.runtime.model}</span>

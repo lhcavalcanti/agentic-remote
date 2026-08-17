@@ -83,6 +83,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         isLocal: false,
         online: this.clients.get(computer.id)?.online ?? false,
         baseUrl: computer.baseUrl,
+        providers: this.clients.get(computer.id)?.providers,
       })),
     ]
   }
@@ -241,12 +242,23 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     input: CreateSessionInput,
   ): Promise<ManagedSession> {
     const computer = this.requireComputer(computerId)
+    const provider = input.provider || 'copilot'
+    const capability = computer.providers?.find(
+      (candidate) => candidate.id === provider,
+    )
+    if (!capability?.available) {
+      throw new Error(
+        capability?.unavailableReason ||
+          `${provider === 'claude' ? 'Claude Agent' : 'GitHub Copilot'} is not available on ${computer.name}`,
+      )
+    }
     const session =
       computerId === this.identity.info.id
         ? await this.localService.createSession(
             input.cwd,
             input.terminalBacked,
             input.allowAllPermissions,
+            input.provider,
           )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)
@@ -455,6 +467,12 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       })
     })
     client.connect()
+    void client.getInfo().then(() => {
+      this.emit('event', {
+        type: 'computer.updated',
+        computer: this.computerSummary(computer),
+      })
+    }).catch(() => undefined)
     return client
   }
 
@@ -505,6 +523,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       name: this.identity.info.name,
       isLocal: true,
       online: true,
+      providers: this.localService.providers(),
     }
   }
 
@@ -515,6 +534,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       isLocal: false,
       online: this.clients.get(computer.id)?.online ?? false,
       baseUrl: computer.baseUrl,
+      providers: this.clients.get(computer.id)?.providers,
     }
   }
 

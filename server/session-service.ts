@@ -1,4 +1,6 @@
 import type {
+  AgentProvider,
+  AgentProviderCapability,
   DirectoryListing,
   ConfigureRuntimeInput,
   RuntimeOptions,
@@ -14,6 +16,7 @@ import type {
 } from '../shared/contracts.js'
 
 export interface SessionService {
+  providers(): AgentProviderCapability[]
   start(): Promise<void>
   stop(): Promise<void>
   listSessions(): SessionDetail[]
@@ -25,6 +28,7 @@ export interface SessionService {
     cwd: string,
     terminalBacked?: boolean,
     allowAllPermissions?: boolean,
+    provider?: AgentProvider,
   ): Promise<SessionDetail>
   uploadFile(
     sessionId: string,

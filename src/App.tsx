@@ -74,6 +74,8 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
+  AgentProvider,
+  AgentProviderCapability,
   ComputerSummary,
   ConfigureRuntimeInput,
   DirectoryListing,
@@ -190,6 +192,7 @@ function readStoredOrder<T>(key: string, fallback: T): T {
 type StatuslineSettings = {
   enabled: boolean
   computer: boolean
+  provider: boolean
   path: boolean
   status: boolean
   queue: boolean
@@ -205,6 +208,7 @@ type StatuslineSettings = {
 const defaultStatusline: StatuslineSettings = {
   enabled: true,
   computer: true,
+  provider: true,
   path: true,
   status: true,
   queue: true,
@@ -222,6 +226,7 @@ const statuslineOptions: Array<{
   label: string
 }> = [
   { key: 'computer', label: 'Computer' },
+  { key: 'provider', label: 'Agent provider' },
   { key: 'path', label: 'Working directory' },
   { key: 'status', label: 'Agent status' },
   { key: 'queue', label: 'Queued prompts' },
@@ -303,6 +308,25 @@ function shortPath(value: string): string {
   return value
 }
 
+function providerName(provider: AgentProvider | undefined): string {
+  return provider === 'claude' ? 'Claude Agent' : 'GitHub Copilot'
+}
+
+function computerProviders(
+  computer: ComputerSummary | undefined,
+): AgentProviderCapability[] {
+  return (
+    computer?.providers || [
+      {
+        id: 'copilot',
+        name: 'GitHub Copilot',
+        available: true,
+        terminalBacked: true,
+      },
+    ]
+  )
+}
+
 function compactTokens(value: number): string {
   if (value < 1_000) {
     return String(value)
@@ -377,6 +401,7 @@ function NewSessionDialog({
   onCreated: (session: ManagedSession) => void
 }) {
   const [computerId, setComputerId] = useState('')
+  const [provider, setProvider] = useState<AgentProvider>('copilot')
   const [cwd, setCwd] = useState('~')
   const [directoryListing, setDirectoryListing] =
     useState<DirectoryListing>()
@@ -398,6 +423,7 @@ function NewSessionDialog({
   useEffect(() => {
     if (open) {
       setComputerId(defaultComputerId || available[0]?.id || '')
+      setProvider('copilot')
       setCwd('~')
       setDirectoryListing(undefined)
       setTerminalBacked(true)
@@ -479,7 +505,13 @@ function NewSessionDialog({
         onCreated(
           await createSession(computerId, {
             cwd,
-            terminalBacked,
+            provider,
+            terminalBacked:
+              computerProviders(
+                available.find((computer) => computer.id === computerId),
+              ).find((entry) => entry.id === provider)?.terminalBacked === true
+                ? terminalBacked
+                : false,
             allowAllPermissions,
           }),
         )
@@ -504,9 +536,15 @@ function NewSessionDialog({
   const previousSessions = history.filter(
     (session) => session.computerId === computerId && !session.isOpen,
   )
+  const selectedComputer = available.find(
+    (computer) => computer.id === computerId,
+  )
+  const providers = computerProviders(selectedComputer)
+  const selectedProvider = providers.find((entry) => entry.id === provider)
 
   return (
     <DialogFrame
+      className="new-session-dialog"
       eyebrow="Conversation"
       onClose={onClose}
       title={mode === 'new' ? 'Choose a folder' : 'Open previous session'}
@@ -543,6 +581,7 @@ function NewSessionDialog({
             onChange={(event) => {
               directoryRequest.current += 1
               setComputerId(event.target.value)
+              setProvider('copilot')
               setHistoryKey('')
               setCwd('~')
             }}
@@ -555,6 +594,35 @@ function NewSessionDialog({
             ))}
           </select>
         </label>
+        {mode === 'new' ? (
+          <label className="field">
+            <span>Agent provider</span>
+            <select
+              aria-label="Agent provider"
+              className="dialog-select"
+              onChange={(event) =>
+                setProvider(event.target.value as AgentProvider)
+              }
+              value={provider}
+            >
+              {providers.map((entry) => (
+                <option
+                  disabled={!entry.available}
+                  key={entry.id}
+                  value={entry.id}
+                >
+                  {entry.name}
+                  {entry.available ? '' : ' — unavailable'}
+                </option>
+              ))}
+            </select>
+            {!selectedProvider?.available && selectedProvider?.unavailableReason ? (
+              <small className="field__hint">
+                {selectedProvider.unavailableReason}
+              </small>
+            ) : null}
+          </label>
+        ) : null}
         {mode === 'new' ? (
           <div className="folder-picker">
             <div className="folder-picker__toolbar">
@@ -604,19 +672,21 @@ function NewSessionDialog({
             <p className="folder-picker__hint">
               The session will start in <strong>{cwd || '~'}</strong>.
             </p>
-            <label className="tmux-session-option">
-              <input
-                checked={terminalBacked}
-                onChange={(event) => setTerminalBacked(event.target.checked)}
-                type="checkbox"
-              />
-              <span>
-                <strong>Create in tmux</strong>
-                <small>
-                  Opens a new window that remains accessible from SSH.
-                </small>
-              </span>
-            </label>
+            {selectedProvider?.terminalBacked ? (
+              <label className="tmux-session-option">
+                <input
+                  checked={terminalBacked}
+                  onChange={(event) => setTerminalBacked(event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>Create in tmux</strong>
+                  <small>
+                    Opens a new window that remains accessible from SSH.
+                  </small>
+                </span>
+              </label>
+            ) : null}
             <label className="tmux-session-option">
               <input
                 checked={allowAllPermissions}
@@ -651,7 +721,8 @@ function NewSessionDialog({
               </option>
               {previousSessions.map((session) => (
                 <option key={sessionKey(session)} value={sessionKey(session)}>
-                  {session.title} — {shortPath(session.cwd)}
+                  {session.title} — {providerName(session.provider)} —{' '}
+                  {shortPath(session.cwd)}
                 </option>
               ))}
             </select>
@@ -663,6 +734,7 @@ function NewSessionDialog({
           disabled={
             submitting ||
             !computerId ||
+            (mode === 'new' && !selectedProvider?.available) ||
             (mode === 'new' ? !cwd.trim() : !historyKey)
           }
           type="submit"
@@ -1387,7 +1459,7 @@ function EmptyConversation({ onCreate }: { onCreate: () => void }) {
         <MessageSquare size={26} />
       </span>
       <h2>Your agents, within reach.</h2>
-      <p>Choose a computer and continue any local Copilot conversation.</p>
+      <p>Choose a computer and continue a Copilot or Claude Agent conversation.</p>
       <button className="primary-button" onClick={onCreate} type="button">
         <Plus size={17} />
         New session
@@ -1441,7 +1513,12 @@ function SortableSessionItem({
       </span>
       <span className={`status-dot status-dot--${session.status}`} />
       <span className="session-item__text">
-        <strong>{session.title}</strong>
+        <strong>
+          {session.title}
+          <em className="provider-badge">
+            {session.provider === 'claude' ? 'Claude' : 'Copilot'}
+          </em>
+        </strong>
         <small>{shortPath(session.cwd)}</small>
       </span>
     </button>
@@ -1499,6 +1576,27 @@ function SortableComputerGroup({
         <strong>{computer.name}</strong>
         <small>{sessions.length}</small>
       </header>
+      <div
+        aria-label={`${computer.name} agent providers`}
+        className="computer-session-group__providers"
+      >
+        {computerProviders(computer).map((provider) => (
+          <span
+            aria-label={`${provider.name} ${
+              provider.available ? 'available' : 'unavailable'
+            } on ${computer.name}`}
+            className={`computer-provider ${
+              provider.available
+                ? 'computer-provider--available'
+                : 'computer-provider--unavailable'
+            }`}
+            key={provider.id}
+            title={provider.unavailableReason}
+          >
+            {provider.id === 'claude' ? 'Claude' : 'Copilot'}
+          </span>
+        ))}
+      </div>
       <SortableContext
         items={sessions.map((session) => `session:${sessionKey(session)}`)}
         strategy={verticalListSortingStrategy}
@@ -1655,7 +1753,7 @@ function RuntimeDialog({
 
   return (
     <DialogFrame
-      eyebrow="Agent runtime"
+      eyebrow={`${providerName(session.provider)} runtime`}
       onClose={onClose}
       title="Model and context"
     >
@@ -1751,12 +1849,15 @@ function RuntimeDialog({
             >
               <option value="interactive">Interactive</option>
               <option value="plan">Plan</option>
-              <option value="autopilot">Autopilot</option>
+              <option value="autopilot">
+                {session.provider === 'claude' ? 'Auto' : 'Autopilot'}
+              </option>
             </select>
           </label>
           <p className="runtime-dialog__hint">
-            Tmux sessions restart their Copilot pane with the same session ID.
-            Change settings only while the agent is idle.
+            {session.provider === 'claude'
+              ? 'Claude settings apply to the next turn. Change settings only while the agent is idle.'
+              : 'Tmux sessions restart their Copilot pane with the same session ID. Change settings only while the agent is idle.'}
           </p>
           {error ? <p className="form-error">{error}</p> : null}
           <button
@@ -3030,6 +3131,8 @@ function App() {
             ...availableCommands,
             ...webCommands.filter(
               (webCommand) =>
+                (selected?.provider !== 'claude' ||
+                  webCommand.name !== 'cwd') &&
                 !availableCommands.some(
                   (command) => command.name === webCommand.name,
                 ),
@@ -3045,7 +3148,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [selectedComputerId, selectedSessionId])
+  }, [selected?.provider, selectedComputerId, selectedSessionId])
 
   useEffect(() => {
     setSelectedCommandIndex(0)
@@ -3965,7 +4068,7 @@ function App() {
     if (
       !selected ||
       !window.confirm(
-        `Close "${selected.title}" on ${selected.computerName}?\n\nThis permanently deletes the Copilot session and its history from that computer.`,
+        `Close "${selected.title}" on ${selected.computerName}?\n\nThis permanently deletes the ${providerName(selected.provider)} session and its history from that computer.`,
       )
     ) {
       return
@@ -4215,7 +4318,7 @@ function App() {
             <strong>{selected?.title || 'Agentic Remote'}</strong>
             <span>
               {selected
-                ? `${selected.computerName} · ${shortPath(selected.cwd)}`
+                ? `${providerName(selected.provider)} · ${selected.computerName} · ${shortPath(selected.cwd)}`
                 : 'Ready when you are'}
             </span>
           </div>
@@ -4335,7 +4438,8 @@ function App() {
               </span>
               <h2>What should we work on?</h2>
               <p>
-                This agent runs on <strong>{selected.computerName}</strong> in{' '}
+                <strong>{providerName(selected.provider)}</strong> runs on{' '}
+                <strong>{selected.computerName}</strong> in{' '}
                 <code>{shortPath(selected.cwd)}</code>.
               </p>
             </div>
@@ -4422,6 +4526,11 @@ function App() {
                 selected.computerId,
               )}`}>
                 {selected.computerName}
+              </span>
+            ) : null}
+            {statusline.provider ? (
+              <span className="web-statusline__provider">
+                {providerName(selected.provider)}
               </span>
             ) : null}
             {statusline.path ? <span>{shortPath(selected.cwd)}</span> : null}
@@ -4639,7 +4748,8 @@ function App() {
                 </div>
               )}
             </div>
-            {((statusline.model && selected.runtime?.model) ||
+            {(statusline.provider ||
+              (statusline.model && selected.runtime?.model) ||
               (statusline.effort && selected.runtime?.reasoningEffort) ||
               (statusline.contextTier && selected.runtime?.contextTier) ||
               (statusline.contextUsage &&
@@ -4653,6 +4763,9 @@ function App() {
                 type="button"
               >
                 <SlidersHorizontal aria-hidden="true" size={12} />
+                {statusline.provider ? (
+                  <span>{providerName(selected.provider)}</span>
+                ) : null}
                 {statusline.model && selected.runtime?.model ? (
                   <span>{selected.runtime.model}</span>
                 ) : null}
@@ -4692,7 +4805,16 @@ function App() {
                 ? 'Transcribing audio…'
                 : uploadingFile
                   ? 'Uploading file…'
-                : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue'}
+                  : (
+                    <>
+                      <span className="composer-hint__desktop">
+                        Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue
+                      </span>
+                      <span className="composer-hint__mobile">
+                        Tap ↑ to send · Return adds a line
+                      </span>
+                    </>
+                  )}
               {selected.queuedCount
                 ? ` · ${selected.queuedCount} queued`
                 : ''}

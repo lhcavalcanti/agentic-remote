@@ -1,5 +1,14 @@
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
+export type AgentProvider = 'copilot' | 'claude'
+
+export interface AgentProviderCapability {
+  id: AgentProvider
+  name: string
+  available: boolean
+  terminalBacked: boolean
+  unavailableReason?: string
+}
 
 export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 
@@ -76,6 +85,7 @@ export interface ConfigureRuntimeInput {
 export interface SessionSummary {
   id: string
   revision?: number
+  provider?: AgentProvider
   cwd: string
   title: string
   updatedAt: string
@@ -99,6 +109,7 @@ export interface ComputerSummary {
   isLocal: boolean
   online: boolean
   baseUrl?: string
+  providers?: AgentProviderCapability[]
 }
 
 export interface ManagedSession extends SessionDetail {
@@ -119,6 +130,7 @@ export interface NodeInfo {
   id: string
   name: string
   version: string
+  providers?: AgentProviderCapability[]
 }
 
 export type ServerEvent =
@@ -135,6 +147,7 @@ export type HubEvent =
 
 export interface CreateSessionInput {
   cwd: string
+  provider?: AgentProvider
   terminalBacked?: boolean
   allowAllPermissions?: boolean
 }

@@ -24,6 +24,12 @@
   --radius: 16px;
 }
 
+.field__hint {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -58,6 +64,7 @@ button {
 
 .app-shell {
   --app-safe-area-top: env(safe-area-inset-top, 0px);
+  --app-content-safe-area-top: var(--app-safe-area-top);
   display: grid;
   position: relative;
   grid-template-columns: 286px minmax(0, 1fr);
@@ -336,6 +343,40 @@ button {
   background: var(--computer-accent);
 }
 
+.computer-session-group__providers {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+  padding: 0 5px 6px 30px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.computer-session-group__providers::-webkit-scrollbar {
+  display: none;
+}
+
+.computer-provider {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.computer-provider--available {
+  color: var(--muted-strong);
+  border-color: color-mix(in srgb, var(--computer-accent) 45%, var(--border));
+}
+
+.computer-provider--unavailable {
+  opacity: 0.48;
+  text-decoration: line-through;
+}
+
 .computer-session-group__sessions {
   display: flex;
   flex-direction: column;
@@ -486,6 +527,24 @@ button {
 .session-item strong {
   font-size: 12.5px;
   font-weight: 580;
+}
+
+.session-item strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.provider-badge {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 650;
+  letter-spacing: 0.03em;
 }
 
 .session-item small {
@@ -1206,6 +1265,10 @@ button {
   color: var(--computer-accent);
 }
 
+.web-statusline__provider {
+  color: var(--accent);
+}
+
 .web-statusline__status {
   display: inline-flex;
   align-items: center;
@@ -1506,6 +1569,10 @@ button {
   color: #676b61;
   font-size: 9px;
   text-align: center;
+}
+
+.composer-hint__mobile {
+  display: none;
 }
 
 .dialog-backdrop {
@@ -2148,13 +2215,26 @@ button {
   }
 
   .app-shell--keyboard-open {
-    top: var(--visual-viewport-top, 0);
+    --app-content-safe-area-top: 0px;
+    top: max(
+      var(--visual-viewport-top, 0px),
+      var(--app-safe-area-top)
+    );
     bottom: auto;
-    height: var(--visual-viewport-height, 100dvh);
+    height: calc(
+      var(--visual-viewport-height, 100dvh) -
+        max(
+          0px,
+          calc(
+            var(--app-safe-area-top) -
+              var(--visual-viewport-top, 0px)
+          )
+        )
+    );
   }
 
   .dialog-backdrop {
-    padding: max(8px, var(--app-safe-area-top)) 0 0;
+    padding: max(8px, var(--app-content-safe-area-top)) 0 0;
     align-items: end;
     justify-items: stretch;
   }
@@ -2172,6 +2252,30 @@ button {
     border-bottom: 0;
     border-left: 0;
     border-radius: 18px 18px 0 0;
+  }
+
+  .new-session-dialog {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .new-session-dialog .dialog__header {
+    flex: 0 0 auto;
+  }
+
+  .new-session-dialog > form {
+    min-height: 0;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .new-session-dialog .dialog__submit {
+    margin-bottom: 1px;
   }
 
   .workspace-dialog {
@@ -2240,8 +2344,8 @@ button {
   }
 
   .brand {
-    height: calc(74px + var(--app-safe-area-top));
-    padding-top: var(--app-safe-area-top);
+    height: calc(74px + var(--app-content-safe-area-top));
+    padding-top: var(--app-content-safe-area-top);
   }
 
   .sidebar--open {
@@ -2270,10 +2374,10 @@ button {
   }
 
   .conversation-header {
-    height: calc(58px + var(--app-safe-area-top));
-    min-height: calc(58px + var(--app-safe-area-top));
+    height: calc(58px + var(--app-content-safe-area-top));
+    min-height: calc(58px + var(--app-content-safe-area-top));
     gap: 2px;
-    padding: var(--app-safe-area-top)
+    padding: var(--app-content-safe-area-top)
       max(6px, env(safe-area-inset-right)) 0
       max(6px, env(safe-area-inset-left));
   }
@@ -2366,7 +2470,17 @@ button {
   }
 
   .composer-hint {
+    display: block;
+    margin-top: 3px;
+    font-size: 8px;
+  }
+
+  .composer-hint__desktop {
     display: none;
+  }
+
+  .composer-hint__mobile {
+    display: inline;
   }
 
   .empty-state,

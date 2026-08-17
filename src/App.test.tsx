@@ -110,6 +110,20 @@ const computer: ComputerSummary = {
   name: 'development',
   isLocal: true,
   online: true,
+  providers: [
+    {
+      id: 'copilot',
+      name: 'GitHub Copilot',
+      available: true,
+      terminalBacked: true,
+    },
+    {
+      id: 'claude',
+      name: 'Claude Agent',
+      available: true,
+      terminalBacked: false,
+    },
+  ],
 }
 
 const secondComputer: ComputerSummary = {
@@ -435,6 +449,12 @@ describe('App', () => {
     )
     expect(screen.getByLabelText('Reorder development')).toBeInTheDocument()
     expect(screen.getByLabelText('Reorder Project chat')).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('GitHub Copilot available on development'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByLabelText('Claude Agent available on development'),
+    ).toBeInTheDocument()
   })
 
   it('keeps completed tools in history while the current tool stays sticky', async () => {
@@ -1185,6 +1205,9 @@ describe('App', () => {
     expect(
       screen.getByRole('heading', { name: 'Choose a folder' }),
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('dialog', { name: 'Choose a folder' }),
+    ).toHaveClass('new-session-dialog')
     await waitFor(() =>
       expect(listDirectories).toHaveBeenCalledWith('computer-1', '~'),
     )
@@ -1202,6 +1225,7 @@ describe('App', () => {
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith('computer-1', {
         cwd: '~/src',
+        provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: true,
       }),
@@ -1219,6 +1243,7 @@ describe('App', () => {
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith('computer-1', {
         cwd: '~',
+        provider: 'copilot',
         terminalBacked: false,
         allowAllPermissions: true,
       }),
@@ -1253,6 +1278,7 @@ describe('App', () => {
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith(secondComputer.id, {
         cwd: '~',
+        provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: true,
       }),
@@ -1276,10 +1302,75 @@ describe('App', () => {
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith('computer-1', {
         cwd: '~',
+        provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: false,
       }),
     )
+  })
+
+  it('creates a Claude Agent session without tmux', async () => {
+    vi.mocked(createSession).mockResolvedValue({
+      ...session,
+      id: 'claude-session',
+      provider: 'claude',
+      title: 'Claude project',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+
+    fireEvent.change(screen.getByLabelText('Agent provider'), {
+      target: { value: 'claude' },
+    })
+    expect(
+      screen.queryByRole('checkbox', { name: /Create in tmux/ }),
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'claude',
+        terminalBacked: false,
+        allowAllPermissions: true,
+      }),
+    )
+  })
+
+  it('sends a message from an existing Claude Agent session', async () => {
+    const claudeSession: ManagedSession = {
+      ...session,
+      id: 'claude-session',
+      provider: 'claude',
+      title: 'Claude project',
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([claudeSession])
+    vi.mocked(getSession).mockResolvedValue(claudeSession)
+    vi.mocked(sendMessage).mockResolvedValue(claudeSession)
+    render(<App />)
+
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, {
+      target: { value: 'Hello Claude' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'claude-session',
+        {
+          content: 'Hello Claude',
+          enqueue: false,
+        },
+      ),
+    )
+    expect(
+      screen.getByText('Tap ↑ to send · Return adds a line'),
+    ).toBeInTheDocument()
   })
 
   it('opens a historical session from the new-session dialog', async () => {

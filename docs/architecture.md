@@ -4,9 +4,9 @@
 
 Every installation runs the same server in one of two roles:
 
-- **Hub** owns the browser UI, a local Copilot session service, and the registry
+- **Hub** owns the browser UI, local provider session services, and the registry
   of paired computers.
-- **Node** owns only its local Copilot session service and exposes an
+- **Node** owns only its local provider session services and exposes an
   authenticated machine API. It does not serve the UI.
 
 A hub is also a node, so local and remote sessions follow the same routing
@@ -16,9 +16,9 @@ contract.
 
 Sessions never move between computers. The owning node retains:
 
-- Copilot authentication and runtime processes
+- Provider authentication and runtime processes
 - Working directories and repository access
-- Copilot session history
+- Provider session history
 - Tool permissions and execution
 
 The hub stores remote node IDs, names, URLs, and pairing tokens in
@@ -26,7 +26,7 @@ The hub stores remote node IDs, names, URLs, and pairing tokens in
 with their computer ID in the UI but does not copy repositories.
 
 Closing a session routes deletion to its owning node. That node disconnects any
-active SDK session, deletes the session from Copilot storage, removes its local
+active SDK session, deletes the session from provider storage, removes its local
 rendered-history cache, and emits a removal event.
 
 ## Transport and authentication
@@ -52,6 +52,16 @@ The hub exposes computer-aware routes under:
 Local requests call the in-process session service. Remote requests are sent to
 the paired node's `/node-api` routes. The node streams its native session events
 over WebSocket; the hub adds computer identity and forwards them to browsers.
+Each node advertises provider capabilities. Legacy nodes advertise Copilot only,
+so a hub cannot accidentally create a Claude session on a node that has not
+been upgraded and authenticated.
+
+The provider router keeps Copilot and Claude Agent state separate while
+presenting one `SessionService` contract. Existing sessions without an explicit
+provider are treated as Copilot sessions. Claude Agent uses the official
+TypeScript Agent SDK, local Claude session persistence, and the owning host's
+existing Claude authentication; Agentic Remote never transports that
+authentication to the hub or another node.
 
 ## Failure behavior
 
@@ -66,7 +76,7 @@ over WebSocket; the hub adds computer identity and forwards them to browsers.
 - A service restart reuses existing tmux processes. A full host reboot
   recreates missing previously open tmux windows with the same Copilot session
   IDs, allowing Copilot to resume from its local session database.
-- Repositories, credentials, and Copilot session databases remain on the
+- Repositories, credentials, and provider session databases remain on the
   owning computer's persistent local filesystem; recovery does not use NFS.
 
 ## Pairing flow

@@ -3,9 +3,9 @@
 Status: Living product and behavior specification
 
 Agentic Remote is a mobile-first progressive web application for supervising
-GitHub Copilot CLI sessions across trusted computers. This document records the
-product decisions and behavior contracts that must remain stable as the app
-evolves.
+GitHub Copilot and Claude Agent sessions across trusted computers. This
+document records the product decisions and behavior contracts that must remain
+stable as the app evolves.
 
 The words MUST, MUST NOT, SHOULD, and MAY describe required, prohibited,
 recommended, and optional behavior.
@@ -14,14 +14,14 @@ recommended, and optional behavior.
 
 Agentic Remote MUST:
 
-- Let a user supervise local and remote Copilot sessions from one phone-first
+- Let a user supervise local and remote agent sessions from one phone-first
   interface.
 - Preserve the ownership, authentication, files, processes, and tools of each
   computer.
-- Match important Copilot CLI behavior rather than presenting a generic chat.
+- Match important provider behavior rather than presenting a generic chat.
 - Make questions and permissions more prominent than passive status updates.
 - Keep sensitive files and audio private by default.
-- Recover useful state after browser, hub, node, or Copilot process restarts.
+- Recover useful state after browser, hub, node, or provider process restarts.
 - Remain installable and reliable as an iPhone/iPad PWA.
 
 Agentic Remote is not:
@@ -45,7 +45,7 @@ The public hostname `agentic.lcavalcanti.cc` MUST route to the development hub.
 The production listener MUST remain a headless paired node.
 
 Every session MUST execute on its owning computer. The hub MUST route operations
-to that computer without copying its repository, Copilot authentication,
+to that computer without copying its repository, provider authentication,
 session history, or tool permissions.
 
 Paired-node requests MUST be authenticated. Pairing tokens and other secrets
@@ -57,6 +57,12 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - The Sessions drawer MUST show all configured computers.
 - Selecting, creating, or opening a session MUST NOT hide other computers.
+- The Sessions drawer MUST show each computer's available and unavailable
+  provider capabilities before the user opens New session.
+- A provider MUST be discoverable without an existing session for that
+  provider.
+- Provider capability indicators MUST distinguish available from unavailable
+  and MUST remain compact, accessible, and safe within the phone drawer.
 - Active tmux sessions MUST be discovered from the Copilot session actually
   opened by the process.
 - A late or ambiguous lock MAY be accepted only when `/proc/<pid>/fd` proves
@@ -65,12 +71,24 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 ### 3.2 Creation
 
-- The user MUST select the owning computer and working folder.
-- New sessions SHOULD be tmux-backed by default.
+- The user MUST select the owning computer, available provider, and working
+  folder.
+- The New session and Open previous sheet MUST scroll independently when its
+  content exceeds the visual viewport, including while the phone keyboard is
+  open, so the final create/open action remains reachable.
+- Copilot MUST remain the backward-compatible default provider.
+- New Copilot sessions SHOULD be tmux-backed by default.
+- Claude Agent sessions MUST use the official Agent SDK and MUST NOT claim to
+  be tmux-backed.
+- A computer MUST advertise provider availability before the UI permits
+  creation with that provider.
 - Allow all permissions SHOULD be checked by default.
 - tmux allow-all sessions MUST launch with `--yolo`.
 - SDK allow-all sessions MUST automatically approve permission callbacks.
 - Disabling allow-all MUST preserve per-operation approval.
+- Agentic Remote MUST use authentication already configured on the owning
+  computer and MUST NOT store or expose provider credentials or implement a
+  Claude subscription login flow.
 
 ### 3.3 Rename, restart, clear, and delete
 
@@ -81,7 +99,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.
-- Delete MUST close the owning Copilot process/session after confirmation and
+- Delete MUST close the owning provider process/session after confirmation and
   remove Agentic Remote state and session uploads.
 
 ### 3.4 Host reboot and power-loss recovery
@@ -95,6 +113,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   effort, context tier, and agent mode.
 - Existing live tmux sessions MUST be detected and MUST NOT be duplicated.
 - SDK sessions MUST remain visible and MAY resume lazily when opened.
+- Claude Agent sessions MUST resume by their persisted provider session ID
+  after an Agentic Remote restart.
 - Closed or deleted sessions MUST NOT be recreated.
 - One failed terminal recovery MUST surface an error for that session and MUST
   NOT prevent the service or other sessions from recovering.
@@ -153,6 +173,8 @@ Questions and permissions are the highest-priority UI state.
 The Send button MUST request immediate delivery. If immediate SDK steering is
 unsupported, the app MUST surface an error and restore the draft; it MUST NOT
 silently queue.
+On phone, the composer MUST label the explicit Send action and explain that
+keyboard Return inserts a newline.
 
 The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not
@@ -258,6 +280,13 @@ switches, failed sends, and clear replacement IDs.
   mode flags while preserving session state.
 - Partial runtime failures MUST surface explicitly and MUST NOT persist false
   success.
+- Provider-specific capabilities MUST be derived from advertised runtime
+  options rather than assuming Copilot and Claude have identical controls.
+- Shared mode labels MUST NOT imply identical provider semantics. Provider
+  differences MUST be documented in `docs/provider-compatibility.md`.
+- A session MUST remain owned by exactly one provider. Agentic Remote MUST NOT
+  merge, translate, or claim to transfer conversation history between Copilot
+  and Claude.
 
 ## 10. Notifications
 
@@ -301,6 +330,9 @@ Priority order:
 - Update checks SHOULD run at startup, foreground return, and on demand.
 - Update now MUST activate/reload the deployed release.
 - The prompt MAY be dismissed without discarding update availability.
+- A deployed UI change required to expose a newly available provider MUST
+  trigger the main-shell update prompt; provider capability MUST NOT depend on
+  visiting App settings to discover that an update exists.
 
 ## 13. Persistence and privacy
 
@@ -310,13 +342,14 @@ Persistent state MAY include:
 - Queues and drafts
 - Notification mute settings
 - Tool activity reconstructed from Copilot events
+- Provider identity and provider-specific runtime metadata
 - Knowledge bookmark metadata
 - Paired node registry and encrypted/external secret references
 
 Persistent state MUST NOT include:
 
 - Copied repositories
-- Copilot/GitHub authentication
+- Copilot/GitHub or Claude authentication
 - SSH private keys
 - Pairing tokens in Git
 - Voice recordings
@@ -342,14 +375,18 @@ Persistent state MUST NOT include:
 - Application changes MUST be committed and pushed before deployment.
 - Unrelated dirty worktree changes MUST be preserved and excluded from scoped
   releases.
-- A release is complete only after targeted/full tests, production build, hub
-  deployment, node deployment, version verification, and live health checks.
+- A general release is complete only after targeted/full tests, production
+  build, intended-host deployment, version verification, and live health
+  checks. Provider rollouts MAY remain development-only pending manual
+  approval; untouched nodes MUST continue advertising only their supported
+  providers.
 
 ## 16. Acceptance regression matrix
 
 Every material release SHOULD preserve:
 
 - All computers visible and paired node online
+- Provider capabilities visible before session creation
 - Previously open tmux sessions restored after a simulated host reboot
 - Active tmux and SDK session discovery
 - Immediate Send, editable Queue, and Stop semantics
@@ -375,6 +412,7 @@ Every material release SHOULD preserve:
 | Browser API client | `src/api.ts` |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |
+| Provider aggregation and Claude Agent lifecycle | `server/provider-session-service.ts`, `server/claude-agent-service.ts` |
 | Persistent session/uploads | `server/session-store.ts` |
 | tmux behavior | `server/terminal-session.ts` |
 | Active-session discovery | `server/active-sessions.ts` |

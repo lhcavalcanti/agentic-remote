@@ -12,6 +12,7 @@ import type { SessionService } from './session-service.js'
 
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
+  provider: z.enum(['copilot', 'claude']).default('copilot'),
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
 })
@@ -100,7 +101,10 @@ export async function registerNodeRoutes(
         }
       })
 
-      node.get('/info', async () => identity.info)
+      node.get('/info', async () => ({
+        ...identity.info,
+        providers: service.providers(),
+      }))
 
       node.get('/sessions', async () => ({
         sessions: service.listSessions(),
@@ -169,6 +173,7 @@ export async function registerNodeRoutes(
               input.cwd,
               input.terminalBacked,
               input.allowAllPermissions,
+              input.provider,
             ),
           })
       })

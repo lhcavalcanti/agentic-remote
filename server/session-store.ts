@@ -78,6 +78,7 @@ export class SessionStore {
 
     for (const session of Object.values(this.state.sessions)) {
       session.revision ??= 0
+      session.provider ??= 'copilot'
       session.isOpen = session.managedOpen === true
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
@@ -130,12 +131,13 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     this.state.sessions[session.id] = {
       ...cloneSession(session),
+      provider: session.provider || 'copilot',
       revision: session.revision ?? 1,
       managedOpen: options.managedOpen,
       backend: options.backend,
     }
     await this.persist()
-    return cloneSession(session)
+    return cloneSession(this.state.sessions[session.id])
   }
 
   async syncDiscovered(sessions: DiscoveredSession[]): Promise<void> {
@@ -156,6 +158,7 @@ export class SessionStore {
       }
       this.state.sessions[discovered.id] = {
         ...discovered,
+        provider: 'copilot',
         status: 'idle',
         isOpen: false,
         messages: [],

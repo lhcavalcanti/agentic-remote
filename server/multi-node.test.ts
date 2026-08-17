@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import type {
   ConfigureRuntimeInput,
@@ -34,6 +34,17 @@ class FakeSessionService extends EventEmitter implements SessionService {
     for (const session of sessions) {
       this.sessions.set(session.id, structuredClone(session))
     }
+  }
+
+  providers() {
+    return [
+      {
+        id: 'copilot' as const,
+        name: 'GitHub Copilot',
+        available: true,
+        terminalBacked: true,
+      },
+    ]
   }
 
   async start() {}
@@ -409,6 +420,10 @@ afterEach(async () => {
 })
 
 describe('multi-node hub', () => {
+  beforeEach(() => {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+  })
+
   it('rejects untrusted hub hosts and origins', async () => {
     vi.stubEnv(
       'AGENTIC_REMOTE_ALLOWED_ORIGINS',

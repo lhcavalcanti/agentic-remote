@@ -1,0 +1,940 @@
+import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
+import { access, realpath, stat } from 'node:fs/promises'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import {
+  deleteSession as deleteClaudeSession,
+  query,
+  renameSession as renameClaudeSession,
+  type EffortLevel,
+  type ModelInfo,
+  type PermissionResult,
+  type Query,
+  type SDKMessage,
+} from '@anthropic-ai/claude-agent-sdk'
+import type {
+  AgentProvider,
+  AgentProviderCapability,
+  ConfigureRuntimeInput,
+  PendingUserInput,
+  RemovedQueuedPrompt,
+  RuntimeModelOption,
+  RuntimeOptions,
+  ServerEvent,
+  SessionDetail,
+  SessionFileUpload,
+  SlashCommand,
+  UserInputReplyInput,
+  WorkspaceFile,
+  WorkspaceListing,
+  WorkspaceSearchResponse,
+} from '../shared/contracts.js'
+import { listHomeDirectories } from './directory-browser.js'
+import type { SessionService } from './session-service.js'
+import { SessionStore } from './session-store.js'
+import {
+  listWorkspace,
+  readWorkspaceFile,
+  searchWorkspace,
+} from './workspace-browser.js'
+
+const execFileAsync = promisify(execFile)
+
+export interface ClaudeSdk {
+  query: typeof query
+  deleteSession: typeof deleteClaudeSession
+  renameSession: typeof renameClaudeSession
+}
+
+type AuthStatusRunner = (
+  executable: string,
+) => Promise<{ loggedIn: boolean }>
+
+interface ClaudeAgentServiceEvents {
+  event: [event: ServerEvent]
+}
+
+interface ActiveClaudeQuery {
+  abortController: AbortController
+  query: Query
+}
+
+interface PendingClaudePermission {
+  sessionId: string
+  input: Record<string, unknown>
+  resolve: (result: PermissionResult) => void
+}
+
+interface ClaudeQuestion {
+  question: string
+  options: string[]
+  multiSelect: boolean
+}
+
+interface PendingClaudeInput {
+  sessionId: string
+  requestId: string
+  input: Record<string, unknown>
+  questions: ClaudeQuestion[]
+  index: number
+  answers: Record<string, string>
+  resolve: (result: PermissionResult) => void
+}
+
+export class ClaudeAgentService
+  extends EventEmitter<ClaudeAgentServiceEvents>
+  implements SessionService
+{
+  private available = false
+  private unavailableReason = 'Claude Agent is not initialized'
+  private models: RuntimeModelOption[] = []
+  private readonly active = new Map<string, ActiveClaudeQuery>()
+  private readonly permissions = new Map<string, PendingClaudePermission>()
+  private readonly userInputs = new Map<string, PendingClaudeInput>()
+
+  constructor(
+    readonly store: SessionStore,
+    private readonly executable =
+      process.env.CLAUDE_BIN?.trim() ||
+      path.join(process.env.HOME || '', '.local', 'bin', 'claude'),
+    private readonly sdk: ClaudeSdk = {
+      query,
+      deleteSession: deleteClaudeSession,
+      renameSession: renameClaudeSession,
+    },
+    private readonly authStatus: AuthStatusRunner = async (executable) => {
+      const { stdout } = await execFileAsync(executable, ['auth', 'status'], {
+        timeout: 10_000,
+      })
+      return JSON.parse(stdout) as { loggedIn: boolean }
+    },
+  ) {
+    super()
+  }
+
+  providers(): AgentProviderCapability[] {
+    return [
+      {
+        id: 'claude',
+        name: 'Claude Agent',
+        available: this.available,
+        terminalBacked: false,
+        unavailableReason: this.available ? undefined : this.unavailableReason,
+      },
+    ]
+  }
+
+  async start(): Promise<void> {
+    await this.store.initialize()
+    await this.detectAvailability()
+  }
+
+  async stop(): Promise<void> {
+    for (const active of this.active.values()) {
+      active.abortController.abort()
+    }
+    this.active.clear()
+    for (const permission of this.permissions.values()) {
+      permission.resolve({
+        behavior: 'deny',
+        message: 'Agentic Remote is shutting down',
+      })
+    }
+    this.permissions.clear()
+    for (const input of this.userInputs.values()) {
+      input.resolve({
+        behavior: 'deny',
+        message: 'Agentic Remote is shutting down',
+      })
+    }
+    this.userInputs.clear()
+  }
+
+  listSessions(): SessionDetail[] {
+    return this.store
+      .list()
+      .filter((session) => session.isOpen)
+      .map((session) => ({ ...session, messages: [] }))
+  }
+
+  listHistory(): SessionDetail[] {
+    return this.store.list().map((session) => ({ ...session, messages: [] }))
+  }
+
+  getSession(id: string): SessionDetail | undefined {
+    return this.store.get(id)
+  }
+
+  async openSession(id: string): Promise<SessionDetail> {
+    return this.requireSession(id)
+  }
+
+  async activateSession(id: string): Promise<SessionDetail> {
+    const opened = await this.store.setOpen(id, true, true)
+    this.publish(opened)
+    return opened
+  }
+
+  async createSession(
+    inputPath: string,
+    _terminalBacked = false,
+    allowAllPermissions = true,
+    provider: AgentProvider = 'claude',
+  ): Promise<SessionDetail> {
+    if (provider !== 'claude') {
+      throw new Error(`Provider ${provider} is not handled by Claude Agent`)
+    }
+    this.requireAvailable()
+    const cwd = await this.validateDirectory(inputPath)
+    const id = randomUUID()
+    const now = new Date().toISOString()
+    const defaultModel = this.models[0]
+    const session = await this.store.create(
+      {
+        id,
+        provider: 'claude',
+        cwd,
+        title: path.basename(cwd) || 'New Claude session',
+        updatedAt: now,
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+        runtime: {
+          allowAllPermissions,
+          model: defaultModel?.id || 'default',
+          reasoningEffort:
+            defaultModel?.reasoningEfforts.includes('high') === true
+              ? 'high'
+              : defaultModel?.reasoningEfforts[0] || 'medium',
+          contextTier: 'default',
+          mode: 'interactive',
+        },
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    this.publish(session)
+    return session
+  }
+
+  uploadFile(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
+    return this.store.saveUpload(sessionId, filename, data)
+  }
+
+  async renameSession(id: string, title: string): Promise<SessionDetail> {
+    const session = this.requireSession(id)
+    await this.sdk.renameSession(id, title, { dir: session.cwd })
+    const renamed = await this.store.renameSession(id, title)
+    this.publish(renamed)
+    return renamed
+  }
+
+  async runtimeOptions(id: string): Promise<RuntimeOptions> {
+    const session = this.requireSession(id)
+    return {
+      current: session.runtime || {},
+      models: this.models,
+    }
+  }
+
+  async configureRuntime(
+    id: string,
+    input: ConfigureRuntimeInput,
+  ): Promise<SessionDetail> {
+    const session = this.requireSession(id)
+    if (session.status !== 'idle') {
+      throw new Error('Runtime settings can only change while the session is idle')
+    }
+    const model = this.models.find((candidate) => candidate.id === input.model)
+    if (!model) {
+      throw new Error('Selected Claude model is not available')
+    }
+    if (!model.reasoningEfforts.includes(input.reasoningEffort)) {
+      throw new Error('Selected reasoning effort is not supported by this model')
+    }
+    if (input.contextTier !== 'default') {
+      throw new Error('Claude Agent manages its context window automatically')
+    }
+    const updated = await this.store.update(id, (stored) => {
+      stored.runtime = {
+        ...stored.runtime,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        contextTier: 'default',
+        mode: input.mode || 'interactive',
+      }
+    })
+    this.publish(updated)
+    return updated
+  }
+
+  async replyUserInput(
+    sessionId: string,
+    requestId: string,
+    input: UserInputReplyInput,
+  ): Promise<SessionDetail> {
+    const pending = this.userInputs.get(requestId)
+    if (!pending || pending.sessionId !== sessionId) {
+      throw new Error('User input request is no longer pending')
+    }
+    const question = pending.questions[pending.index]
+    if (!question) {
+      throw new Error('User input request is invalid')
+    }
+    pending.answers[question.question] = input.answer
+    this.userInputs.delete(requestId)
+    pending.index += 1
+    if (pending.index < pending.questions.length) {
+      pending.requestId = `claude-input:${randomUUID()}`
+      this.userInputs.set(pending.requestId, pending)
+      const updated = await this.store.update(sessionId, (session) => {
+        session.pendingUserInput = this.pendingInput(pending)
+        session.status = 'waiting'
+        session.activity = session.pendingUserInput.question
+      })
+      this.publish(updated)
+      return updated
+    }
+    pending.resolve({
+      behavior: 'allow',
+      updatedInput: {
+        ...pending.input,
+        answers: pending.answers,
+      },
+    })
+    const updated = await this.store.update(sessionId, (session) => {
+      session.pendingUserInput = undefined
+      session.status = 'running'
+      session.activity = 'Continuing'
+    })
+    this.publish(updated)
+    return updated
+  }
+
+  async clearConversation(id: string): Promise<SessionDetail> {
+    const session = this.requireIdle(id)
+    await this.sdk.deleteSession(id, { dir: session.cwd })
+    const replacementId = randomUUID()
+    const cleared = await this.store.replaceWithClearedSession(id, replacementId)
+    this.emit('event', { type: 'session.removed', sessionId: id })
+    this.publish(cleared)
+    return cleared
+  }
+
+  async restartSession(id: string): Promise<SessionDetail> {
+    this.requireIdle(id)
+    const restarted = await this.store.updateStatus(id, 'idle')
+    this.publish(restarted)
+    return restarted
+  }
+
+  async removeQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<RemovedQueuedPrompt> {
+    const result = await this.store.removeQueuedPrompt(sessionId, promptId)
+    if (!result.prompt) {
+      throw new Error('Queued prompt not found')
+    }
+    this.publish(result.session)
+    return { session: result.session, prompt: result.prompt }
+  }
+
+  async sendMessage(
+    sessionId: string,
+    content: string,
+    enqueue = false,
+  ): Promise<SessionDetail> {
+    const session = this.requireSession(sessionId)
+    if (session.status === 'running' || session.status === 'waiting') {
+      if (!enqueue) {
+        throw new Error('Claude Agent is already running; queue this message instead')
+      }
+      const queued = await this.store.enqueuePrompt(sessionId, {
+        id: randomUUID(),
+        content,
+        createdAt: new Date().toISOString(),
+      })
+      this.publish(queued)
+      return queued
+    }
+    const createdAt = new Date().toISOString()
+    await this.store.addMessage(sessionId, {
+      id: randomUUID(),
+      role: 'user',
+      content,
+      createdAt,
+    })
+    const assistantId = randomUUID()
+    await this.store.addMessage(sessionId, {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString(),
+      streaming: true,
+    })
+    const running = await this.store.update(sessionId, (stored) => {
+      stored.status = 'running'
+      stored.activity = 'Thinking'
+      if (stored.messages.filter((message) => message.role === 'user').length === 1) {
+        stored.title =
+          content.length > 52 ? `${content.slice(0, 52)}…` : content
+      }
+    })
+    this.publish(running)
+    void this.runQuery(sessionId, content, assistantId)
+    return running
+  }
+
+  async listCommands(_sessionId: string): Promise<SlashCommand[]> {
+    return []
+  }
+
+  async executeCommand(
+    _sessionId: string,
+    command: string,
+    _enqueue = false,
+  ): Promise<SessionDetail> {
+    throw new Error(`Claude Agent command ${command.split(/\s/, 1)[0]} is not available`)
+  }
+
+  async cancel(sessionId: string): Promise<void> {
+    this.active.get(sessionId)?.abortController.abort()
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    const session = this.requireSession(sessionId)
+    this.active.get(sessionId)?.abortController.abort()
+    this.resolvePending(sessionId, 'Session was deleted')
+    await this.sdk.deleteSession(sessionId, { dir: session.cwd })
+    await this.store.remove(sessionId)
+    this.emit('event', { type: 'session.removed', sessionId })
+  }
+
+  async replyPermission(
+    sessionId: string,
+    requestId: string,
+    optionId: string,
+  ): Promise<SessionDetail> {
+    const pending = this.permissions.get(requestId)
+    if (!pending || pending.sessionId !== sessionId) {
+      throw new Error('Permission request is no longer pending')
+    }
+    this.permissions.delete(requestId)
+    pending.resolve(
+      optionId === 'allow-once'
+        ? { behavior: 'allow', updatedInput: pending.input }
+        : { behavior: 'deny', message: 'User denied this tool request' },
+    )
+    const updated = await this.store.update(sessionId, (session) => {
+      session.pendingPermission = undefined
+      session.status = 'running'
+      session.activity = 'Continuing'
+    })
+    this.publish(updated)
+    return updated
+  }
+
+  listDirectories(path?: string) {
+    return listHomeDirectories(path)
+  }
+
+  listWorkspace(
+    sessionId: string,
+    requestedPath?: string,
+  ): Promise<WorkspaceListing> {
+    return listWorkspace(this.requireSession(sessionId).cwd, requestedPath)
+  }
+
+  readWorkspaceFile(
+    sessionId: string,
+    requestedPath: string,
+  ): Promise<WorkspaceFile> {
+    return readWorkspaceFile(this.requireSession(sessionId).cwd, requestedPath)
+  }
+
+  searchWorkspace(
+    sessionId: string,
+    searchQuery: string,
+    requestedPath?: string,
+  ): Promise<WorkspaceSearchResponse> {
+    return searchWorkspace(
+      this.requireSession(sessionId).cwd,
+      searchQuery,
+      requestedPath,
+    )
+  }
+
+  private async detectAvailability(): Promise<void> {
+    try {
+      await access(this.executable)
+      const status = await this.authStatus(this.executable)
+      if (!status.loggedIn) {
+        this.unavailableReason = 'Run claude auth login on this computer'
+        return
+      }
+      this.models = await this.loadModels()
+      this.available = true
+      this.unavailableReason = ''
+    } catch (error) {
+      this.available = false
+      this.unavailableReason =
+        (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? 'Claude Code is not installed on this computer'
+          : 'Claude authentication or model discovery failed'
+    }
+  }
+
+  private async loadModels(): Promise<RuntimeModelOption[]> {
+    async function* emptyPrompt() {}
+    const abortController = new AbortController()
+    const modelQuery = this.sdk.query({
+      prompt: emptyPrompt(),
+      options: {
+        abortController,
+        cwd: process.cwd(),
+        pathToClaudeCodeExecutable: this.executable,
+      },
+    })
+    try {
+      return (await modelQuery.supportedModels()).map((model) =>
+        this.runtimeModel(model),
+      )
+    } finally {
+      abortController.abort()
+      await modelQuery.return(undefined).catch(() => undefined)
+    }
+  }
+
+  private runtimeModel(model: ModelInfo): RuntimeModelOption {
+    return {
+      id: model.value,
+      name: model.displayName,
+      reasoningEfforts:
+        model.supportedEffortLevels?.length
+          ? [...model.supportedEffortLevels]
+          : ['medium'],
+      contextTiers: ['default'],
+    }
+  }
+
+  private async runQuery(
+    sessionId: string,
+    prompt: string,
+    assistantId: string,
+  ): Promise<void> {
+    const session = this.requireSession(sessionId)
+    const hasPriorTurn =
+      session.messages.filter((message) => message.role === 'user').length > 1
+    const abortController = new AbortController()
+    const runtime = session.runtime
+    const activeQuery = this.sdk.query({
+      prompt,
+      options: {
+        abortController,
+        allowDangerouslySkipPermissions:
+          runtime?.allowAllPermissions === true,
+        canUseTool: (toolName, input) =>
+          this.canUseTool(sessionId, toolName, input),
+        cwd: session.cwd,
+        effort: this.effort(runtime?.reasoningEffort),
+        includePartialMessages: true,
+        model: runtime?.model,
+        pathToClaudeCodeExecutable: this.executable,
+        permissionMode: this.permissionMode(
+          runtime?.mode,
+          runtime?.allowAllPermissions,
+        ),
+        ...(hasPriorTurn ? { resume: sessionId } : { sessionId }),
+      },
+    })
+    this.active.set(sessionId, {
+      abortController,
+      query: activeQuery,
+    })
+    const toolIds = new Set<string>()
+    try {
+      for await (const message of activeQuery) {
+        if (!this.store.get(sessionId)) {
+          return
+        }
+        await this.handleMessage(sessionId, assistantId, message, toolIds)
+      }
+      if (!this.store.get(sessionId)) {
+        return
+      }
+      const finished = await this.store.finishMessage(sessionId, assistantId)
+      const idle = await this.store.update(finished.id, (stored) => {
+        stored.status = 'idle'
+        stored.activity = undefined
+        stored.pendingPermission = undefined
+        stored.pendingUserInput = undefined
+      })
+      this.publish(idle)
+      await this.sdk.renameSession(sessionId, idle.title, {
+        dir: idle.cwd,
+      }).catch(() => undefined)
+    } catch (error) {
+      if (!this.store.get(sessionId)) {
+        return
+      }
+      const aborted = abortController.signal.aborted
+      await this.store.finishMessage(sessionId, assistantId).catch(() => undefined)
+      const failed = await this.store.update(sessionId, (stored) => {
+        stored.status = aborted ? 'idle' : 'error'
+        stored.activity = undefined
+        stored.pendingPermission = undefined
+        stored.pendingUserInput = undefined
+      })
+      this.publish(failed)
+      if (!aborted) {
+        this.emit('event', {
+          type: 'error',
+          sessionId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+    } finally {
+      this.active.delete(sessionId)
+      this.resolvePending(sessionId, 'Claude Agent stopped')
+      await this.drainQueue(sessionId)
+    }
+  }
+
+  private async handleMessage(
+    sessionId: string,
+    assistantId: string,
+    message: SDKMessage,
+    toolIds: Set<string>,
+  ): Promise<void> {
+    if (message.type === 'stream_event') {
+      const event = message.event
+      if (
+        event.type === 'content_block_delta' &&
+        event.delta.type === 'text_delta'
+      ) {
+        this.publish(
+          this.store.streamMessage(sessionId, assistantId, event.delta.text),
+        )
+      } else if (
+        event.type === 'content_block_start' &&
+        event.content_block.type === 'tool_use'
+      ) {
+        await this.startTool(
+          sessionId,
+          event.content_block.id,
+          event.content_block.name,
+          toolIds,
+        )
+      }
+      return
+    }
+    if (message.type === 'assistant') {
+      for (const block of message.message.content) {
+        if (block.type === 'tool_use') {
+          await this.startTool(sessionId, block.id, block.name, toolIds)
+        }
+      }
+      return
+    }
+    if (message.type === 'user' && Array.isArray(message.message.content)) {
+      for (const block of message.message.content) {
+        if (
+          typeof block === 'object' &&
+          block !== null &&
+          Reflect.get(block, 'type') === 'tool_result'
+        ) {
+          const toolUseId = Reflect.get(block, 'tool_use_id')
+          if (typeof toolUseId === 'string' && toolIds.has(toolUseId)) {
+            const finished = await this.store.finishToolActivity(
+              sessionId,
+              toolUseId,
+              Reflect.get(block, 'is_error') !== true,
+            )
+            this.publish(finished)
+          }
+        }
+      }
+      return
+    }
+    if (message.type === 'result') {
+      const usage = Object.values(message.modelUsage || {})
+      const contextTokens = usage.reduce(
+        (total, model) =>
+          total +
+          model.inputTokens +
+          model.cacheReadInputTokens +
+          model.cacheCreationInputTokens,
+        0,
+      )
+      const contextTokenLimit = Math.max(
+        0,
+        ...usage.map((model) => model.contextWindow),
+      )
+      const updated = await this.store.update(sessionId, (session) => {
+        session.runtime = {
+          ...session.runtime,
+          contextTokens: contextTokens || undefined,
+          contextTokenLimit: contextTokenLimit || undefined,
+          contextEstimated: false,
+        }
+      })
+      this.publish(updated)
+    }
+  }
+
+  private async startTool(
+    sessionId: string,
+    toolUseId: string,
+    name: string,
+    toolIds: Set<string>,
+  ): Promise<void> {
+    if (toolIds.has(toolUseId)) {
+      return
+    }
+    toolIds.add(toolUseId)
+    const updated = await this.store.startToolActivity(
+      sessionId,
+      toolUseId,
+      name,
+      new Date().toISOString(),
+    )
+    this.publish(updated)
+  }
+
+  private canUseTool(
+    sessionId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<PermissionResult> {
+    if (toolName === 'AskUserQuestion') {
+      return this.requestUserInput(sessionId, input)
+    }
+    if (this.requireSession(sessionId).runtime?.allowAllPermissions) {
+      return Promise.resolve({ behavior: 'allow', updatedInput: input })
+    }
+    const requestId = `claude-permission:${randomUUID()}`
+    return new Promise((resolve) => {
+      this.permissions.set(requestId, { sessionId, input, resolve })
+      void this.store
+        .update(sessionId, (session) => {
+          session.pendingPermission = {
+            requestId,
+            title: this.permissionTitle(toolName, input),
+            kind: toolName,
+            options: [
+              { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' },
+              { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
+            ],
+          }
+          session.status = 'waiting'
+          session.activity = session.pendingPermission.title
+        })
+        .then((session) => this.publish(session))
+        .catch((error: unknown) => {
+          this.permissions.delete(requestId)
+          resolve({
+            behavior: 'deny',
+            message: error instanceof Error ? error.message : String(error),
+          })
+        })
+    })
+  }
+
+  private requestUserInput(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): Promise<PermissionResult> {
+    const questions = this.claudeQuestions(input)
+    if (questions.length === 0) {
+      return Promise.resolve({
+        behavior: 'deny',
+        message: 'Claude requested unsupported user input',
+      })
+    }
+    const requestId = `claude-input:${randomUUID()}`
+    return new Promise((resolve) => {
+      const pending: PendingClaudeInput = {
+        sessionId,
+        requestId,
+        input,
+        questions,
+        index: 0,
+        answers: {},
+        resolve,
+      }
+      this.userInputs.set(requestId, pending)
+      void this.store
+        .update(sessionId, (session) => {
+          session.pendingUserInput = this.pendingInput(pending)
+          session.status = 'waiting'
+          session.activity = session.pendingUserInput.question
+        })
+        .then((session) => this.publish(session))
+        .catch((error: unknown) => {
+          this.userInputs.delete(requestId)
+          resolve({
+            behavior: 'deny',
+            message: error instanceof Error ? error.message : String(error),
+          })
+        })
+    })
+  }
+
+  private claudeQuestions(input: Record<string, unknown>): ClaudeQuestion[] {
+    const questions = input.questions
+    if (!Array.isArray(questions)) {
+      return []
+    }
+    return questions.flatMap((value) => {
+      if (typeof value !== 'object' || value === null) {
+        return []
+      }
+      const question = Reflect.get(value, 'question')
+      const rawOptions = Reflect.get(value, 'options')
+      if (typeof question !== 'string' || !Array.isArray(rawOptions)) {
+        return []
+      }
+      const options = rawOptions.flatMap((option) => {
+        if (typeof option !== 'object' || option === null) {
+          return []
+        }
+        const label = Reflect.get(option, 'label')
+        return typeof label === 'string' ? [label] : []
+      })
+      return [
+        {
+          question,
+          options,
+          multiSelect: Reflect.get(value, 'multiSelect') === true,
+        },
+      ]
+    })
+  }
+
+  private pendingInput(pending: PendingClaudeInput): PendingUserInput {
+    const question = pending.questions[pending.index]
+    return {
+      requestId: pending.requestId,
+      question: question.question,
+      choices: question.options,
+      allowFreeform: !question.multiSelect,
+    }
+  }
+
+  private permissionTitle(
+    toolName: string,
+    input: Record<string, unknown>,
+  ): string {
+    const description = input.description
+    if (typeof description === 'string' && description.trim()) {
+      return `${toolName}: ${description.trim()}`
+    }
+    const command = input.command
+    if (toolName === 'Bash' && typeof command === 'string') {
+      return `Run ${command.slice(0, 160)}`
+    }
+    return `Use ${toolName}`
+  }
+
+  private resolvePending(sessionId: string, message: string): void {
+    for (const [requestId, permission] of this.permissions) {
+      if (permission.sessionId === sessionId) {
+        permission.resolve({ behavior: 'deny', message })
+        this.permissions.delete(requestId)
+      }
+    }
+    for (const [requestId, input] of this.userInputs) {
+      if (input.sessionId === sessionId) {
+        input.resolve({ behavior: 'deny', message })
+        this.userInputs.delete(requestId)
+      }
+    }
+  }
+
+  private async drainQueue(sessionId: string): Promise<void> {
+    const session = this.store.get(sessionId)
+    if (!session || session.status !== 'idle') {
+      return
+    }
+    const next = session.queuedPrompts?.[0]
+    if (!next) {
+      return
+    }
+    await this.store.removeQueuedPrompt(sessionId, next.id)
+    await this.sendMessage(sessionId, next.content)
+  }
+
+  private permissionMode(
+    mode: string | undefined,
+    allowAllPermissions: boolean | undefined,
+  ): 'default' | 'bypassPermissions' | 'plan' | 'auto' {
+    if (mode === 'plan') {
+      return 'plan'
+    }
+    if (mode === 'autopilot') {
+      return 'auto'
+    }
+    return allowAllPermissions ? 'bypassPermissions' : 'default'
+  }
+
+  private effort(value: string | undefined): EffortLevel | undefined {
+    return value === 'low' ||
+      value === 'medium' ||
+      value === 'high' ||
+      value === 'xhigh' ||
+      value === 'max'
+      ? value
+      : undefined
+  }
+
+  private requireAvailable(): void {
+    if (!this.available) {
+      throw new Error(this.unavailableReason)
+    }
+  }
+
+  private requireSession(id: string): SessionDetail {
+    const session = this.store.get(id)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    return session
+  }
+
+  private requireIdle(id: string): SessionDetail {
+    const session = this.requireSession(id)
+    if (session.status !== 'idle') {
+      throw new Error('Session must be idle')
+    }
+    return session
+  }
+
+  private publish(session: SessionDetail): void {
+    this.emit('event', { type: 'session.upserted', session })
+  }
+
+  private async validateDirectory(inputPath: string): Promise<string> {
+    const trimmed = inputPath.trim()
+    if (!trimmed) {
+      throw new Error('Folder path is required')
+    }
+    const expanded =
+      trimmed === '~' || trimmed.startsWith('~/')
+        ? path.join(process.env.HOME || '', trimmed.slice(1))
+        : trimmed
+    if (!path.isAbsolute(expanded)) {
+      throw new Error('Use an absolute folder path')
+    }
+    const resolved = await realpath(expanded)
+    if (!(await stat(resolved)).isDirectory()) {
+      throw new Error('Folder path must point to a directory')
+    }
+    return resolved
+  }
+}

@@ -16,6 +16,8 @@ import {
   type SessionMetadata,
 } from '@github/copilot-sdk'
 import type {
+  AgentProvider,
+  AgentProviderCapability,
   ChatMessage,
   AgentMode,
   ConfigureRuntimeInput,
@@ -759,6 +761,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.client = client
   }
 
+  providers(): AgentProviderCapability[] {
+    return [
+      {
+        id: 'copilot',
+        name: 'GitHub Copilot',
+        available: true,
+        terminalBacked: true,
+      },
+    ]
+  }
+
   async start(): Promise<void> {
     await this.store.initialize()
     await this.client.start()
@@ -768,6 +781,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (recoveredTerminalSessions > 0) {
       await this.discoverSessions()
     }
+
     await this.reconcileUntrackedTerminalDispatches()
     await this.refreshTranscripts()
     await Promise.all(
@@ -999,7 +1013,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     inputPath: string,
     terminalBacked = false,
     allowAllPermissions = true,
+    provider: AgentProvider = 'copilot',
   ): Promise<SessionDetail> {
+    if (provider !== 'copilot') {
+      throw new Error(`Provider ${provider} is not handled by Copilot`)
+    }
     const cwd = await this.validateDirectory(inputPath)
     if (terminalBacked) {
       return this.createTerminalSession(cwd, allowAllPermissions)

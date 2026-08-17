@@ -7,6 +7,7 @@ import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { AgentService } from './agent-service.js'
+import { ClaudeAgentService } from './claude-agent-service.js'
 import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
@@ -15,6 +16,7 @@ import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
 import { resolveDataDirectory } from './paths.js'
 import { PushNotificationService } from './push-notification-service.js'
+import { ProviderSessionService } from './provider-session-service.js'
 import { registerPushRoutes } from './push-routes.js'
 import { SessionStore } from './session-store.js'
 import type { SessionService } from './session-service.js'
@@ -70,7 +72,14 @@ export async function buildApp(
   const app = Fastify({ logger: options.logger ?? true })
   const role = options.role ?? 'hub'
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
-  const service = options.service ?? new AgentService(new SessionStore(dataDirectory))
+  const service =
+    options.service ??
+    new ProviderSessionService(
+      new AgentService(new SessionStore(dataDirectory)),
+      new ClaudeAgentService(
+        new SessionStore(path.join(dataDirectory, 'claude')),
+      ),
+    )
   const identity = options.identity ?? new NodeIdentityStore(dataDirectory)
   await identity.initialize()
 

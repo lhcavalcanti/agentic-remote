@@ -47,6 +47,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   private reconnectDelay = 1_000
   private stopped = false
   private _online = false
+  private _providers: NodeInfo['providers']
 
   constructor(readonly computer: RegisteredComputer) {
     super()
@@ -56,8 +57,23 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return this._online
   }
 
+  get providers(): NonNullable<NodeInfo['providers']> {
+    return (
+      this._providers || [
+        {
+          id: 'copilot',
+          name: 'GitHub Copilot',
+          available: true,
+          terminalBacked: true,
+        },
+      ]
+    )
+  }
+
   async getInfo(): Promise<NodeInfo> {
-    return this.request<NodeInfo>('/node-api/info')
+    const info = await this.request<NodeInfo>('/node-api/info')
+    this._providers = info.providers
+    return info
   }
 
   async listSessions(): Promise<SessionDetail[]> {
@@ -323,6 +339,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     socket.on('open', () => {
       this.reconnectDelay = 1_000
       this.setOnline(true)
+      void this.getInfo().catch(() => undefined)
     })
     socket.on('message', (data) => {
       try {

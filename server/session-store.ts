@@ -271,6 +271,18 @@ export class SessionStore {
     })
   }
 
+  async setBackend(
+    sessionId: string,
+    backend: 'sdk' | 'terminal',
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.backend = backend
+      session.managedOpen = true
+      session.isOpen = true
+      session.updatedAt = new Date().toISOString()
+    })
+  }
+
   async renameSession(sessionId: string, title: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.title = title

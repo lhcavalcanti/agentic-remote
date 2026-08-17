@@ -48,6 +48,7 @@ export interface SessionService {
   ): Promise<SessionDetail>
   clearConversation(id: string): Promise<SessionDetail>
   restartSession(id: string): Promise<SessionDetail>
+  moveToTerminal(id: string): Promise<SessionDetail>
   removeQueuedPrompt(
     sessionId: string,
     promptId: string,

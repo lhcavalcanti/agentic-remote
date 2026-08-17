@@ -248,6 +248,16 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
+  async moveToTerminal(id: string): Promise<SessionDetail> {
+    const session = this.sessions.get(id)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.executionMode = 'tmux'
+    this.emitEvent({ type: 'session.upserted', session })
+    return structuredClone(session)
+  }
+
   async removeQueuedPrompt(sessionId: string, promptId: string) {
     const session = this.sessions.get(sessionId)
     const prompt = session?.queuedPrompts?.find((entry) => entry.id === promptId)
@@ -764,6 +774,16 @@ describe('multi-node hub', () => {
       expect(restarted.json().session).toMatchObject({
         id: 'remote-session',
         computerName: 'homelab-prod',
+      })
+      const movedToTmux = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/tmux`,
+        payload: {},
+      })
+      expect(movedToTmux.json().session).toMatchObject({
+        id: 'remote-session',
+        computerName: 'homelab-prod',
+        executionMode: 'tmux',
       })
 
       const history = await hub.app.inject({

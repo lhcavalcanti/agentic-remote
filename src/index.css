@@ -343,40 +343,6 @@ button {
   background: var(--computer-accent);
 }
 
-.computer-session-group__providers {
-  display: flex;
-  min-width: 0;
-  gap: 5px;
-  padding: 0 5px 6px 30px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.computer-session-group__providers::-webkit-scrollbar {
-  display: none;
-}
-
-.computer-provider {
-  flex: 0 0 auto;
-  padding: 2px 5px;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  font-size: 8px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-}
-
-.computer-provider--available {
-  color: var(--muted-strong);
-  border-color: color-mix(in srgb, var(--computer-accent) 45%, var(--border));
-}
-
-.computer-provider--unavailable {
-  opacity: 0.48;
-  text-decoration: line-through;
-}
-
 .computer-session-group__sessions {
   display: flex;
   flex-direction: column;
@@ -529,12 +495,6 @@ button {
   font-weight: 580;
 }
 
-.session-item strong {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .provider-badge {
   flex: 0 0 auto;
   padding: 1px 4px;
@@ -545,6 +505,13 @@ button {
   font-style: normal;
   font-weight: 650;
   letter-spacing: 0.03em;
+}
+
+.session-item__badges {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
 }
 
 .session-mode-badge {

@@ -366,6 +366,18 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return managedSession(session, computer)
   }
 
+  async moveToTerminal(
+    computerId: string,
+    sessionId: string,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.moveToTerminal(sessionId)
+        : await this.requireClient(computerId).moveToTerminal(sessionId)
+    return managedSession(session, computer)
+  }
+
   async sendMessage(
     computerId: string,
     sessionId: string,

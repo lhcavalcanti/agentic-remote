@@ -147,6 +147,10 @@ export class ProviderSessionService
     return this.serviceFor(id).restartSession(id)
   }
 
+  moveToTerminal(id: string): Promise<SessionDetail> {
+    return this.serviceFor(id).moveToTerminal(id)
+  }
+
   removeQueuedPrompt(
     sessionId: string,
     promptId: string,

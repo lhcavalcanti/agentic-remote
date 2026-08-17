@@ -294,6 +294,20 @@ export async function restartSession(
   return response.session
 }
 
+export async function moveSessionToTmux(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/tmux`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
+  return response.session
+}
+
 export async function sendMessage(
   computerId: string,
   sessionId: string,

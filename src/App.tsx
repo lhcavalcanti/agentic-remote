@@ -65,6 +65,7 @@ import {
   Settings,
   SlidersHorizontal,
   Square,
+  SquareTerminal,
   Trash2,
   Wifi,
   WifiOff,
@@ -111,6 +112,7 @@ import {
   listDirectories,
   listSessions,
   listWorkspace,
+  moveSessionToTmux,
   removeComputer,
   removeQueuedPrompt,
   renameSession,
@@ -1523,8 +1525,7 @@ function SortableSessionItem({
       </span>
       <span className={`status-dot status-dot--${session.status}`} />
       <span className="session-item__text">
-        <strong>
-          {session.title}
+        <span className="session-item__badges">
           <em className="provider-badge">
             {session.provider === 'claude' ? 'Claude' : 'Copilot'}
           </em>
@@ -1533,6 +1534,9 @@ function SortableSessionItem({
               {executionModeName(session.executionMode)}
             </em>
           ) : null}
+        </span>
+        <strong>
+          {session.title}
         </strong>
         <small>{shortPath(session.cwd)}</small>
       </span>
@@ -1591,27 +1595,6 @@ function SortableComputerGroup({
         <strong>{computer.name}</strong>
         <small>{sessions.length}</small>
       </header>
-      <div
-        aria-label={`${computer.name} agent providers`}
-        className="computer-session-group__providers"
-      >
-        {computerProviders(computer).map((provider) => (
-          <span
-            aria-label={`${provider.name} ${
-              provider.available ? 'available' : 'unavailable'
-            } on ${computer.name}`}
-            className={`computer-provider ${
-              provider.available
-                ? 'computer-provider--available'
-                : 'computer-provider--unavailable'
-            }`}
-            key={provider.id}
-            title={provider.unavailableReason}
-          >
-            {provider.id === 'claude' ? 'Claude' : 'Copilot'}
-          </span>
-        ))}
-      </div>
       <SortableContext
         items={sessions.map((session) => `session:${sessionKey(session)}`)}
         strategy={verticalListSortingStrategy}
@@ -2691,6 +2674,7 @@ function App() {
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [restarting, setRestarting] = useState(false)
+  const [movingToTmux, setMovingToTmux] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
@@ -3948,6 +3932,34 @@ function App() {
     }
   }
 
+  async function moveSelectedSessionToTmux() {
+    if (
+      !selected ||
+      movingToTmux ||
+      selected.provider === 'claude' ||
+      selected.executionMode !== 'sdk' ||
+      selected.status !== 'idle' ||
+      !window.confirm(
+        `Move "${selected.title}" to tmux?\n\nThe Copilot SDK process will disconnect and the same session will resume in a tmux window.`,
+      )
+    ) {
+      return
+    }
+    setMovingToTmux(true)
+    setError(undefined)
+    try {
+      const migrated = await moveSessionToTmux(
+        selected.computerId,
+        selected.id,
+      )
+      setSessions((current) => upsertSession(current, migrated))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setMovingToTmux(false)
+    }
+  }
+
   function selectCommand(command: SlashCommand) {
     setComposer(`/${command.name}${command.inputHint ? ' ' : ''}`)
     setSelectedCommandIndex(0)
@@ -4355,6 +4367,19 @@ function App() {
               type="button"
             >
               <FolderOpen size={18} />
+            </button>
+          ) : null}
+          {selected?.provider !== 'claude' &&
+          selected?.executionMode === 'sdk' ? (
+            <button
+              aria-label="Move session to tmux"
+              className="icon-button"
+              disabled={movingToTmux || selected.status !== 'idle'}
+              onClick={() => void moveSelectedSessionToTmux()}
+              title="Move this Copilot session to tmux"
+              type="button"
+            >
+              <SquareTerminal size={18} />
             </button>
           ) : null}
           {selected ? (

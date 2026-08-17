@@ -121,9 +121,10 @@ flowchart TB
 | External session discovery | Yes | Agentic Remote sessions only |
 | Context management | Selectable where supported | Automatic |
 
-Provider availability appears under each computer in the Sessions drawer.
-Copilot remains the default. A session belongs to one provider; history is not
-transferred between providers.
+Provider and execution-mode badges appear above each session name. Copilot
+remains the default. Idle Copilot SDK sessions can be moved to tmux from the
+session header. A session belongs to one provider; history is not transferred
+between providers.
 
 See [Provider compatibility](docs/provider-compatibility.md) for the complete
 matrix.

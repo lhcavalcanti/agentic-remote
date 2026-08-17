@@ -245,6 +245,13 @@ export async function registerNodeRoutes(
         }),
       )
 
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/tmux',
+        async (request) => ({
+          session: await service.moveToTerminal(request.params.sessionId),
+        }),
+      )
+
       node.get<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/runtime',
         async (request) => service.runtimeOptions(request.params.sessionId),

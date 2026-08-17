@@ -381,6 +381,10 @@ export class ClaudeAgentService
     return restarted
   }
 
+  async moveToTerminal(_id: string): Promise<SessionDetail> {
+    throw new Error('Claude Agent sessions cannot move to tmux')
+  }
+
   async removeQueuedPrompt(
     sessionId: string,
     promptId: string,

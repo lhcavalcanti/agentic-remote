@@ -316,6 +316,16 @@ export async function registerHubRoutes(
     }),
   )
 
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/tmux',
+    async (request) => ({
+      session: await manager.moveToTerminal(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
+  )
+
   app.get<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/runtime',
     async (request) =>

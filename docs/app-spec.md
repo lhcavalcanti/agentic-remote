@@ -57,14 +57,20 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - The Sessions drawer MUST show all configured computers.
 - Selecting, creating, or opening a session MUST NOT hide other computers.
-- The Sessions drawer MUST show each computer's available and unavailable
-  provider capabilities before the user opens New session.
-- A provider MUST be discoverable without an existing session for that
-  provider.
-- Provider capability indicators MUST distinguish available from unavailable
-  and MUST remain compact, accessible, and safe within the phone drawer.
+- The New session provider selector MUST show the selected computer's available
+  and unavailable providers before creation.
+- Computer-group headers MUST NOT show provider tags; provider identity belongs
+  to individual sessions.
+- Each session's provider and execution-mode badges MUST appear above its chat
+  name rather than inline beside it.
 - Every open session MUST identify whether it is tmux-backed or SDK-only. The
   UI MUST NOT imply that SDK-only sessions are available through `tmux attach`.
+- An idle Copilot SDK session MAY be moved to tmux while preserving its session
+  ID, title, working directory, transcript, queue, and runtime settings.
+- A failed move to tmux MUST restore the Copilot SDK session and surface an
+  explicit error.
+- Claude Agent sessions MUST remain SDK-only and MUST NOT expose a move-to-tmux
+  action.
 - Active tmux sessions MUST be discovered from the Copilot session actually
   opened by the process.
 - A late or ambiguous lock MAY be accepted only when `/proc/<pid>/fd` proves

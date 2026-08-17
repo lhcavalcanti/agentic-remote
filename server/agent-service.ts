@@ -1208,6 +1208,64 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return restarted
   }
 
+  async moveToTerminal(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (this.store.backend(id) === 'terminal') {
+      return stored
+    }
+    if (
+      stored.status !== 'idle' ||
+      this.drainingSessions.has(id)
+    ) {
+      throw new Error('Session can only move to tmux while idle')
+    }
+    if (!this.terminalController.create) {
+      throw new Error('Terminal-backed sessions are not available')
+    }
+    const loading = this.loadingSessions.get(id)
+    if (loading) {
+      await loading
+    }
+    const active = this.sessions.get(id)
+    if (active) {
+      await active.disconnect()
+      this.sessions.delete(id)
+    }
+    this.hydratedSessions.delete(id)
+    this.launchingTerminalSessionIds.add(id)
+    this.discoveryGeneration += 1
+    try {
+      await this.terminalController.create(
+        id,
+        stored.cwd,
+        stored.title,
+        stored.runtime?.allowAllPermissions ?? true,
+        stored.runtime,
+      )
+      const migrated = await this.store.setBackend(id, 'terminal')
+      this.externalSessionIds.add(id)
+      this.publish(migrated)
+      return migrated
+    } catch (error) {
+      await this.activeSessionStopper(id)
+      try {
+        await this.ensureLoaded(id)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          'Moving the session to tmux failed and the SDK session could not be restored',
+        )
+      }
+      throw error
+    } finally {
+      this.launchingTerminalSessionIds.delete(id)
+      this.discoveryGeneration += 1
+    }
+  }
+
   async clearConversation(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {

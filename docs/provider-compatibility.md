@@ -37,6 +37,9 @@ history is not transferred between providers.
 - Claude Agent is SDK-only. The UI hides the tmux option and does not claim SSH
   visibility or terminal recovery. Session badges and the header identify
   whether each session is **tmux** or **SDK**.
+- Idle Copilot SDK sessions can migrate to tmux with the same provider session
+  ID. Claude Agent sessions cannot migrate because the Agent SDK process is not
+  attachable to a tmux pane.
 - Claude model and effort changes apply to the next turn. Claude controls its
   context window, so it does not advertise a long-context tier.
 - Copilot supplies its native slash-command catalog. Claude exposes only the

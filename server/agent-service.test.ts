@@ -1278,6 +1278,50 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('moves an idle Copilot SDK session into tmux', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    let terminalActive = false
+    const terminal = {
+      create: vi.fn(async () => {
+        terminalActive = true
+        return { sessionName: 'agentic-remote', windowId: '@30' }
+      }),
+      has: vi.fn(async () => terminalActive),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false, true)
+
+    const migrated = await service.moveToTerminal(created.id)
+
+    expect(terminal.create).toHaveBeenCalledWith(
+      created.id,
+      directory,
+      path.basename(directory),
+      true,
+      expect.objectContaining({ allowAllPermissions: true }),
+    )
+    expect(client.session.disconnectCount).toBe(1)
+    expect(migrated).toMatchObject({
+      id: created.id,
+      executionMode: 'tmux',
+      isOpen: true,
+    })
+    await service.stop()
+  })
+
   it('recreates previously open terminal sessions during boot', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

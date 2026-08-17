@@ -36,6 +36,7 @@ import {
   listKnowledgeBookmarks,
   listSessions,
   listWorkspace,
+  moveSessionToTmux,
   removeQueuedPrompt,
   renameSession,
   readWorkspaceFile,
@@ -62,6 +63,7 @@ vi.mock('./api', () => ({
   deleteKnowledgeBookmark: vi.fn(),
   listDirectories: vi.fn(),
   listWorkspace: vi.fn(),
+  moveSessionToTmux: vi.fn(),
   readWorkspaceFile: vi.fn(),
   searchWorkspace: vi.fn(),
   getSession: vi.fn(),
@@ -368,6 +370,10 @@ describe('App', () => {
       messages: [],
     })
     vi.mocked(restartSession).mockResolvedValue(session)
+    vi.mocked(moveSessionToTmux).mockResolvedValue({
+      ...session,
+      executionMode: 'tmux',
+    })
     vi.mocked(replyUserInput).mockResolvedValue(session)
     vi.mocked(listCommands).mockResolvedValue([
       {
@@ -450,12 +456,6 @@ describe('App', () => {
     )
     expect(screen.getByLabelText('Reorder development')).toBeInTheDocument()
     expect(screen.getByLabelText('Reorder Project chat')).toBeInTheDocument()
-    expect(
-      screen.getByLabelText('GitHub Copilot available on development'),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByLabelText('Claude Agent available on development'),
-    ).toBeInTheDocument()
     expect(
       screen.getByText('tmux', { selector: '.session-mode-badge' }),
     ).toBeInTheDocument()
@@ -1690,6 +1690,39 @@ describe('App', () => {
         'session-1',
       ),
     )
+  })
+
+  it('moves an idle Copilot SDK session to tmux', async () => {
+    const sdkSession: ManagedSession = {
+      ...session,
+      executionMode: 'sdk',
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([sdkSession])
+    vi.mocked(getSession).mockResolvedValue(sdkSession)
+    vi.mocked(moveSessionToTmux).mockResolvedValue({
+      ...sdkSession,
+      executionMode: 'tmux',
+    })
+    render(<App />)
+
+    await screen.findByRole('button', { name: 'Move session to tmux' })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Move session to tmux' }),
+    )
+
+    await waitFor(() =>
+      expect(moveSessionToTmux).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+      ),
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Move session to tmux' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText('tmux', { selector: '.session-mode-badge' }),
+    ).toBeInTheDocument()
   })
 
   it('resynchronizes sessions when the event stream reconnects', async () => {

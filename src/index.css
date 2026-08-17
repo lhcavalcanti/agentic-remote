@@ -2180,11 +2180,11 @@ button {
   .app-shell {
     display: block;
     position: fixed;
-    top: 0;
+    top: var(--visual-viewport-top, 0px);
     right: 0;
-    bottom: 0;
+    bottom: auto;
     left: 0;
-    height: auto;
+    height: var(--visual-viewport-height, 100dvh);
   }
 
   .app-shell--keyboard-open {

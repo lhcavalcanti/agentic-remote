@@ -331,6 +331,9 @@ Priority order:
   `env(safe-area-inset-top)` incorrectly reports zero.
 - Composer and dialogs MUST respect the home indicator and visual viewport.
 - Keyboard-open sizing MUST follow `visualViewport.height` and `offsetTop`.
+- In browser and split-size modes, the entire mobile shell MUST follow the
+  current visual viewport height and offset even when the keyboard is closed;
+  it MUST NOT assume full-screen dimensions.
 
 ## 12. PWA updates
 

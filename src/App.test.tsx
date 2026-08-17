@@ -193,7 +193,7 @@ describe('App', () => {
     expect(composerMaximumHeight(false, 430)).toBe(180)
   })
 
-  it('tracks the visual viewport only while the mobile keyboard is open', async () => {
+  it('tracks the visual viewport at normal and keyboard-open sizes', async () => {
     const originalVisualViewport = window.visualViewport
     const visualViewport = new EventTarget() as VisualViewport
     Object.defineProperties(visualViewport, {
@@ -207,6 +207,23 @@ describe('App', () => {
 
     const rendered = render(<App />)
     const shell = document.querySelector<HTMLElement>('.app-shell')
+    Object.defineProperty(visualViewport, 'height', {
+      configurable: true,
+      value: 700,
+      writable: true,
+    })
+    Object.defineProperty(visualViewport, 'offsetTop', {
+      configurable: true,
+      value: 18,
+      writable: true,
+    })
+    act(() => visualViewport.dispatchEvent(new Event('resize')))
+    expect(shell).not.toHaveClass('app-shell--keyboard-open')
+    expect(shell?.style.getPropertyValue('--visual-viewport-height')).toBe(
+      '700px',
+    )
+    expect(shell?.style.getPropertyValue('--visual-viewport-top')).toBe('18px')
+
     const editor = document.createElement('textarea')
     document.body.append(editor)
     editor.focus()

@@ -20,6 +20,8 @@ describe('mobile safe areas', () => {
     expect(css).toMatch(
       /top:\s*max\(\s*var\(--visual-viewport-top,\s*0px\),\s*var\(--app-safe-area-top\)/s,
     )
+    expect(css).toContain('top: var(--visual-viewport-top, 0px);')
+    expect(css).toContain('height: var(--visual-viewport-height, 100dvh);')
     expect(css).toMatch(
       /\.conversation-header\s*\{[^}]*var\(--app-content-safe-area-top\)/s,
     )

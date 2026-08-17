@@ -2833,7 +2833,7 @@ function App() {
       )
       setKeyboardOpen(open)
       setViewportHeight(viewport?.height || window.innerHeight)
-      setViewportOffsetTop(open ? viewport?.offsetTop || 0 : 0)
+      setViewportOffsetTop(viewport?.offsetTop || 0)
     }
     const timers = new Set<number>()
     const handleViewportChange = () => {

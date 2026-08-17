@@ -55,6 +55,7 @@ export class SessionStore {
   private readonly statePath: string
   private state: StoredState = { version: 1, sessions: {} }
   private writeQueue: Promise<void> = Promise.resolve()
+  private pendingPersist?: Promise<void>
 
   constructor(
     directory = resolveDataDirectory(),
@@ -682,12 +683,20 @@ export class SessionStore {
   }
 
   private persist(): Promise<void> {
-    const snapshot = JSON.stringify(this.state, null, 2)
+    // Collapse writes queued behind an in-flight one: they would each
+    // re-serialise every session, and the snapshot is taken when the write
+    // starts, so a single write covers all mutations made until then.
+    if (this.pendingPersist) {
+      return this.pendingPersist
+    }
     const task = this.writeQueue.then(async () => {
+      this.pendingPersist = undefined
+      const snapshot = JSON.stringify(this.state)
       const temporaryPath = `${this.statePath}.tmp`
       await writeFile(temporaryPath, snapshot, { mode: 0o600 })
       await rename(temporaryPath, this.statePath)
     })
+    this.pendingPersist = task
     this.writeQueue = task.catch(() => undefined)
     return task
   }

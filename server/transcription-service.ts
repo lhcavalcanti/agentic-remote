@@ -26,7 +26,14 @@ const ffmpegStatic: unknown = require('ffmpeg-static')
 const ffprobeStatic: unknown = require('ffprobe-static')
 const packagedFfmpegPath = packagedBinary(ffmpegStatic)
 const packagedFfprobePath = packagedBinary(ffprobeStatic, 'path')
-const packagedMediaDigests: Record<
+
+/**
+ * SHA-256 digests of the `ffmpeg-static`/`ffprobe-static` binaries this project
+ * is pinned against, keyed by `${platform}-${arch}`. `pnpm test` recomputes
+ * them from the resolved packages, so a dependency bump fails the suite with
+ * the replacement values instead of a runtime 503.
+ */
+export const packagedMediaDigests: Record<
   string,
   { ffmpeg: string; ffprobe: string }
 > = {
@@ -35,6 +42,11 @@ const packagedMediaDigests: Record<
     ffprobe: 'e3624d8ff953c7e2f1f3e3ee24bfa64399bcb3bd5c302b2216d3f794b31bbbf6',
   },
 }
+
+export const packagedMediaPaths: {
+  ffmpeg: string | undefined
+  ffprobe: string | undefined
+} = { ffmpeg: packagedFfmpegPath, ffprobe: packagedFfprobePath }
 const genericMimeTypes = new Set(['', 'application/octet-stream'])
 const supportedExtensions = new Set([
   '.aac',

@@ -45,6 +45,7 @@ const permissionReplySchema = z.object({
 const userInputReplySchema = z.object({
   answer: z.string().trim().min(1).max(20_000),
   wasFreeform: z.boolean(),
+  answers: z.array(z.string().trim().min(1).max(20_000)).min(1).max(32).optional(),
 })
 
 const executeCommandSchema = z.object({

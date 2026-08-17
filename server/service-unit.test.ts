@@ -13,4 +13,26 @@ describe('managed service unit', () => {
     )
     expect(script).toContain('KillMode=process')
   })
+
+  it('derives an origin allowlist that still permits loopback browsing', async () => {
+    const script = await readFile(
+      new URL('../bin/agentic-remote', import.meta.url),
+      'utf8',
+    )
+
+    // An explicit list disables the server's derived loopback allowance, so the
+    // value setup writes has to include the loopback origins itself.
+    expect(script).toContain(
+      "printf 'http://%s:%s,http://localhost:%s,http://127.0.0.1:%s'",
+    )
+    // A derived allowlist is regenerated when --host/--port change, while a
+    // user-supplied one is preserved.
+    expect(script).toContain(
+      '"$previous_origins" != "$(derived_origins "$previous_host" "$previous_port")"',
+    )
+    // Extra session roots survive a re-run of setup.
+    expect(script).toContain(
+      "printf 'AGENTIC_REMOTE_ALLOWED_ROOTS=%s\\n' \"$allowed_roots\"",
+    )
+  })
 })

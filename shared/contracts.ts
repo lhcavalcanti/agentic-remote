@@ -42,6 +42,7 @@ export interface PendingUserInput {
   question: string
   choices: string[]
   allowFreeform: boolean
+  multiSelect?: boolean
 }
 
 export interface QueuedPrompt {
@@ -187,6 +188,7 @@ export interface PermissionReplyInput {
 export interface UserInputReplyInput {
   answer: string
   wasFreeform: boolean
+  answers?: string[]
 }
 
 export interface AddComputerInput {

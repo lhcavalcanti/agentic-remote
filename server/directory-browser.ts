@@ -1,11 +1,12 @@
 import { readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { DirectoryListing } from '../shared/contracts.js'
+import { homeDirectory, isWithin } from './session-directory.js'
 
 export async function listHomeDirectories(
   requestedPath = '~',
 ): Promise<DirectoryListing> {
-  const home = await realpath(process.env.HOME || process.cwd())
+  const home = await homeDirectory()
   const resolved = await resolveRequestedPath(home, requestedPath)
   const metadata = await stat(resolved)
   if (!metadata.isDirectory()) {
@@ -75,11 +76,6 @@ async function resolveRequestedPath(
     throw new Error('Folder browsing is restricted to the user home directory')
   }
   return resolved
-}
-
-function isWithin(home: string, candidate: string): boolean {
-  const relative = path.relative(home, candidate)
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
 }
 
 function displayPath(home: string, candidate: string): string {

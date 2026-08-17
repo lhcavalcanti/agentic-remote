@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 const packageVersion = JSON.parse(
@@ -22,5 +22,12 @@ export default defineConfig({
         ws: true,
       },
     },
+  },
+  test: {
+    // React resolves to its production CJS build when NODE_ENV=production, and
+    // that build omits `act`, so every component test fails. `pnpm start` and
+    // the systemd unit both export NODE_ENV=production, so pin it here to keep
+    // the test run independent of the ambient environment.
+    env: { NODE_ENV: 'development' },
   },
 })

@@ -1554,6 +1554,46 @@ describe('App', () => {
     expect(screen.queryByText('Which environment?')).not.toBeInTheDocument()
   })
 
+  it('answers multi-select questions with every selected option', async () => {
+    const askingSession = {
+      ...session,
+      status: 'waiting' as const,
+      pendingUserInput: {
+        requestId: 'question-multi',
+        question: 'Which features?',
+        choices: ['Search', 'Export', 'Webhooks'],
+        allowFreeform: false,
+        multiSelect: true,
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([askingSession])
+    vi.mocked(getSession).mockResolvedValue(askingSession)
+    vi.mocked(replyUserInput).mockResolvedValue({
+      ...askingSession,
+      status: 'running',
+      pendingUserInput: undefined,
+    })
+    render(<App />)
+
+    expect(await screen.findByText('Which features?')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Search' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Webhooks' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Answer' }))
+
+    await waitFor(() =>
+      expect(replyUserInput).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'question-multi',
+        {
+          answer: 'Search, Webhooks',
+          wasFreeform: false,
+          answers: ['Search', 'Webhooks'],
+        },
+      ),
+    )
+  })
+
   it('scrolls a newly received question into view', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -2368,5 +2408,27 @@ describe('App', () => {
     expect(
       await screen.findByRole('button', { name: 'Apply runtime settings' }),
     ).toBeDisabled()
+  })
+
+  it('applies the persisted computer order without mutating the loaded array', async () => {
+    localStorage.setItem(
+      'agentic-remote:computer-order',
+      JSON.stringify([secondComputer.id, computer.id]),
+    )
+    const loaded = [computer, secondComputer]
+    vi.mocked(listComputers).mockResolvedValue(loaded)
+    vi.mocked(listSessions).mockResolvedValue([session])
+    const { container } = render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() => {
+      const groups = container.querySelectorAll(
+        '.computer-session-groups > *',
+      )
+      expect(groups).toHaveLength(2)
+      expect(groups[0].textContent).toContain(secondComputer.name)
+      expect(groups[1].textContent).toContain(computer.name)
+    })
+    expect(loaded).toEqual([computer, secondComputer])
   })
 })

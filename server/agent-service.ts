@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { realpath, rm, stat } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import {
@@ -44,12 +44,14 @@ import {
   stopActiveCopilotSession,
 } from './active-sessions.js'
 import {
+  forgetSessionEvents,
   readSessionEvents,
   readSessionWorkspaceMetadata,
   sessionEventLogVersion,
   sessionWorkspaceVersion,
 } from './event-log.js'
 import { listHomeDirectories } from './directory-browser.js'
+import { validateSessionDirectory } from './session-directory.js'
 import {
   listWorkspace,
   readWorkspaceFile,
@@ -1293,6 +1295,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         : undefined
     const replacementId = randomUUID()
     this.deletedSessionIds.add(id)
+    forgetSessionEvents(id)
     this.discoveryGeneration += 1
     try {
       if (this.externalSessionIds.has(id)) {
@@ -1860,6 +1863,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     this.deletingSessions.add(sessionId)
     this.deletedSessionIds.add(sessionId)
+    forgetSessionEvents(sessionId)
     let completed = false
     try {
       await this.activeSessionStopper(sessionId)
@@ -2978,22 +2982,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async validateDirectory(inputPath: string): Promise<string> {
-    const trimmed = inputPath.trim()
-    if (!trimmed) {
-      throw new Error('Folder path is required')
-    }
-    const expanded =
-      trimmed === '~' || trimmed.startsWith('~/')
-        ? path.join(process.env.HOME || '', trimmed.slice(1))
-        : trimmed
-    if (!path.isAbsolute(expanded)) {
-      throw new Error('Use an absolute folder path')
-    }
-    const resolved = await realpath(expanded)
-    const metadata = await stat(resolved)
-    if (!metadata.isDirectory()) {
-      throw new Error('Folder path must point to a directory')
-    }
-    return resolved
+    return validateSessionDirectory(inputPath)
   }
 }

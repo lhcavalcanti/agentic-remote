@@ -311,6 +311,7 @@ export class PushNotificationService {
       return 0
     }
     const expired = new Set<string>()
+    const failures: unknown[] = []
     let sent = 0
     await Promise.all(
       state.subscriptions.map(async (subscription) => {
@@ -332,7 +333,7 @@ export class PushNotificationService {
             return
           }
 
-          throw error
+          failures.push(error)
         }
       }),
     )
@@ -341,6 +342,12 @@ export class PushNotificationService {
         (subscription) => !expired.has(subscription.endpoint),
       )
       await this.persist()
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        'Some push notifications could not be delivered',
+      )
     }
     return sent
   }

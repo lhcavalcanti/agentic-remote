@@ -7,7 +7,7 @@ import type {
   Query,
   SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ClaudeAgentService,
   type ClaudeSdk,
@@ -17,11 +17,17 @@ import { SessionStore } from './session-store.js'
 const directories: string[] = []
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
   )
+})
+
+// Sessions are confined to the home directory; these fixtures run in tmpdir.
+beforeEach(() => {
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', tmpdir())
 })
 
 function models(): ModelInfo[] {
@@ -359,5 +365,137 @@ describe('ClaudeAgentService', () => {
     expect(runOptions[0].resume).toBeUndefined()
     expect(runOptions[1]).toMatchObject({ sessionId })
     expect(runOptions[1].resume).toBeUndefined()
+  })
+
+  it('treats the real SDK missing-transcript message as already deleted', async () => {
+    const { deleteSession, directory, service } = await fixture(
+      async function* () {},
+    )
+    const created = await service.createSession(directory, false, true, 'claude')
+    // The exact message @anthropic-ai/claude-agent-sdk throws for a session
+    // that never wrote a transcript.
+    deleteSession.mockRejectedValue(
+      new Error(
+        `Session ${created.id} not found in project directory for ${directory}`,
+      ),
+    )
+
+    const cleared = await service.clearConversation(created.id)
+    expect(cleared.messages).toEqual([])
+    await expect(service.deleteSession(cleared.id)).resolves.toBeUndefined()
+    expect(service.getSession(cleared.id)).toBeUndefined()
+  })
+
+  it('still reports unexpected provider errors when deleting a session', async () => {
+    const { deleteSession, directory, service } = await fixture(
+      async function* () {},
+    )
+    const created = await service.createSession(directory, false, true, 'claude')
+    deleteSession.mockRejectedValue(new Error('disk exploded'))
+
+    await expect(service.deleteSession(created.id)).rejects.toThrow(
+      'disk exploded',
+    )
+    expect(service.getSession(created.id)).toBeUndefined()
+  })
+
+  it('collects multi-select answers as a comma-separated string', async () => {
+    let sessionId = ''
+    const fixtureResult = await fixture(async function* (options) {
+      const decision = await options.canUseTool?.(
+        'AskUserQuestion',
+        {
+          questions: [
+            {
+              question: 'Which features?',
+              header: 'Features',
+              options: [
+                { label: 'Search', description: 'Full text search' },
+                { label: 'Export', description: 'CSV export' },
+                { label: 'Webhooks', description: 'Outbound webhooks' },
+              ],
+              multiSelect: true,
+            },
+          ],
+        },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tool-multi',
+          requestId: 'permission-multi',
+        },
+      )
+      expect(decision).toMatchObject({
+        behavior: 'allow',
+        updatedInput: {
+          answers: { 'Which features?': 'Search, Webhooks' },
+        },
+      })
+      yield* textResult(sessionId)
+    })
+    const { directory, service } = fixtureResult
+    const created = await service.createSession(directory, false, true, 'claude')
+    sessionId = created.id
+
+    await service.sendMessage(sessionId, 'pick features')
+    await vi.waitFor(() =>
+      expect(service.getSession(sessionId)?.pendingUserInput).toBeDefined(),
+    )
+    const request = service.getSession(sessionId)?.pendingUserInput
+    expect(request).toMatchObject({
+      question: 'Which features?',
+      multiSelect: true,
+    })
+
+    await service.replyUserInput(sessionId, request?.requestId || '', {
+      answer: 'Search, Webhooks',
+      wasFreeform: false,
+      answers: ['Search', 'Webhooks'],
+    })
+    await waitForIdle(service, sessionId)
+  })
+
+  it('rejects multi-select answers that are not offered options', async () => {
+    let sessionId = ''
+    const fixtureResult = await fixture(async function* (options) {
+      await options.canUseTool?.(
+        'AskUserQuestion',
+        {
+          questions: [
+            {
+              question: 'Which features?',
+              header: 'Features',
+              options: [
+                { label: 'Search', description: 'Full text search' },
+                { label: 'Export', description: 'CSV export' },
+              ],
+              multiSelect: true,
+            },
+          ],
+        },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tool-multi-invalid',
+          requestId: 'permission-multi-invalid',
+        },
+      )
+      yield* textResult(sessionId)
+    })
+    const { directory, service } = fixtureResult
+    const created = await service.createSession(directory, false, true, 'claude')
+    sessionId = created.id
+
+    await service.sendMessage(sessionId, 'pick features')
+    await vi.waitFor(() =>
+      expect(service.getSession(sessionId)?.pendingUserInput).toBeDefined(),
+    )
+    const request = service.getSession(sessionId)?.pendingUserInput
+
+    await expect(
+      service.replyUserInput(sessionId, request?.requestId || '', {
+        answer: 'Search, Telemetry',
+        wasFreeform: false,
+        answers: ['Search', 'Telemetry'],
+      }),
+    ).rejects.toThrow('Unknown option: Telemetry')
   })
 })

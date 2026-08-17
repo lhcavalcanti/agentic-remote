@@ -45,6 +45,7 @@ const permissionReplySchema = z.object({
 const userInputReplySchema = z.object({
   answer: z.string().trim().min(1).max(20_000),
   wasFreeform: z.boolean(),
+  answers: z.array(z.string().trim().min(1).max(20_000)).min(1).max(32).optional(),
 })
 
 const executeCommandSchema = z.object({
@@ -82,36 +83,103 @@ interface SessionParams {
   sessionId: string
 }
 
-function configuredOrigins(): Set<string> {
-  return new Set(
-    (process.env.AGENTIC_REMOTE_ALLOWED_ORIGINS || '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean)
-      .map((value) => new URL(value).origin),
-  )
+type OriginPolicy = {
+  origins: Set<string>
+  /**
+   * Loopback names cannot be pointed at the hub by an attacker-controlled DNS
+   * record, so they stay allowed on any port while the policy is derived. An
+   * explicit allowlist is honoured verbatim instead.
+   */
+  allowLoopback: boolean
 }
 
-function hostAllowed(host: string | undefined, origins: Set<string>): boolean {
-  if (!host || origins.size === 0) {
+const wildcardHosts = new Set(['0.0.0.0', '::', '*'])
+const loopbackHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
+
+function isLoopbackHost(host: string): boolean {
+  const withoutPort = host.startsWith('[')
+    ? host.slice(0, host.indexOf(']') + 1)
+    : host.split(':')[0]
+  return loopbackHosts.has(withoutPort.toLowerCase())
+}
+
+function originPolicy(): OriginPolicy {
+  const configured = (process.env.AGENTIC_REMOTE_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  if (configured.length > 0) {
+    const origins = new Set<string>()
+    for (const value of configured) {
+      let parsed: URL
+      try {
+        parsed = new URL(value)
+      } catch {
+        throw new Error(
+          `Invalid AGENTIC_REMOTE_ALLOWED_ORIGINS entry: ${value}`,
+        )
+      }
+      // `localhost:4317` parses as a URL whose origin is the opaque "null",
+      // which would otherwise fail on every request instead of at startup.
+      if (
+        (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+        !parsed.host ||
+        parsed.origin === 'null'
+      ) {
+        throw new Error(
+          `Invalid AGENTIC_REMOTE_ALLOWED_ORIGINS entry: ${value} (expected http(s)://host[:port])`,
+        )
+      }
+      origins.add(parsed.origin)
+    }
+    return { origins, allowLoopback: false }
+  }
+  // Fail closed on the hub's own address so a hub started without an explicit
+  // allowlist still rejects DNS rebinding instead of accepting any Host.
+  const host = process.env.HOST?.trim() || '127.0.0.1'
+  const port = process.env.PORT?.trim() || '4318'
+  const origins = new Set<string>()
+  if (!wildcardHosts.has(host)) {
+    const formatted = host.includes(':') && !host.startsWith('[')
+      ? `[${host}]`
+      : host
+    try {
+      origins.add(new URL(`http://${formatted}:${port}`).origin)
+    } catch {
+      // An unusable HOST leaves only the loopback allowance below.
+    }
+  }
+  return { origins, allowLoopback: true }
+}
+
+function hostAllowed(host: string | undefined, policy: OriginPolicy): boolean {
+  if (!host) {
     return false
   }
-  return [...origins].some((origin) => new URL(origin).host === host)
+  if (policy.allowLoopback && isLoopbackHost(host)) {
+    return true
+  }
+  return [...policy.origins].some((origin) => new URL(origin).host === host)
 }
 
 function originAllowed(
   origin: string,
   host: string | undefined,
-  origins: Set<string>,
+  policy: OriginPolicy,
 ): boolean {
-  if (!hostAllowed(host, origins)) {
+  if (!hostAllowed(host, policy)) {
     return false
   }
+  let parsed: URL
   try {
-    return origins.has(new URL(origin).origin)
+    parsed = new URL(origin)
   } catch {
     return false
   }
+  if (policy.allowLoopback && isLoopbackHost(parsed.host)) {
+    return true
+  }
+  return policy.origins.has(parsed.origin)
 }
 
 export async function registerHubRoutes(
@@ -119,14 +187,13 @@ export async function registerHubRoutes(
   manager: ComputerManager,
   knowledge: KnowledgeStore,
 ): Promise<void> {
-  const origins = configuredOrigins()
+  const policy = originPolicy()
   app.addHook('onRequest', async (request, reply) => {
     const origin = request.headers.origin
     if (
       request.url.startsWith('/api/') &&
-      origins.size > 0 &&
-      (!hostAllowed(request.headers.host, origins) ||
-        (origin && !originAllowed(origin, request.headers.host, origins)))
+      (!hostAllowed(request.headers.host, policy) ||
+        (origin && !originAllowed(origin, request.headers.host, policy)))
     ) {
       return reply.code(403).send({ error: 'Origin is not allowed' })
     }

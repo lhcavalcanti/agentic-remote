@@ -1033,6 +1033,26 @@ button {
   margin-top: 14px;
 }
 
+.user-input-card__options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.user-input-card__option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.user-input-card__option input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
 .user-input-card__form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

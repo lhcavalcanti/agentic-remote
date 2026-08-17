@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { access, realpath, stat } from 'node:fs/promises'
+import { access } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import {
@@ -33,6 +33,7 @@ import type {
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import { listHomeDirectories } from './directory-browser.js'
+import { validateSessionDirectory } from './session-directory.js'
 import type { SessionService } from './session-service.js'
 import { SessionStore } from './session-store.js'
 import {
@@ -329,7 +330,7 @@ export class ClaudeAgentService
     if (!question) {
       throw new Error('User input request is invalid')
     }
-    pending.answers[question.question] = input.answer
+    pending.answers[question.question] = this.resolveAnswer(question, input)
     this.userInputs.delete(requestId)
     pending.index += 1
     if (pending.index < pending.questions.length) {
@@ -926,6 +927,24 @@ export class ClaudeAgentService
     })
   }
 
+  private resolveAnswer(
+    question: ClaudeQuestion,
+    input: UserInputReplyInput,
+  ): string {
+    if (!question.multiSelect) {
+      return input.answer
+    }
+    const selected = input.answers?.length ? input.answers : [input.answer]
+    const unknown = selected.filter(
+      (value) => !question.options.includes(value),
+    )
+    if (unknown.length > 0) {
+      throw new Error(`Unknown option: ${unknown[0]}`)
+    }
+    // The SDK expects multi-select answers as a comma-separated string.
+    return [...new Set(selected)].join(', ')
+  }
+
   private pendingInput(pending: PendingClaudeInput): PendingUserInput {
     const question = pending.questions[pending.index]
     return {
@@ -933,6 +952,7 @@ export class ClaudeAgentService
       question: question.question,
       choices: question.options,
       allowFreeform: !question.multiSelect,
+      multiSelect: question.multiSelect,
     }
   }
 
@@ -1029,21 +1049,6 @@ export class ClaudeAgentService
   }
 
   private async validateDirectory(inputPath: string): Promise<string> {
-    const trimmed = inputPath.trim()
-    if (!trimmed) {
-      throw new Error('Folder path is required')
-    }
-    const expanded =
-      trimmed === '~' || trimmed.startsWith('~/')
-        ? path.join(process.env.HOME || '', trimmed.slice(1))
-        : trimmed
-    if (!path.isAbsolute(expanded)) {
-      throw new Error('Use an absolute folder path')
-    }
-    const resolved = await realpath(expanded)
-    if (!(await stat(resolved)).isDirectory()) {
-      throw new Error('Folder path must point to a directory')
-    }
-    return resolved
+    return validateSessionDirectory(inputPath)
   }
 }

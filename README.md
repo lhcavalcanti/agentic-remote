@@ -184,6 +184,34 @@ expose paired nodes publicly.
 Pairing tokens, provider credentials, repositories, and session databases must
 remain on their owning computers and outside Git.
 
+The hub validates the `Host` and `Origin` headers on every `/api/*` request so
+a browser on the same network cannot reach it through DNS rebinding.
+`agentic-remote setup` writes the hub's own address plus the loopback origins to
+`AGENTIC_REMOTE_ALLOWED_ORIGINS` in the service environment file. When the hub
+is reached through any other name — a reverse proxy, tunnel, or TLS hostname —
+list every origin explicitly, comma separated, or those requests are rejected
+with `403`:
+
+```bash
+AGENTIC_REMOTE_ALLOWED_ORIGINS=https://agentic.example.com,http://10.0.0.181:4317 \
+  ./bin/agentic-remote setup --role hub --name development --host 10.0.0.181 --port 4317
+```
+
+Setting the variable yourself replaces the derived list, so include every origin
+you use, including `http://localhost:PORT` if you browse the hub locally. A
+malformed entry fails at startup instead of being ignored. When the variable is
+unset entirely, the hub falls back to its own `HOST:PORT` and allows loopback.
+
+Sessions are confined to the user home directory, matching the folder browser.
+Set `AGENTIC_REMOTE_ALLOWED_ROOTS` to a comma-separated list of absolute paths
+to deliberately allow additional roots.
+
+Audio transcription runs packaged `ffmpeg`/`ffprobe` binaries and verifies them
+against known SHA-256 digests before use. A `503` mentioning packaged media
+binaries means the digest did not match the table in
+`server/transcription-service.ts` — expected after bumping `ffmpeg-static` or
+`ffprobe-static`, and `pnpm test` reports the replacement digests.
+
 ## Documentation
 
 - [Application specification](docs/app-spec.md) — normative product behavior

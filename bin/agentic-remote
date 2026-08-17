@@ -125,6 +125,15 @@ EOF
   rm -f -- "$temporary"
 }
 
+derived_origins() {
+  local derived_host="$1" derived_port="$2"
+  if [[ -z "$derived_host" || -z "$derived_port" ]]; then
+    return 0
+  fi
+  printf 'http://%s:%s,http://localhost:%s,http://127.0.0.1:%s' \
+    "$derived_host" "$derived_port" "$derived_port" "$derived_port"
+}
+
 publish_release() {
   local releases_dir release_id release_dir temporary_link
   releases_dir="$CONFIG_DIR/releases"
@@ -171,6 +180,7 @@ enable_linger() {
 
 setup_service() {
   local host="" port="" role="" name="" data_directory="" allowed_origins=""
+  local allowed_roots=""
   while (($# > 0)); do
     case "$1" in
       --host)
@@ -210,7 +220,12 @@ setup_service() {
   role="${role:-$(config_value AGENTIC_REMOTE_ROLE)}"
   name="${name:-$(config_value AGENTIC_REMOTE_NODE_NAME)}"
   data_directory="$(config_value AGENTIC_REMOTE_DATA_DIR)"
-  allowed_origins="${AGENTIC_REMOTE_ALLOWED_ORIGINS:-$(config_value AGENTIC_REMOTE_ALLOWED_ORIGINS)}"
+  allowed_roots="${AGENTIC_REMOTE_ALLOWED_ROOTS:-$(config_value AGENTIC_REMOTE_ALLOWED_ROOTS)}"
+  local previous_host previous_port previous_origins
+  previous_host="$(config_value HOST)"
+  previous_port="$(config_value PORT)"
+  previous_origins="$(config_value AGENTIC_REMOTE_ALLOWED_ORIGINS)"
+  allowed_origins="${AGENTIC_REMOTE_ALLOWED_ORIGINS:-}"
   host="${host:-127.0.0.1}"
   port="${port:-4317}"
   role="${role:-hub}"
@@ -219,6 +234,19 @@ setup_service() {
   validate_port "$port"
   validate_role "$role"
   validate_name "$name"
+
+  if [[ -z "$allowed_origins" && -n "$previous_origins" ]]; then
+    # Keep a user-supplied allowlist, but regenerate one this script derived so
+    # a changed --host/--port does not leave the hub rejecting its new address.
+    if [[ "$previous_origins" != "$(derived_origins "$previous_host" "$previous_port")" ]]; then
+      allowed_origins="$previous_origins"
+    fi
+  fi
+  if [[ -z "$allowed_origins" ]]; then
+    # Keep loopback usable: an explicit list turns off the server's derived
+    # loopback allowance, so the derived value has to spell it out.
+    allowed_origins="$(derived_origins "$host" "$port")"
+  fi
 
   printf 'Installing dependencies...\n'
   pnpm --dir "$REPO_ROOT" install --frozen-lockfile
@@ -238,9 +266,10 @@ setup_service() {
   if [[ -n "$data_directory" ]]; then
     printf 'AGENTIC_REMOTE_DATA_DIR=%s\n' "$data_directory" >>"$environment_tmp"
   fi
-  if [[ -n "$allowed_origins" ]]; then
-    printf 'AGENTIC_REMOTE_ALLOWED_ORIGINS=%s\n' "$allowed_origins" >>"$environment_tmp"
+  if [[ -n "$allowed_roots" ]]; then
+    printf 'AGENTIC_REMOTE_ALLOWED_ROOTS=%s\n' "$allowed_roots" >>"$environment_tmp"
   fi
+  printf 'AGENTIC_REMOTE_ALLOWED_ORIGINS=%s\n' "$allowed_origins" >>"$environment_tmp"
   install -m 0600 "$environment_tmp" "$ENV_FILE"
   rm -f -- "$environment_tmp"
 

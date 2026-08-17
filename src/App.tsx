@@ -1383,15 +1383,52 @@ function UserInputCard({
 }: {
   request: PendingUserInput
   disabled: boolean
-  onReply: (answer: string, wasFreeform: boolean) => void
+  onReply: (answer: string, wasFreeform: boolean, answers?: string[]) => void
 }) {
   const [answer, setAnswer] = useState('')
+  const [selected, setSelected] = useState<string[]>([])
+
+  useEffect(() => {
+    setSelected([])
+    setAnswer('')
+  }, [request.requestId])
+
+  const multiSelect = request.multiSelect === true
 
   return (
     <section className="user-input-card">
       <p className="eyebrow">Agent question</p>
       <h3>{request.question}</h3>
-      {request.choices.length > 0 ? (
+      {multiSelect && request.choices.length > 0 ? (
+        <div className="user-input-card__options">
+          {request.choices.map((choice) => (
+            <label className="user-input-card__option" key={choice}>
+              <input
+                checked={selected.includes(choice)}
+                disabled={disabled}
+                onChange={(event) =>
+                  setSelected((current) =>
+                    event.target.checked
+                      ? [...current, choice]
+                      : current.filter((value) => value !== choice),
+                  )
+                }
+                type="checkbox"
+              />
+              <span>{choice}</span>
+            </label>
+          ))}
+          <button
+            className="primary-button"
+            disabled={disabled || selected.length === 0}
+            onClick={() => onReply(selected.join(', '), false, selected)}
+            type="button"
+          >
+            Answer
+          </button>
+        </div>
+      ) : null}
+      {!multiSelect && request.choices.length > 0 ? (
         <div className="user-input-card__choices">
           {request.choices.map((choice) => (
             <button
@@ -2739,12 +2776,11 @@ function App() {
 
   const orderedComputers = useMemo(() => {
     const rank = new Map(computerOrder.map((id, index) => [id, index]))
-    return computers
-      .sort(
-        (left, right) =>
-          (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
-          (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER),
-      )
+    return [...computers].sort(
+      (left, right) =>
+        (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+    )
   }, [computerOrder, computers])
   const sessionsByComputer = useMemo(() => {
     const grouped = new Map<string, ManagedSession[]>()
@@ -2914,6 +2950,11 @@ function App() {
   )
 
   useEffect(() => {
+    // `computers` is empty until the initial load resolves; reconciling against
+    // it would discard the persisted order before it can be applied.
+    if (computers.length === 0) {
+      return
+    }
     setComputerOrder((current) => {
       const ids = computers.map((computer) => computer.id)
       const next = [
@@ -2928,6 +2969,9 @@ function App() {
   }, [computers])
 
   useEffect(() => {
+    if (computers.length === 0) {
+      return
+    }
     setSessionOrder((current) => {
       const next = { ...current }
       let changed = false
@@ -4060,7 +4104,11 @@ function App() {
     }
   }
 
-  async function answerUserInput(answer: string, wasFreeform: boolean) {
+  async function answerUserInput(
+    answer: string,
+    wasFreeform: boolean,
+    answers?: string[],
+  ) {
     if (!selected?.pendingUserInput || userInputBusy) {
       return
     }
@@ -4071,7 +4119,7 @@ function App() {
         selected.computerId,
         selected.id,
         selected.pendingUserInput.requestId,
-        { answer, wasFreeform },
+        { answer, wasFreeform, ...(answers ? { answers } : {}) },
       )
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
@@ -4553,8 +4601,8 @@ function App() {
           {selected?.pendingUserInput ? (
             <UserInputCard
               disabled={userInputBusy}
-              onReply={(answer, wasFreeform) =>
-                void answerUserInput(answer, wasFreeform)
+              onReply={(answer, wasFreeform, answers) =>
+                void answerUserInput(answer, wasFreeform, answers)
               }
               request={selected.pendingUserInput}
             />

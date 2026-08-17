@@ -487,6 +487,105 @@ describe('multi-node hub', () => {
     }
   })
 
+  it('falls back to the hub address when no allowlist is configured', async () => {
+    vi.stubEnv('HOST', '10.0.0.181')
+    vi.stubEnv('PORT', '4317')
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-default-origin'),
+      logger: false,
+      role: 'hub',
+      service,
+    })
+    try {
+      const rebinding = await hub.app.inject({
+        method: 'GET',
+        url: '/api/sessions',
+        headers: { host: 'attacker.example.test' },
+      })
+      expect(rebinding.statusCode).toBe(403)
+      const ownAddress = await hub.app.inject({
+        method: 'GET',
+        url: '/api/sessions',
+        headers: { host: '10.0.0.181:4317' },
+      })
+      expect(ownAddress.statusCode).toBe(200)
+      const loopback = await hub.app.inject({
+        method: 'GET',
+        url: '/api/sessions',
+        headers: { host: '127.0.0.1:4317' },
+      })
+      expect(loopback.statusCode).toBe(200)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it('accepts loopback browsing with the allowlist written by setup', async () => {
+    // Exactly what `agentic-remote setup --host 10.0.0.181 --port 4317` writes.
+    vi.stubEnv(
+      'AGENTIC_REMOTE_ALLOWED_ORIGINS',
+      'http://10.0.0.181:4317,http://localhost:4317,http://127.0.0.1:4317',
+    )
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-setup-origin'),
+      logger: false,
+      role: 'hub',
+      service,
+    })
+    try {
+      for (const host of [
+        '10.0.0.181:4317',
+        'localhost:4317',
+        '127.0.0.1:4317',
+      ]) {
+        const response = await hub.app.inject({
+          method: 'GET',
+          url: '/api/sessions',
+          headers: { host },
+        })
+        expect(response.statusCode, `host ${host}`).toBe(200)
+      }
+      const rejected = await hub.app.inject({
+        method: 'GET',
+        url: '/api/sessions',
+        headers: { host: 'attacker.example.test' },
+      })
+      expect(rejected.statusCode).toBe(403)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it('reports a malformed origin allowlist entry', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'not-a-url')
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    await expect(
+      buildApp({
+        dataDirectory: await temporaryDirectory('agentic-remote-bad-origin'),
+        logger: false,
+        role: 'hub',
+        service,
+      }),
+    ).rejects.toThrow('Invalid AGENTIC_REMOTE_ALLOWED_ORIGINS entry')
+  })
+
+  it('rejects an origin entry that has no scheme', async () => {
+    // `new URL('localhost:4317')` parses, but its origin is the opaque "null",
+    // which would otherwise fail on every request rather than at startup.
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'localhost:4317')
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    await expect(
+      buildApp({
+        dataDirectory: await temporaryDirectory('agentic-remote-scheme-origin'),
+        logger: false,
+        role: 'hub',
+        service,
+      }),
+    ).rejects.toThrow('expected http(s)://host[:port]')
+  })
+
   it('registers, aggregates, routes, and deletes remote sessions', async () => {
     const remoteSession = session('remote-session', 'Remote')
     remoteSession.queuedCount = 1

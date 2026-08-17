@@ -10,7 +10,7 @@ import type {
   SessionEvent,
   SessionMetadata,
 } from '@github/copilot-sdk'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentService,
   type CopilotClientLike,
@@ -256,11 +256,17 @@ function configurableModel(): ModelInfo {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
   )
+})
+
+// Sessions are confined to the home directory; these fixtures run in tmpdir.
+beforeEach(() => {
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', tmpdir())
 })
 
 describe('AgentService deletion', () => {

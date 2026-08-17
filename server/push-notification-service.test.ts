@@ -211,4 +211,50 @@ describe('PushNotificationService', () => {
     expect(reloaded.publicKey()).toBe(service.publicKey())
     await reloaded.unsubscribe(subscription.endpoint)
   })
+
+  it('prunes expired subscriptions even when another endpoint fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'push-service-test-'))
+    directories.push(directory)
+    const sender = vi.fn(
+      async (
+        subscription: PushSubscription,
+        _payload?: string | Buffer | null,
+        _options?: RequestOptions,
+      ) => {
+        if (subscription.endpoint.includes('gone')) {
+          throw Object.assign(new Error('Gone'), { statusCode: 410 })
+        }
+        if (subscription.endpoint.includes('flaky')) {
+          throw Object.assign(new Error('Server error'), { statusCode: 500 })
+        }
+        return { statusCode: 201, headers: {}, body: '' }
+      },
+    )
+    const service = new PushNotificationService(directory, sender)
+    await service.initialize()
+    const keys = { p256dh: 'public-key', auth: 'auth-key' }
+    for (const endpoint of [
+      'https://push.example.test/gone',
+      'https://push.example.test/flaky',
+      'https://push.example.test/healthy',
+    ]) {
+      await service.subscribe({ endpoint, expirationTime: null, keys })
+    }
+
+    await expect(service.sendTestNotification()).rejects.toThrow(AggregateError)
+    service.stop()
+
+    sender.mockClear()
+    const reloaded = new PushNotificationService(directory, sender)
+    await reloaded.initialize()
+    await expect(reloaded.sendTestNotification()).rejects.toThrow(
+      AggregateError,
+    )
+    const endpoints = sender.mock.calls.map((call) => call[0].endpoint)
+    expect(endpoints).toEqual([
+      'https://push.example.test/flaky',
+      'https://push.example.test/healthy',
+    ])
+    reloaded.stop()
+  })
 })

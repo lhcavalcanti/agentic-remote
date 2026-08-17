@@ -575,4 +575,34 @@ describe('SessionStore', () => {
     expect(store.get('running')?.isOpen).toBe(true)
     expect(store.get('stopped')?.isOpen).toBe(false)
   })
+
+  it('persists every mutation in a burst that shares one write', async () => {
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'session-burst',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+
+    await Promise.all(
+      Array.from({ length: 25 }, (_unused, index) =>
+        store.addMessage('session-burst', {
+          id: `message-${index}`,
+          role: 'assistant',
+          content: `chunk ${index}`,
+          createdAt: '2026-07-22T00:00:01.000Z',
+        }),
+      ),
+    )
+
+    const persisted = JSON.parse(
+      await readFile(path.join(directory, 'state.json'), 'utf8'),
+    ) as {
+      sessions: Record<string, { messages: { id: string }[] }>
+    }
+    expect(persisted.sessions['session-burst'].messages).toHaveLength(25)
+  })
 })

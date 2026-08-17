@@ -136,6 +136,42 @@ NODE_ENV=production pnpm check  # guards the inherited-env regression
 - A packaged-media digest test fails whenever `ffmpeg-static` or
   `ffprobe-static` moves, and prints the replacement digests.
 
+## Development workflow
+
+Work is tracked in GitHub issues and lands through pull requests. **Do not push
+directly to `main`.**
+
+1. **Start from an issue.** File one first if the work is not already tracked,
+   so the change has a rationale to link to.
+2. **Branch** with a short prefixed name: `fix/…`, `feat/…`, `perf/…`,
+   `docs/…`.
+3. **Validate before opening**: `pnpm check`, plus
+   `NODE_ENV=production pnpm check` when the change touches tests or config.
+4. **Open a PR that links its issues** using closing keywords, so merging
+   closes them automatically:
+
+   ```
+   Fixes #3
+   Fixes #4
+   ```
+
+   Use `Refs #11` for a partial slice that should leave the issue open.
+5. **Merge the PR**, then delete the branch.
+6. **Deploy and verify on development**, then ask before production
+   (see Rolling out).
+7. **Close issues with evidence.** If a PR did not auto-close them, close each
+   one with what changed, how it was verified, and any deliberate deviation
+   from the issue's suggested fix. Record measurements where the issue was
+   about performance.
+
+Notes:
+
+- Another agent session may be editing this checkout. Stage only your own
+  paths, and prefer `git worktree add` for branch work so the shared working
+  tree is left untouched.
+- The service runs from a published release, so merging alone changes nothing
+  on either host until a rollout.
+
 ## Rolling out
 
 1. Deploy and validate on the **development hub** first.
@@ -147,7 +183,10 @@ NODE_ENV=production pnpm check  # guards the inherited-env regression
 4. **Ask the user explicitly before updating production.** Approval for
    development never implies approval for production
    (`.github/copilot-instructions.md`).
-5. `./bin/agentic-remote rollback` activates the previous release.
+5. Update production over the approved operator SSH path, then verify node
+   health, hub connectivity, and the behavior the change affected. A node
+   answers `404` on `/`; check it through the hub's computer list instead.
+6. `./bin/agentic-remote rollback` activates the previous release.
 
 The service runs from `~/.config/agentic-remote/releases/current`, not from the
 working tree, so uncommitted edits are never live.

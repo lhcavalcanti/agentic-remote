@@ -79,7 +79,7 @@ export class PushNotificationService {
     }
     webPush.setVapidDetails(
       process.env.AGENTIC_REMOTE_VAPID_SUBJECT?.trim() ||
-        'https://github.com/lhcavalcanti/agentic-remote',
+        'https://example.com/agentic-remote',
       this.requireState().publicKey,
       this.requireState().privateKey,
     )

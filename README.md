@@ -13,8 +13,8 @@ Run this once on the computer that should host the UI:
 ```bash
 ./bin/agentic-remote setup \
   --role hub \
-  --name development \
-  --host 10.0.0.181 \
+  --name agent-hub \
+  --host 192.168.1.10 \
   --port 4317
 ```
 
@@ -25,9 +25,9 @@ This single command:
 3. Installs and starts `agentic-remote.service`.
 4. Serves the browser UI.
 5. Runs development-local agent sessions.
-6. Listens on `10.0.0.181:4317` for LAN access.
+6. Listens on `192.168.1.10:4317` for LAN access.
 
-Open <http://10.0.0.181:4317/>.
+Open <http://192.168.1.10:4317/>.
 
 `--role hub` enables the UI. `--host` only chooses the address to bind. They
 are options for the same service, not separate setup steps.
@@ -37,7 +37,7 @@ are options for the same service, not separate setup steps.
 ```mermaid
 flowchart LR
     Browser["Browser / installed PWA"] --> Hub["Hub<br/>UI + API + local sessions"]
-    Hub --> Local["Development-local<br/>Copilot / Claude"]
+    Hub --> Local["Hub-local<br/>Copilot / Claude"]
     Hub -->|"authenticated node API"| Node["Paired node<br/>headless"]
     Node --> Remote["Node-local<br/>Copilot / Claude"]
 ```
@@ -93,8 +93,8 @@ On the additional computer:
 ```bash
 ./bin/agentic-remote setup \
   --role node \
-  --name homelab-prod \
-  --host 10.0.0.233 \
+  --name worker-node \
+  --host 192.168.1.11 \
   --port 4317
 
 agentic-remote pair-info
@@ -105,9 +105,9 @@ pairing token.
 
 ```mermaid
 flowchart TB
-    Hub["development · hub<br/>10.0.0.181:4317<br/>serves UI"]
-    Prod["homelab-prod · node<br/>10.0.0.233:4317<br/>headless"]
-    Hub -->|"pairing token"| Prod
+    Hub["agent-hub<br/>192.168.1.10:4317<br/>serves UI"]
+    Node["worker-node<br/>192.168.1.11:4317<br/>headless"]
+    Hub -->|"pairing token"| Node
 ```
 
 ## Providers
@@ -181,8 +181,15 @@ Agentic Remote is a trusted-administrator interface, not a multi-tenant
 service. Protect the hub with TLS and a deny-by-default access layer. Do not
 expose paired nodes publicly.
 
+**The hub has no built-in user login.** Host/Origin validation prevents browser
+rebinding but is not authentication. Never expose the hub directly to the
+internet; place every HTTP and WebSocket route behind an authenticated reverse
+proxy or private encrypted network.
+
 Pairing tokens, provider credentials, repositories, and session databases must
 remain on their owning computers and outside Git.
+
+See [Security policy](SECURITY.md) before allowing other users to access a hub.
 
 The hub validates the `Host` and `Origin` headers on every `/api/*` request so
 a browser on the same network cannot reach it through DNS rebinding.
@@ -193,8 +200,8 @@ list every origin explicitly, comma separated, or those requests are rejected
 with `403`:
 
 ```bash
-AGENTIC_REMOTE_ALLOWED_ORIGINS=https://agentic.example.com,http://10.0.0.181:4317 \
-  ./bin/agentic-remote setup --role hub --name development --host 10.0.0.181 --port 4317
+AGENTIC_REMOTE_ALLOWED_ORIGINS=https://agents.example.com,http://192.168.1.10:4317 \
+  ./bin/agentic-remote setup --role hub --name agent-hub --host 192.168.1.10 --port 4317
 ```
 
 Setting the variable yourself replaces the derived list, so include every origin
@@ -218,13 +225,16 @@ binaries means the digest did not match the table in
 - [Multi-computer architecture](docs/architecture.md) — routing and ownership
 - [Provider compatibility](docs/provider-compatibility.md) — Copilot/Claude
   differences
+- [Security policy](SECURITY.md) — reporting and deployment boundaries
+
+Agentic Remote is available under the [MIT License](LICENSE).
 
 ## Troubleshooting
 
 ```bash
 agentic-remote status
 agentic-remote logs
-curl http://10.0.0.181:4317/api/health
+curl http://192.168.1.10:4317/api/health
 ```
 
 If the installed PWA looks outdated, use **App settings → Check for updates**,

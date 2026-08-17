@@ -34,15 +34,15 @@ Agentic Remote is not:
 
 ## 2. Deployment and ownership topology
 
-The supported homelab topology is:
+The supported topology is:
 
 | Computer | Role | Address | Responsibility |
 | --- | --- | --- | --- |
-| Development VM 103 | Hub | `10.0.0.181:4317` | Public UI, local sessions, transcription, push, central Knowledge metadata |
-| Production VM 101 | Paired node | `10.0.0.233:4317` | Production-local sessions and authenticated node API |
+| Hub host | Hub | Configured `HOST:PORT` | UI, local sessions, transcription, push, central Knowledge metadata |
+| Worker host | Paired node | Configured `HOST:PORT` | Node-local sessions and authenticated node API |
 
-The public hostname `agentic.lcavalcanti.cc` MUST route to the development hub.
-The production listener MUST remain a headless paired node.
+Any public hostname MUST route to the hub. Paired-node listeners MUST remain
+headless and MUST NOT serve the UI.
 
 Every session MUST execute on its owning computer. The hub MUST route operations
 to that computer without copying its repository, provider authentication,

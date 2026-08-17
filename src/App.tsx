@@ -1022,7 +1022,7 @@ function ComputersDialog({
           <input
             className="dialog-input"
             onChange={(event) => setName(event.target.value)}
-            placeholder="homelab-prod"
+            placeholder="worker-node"
             value={name}
           />
         </label>
@@ -1031,7 +1031,7 @@ function ComputersDialog({
           <input
             className="dialog-input"
             onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="http://10.0.0.233:4317"
+            placeholder="http://192.168.1.11:4317"
             spellCheck={false}
             value={baseUrl}
           />

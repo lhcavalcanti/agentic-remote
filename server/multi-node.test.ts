@@ -488,7 +488,7 @@ describe('multi-node hub', () => {
   })
 
   it('falls back to the hub address when no allowlist is configured', async () => {
-    vi.stubEnv('HOST', '10.0.0.181')
+    vi.stubEnv('HOST', '192.0.2.10')
     vi.stubEnv('PORT', '4317')
     const service = new FakeSessionService(session('local-session', 'Local'))
     const hub = await buildApp({
@@ -507,7 +507,7 @@ describe('multi-node hub', () => {
       const ownAddress = await hub.app.inject({
         method: 'GET',
         url: '/api/sessions',
-        headers: { host: '10.0.0.181:4317' },
+        headers: { host: '192.0.2.10:4317' },
       })
       expect(ownAddress.statusCode).toBe(200)
       const loopback = await hub.app.inject({
@@ -522,10 +522,10 @@ describe('multi-node hub', () => {
   })
 
   it('accepts loopback browsing with the allowlist written by setup', async () => {
-    // Exactly what `agentic-remote setup --host 10.0.0.181 --port 4317` writes.
+    // Exactly what `agentic-remote setup --host 192.0.2.10 --port 4317` writes.
     vi.stubEnv(
       'AGENTIC_REMOTE_ALLOWED_ORIGINS',
-      'http://10.0.0.181:4317,http://localhost:4317,http://127.0.0.1:4317',
+      'http://192.0.2.10:4317,http://localhost:4317,http://127.0.0.1:4317',
     )
     const service = new FakeSessionService(session('local-session', 'Local'))
     const hub = await buildApp({
@@ -536,7 +536,7 @@ describe('multi-node hub', () => {
     })
     try {
       for (const host of [
-        '10.0.0.181:4317',
+        '192.0.2.10:4317',
         'localhost:4317',
         '127.0.0.1:4317',
       ]) {
@@ -650,7 +650,7 @@ describe('multi-node hub', () => {
         payload: {
           baseUrl: remoteUrl,
           token: remote.identity.token,
-          name: 'homelab-prod',
+          name: 'worker-node',
         },
       })
       expect(registered.statusCode).toBe(201)
@@ -737,7 +737,7 @@ describe('multi-node hub', () => {
       expect(savedKnowledge.statusCode, savedKnowledge.body).toBe(201)
       expect(savedKnowledge.json().bookmark).toMatchObject({
         computerId: remoteComputerId,
-        computerName: 'homelab-prod',
+        computerName: 'worker-node',
         sessionId: 'remote-session',
         path: 'README.md',
         kind: 'file',
@@ -762,7 +762,7 @@ describe('multi-node hub', () => {
         sessions
           .json()
           .sessions.map((entry: { computerName: string }) => entry.computerName),
-      ).toEqual(expect.arrayContaining(['homelab-prod', hub.identity.info.name]))
+      ).toEqual(expect.arrayContaining(['worker-node', hub.identity.info.name]))
 
       const created = await hub.app.inject({
         method: 'POST',
@@ -799,7 +799,7 @@ describe('multi-node hub', () => {
         url: `/api/computers/${remoteComputerId}/sessions/remote-session`,
       })
       expect(detail.json().session).toMatchObject({
-        computerName: 'homelab-prod',
+        computerName: 'worker-node',
         messages: [{ content: 'Remote history' }],
       })
       const answered = await hub.app.inject({
@@ -808,7 +808,7 @@ describe('multi-node hub', () => {
         payload: { answer: 'Two', wasFreeform: false },
       })
       expect(answered.json().session).toMatchObject({
-        computerName: 'homelab-prod',
+        computerName: 'worker-node',
         status: 'running',
       })
       expect(answered.json().session).not.toHaveProperty('pendingUserInput')
@@ -819,14 +819,14 @@ describe('multi-node hub', () => {
       })
       expect(renamed.json().session).toMatchObject({
         title: 'Renamed remote',
-        computerName: 'homelab-prod',
+        computerName: 'worker-node',
       })
       const removedQueue = await hub.app.inject({
         method: 'DELETE',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session/queue/remote-queue`,
       })
       expect(removedQueue.json()).toMatchObject({
-        session: { queuedCount: 0, computerName: 'homelab-prod' },
+        session: { queuedCount: 0, computerName: 'worker-node' },
         prompt: { content: 'Queued remote prompt' },
       })
       const runtimeOptions = await hub.app.inject({
@@ -847,7 +847,7 @@ describe('multi-node hub', () => {
         },
       })
       expect(configuredRuntime.json().session).toMatchObject({
-        computerName: 'homelab-prod',
+        computerName: 'worker-node',
         runtime: {
           model: 'remote-model',
           reasoningEffort: 'high',
@@ -862,7 +862,7 @@ describe('multi-node hub', () => {
       })
       expect(cleared.json().session).toMatchObject({
         id: 'remote-session',
-        computerName: 'homelab-prod',
+        computerName: 'worker-node',
         messages: [],
       })
       const restarted = await hub.app.inject({
@@ -872,7 +872,7 @@ describe('multi-node hub', () => {
       })
       expect(restarted.json().session).toMatchObject({
         id: 'remote-session',
-        computerName: 'homelab-prod',
+        computerName: 'worker-node',
       })
       const movedToTmux = await hub.app.inject({
         method: 'POST',
@@ -881,7 +881,7 @@ describe('multi-node hub', () => {
       })
       expect(movedToTmux.json().session).toMatchObject({
         id: 'remote-session',
-        computerName: 'homelab-prod',
+        computerName: 'worker-node',
         executionMode: 'tmux',
       })
 
@@ -893,7 +893,7 @@ describe('multi-node hub', () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: 'historical-session',
-            computerName: 'homelab-prod',
+            computerName: 'worker-node',
             isOpen: false,
           }),
         ]),
@@ -944,7 +944,7 @@ describe('multi-node hub', () => {
       })
       await expect(upserted).resolves.toMatchObject({
         type: 'session.upserted',
-        session: { computerName: 'homelab-prod' },
+        session: { computerName: 'worker-node' },
       })
 
       const removed = waitForEvent(

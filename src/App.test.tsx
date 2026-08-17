@@ -131,10 +131,10 @@ const computer: ComputerSummary = {
 
 const secondComputer: ComputerSummary = {
   id: 'computer-2',
-  name: 'homelab-prod',
+  name: 'worker-node',
   isLocal: false,
   online: true,
-  baseUrl: 'http://10.0.0.233:4317',
+  baseUrl: 'http://192.0.2.20:4317',
 }
 
 const session: ManagedSession = {
@@ -142,7 +142,7 @@ const session: ManagedSession = {
   computerId: computer.id,
   computerName: computer.name,
   executionMode: 'tmux',
-  cwd: '/home/lcavalcanti/src/project',
+  cwd: '/home/tester/src/project',
   title: 'Project chat',
   updatedAt: '2026-07-22T00:00:00.000Z',
   status: 'idle',
@@ -182,7 +182,7 @@ const secondSession: ManagedSession = {
   ...session,
   id: 'session-2',
   title: 'Second chat',
-  cwd: '/home/lcavalcanti/src/second',
+  cwd: '/home/tester/src/second',
   messages: [],
 }
 
@@ -675,7 +675,7 @@ describe('App', () => {
     expect(screen.getByText(/# Workspace guide/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Insert path' }))
     expect(screen.getByLabelText('Message')).toHaveValue(
-      'File: `/home/lcavalcanti/src/project/README.md`',
+      'File: `/home/tester/src/project/README.md`',
     )
   })
 
@@ -786,7 +786,7 @@ describe('App', () => {
     })
 
     expect(
-      await screen.findByTitle('/home/lcavalcanti/src/project/src'),
+      await screen.findByTitle('/home/tester/src/project/src'),
     ).toBeInTheDocument()
     await act(async () => {
       resolveDocs({
@@ -797,7 +797,7 @@ describe('App', () => {
       await docsListing
     })
     expect(
-      screen.getByTitle('/home/lcavalcanti/src/project/src'),
+      screen.getByTitle('/home/tester/src/project/src'),
     ).toBeInTheDocument()
   })
 
@@ -829,7 +829,7 @@ describe('App', () => {
         computer.id,
         session.id,
         {
-          command: '/cwd /home/lcavalcanti/src/project/docs',
+          command: '/cwd /home/tester/src/project/docs',
           enqueue: false,
         },
       ),
@@ -1309,7 +1309,7 @@ describe('App', () => {
       .map((group) => group.textContent)
       .join(' ')
     expect(groups).toContain('development')
-    expect(groups).toContain('homelab-prod')
+    expect(groups).toContain('worker-node')
   })
 
   it('can create a session without allow-all permissions', async () => {
@@ -2280,7 +2280,7 @@ describe('App', () => {
         'computer-1',
         'session-1',
         {
-          command: '/cwd /home/lcavalcanti/src/project/docs',
+          command: '/cwd /home/tester/src/project/docs',
           enqueue: false,
         },
       ),

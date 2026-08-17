@@ -8,6 +8,7 @@ export interface AgentProviderCapability {
   name: string
   available: boolean
   terminalBacked: boolean
+  supportsTmuxMigration?: boolean
   unavailableReason?: string
 }
 

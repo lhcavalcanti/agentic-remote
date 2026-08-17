@@ -118,6 +118,7 @@ const computer: ComputerSummary = {
       name: 'GitHub Copilot',
       available: true,
       terminalBacked: true,
+      supportsTmuxMigration: true,
     },
     {
       id: 'claude',
@@ -1704,6 +1705,7 @@ describe('App', () => {
       ...sdkSession,
       executionMode: 'tmux',
     })
+
     render(<App />)
 
     await screen.findByRole('button', { name: 'Move session to tmux' })
@@ -1723,6 +1725,25 @@ describe('App', () => {
     expect(
       screen.getByText('tmux', { selector: '.session-mode-badge' }),
     ).toBeInTheDocument()
+  })
+
+  it('hides tmux migration when the owning node does not advertise support', async () => {
+    const remoteSdkSession: ManagedSession = {
+      ...session,
+      computerId: secondComputer.id,
+      computerName: secondComputer.name,
+      executionMode: 'sdk',
+      messages: [],
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([remoteSdkSession])
+    vi.mocked(getSession).mockResolvedValue(remoteSdkSession)
+    render(<App />)
+
+    await screen.findByLabelText('Message')
+    expect(
+      screen.queryByRole('button', { name: 'Move session to tmux' }),
+    ).not.toBeInTheDocument()
   })
 
   it('resynchronizes sessions when the event stream reconnects', async () => {

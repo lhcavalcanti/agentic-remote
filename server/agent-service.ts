@@ -768,6 +768,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         name: 'GitHub Copilot',
         available: true,
         terminalBacked: true,
+        supportsTmuxMigration: true,
       },
     ]
   }

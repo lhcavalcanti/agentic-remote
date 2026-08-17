@@ -67,6 +67,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   UI MUST NOT imply that SDK-only sessions are available through `tmux attach`.
 - An idle Copilot SDK session MAY be moved to tmux while preserving its session
   ID, title, working directory, transcript, queue, and runtime settings.
+- The move-to-tmux action MUST appear only when the owning computer explicitly
+  advertises migration support; legacy nodes MUST fail closed without the
+  action.
 - A failed move to tmux MUST restore the Copilot SDK session and surface an
   explicit error.
 - Claude Agent sessions MUST remain SDK-only and MUST NOT expose a move-to-tmux

@@ -146,6 +146,7 @@ export class ClaudeAgentService
         name: 'Claude Agent',
         available: this.available,
         terminalBacked: false,
+        supportsTmuxMigration: false,
         unavailableReason: this.available ? undefined : this.unavailableReason,
       },
     ]

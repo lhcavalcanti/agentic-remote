@@ -2784,6 +2784,11 @@ function App() {
   const selectedNotificationsMuted = selected
     ? mutedSessions.includes(sessionKey(selected))
     : false
+  const selectedProviderCapability = selected
+    ? computerProviders(
+        computers.find((computer) => computer.id === selected.computerId),
+      ).find((provider) => provider.id === (selected.provider || 'copilot'))
+    : undefined
   const commandQuery = composer.startsWith('/')
     ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
     : ''
@@ -4370,7 +4375,8 @@ function App() {
             </button>
           ) : null}
           {selected?.provider !== 'claude' &&
-          selected?.executionMode === 'sdk' ? (
+          selected?.executionMode === 'sdk' &&
+          selectedProviderCapability?.supportsTmuxMigration === true ? (
             <button
               aria-label="Move session to tmux"
               className="icon-button"

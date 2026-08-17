@@ -27,6 +27,16 @@ interface RemoteNodeClientEvents {
   status: [online: boolean]
 }
 
+class RemoteNodeRequestError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+  ) {
+    super(message)
+    this.name = 'RemoteNodeRequestError'
+  }
+}
+
 export function normalizeNodeUrl(value: string): string {
   const url = new URL(value.trim())
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -65,6 +75,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
           name: 'GitHub Copilot',
           available: true,
           terminalBacked: true,
+          supportsTmuxMigration: false,
         },
       ]
     )
@@ -410,8 +421,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       const payload = (await response.json().catch(() => null)) as
         | { error?: string }
         | null
-      throw new Error(
+      throw new RemoteNodeRequestError(
         payload?.error || `${this.computer.name} request failed (${response.status})`,
+        response.status,
       )
     }
     this.setOnline(true)

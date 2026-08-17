@@ -389,6 +389,10 @@ Persistent state MUST NOT include:
 - Application changes MUST be committed and pushed before deployment.
 - Unrelated dirty worktree changes MUST be preserved and excluded from scoped
   releases.
+- Every validated development fix MUST end with an explicit user decision about
+  whether to update the production node.
+- Production MUST NOT be updated implicitly from development approval or from
+  approval granted for an earlier fix.
 - A general release is complete only after targeted/full tests, production
   build, intended-host deployment, version verification, and live health
   checks. Provider rollouts MAY remain development-only pending manual

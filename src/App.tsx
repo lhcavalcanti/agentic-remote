@@ -1692,8 +1692,11 @@ function RuntimeDialog({
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const [runtimeStatus, setRuntimeStatus] =
+    useState<ManagedSession['status']>()
   const computerId = session?.computerId
   const sessionId = session?.id
+  const sessionStatus = session?.status
 
   useEffect(() => {
     if (!open || !computerId || !sessionId) {
@@ -1703,6 +1706,7 @@ function RuntimeDialog({
     setLoading(true)
     setOptions(undefined)
     setConfiguration(undefined)
+    setRuntimeStatus(sessionStatus)
     setError(undefined)
     void getRuntimeOptions(computerId, sessionId)
       .then((loaded) => {
@@ -1713,6 +1717,7 @@ function RuntimeDialog({
           loaded.models.find((entry) => entry.id === loaded.current.model) ||
           loaded.models[0]
         setOptions(loaded)
+        setRuntimeStatus(loaded.status || sessionStatus)
         if (model) {
           setConfiguration({
             model: model.id,
@@ -1749,7 +1754,7 @@ function RuntimeDialog({
     return () => {
       active = false
     }
-  }, [computerId, open, sessionId])
+  }, [computerId, open, sessionId, sessionStatus])
 
   if (!open || !session) {
     return null
@@ -1765,7 +1770,7 @@ function RuntimeDialog({
     if (!configuration) {
       return
     }
-    if (targetSession.status !== 'idle') {
+    if (runtimeStatus !== 'idle') {
       setError('Runtime settings can only change while the session is idle')
       return
     }
@@ -1894,10 +1899,16 @@ function RuntimeDialog({
               ? 'Claude settings apply to the next turn. Change settings only while the agent is idle.'
               : 'Tmux sessions restart their Copilot pane with the same session ID. Change settings only while the agent is idle.'}
           </p>
+          {runtimeStatus !== 'idle' ? (
+            <p className="form-error" role="status">
+              Finish or stop the current response before changing runtime
+              settings.
+            </p>
+          ) : null}
           {error ? <p className="form-error">{error}</p> : null}
           <button
             className="primary-button dialog__submit"
-            disabled={submitting || targetSession.status !== 'idle'}
+            disabled={submitting || runtimeStatus !== 'idle'}
             type="submit"
           >
             {submitting ? 'Applying…' : 'Apply runtime settings'}

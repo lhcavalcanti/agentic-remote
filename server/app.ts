@@ -83,6 +83,38 @@ export async function buildApp(
   const identity = options.identity ?? new NodeIdentityStore(dataDirectory)
   await identity.initialize()
 
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof z.ZodError) {
+      return reply.code(400).send({
+        error: error.issues[0]?.message || 'Invalid request',
+      })
+    }
+    app.log.error(error)
+    if (error instanceof TranscriptionError || error instanceof FileUploadError) {
+      return reply.code(error.statusCode).send({ error: error.message })
+    }
+    const explicitStatusCode = errorStatusCode(error)
+    if (
+      explicitStatusCode !== undefined &&
+      explicitStatusCode >= 400 &&
+      explicitStatusCode < 600
+    ) {
+      return reply.code(explicitStatusCode).send({
+        error: error instanceof Error ? error.message : 'Request failed',
+      })
+    }
+    const message = error instanceof Error ? error.message : 'Unexpected server error'
+    const lower = message.toLowerCase()
+    const statusCode = lower.includes('not found')
+      ? 404
+      : lower.includes('not registered')
+        ? 400
+        : 500
+    return reply.code(statusCode).send({
+      error: statusCode === 500 ? 'Unexpected server error' : message,
+    })
+  })
+
   await app.register(fastifyWebsocket)
   await registerNodeRoutes(app, service, identity)
 
@@ -125,38 +157,6 @@ export async function buildApp(
     role,
     node: identity.info,
   }))
-
-  app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof z.ZodError) {
-      return reply.code(400).send({
-        error: error.issues[0]?.message || 'Invalid request',
-      })
-    }
-    app.log.error(error)
-    if (error instanceof TranscriptionError || error instanceof FileUploadError) {
-      return reply.code(error.statusCode).send({ error: error.message })
-    }
-    const explicitStatusCode = errorStatusCode(error)
-    if (
-      explicitStatusCode !== undefined &&
-      explicitStatusCode >= 400 &&
-      explicitStatusCode < 600
-    ) {
-      return reply.code(explicitStatusCode).send({
-        error: error instanceof Error ? error.message : 'Request failed',
-      })
-    }
-    const message = error instanceof Error ? error.message : 'Unexpected server error'
-    const lower = message.toLowerCase()
-    const statusCode = lower.includes('not found')
-      ? 404
-      : lower.includes('not registered')
-        ? 400
-        : 500
-    return reply.code(statusCode).send({
-      error: statusCode === 500 ? 'Unexpected server error' : message,
-    })
-  })
 
   if (role === 'hub' && options.serveStatic) {
     const serverDirectory = path.dirname(fileURLToPath(import.meta.url))

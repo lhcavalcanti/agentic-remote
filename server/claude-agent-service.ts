@@ -283,6 +283,7 @@ export class ClaudeAgentService
     return {
       current: session.runtime || {},
       models: this.models,
+      status: session.status,
     }
   }
 

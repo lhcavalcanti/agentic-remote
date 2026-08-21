@@ -121,6 +121,17 @@ interface ModelPromptLimits {
   maximum?: number
 }
 
+class RuntimeConfigurationError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+    this.name = 'RuntimeConfigurationError'
+  }
+}
+
 const runtimeEventTypes = new Set<SessionEvent['type']>([
   'session.start',
   'session.resume',
@@ -731,6 +742,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly liveTaskCompletionSummaries = new Map<string, string>()
   private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
   private readonly runtimeModels = new Map<string, RuntimeModelOption>()
+  private runtimeModelLoad?: Promise<void>
   private readonly externalCommandCache = new Map<
     string,
     {
@@ -778,7 +790,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async start(): Promise<void> {
     await this.store.initialize()
     await this.client.start()
-    await this.loadModelPromptLimits()
+    await this.ensureRuntimeModels().catch((error: unknown) => {
+      console.warn('Unable to load runtime models:', error)
+    })
     await this.discoverSessions()
     const recoveredTerminalSessions = await this.recoverTerminalSessions()
     if (recoveredTerminalSessions > 0) {
@@ -920,17 +934,38 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return session.cwd
   }
 
-  private async loadModelPromptLimits(): Promise<void> {
+  private ensureRuntimeModels(): Promise<void> {
+    if (this.runtimeModels.size > 0) {
+      return Promise.resolve()
+    }
+    if (this.runtimeModelLoad) {
+      return this.runtimeModelLoad
+    }
+    const loading = this.loadRuntimeModels().finally(() => {
+      if (this.runtimeModelLoad === loading) {
+        this.runtimeModelLoad = undefined
+      }
+    })
+    this.runtimeModelLoad = loading
+    return loading
+  }
+
+  private async loadRuntimeModels(): Promise<void> {
     if (!this.client.listModels) {
-      return
+      throw new RuntimeConfigurationError(
+        'Runtime model discovery is not supported',
+        503,
+      )
     }
-    let models: ModelInfo[]
-    try {
-      models = await this.client.listModels()
-    } catch (error) {
-      console.warn('Unable to load model context limits:', error)
-      return
+    const models = await this.client.listModels()
+    if (models.length === 0) {
+      throw new RuntimeConfigurationError(
+        'No runtime models are currently available',
+        503,
+      )
     }
+    this.modelPromptLimits.clear()
+    this.runtimeModels.clear()
     for (const model of models) {
       const value = recordValue(model)
       const capabilities = recordValue(value.capabilities)
@@ -1082,13 +1117,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async runtimeOptions(id: string): Promise<RuntimeOptions> {
-    const stored = this.store.get(id)
+    let stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
+    }
+    stored = await this.reconcileRuntimeStatus(stored)
+    try {
+      await this.ensureRuntimeModels()
+    } catch (error) {
+      throw new RuntimeConfigurationError(
+        'Runtime models are temporarily unavailable. Try again.',
+        503,
+        { cause: error },
+      )
     }
     return {
       current: stored.runtime || {},
       models: [...this.runtimeModels.values()],
+      status: stored.status,
     }
   }
 
@@ -1096,22 +1142,41 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     id: string,
     input: ConfigureRuntimeInput,
   ): Promise<SessionDetail> {
-    const stored = this.store.get(id)
+    let stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
     }
+    stored = await this.reconcileRuntimeStatus(stored)
     if (stored.status === 'running' || stored.status === 'waiting') {
-      throw new Error('Runtime settings can only change while the session is idle')
+      throw new RuntimeConfigurationError(
+        'Runtime settings can only change while the session is idle',
+        409,
+      )
+    }
+    try {
+      await this.ensureRuntimeModels()
+    } catch (error) {
+      throw new RuntimeConfigurationError(
+        'Runtime models are temporarily unavailable. Try again.',
+        503,
+        { cause: error },
+      )
     }
     const model = this.runtimeModels.get(input.model)
     if (!model) {
-      throw new Error('Selected model is not available')
+      throw new RuntimeConfigurationError('Selected model is not available', 400)
     }
     if (!model.reasoningEfforts.includes(input.reasoningEffort)) {
-      throw new Error('Selected reasoning effort is not supported by this model')
+      throw new RuntimeConfigurationError(
+        'Selected reasoning effort is not supported by this model',
+        400,
+      )
     }
     if (!model.contextTiers.includes(input.contextTier)) {
-      throw new Error('Selected context tier is not supported by this model')
+      throw new RuntimeConfigurationError(
+        'Selected context tier is not supported by this model',
+        400,
+      )
     }
     const mode = input.mode || agentMode(stored.runtime?.mode) || 'interactive'
     const configuration: ConfigureRuntimeInput = { ...input, mode }
@@ -1172,6 +1237,49 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     return persistRuntime(mode)
+  }
+
+  private async reconcileRuntimeStatus(
+    stored: SessionDetail,
+  ): Promise<SessionDetail> {
+    if (
+      stored.status === 'idle' ||
+      !this.externalSessionIds.has(stored.id) ||
+      this.activePrompts.has(stored.id) ||
+      stored.pendingPermission ||
+      stored.pendingUserInput
+    ) {
+      return stored
+    }
+    const events = await this.sessionEventReader(stored.id)
+    const latestLifecycle = events.findLast(
+      (event) =>
+        !event.agentId &&
+        (event.type === 'assistant.turn_start' ||
+          event.type === 'assistant.turn_end' ||
+          event.type === 'session.idle' ||
+          event.type === 'session.error' ||
+          event.type === 'abort' ||
+          event.type === 'session.shutdown'),
+    )
+    if (
+      !latestLifecycle ||
+      Date.parse(latestLifecycle.timestamp) < Date.parse(stored.updatedAt)
+    ) {
+      return stored
+    }
+    const status = statusFromEvents(events)
+    if (status === stored.status || status === 'waiting') {
+      return stored
+    }
+    const reconciled = await this.store.update(stored.id, (session) => {
+      session.status = status
+      if (status !== 'running') {
+        session.activity = undefined
+      }
+    })
+    this.publish(reconciled)
+    return reconciled
   }
 
   async restartSession(id: string): Promise<SessionDetail> {

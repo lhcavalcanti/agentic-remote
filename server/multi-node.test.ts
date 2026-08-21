@@ -434,6 +434,34 @@ describe('multi-node hub', () => {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
   })
 
+  it('uses the application error handler for registered session routes', async () => {
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    vi.spyOn(service, 'runtimeOptions').mockRejectedValue(
+      Object.assign(new Error('Runtime models are temporarily unavailable'), {
+        statusCode: 503,
+      }),
+    )
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-route-error'),
+      logger: false,
+      role: 'hub',
+      service,
+    })
+    try {
+      const response = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${hub.identity.info.id}/sessions/local-session/runtime`,
+      })
+
+      expect(response.statusCode).toBe(503)
+      expect(response.json()).toEqual({
+        error: 'Runtime models are temporarily unavailable',
+      })
+    } finally {
+      await hub.app.close()
+    }
+  })
+
   it('rejects untrusted hub hosts and origins', async () => {
     vi.stubEnv(
       'AGENTIC_REMOTE_ALLOWED_ORIGINS',

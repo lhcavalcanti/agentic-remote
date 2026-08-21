@@ -21,6 +21,7 @@ import type {
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
+import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
 
 class FakeSessionService extends EventEmitter implements SessionService {
@@ -143,11 +144,16 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
+  createError?: Error
+
   async createSession(
     cwd: string,
     terminalBacked?: boolean,
     allowAllPermissions?: boolean,
   ): Promise<SessionDetail> {
+    if (this.createError) {
+      throw this.createError
+    }
     this.lastCreateTerminalBacked = terminalBacked
     this.lastCreateAllowAllPermissions = allowAllPermissions
     const session: SessionDetail = {
@@ -996,6 +1002,48 @@ describe('multi-node hub', () => {
       hubSocket?.close()
       await hub.app.close()
       await remote.app.close()
+    }
+  })
+  it('surfaces a rejected folder as 400 with its reason', async () => {
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    service.createError = new SessionDirectoryError(
+      'Sessions are restricted to the user home directory',
+    )
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-bad-cwd'),
+      logger: false,
+      role: 'hub',
+      service,
+    })
+    try {
+      const computerId = hub.app
+        ? JSON.parse(
+            (
+              await hub.app.inject({ method: 'GET', url: '/api/computers' })
+            ).body,
+          ).computers[0].id
+        : ''
+      const rejected = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${computerId}/sessions`,
+        payload: { cwd: '/', provider: 'copilot' },
+      })
+      expect(rejected.statusCode).toBe(400)
+      expect(JSON.parse(rejected.body).error).toBe(
+        'Sessions are restricted to the user home directory',
+      )
+
+      // A genuine fault must still be hidden behind a 500.
+      service.createError = new Error('database on fire')
+      const failed = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${computerId}/sessions`,
+        payload: { cwd: '~', provider: 'copilot' },
+      })
+      expect(failed.statusCode).toBe(500)
+      expect(JSON.parse(failed.body).error).toBe('Unexpected server error')
+    } finally {
+      await hub.app.close()
     }
   })
 })

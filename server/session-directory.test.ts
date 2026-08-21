@@ -1,8 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { validateSessionDirectory } from './session-directory.js'
+import {
+  SessionDirectoryError,
+  validateSessionDirectory,
+} from './session-directory.js'
 
 const directories: string[] = []
 
@@ -60,5 +63,43 @@ describe('validateSessionDirectory', () => {
 
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', outside)
     await expect(validateSessionDirectory(outside)).resolves.toBe(outside)
+  })
+  it('reports every rejection as a 400 with its reason', async () => {
+    const home = await homeFixture()
+    const outside = await mkdtemp(path.join(tmpdir(), 'session-outside-'))
+    directories.push(outside)
+    const file = path.join(home, 'note.txt')
+    await writeFile(file, 'not a directory')
+
+    const cases: Array<[string, string]> = [
+      ['   ', 'Folder path is required'],
+      ['src', 'Use an absolute folder path'],
+      [path.join(home, 'missing-folder'), 'Folder does not exist'],
+      [file, 'Folder path must point to a directory'],
+      [outside, 'Sessions are restricted to the user home directory'],
+    ]
+
+    for (const [input, message] of cases) {
+      const error = await validateSessionDirectory(input).catch(
+        (caught: unknown) => caught,
+      )
+      expect(error, input).toBeInstanceOf(SessionDirectoryError)
+      expect((error as SessionDirectoryError).statusCode, input).toBe(400)
+      expect((error as Error).message, input).toContain(message)
+    }
+  })
+  it('rejects a directory it cannot read', async () => {
+    const home = await homeFixture()
+    const locked = path.join(home, 'locked')
+    await mkdir(locked, { mode: 0o000 })
+
+    const error = await validateSessionDirectory(locked).catch(
+      (caught: unknown) => caught,
+    )
+    await chmod(locked, 0o700)
+
+    expect(error).toBeInstanceOf(SessionDirectoryError)
+    expect((error as SessionDirectoryError).statusCode).toBe(400)
+    expect((error as Error).message).toContain('Folder is not readable')
   })
 })

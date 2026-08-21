@@ -1,5 +1,20 @@
-import { realpath, stat } from 'node:fs/promises'
+import { access, realpath, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import path from 'node:path'
+
+/**
+ * A rejected folder path is a user mistake, not a server fault, so it carries a
+ * status the API error handler can surface with its reason intact.
+ */
+export class SessionDirectoryError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number = 400,
+  ) {
+    super(message)
+    this.name = 'SessionDirectoryError'
+  }
+}
 
 export function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate)
@@ -37,7 +52,7 @@ export async function validateSessionDirectory(
 ): Promise<string> {
   const trimmed = inputPath.trim()
   if (!trimmed) {
-    throw new Error('Folder path is required')
+    throw new SessionDirectoryError('Folder path is required')
   }
   const home = await homeDirectory()
   const expanded =
@@ -45,15 +60,38 @@ export async function validateSessionDirectory(
       ? path.join(home, trimmed.slice(1))
       : trimmed
   if (!path.isAbsolute(expanded)) {
-    throw new Error('Use an absolute folder path')
+    throw new SessionDirectoryError('Use an absolute folder path')
   }
-  const resolved = await realpath(expanded)
-  if (!(await stat(resolved)).isDirectory()) {
-    throw new Error('Folder path must point to a directory')
+  let resolved: string
+  let isDirectory: boolean
+  try {
+    resolved = await realpath(expanded)
+    isDirectory = (await stat(resolved)).isDirectory()
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new SessionDirectoryError(`Folder does not exist: ${expanded}`)
+    }
+    if (code === 'EACCES' || code === 'EPERM') {
+      throw new SessionDirectoryError(`Folder is not readable: ${expanded}`)
+    }
+    throw error
+  }
+  if (!isDirectory) {
+    throw new SessionDirectoryError('Folder path must point to a directory')
+  }
+  try {
+    // `stat` succeeds on a directory the agent could not actually list, which
+    // would otherwise fail later as an opaque server error.
+    await access(resolved, constants.R_OK | constants.X_OK)
+  } catch {
+    throw new SessionDirectoryError(`Folder is not readable: ${expanded}`)
   }
   const roots = await allowedRoots(home)
   if (!roots.some((root) => isWithin(root, resolved))) {
-    throw new Error('Sessions are restricted to the user home directory')
+    throw new SessionDirectoryError(
+      'Sessions are restricted to the user home directory',
+    )
   }
   return resolved
 }

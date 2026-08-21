@@ -6,12 +6,7 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "ffmpeg-static"
-    ],
-    "overrides": {
-      "brace-expansion@5.0.7": "5.0.9",
-      "fast-uri@3.1.4": "3.1.5",
-      "fast-uri@4.1.1": "4.1.2"
-    }
+    ]
   },
   "type": "module",
   "scripts": {

@@ -83,6 +83,9 @@ export async function buildApp(
   const identity = options.identity ?? new NodeIdentityStore(dataDirectory)
   await identity.initialize()
 
+  // Registered before any routes: route plugins capture the error handler
+  // present when their scope is created, so a later call would leave them
+  // on Fastify's default serialization.
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
       return reply.code(400).send({

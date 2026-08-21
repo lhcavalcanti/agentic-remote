@@ -103,3 +103,54 @@ describe('API request headers', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 })
+
+describe('API error messages', () => {
+  async function failWith(
+    status: number,
+    body: Record<string, unknown>,
+  ): Promise<string> {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(body, { status })),
+    )
+    return sendMessage('computer', 'session', { content: 'hello' }).then(
+      () => 'no error thrown',
+      (error: Error) => error.message,
+    )
+  }
+
+  it('surfaces the reason from the app error shape', async () => {
+    await expect(
+      failWith(400, { error: 'Sessions are restricted to the user home directory' }),
+    ).resolves.toBe('Sessions are restricted to the user home directory')
+  })
+
+  it("surfaces the reason from Fastify's default client-error shape", async () => {
+    await expect(
+      failWith(400, { statusCode: 400, error: 'Bad Request', message: 'Folder does not exist' }),
+    ).resolves.toBe('Folder does not exist')
+  })
+
+  it('never surfaces an internal 5xx message', async () => {
+    await expect(
+      failWith(500, {
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'database on fire',
+      }),
+    ).resolves.toBe('Internal Server Error')
+  })
+
+  it('falls back to the status when there is no body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 503 })),
+    )
+    await expect(
+      sendMessage('computer', 'session', { content: 'hello' }).then(
+        () => 'no error thrown',
+        (error: Error) => error.message,
+      ),
+    ).resolves.toBe('Request failed (503)')
+  })
+})

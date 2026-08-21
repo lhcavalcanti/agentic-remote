@@ -24,9 +24,23 @@ import type {
 
 async function responseError(response: Response): Promise<Error> {
   const payload = (await response.json().catch(() => null)) as
-    | { error?: string }
+    | { error?: string; message?: string; statusCode?: number }
     | null
-  return new Error(payload?.error || `Request failed (${response.status})`)
+  const fallback = `Request failed (${response.status})`
+  if (!payload) {
+    return new Error(fallback)
+  }
+  // Fastify's built-in envelope carries a numeric `statusCode`, a generic
+  // `error` label, and the real reason in `message`; the app's own handler
+  // sends only `{ error }`. Do not key off `statusText`, which is empty over
+  // HTTP/2. A 5xx `message` is the raw exception and must not reach the UI.
+  const isDefaultEnvelope =
+    typeof payload.statusCode === 'number' &&
+    typeof payload.message === 'string'
+  if (isDefaultEnvelope && response.status < 500) {
+    return new Error(payload.message || payload.error || fallback)
+  }
+  return new Error(payload.error || fallback)
 }
 
 async function request<TResult>(

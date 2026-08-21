@@ -759,6 +759,62 @@ describe('AgentService deletion', () => {
       await service.stop()
   })
 
+  it('reconciles stale terminal status before returning runtime options', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const completionAt = new Date(Date.now() + 1_000).toISOString()
+    const events = [
+      {
+        type: 'assistant.turn_end',
+        id: 'completed-turn',
+        parentId: null,
+        timestamp: completionAt,
+        data: {},
+      },
+    ] as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'events-v1',
+      terminal,
+    )
+    await service.start()
+    await service.store.updateStatus(client.session.sessionId, 'running')
+
+    const options = await service.runtimeOptions(client.session.sessionId)
+
+    expect(options.status).toBe('idle')
+    expect(service.store.get(client.session.sessionId)?.status).toBe('idle')
+    await service.stop()
+  })
+
   it('ignores a prompt completion after its session was deleted', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

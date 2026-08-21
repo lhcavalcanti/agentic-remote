@@ -2415,6 +2415,49 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('uses reconciled runtime status when the session summary is stale', async () => {
+    const staleSession = {
+      ...session,
+      status: 'running' as const,
+      runtime: {
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        mode: 'plan',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([staleSession])
+    vi.mocked(getSession).mockResolvedValue(staleSession)
+    vi.mocked(getRuntimeOptions).mockResolvedValue({
+      status: 'idle',
+      current: staleSession.runtime,
+      models: [
+        {
+          id: 'gpt-5.6-sol',
+          name: 'GPT-5.6 Sol',
+          reasoningEfforts: ['high'],
+          contextTiers: ['default', 'long_context'],
+        },
+      ],
+    })
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Configure model, effort, and context',
+      }),
+    )
+
+    expect(
+      await screen.findByRole('button', { name: 'Apply runtime settings' }),
+    ).toBeEnabled()
+    expect(
+      screen.queryByText(
+        'Finish or stop the current response before changing runtime settings.',
+      ),
+    ).not.toBeInTheDocument()
+  })
+
   it('applies the persisted computer order without mutating the loaded array', async () => {
     localStorage.setItem(
       'agentic-remote:computer-order',

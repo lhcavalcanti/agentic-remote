@@ -293,6 +293,11 @@ switches, failed sends, and clear replacement IDs.
   success.
 - Provider-specific capabilities MUST be derived from advertised runtime
   options rather than assuming Copilot and Claude have identical controls.
+- A transient provider-authentication failure during startup MUST NOT leave the
+  runtime model catalog permanently empty; model discovery MUST retry when
+  runtime options are requested.
+- Runtime option loading MUST reconcile stale terminal status before deciding
+  whether Apply is available.
 - Shared mode labels MUST NOT imply identical provider semantics. Provider
   differences MUST be documented in `docs/provider-compatibility.md`.
 - A session MUST remain owned by exactly one provider. Agentic Remote MUST NOT

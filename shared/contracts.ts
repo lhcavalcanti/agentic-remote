@@ -76,6 +76,7 @@ export interface RuntimeModelOption {
 export interface RuntimeOptions {
   current: SessionRuntimeInfo
   models: RuntimeModelOption[]
+  status?: SessionStatus
 }
 
 export interface ConfigureRuntimeInput {

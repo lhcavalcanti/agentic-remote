@@ -1117,10 +1117,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async runtimeOptions(id: string): Promise<RuntimeOptions> {
-    const stored = this.store.get(id)
+    let stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
     }
+    stored = await this.reconcileRuntimeStatus(stored)
     try {
       await this.ensureRuntimeModels()
     } catch (error) {
@@ -1133,6 +1134,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return {
       current: stored.runtime || {},
       models: [...this.runtimeModels.values()],
+      status: stored.status,
     }
   }
 
@@ -1140,10 +1142,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     id: string,
     input: ConfigureRuntimeInput,
   ): Promise<SessionDetail> {
-    const stored = this.store.get(id)
+    let stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
     }
+    stored = await this.reconcileRuntimeStatus(stored)
     if (stored.status === 'running' || stored.status === 'waiting') {
       throw new RuntimeConfigurationError(
         'Runtime settings can only change while the session is idle',
@@ -1234,6 +1237,49 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     return persistRuntime(mode)
+  }
+
+  private async reconcileRuntimeStatus(
+    stored: SessionDetail,
+  ): Promise<SessionDetail> {
+    if (
+      stored.status === 'idle' ||
+      !this.externalSessionIds.has(stored.id) ||
+      this.activePrompts.has(stored.id) ||
+      stored.pendingPermission ||
+      stored.pendingUserInput
+    ) {
+      return stored
+    }
+    const events = await this.sessionEventReader(stored.id)
+    const latestLifecycle = events.findLast(
+      (event) =>
+        !event.agentId &&
+        (event.type === 'assistant.turn_start' ||
+          event.type === 'assistant.turn_end' ||
+          event.type === 'session.idle' ||
+          event.type === 'session.error' ||
+          event.type === 'abort' ||
+          event.type === 'session.shutdown'),
+    )
+    if (
+      !latestLifecycle ||
+      Date.parse(latestLifecycle.timestamp) < Date.parse(stored.updatedAt)
+    ) {
+      return stored
+    }
+    const status = statusFromEvents(events)
+    if (status === stored.status || status === 'waiting') {
+      return stored
+    }
+    const reconciled = await this.store.update(stored.id, (session) => {
+      session.status = status
+      if (status !== 'running') {
+        session.activity = undefined
+      }
+    })
+    this.publish(reconciled)
+    return reconciled
   }
 
   async restartSession(id: string): Promise<SessionDetail> {

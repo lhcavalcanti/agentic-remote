@@ -1894,6 +1894,12 @@ function RuntimeDialog({
               ? 'Claude settings apply to the next turn. Change settings only while the agent is idle.'
               : 'Tmux sessions restart their Copilot pane with the same session ID. Change settings only while the agent is idle.'}
           </p>
+          {targetSession.status !== 'idle' ? (
+            <p className="form-error" role="status">
+              Finish or stop the current response before changing runtime
+              settings.
+            </p>
+          ) : null}
           {error ? <p className="form-error">{error}</p> : null}
           <button
             className="primary-button dialog__submit"

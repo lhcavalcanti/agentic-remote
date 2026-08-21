@@ -171,6 +171,7 @@ class FakeCopilotClient implements CopilotClientLike {
   resumeError?: Error
   createError?: Error
   listModelsError?: Error
+  listModelsCalls = 0
   models: ModelInfo[] = []
   readonly createdConfigs: SessionConfig[] = []
   readonly deletedSessionIds: string[] = []
@@ -207,6 +208,7 @@ class FakeCopilotClient implements CopilotClientLike {
     return this.nextSessionList ?? []
   }
   async listModels(): Promise<ModelInfo[]> {
+    this.listModelsCalls += 1
     if (this.listModelsError) {
       throw this.listModelsError
     }
@@ -743,9 +745,16 @@ describe('AgentService deletion', () => {
       await service.start()
 
       expect(warning).toHaveBeenCalledWith(
-        'Unable to load model context limits:',
+        'Unable to load runtime models:',
         client.listModelsError,
       )
+      client.listModelsError = undefined
+      client.models = [configurableModel()]
+      const created = await service.createSession(directory)
+      await expect(service.runtimeOptions(created.id)).resolves.toMatchObject({
+        models: [expect.objectContaining({ id: 'gpt-configurable' })],
+      })
+      expect(client.listModelsCalls).toBe(2)
       warning.mockRestore()
       await service.stop()
   })

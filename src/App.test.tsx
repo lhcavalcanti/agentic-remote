@@ -2408,6 +2408,11 @@ describe('App', () => {
     expect(
       await screen.findByRole('button', { name: 'Apply runtime settings' }),
     ).toBeDisabled()
+    expect(
+      screen.getByText(
+        'Finish or stop the current response before changing runtime settings.',
+      ),
+    ).toBeInTheDocument()
   })
 
   it('applies the persisted computer order without mutating the loaded array', async () => {

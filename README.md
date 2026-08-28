@@ -162,6 +162,53 @@ agentic-remote uninstall
 `rollback` activates the previous release. Application data is preserved under
 `~/.agentic-remote/`.
 
+## Access through Microsoft Dev Tunnels
+
+Microsoft Dev Tunnels can expose the hub through an authenticated HTTPS URL.
+Its HTTP(S) and WebSocket forwarding supports the Agentic Remote UI, event
+stream, and installable PWA.
+
+Install and authenticate the Dev Tunnels CLI using Microsoft's current
+[installation guide](https://learn.microsoft.com/azure/developer/dev-tunnels/get-started):
+
+```bash
+curl -sL https://aka.ms/DevTunnelCliInstall | bash
+devtunnel user login -g
+```
+
+Start a private temporary tunnel for the hub:
+
+```bash
+devtunnel host -p 4317
+```
+
+Copy the printed `https://...devtunnels.ms` URL. In another terminal, configure
+the hub to accept that exact browser origin and to listen on an interface the
+local tunnel host can reach:
+
+```bash
+AGENTIC_REMOTE_ALLOWED_ORIGINS="https://TUNNEL-PORT.devtunnels.ms,http://localhost:4317" \
+  ./bin/agentic-remote setup \
+  --role hub \
+  --name agent-hub \
+  --host 0.0.0.0 \
+  --port 4317
+```
+
+Replace `https://TUNNEL-PORT.devtunnels.ms` with the URL printed by
+`devtunnel`. Open that URL, authenticate, and complete Microsoft's first-visit
+anti-phishing confirmation. Keep the `devtunnel host` process running.
+
+Temporary tunnel URLs change when restarted, so update
+`AGENTIC_REMOTE_ALLOWED_ORIGINS` and rerun setup for the new URL. Create and
+host a persistent named tunnel if a stable origin is needed.
+
+> [!WARNING]
+> Keep the tunnel private. Do not use `--allow-anonymous`: Agentic Remote is an
+> administrator interface with no built-in user login. Dev Tunnels is currently
+> a preview service without an SLA and is not recommended for production
+> workloads.
+
 ## Development
 
 ```bash

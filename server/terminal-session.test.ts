@@ -6,6 +6,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  isTerminalSessionInUsePrompt,
   parseTerminalPermission,
   parseTerminalUserInput,
   TmuxTerminalSessionController,
@@ -32,6 +33,18 @@ afterEach(async () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it('detects the Copilot session-in-use startup dialog', () => {
+    expect(
+      isTerminalSessionInUsePrompt(`
+│ Session in use
+│ This session appears to be in use by another CLI or application.
+│ ❯ 1. Resume anyway
+│   2. Go back (Esc)
+      `),
+    ).toBe(true)
+    expect(isTerminalSessionInUsePrompt('❯ Ready for a prompt')).toBe(false)
+  })
+
   it('parses Copilot ask-user choice and freeform dialogs', () => {
     expect(
       parseTerminalUserInput(`

@@ -413,6 +413,7 @@ export class TmuxTerminalSessionController
       if (!target) {
         return false
       }
+      await resumeSessionIfPrompted(target)
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -623,6 +624,40 @@ interface TmuxSessionInfo {
   createdAt: number
 }
 
+export function isTerminalSessionInUsePrompt(pane: string): boolean {
+  return (
+    /Session in use/i.test(pane) &&
+    /1\.\s+Resume anyway/i.test(pane) &&
+    /2\.\s+Go back/i.test(pane)
+  )
+}
+
+async function resumeSessionIfPrompted(target: string): Promise<void> {
+  const capture = async () =>
+    (
+      await execFileAsync('tmux', [
+        'capture-pane',
+        '-p',
+        '-t',
+        target,
+        '-S',
+        '-80',
+      ])
+    ).stdout
+
+  if (!isTerminalSessionInUsePrompt(await capture())) {
+    return
+  }
+  await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    if (!isTerminalSessionInUsePrompt(await capture())) {
+      return
+    }
+  }
+  throw new Error('Copilot session-use confirmation did not close')
+}
+
 function cleanDialogLine(line: string): string {
   return line
     .replace(/^[\s│┃╭╰]+/u, '')
@@ -790,6 +825,9 @@ async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
       (error as NodeJS.ErrnoException).code === 'ENOENT' ||
       String((error as { stderr?: string }).stderr).includes(
         'no server running',
+      ) ||
+      String((error as { stderr?: string }).stderr).includes(
+        'error connecting to',
       )
     ) {
       return []

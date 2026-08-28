@@ -51,6 +51,7 @@ import {
   FileText,
   GripVertical,
   History,
+  List,
   LoaderCircle,
   ListPlus,
   Menu,
@@ -73,6 +74,16 @@ import {
   X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import {
+  breadcrumbSegments,
+  headingSlug,
+  headingText,
+  outlineFromMarkdown,
+  pushNavigation,
+  rememberScroll,
+  type DocumentHeading,
+  type NavigationEntry,
+} from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
 import type {
   AgentProvider,
@@ -2127,6 +2138,22 @@ function WorkspaceDialog({
   const workspaceRequest = useRef(0)
   const directoryHistoryRef = useRef<string[]>([])
   const historyIndexRef = useRef(-1)
+  const [documentHistory, setDocumentHistory] = useState<NavigationEntry[]>([])
+  const [documentIndex, setDocumentIndex] = useState(-1)
+  const [outlineOpen, setOutlineOpen] = useState(false)
+  const documentHistoryRef = useRef<NavigationEntry[]>([])
+  const documentIndexRef = useRef(-1)
+  const pendingScrollRef = useRef<number | undefined>(undefined)
+
+  const updateDocumentHistory = useCallback(
+    (history: NavigationEntry[], index: number) => {
+      documentHistoryRef.current = history
+      documentIndexRef.current = index
+      setDocumentHistory(history)
+      setDocumentIndex(index)
+    },
+    [],
+  )
 
   const updateDirectoryHistory = useCallback(
     (history: string[], index: number) => {
@@ -2194,7 +2221,7 @@ function WorkspaceDialog({
   )
 
   const openFile = useCallback(
-    async (path: string) => {
+    async (path: string, restoreScroll?: number): Promise<boolean> => {
       const request = ++workspaceRequest.current
       setLoading(true)
       setError(undefined)
@@ -2205,21 +2232,78 @@ function WorkspaceDialog({
           path,
         )
         if (request === workspaceRequest.current) {
+          if (restoreScroll === undefined) {
+            // Remember where the reader was before leaving the current entry.
+            // The preview may already be unmounted (Back to files), in which
+            // case the offset recorded while scrolling is still the right one.
+            const leaving = previewContentRef.current
+            const remembered = leaving
+              ? rememberScroll(
+                  documentHistoryRef.current,
+                  documentIndexRef.current,
+                  leaving.scrollTop,
+                )
+              : documentHistoryRef.current
+            const pushed = pushNavigation(remembered, documentIndexRef.current, {
+              path,
+              kind: 'file',
+            })
+            updateDocumentHistory(pushed.history, pushed.index)
+          }
+          pendingScrollRef.current = restoreScroll
           setFile(nextFile)
           setRaw(false)
+          setOutlineOpen(false)
+          return true
         }
+        return false
       } catch (caught) {
         if (request === workspaceRequest.current) {
           setError(caught instanceof Error ? caught.message : String(caught))
         }
+        return false
       } finally {
         if (request === workspaceRequest.current) {
           setLoading(false)
         }
       }
     },
-    [session.computerId, session.id],
+    [session.computerId, session.id, updateDocumentHistory],
   )
+
+  function rememberCurrentScroll() {
+    const element = previewContentRef.current
+    const index = documentIndexRef.current
+    const history = documentHistoryRef.current
+    if (!element || !history[index]) {
+      return
+    }
+    // Mutating the mirror keeps Back accurate without re-rendering on scroll.
+    history[index] = { ...history[index], scrollTop: element.scrollTop }
+  }
+
+  function navigateDocument(index: number) {
+    const entry = documentHistoryRef.current[index]
+    if (!entry || loading) {
+      return
+    }
+    const leaving = previewContentRef.current
+    const remembered = leaving
+      ? rememberScroll(
+          documentHistoryRef.current,
+          documentIndexRef.current,
+          leaving.scrollTop,
+        )
+      : documentHistoryRef.current
+    updateDocumentHistory(remembered, documentIndexRef.current)
+    void openFile(entry.path, entry.scrollTop ?? 0).then((opened) => {
+      // Move the cursor only after the document is actually on screen,
+      // otherwise a failed read leaves the index pointing at the wrong entry.
+      if (opened) {
+        updateDocumentHistory(documentHistoryRef.current, index)
+      }
+    })
+  }
 
   function navigateHistory(index: number) {
     const path = directoryHistoryRef.current[index]
@@ -2289,8 +2373,50 @@ function WorkspaceDialog({
   ])
 
   useEffect(() => {
-    previewContentRef.current?.scrollTo({ top: 0 })
+    const top = pendingScrollRef.current ?? 0
+    pendingScrollRef.current = undefined
+    // Wait for the rendered document before restoring its offset.
+    const frame = requestAnimationFrame(() => {
+      const element = previewContentRef.current
+      if (element) {
+        element.scrollTop = top
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+    // Deliberately not keyed on `raw`: toggling Rendered/Raw is not navigation
+    // and must not throw the reader back to the top.
   }, [file?.path])
+
+  const outline = useMemo<DocumentHeading[]>(
+    () =>
+      file?.kind === 'markdown' && !raw
+        ? outlineFromMarkdown(file.content || '')
+        : [],
+    [file, raw],
+  )
+
+  const markdownComponents = useMemo(() => {
+    // Slugs come from the heading text alone so an id stays stable across
+    // re-renders; a render-time counter would renumber on every pass.
+    const heading = (level: 1 | 2 | 3 | 4 | 5 | 6) =>
+      function Heading({ children }: { children?: ReactNode }) {
+        const Tag = `h${level}` as const
+        return <Tag id={headingSlug(headingText(children))}>{children}</Tag>
+      }
+    return {
+      h1: heading(1),
+      h2: heading(2),
+      h3: heading(3),
+      h4: heading(4),
+      h5: heading(5),
+      h6: heading(6),
+    }
+  }, [])
+
+  const crumbs = breadcrumbSegments(
+    listing?.path ?? '.',
+    session.cwd.split('/').filter(Boolean).at(-1) || '~',
+  )
 
   const bookmarked = file
     ? bookmarks.some(
@@ -2405,7 +2531,33 @@ function WorkspaceDialog({
               >
                 <ArrowUp size={15} />
               </button>
-              <span title={selectedFolder}>{selectedFolder}</span>
+              <nav aria-label="Folder breadcrumb" className="workspace-crumbs">
+                {crumbs.map((crumb, index) => (
+                  <span key={crumb.path}>
+                    {index > 0 ? (
+                      <span aria-hidden="true" className="workspace-crumbs__sep">
+                        /
+                      </span>
+                    ) : null}
+                    <button
+                      aria-current={
+                        index === crumbs.length - 1 ? 'page' : undefined
+                      }
+                      disabled={loading}
+                      onClick={() => {
+                        if (index === crumbs.length - 1) {
+                          return
+                        }
+                        void openDirectory(crumb.path, { kind: 'push' })
+                      }}
+                      title={workspaceAbsolutePath(session.cwd, crumb.path)}
+                      type="button"
+                    >
+                      {crumb.name}
+                    </button>
+                  </span>
+                ))}
+              </nav>
             </div>
             <div className="workspace-tree__actions">
               {results ? (
@@ -2518,6 +2670,40 @@ function WorkspaceDialog({
                   <strong>{file.name}</strong>
                   <small>{file.path}</small>
                 </div>
+                {documentHistory.length > 1 ? (
+                  <>
+                    <button
+                      aria-label="Previous document"
+                      disabled={documentIndex <= 0 || loading}
+                      onClick={() => navigateDocument(documentIndex - 1)}
+                      type="button"
+                    >
+                      <ChevronLeft size={15} />
+                    </button>
+                    <button
+                      aria-label="Next document"
+                      disabled={
+                        documentIndex < 0 ||
+                        documentIndex >= documentHistory.length - 1 ||
+                        loading
+                      }
+                      onClick={() => navigateDocument(documentIndex + 1)}
+                      type="button"
+                    >
+                      <ChevronRight size={15} />
+                    </button>
+                  </>
+                ) : null}
+                {outline.length > 1 ? (
+                  <button
+                    aria-expanded={outlineOpen}
+                    aria-label="Document outline"
+                    onClick={() => setOutlineOpen(!outlineOpen)}
+                    type="button"
+                  >
+                    <List size={15} />
+                  </button>
+                ) : null}
                 {file.kind === 'markdown' ? (
                   <button onClick={() => setRaw(!raw)} type="button">
                     {raw ? 'Rendered' : 'Raw'}
@@ -2547,14 +2733,44 @@ function WorkspaceDialog({
                   Ask agent about file
                 </button>
               </div>
+              {outlineOpen && outline.length > 0 ? (
+                <nav aria-label="Document outline" className="workspace-outline">
+                  {outline.map((heading) => (
+                    <button
+                      className={`workspace-outline__item workspace-outline__item--${Math.min(
+                        heading.level,
+                        3,
+                      )}`}
+                      key={`${heading.index}-${heading.id}`}
+                      onClick={() => {
+                        // Headings are matched by position, so repeated
+                        // heading text still scrolls to the right one.
+                        previewContentRef.current
+                          ?.querySelectorAll('h1, h2, h3, h4, h5, h6')
+                          ?.[heading.index]?.scrollIntoView({ block: 'start' })
+                        setOutlineOpen(false)
+                      }}
+                      type="button"
+                    >
+                      {heading.text}
+                    </button>
+                  ))}
+                </nav>
+              ) : null}
               <div
-                className="workspace-preview__content"
+                className={`workspace-preview__content${
+                  file.kind === 'markdown' && !raw ? ' markdown-body' : ''
+                }`}
+                onScroll={rememberCurrentScroll}
                 ref={previewContentRef}
               >
                 {file.kind === 'pdf' ? (
                   <PdfViewer file={file} />
                 ) : file.kind === 'markdown' && !raw ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown
+                    components={markdownComponents}
+                    remarkPlugins={[remarkGfm]}
+                  >
                     {file.content || ''}
                   </ReactMarkdown>
                 ) : (

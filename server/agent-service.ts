@@ -698,6 +698,8 @@ function permissionTitle(request: PermissionRequest): string {
       return request.hookMessage || `Run hook for ${request.toolName}`
     case 'extension-management':
       return `Manage extension ${request.extensionName}`
+    case 'factory':
+      return `${request.operation === 'author' ? 'Author' : 'Run'} factory ${request.name}`
     case 'extension-permission-access':
       return `Allow extension ${request.extensionName}`
   }

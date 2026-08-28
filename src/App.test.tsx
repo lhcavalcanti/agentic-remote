@@ -35,6 +35,10 @@ import {
   listDirectories,
   listHistory,
   listKnowledgeBookmarks,
+  listKnowledgeRoots,
+  listKnowledgeEntries,
+  readKnowledgeFile,
+  addKnowledgeRoot,
   listSessions,
   listWorkspace,
   moveSessionToTmux,
@@ -60,6 +64,11 @@ vi.mock('./api', () => ({
   listComputers: vi.fn(),
   listHistory: vi.fn(),
   listKnowledgeBookmarks: vi.fn(),
+  listKnowledgeRoots: vi.fn(),
+  addKnowledgeRoot: vi.fn(),
+  deleteKnowledgeRoot: vi.fn(),
+  listKnowledgeEntries: vi.fn(),
+  readKnowledgeFile: vi.fn(),
   addKnowledgeBookmark: vi.fn(),
   deleteKnowledgeBookmark: vi.fn(),
   listDirectories: vi.fn(),
@@ -289,6 +298,7 @@ describe('App', () => {
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
     vi.mocked(listKnowledgeBookmarks).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
     vi.mocked(listWorkspace).mockImplementation(
       async (_computerId, _sessionId, path = '.') =>
         path === 'docs'
@@ -2615,6 +2625,120 @@ describe('App', () => {
       expect(
         document.querySelector('.workspace-preview__content')?.scrollTop,
       ).toBe(240),
+    )
+  })
+  it('browses a knowledge root from the sidebar switch', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? {
+            path: 'guides',
+            parent: '.',
+            entries: [
+              {
+                name: 'setup.md',
+                path: 'guides/setup.md',
+                kind: 'markdown' as const,
+                size: 30,
+              },
+            ],
+          }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'setup.md',
+      path: 'guides/setup.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 30,
+      content: '# Setup\n\nSteps.\n\n## Install\n\nRun it.',
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    // The first root is selected automatically and listed without any session.
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', '.'),
+    )
+    fireEvent.click(await within(tree).findByRole('button', { name: /guides/ }))
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
+    )
+
+    fireEvent.click(
+      await within(tree).findByRole('button', { name: /setup.md/ }),
+    )
+    expect(
+      await screen.findByRole('heading', { name: 'Setup' }),
+    ).toBeInTheDocument()
+    expect(readKnowledgeFile).toHaveBeenCalledWith('root-1', 'guides/setup.md')
+
+    // The reader offers the same outline as the session workspace.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Document outline' }),
+    )
+    const outline = await screen.findByRole('navigation', {
+      name: 'Document outline',
+    })
+    expect(
+      within(outline).getByRole('button', { name: 'Install' }),
+    ).toBeInTheDocument()
+
+    // Switching back leaves the conversation intact.
+    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
+    expect(
+      screen.getByRole('navigation', { name: 'Sessions' }),
+    ).not.toHaveAttribute('hidden')
+  })
+
+  it('adds a knowledge root by picking a computer folder', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+      id: 'root-new',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '~/src',
+      name: 'src',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    })
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [],
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add knowledge root' }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /src/ }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add this folder' }),
+    )
+
+    await waitFor(() =>
+      expect(addKnowledgeRoot).toHaveBeenCalledWith({
+        computerId: computer.id,
+        path: '~/src',
+      }),
     )
   })
 })

@@ -146,6 +146,21 @@ class FakeSessionService extends EventEmitter implements SessionService {
 
   createError?: Error
 
+  async listKnowledge(root: string, path = '.') {
+    return { path, entries: [{ name: 'note.md', path: 'note.md', kind: 'markdown' as const, size: 12 }], root }
+  }
+
+  async readKnowledgeFile(root: string, path: string) {
+    return {
+      name: path.split('/').at(-1) || path,
+      path,
+      kind: 'markdown' as const,
+      mimeType: 'text/plain; charset=utf-8',
+      size: 12,
+      content: `# ${root}/${path}`,
+    }
+  }
+
   async createSession(
     cwd: string,
     terminalBacked?: boolean,
@@ -1042,6 +1057,99 @@ describe('multi-node hub', () => {
       })
       expect(failed.statusCode).toBe(500)
       expect(JSON.parse(failed.body).error).toBe('Unexpected server error')
+    } finally {
+      await hub.app.close()
+    }
+  })
+  it('browses a knowledge root on the owning computer', async () => {
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-knowledge'),
+      logger: false,
+      role: 'hub',
+      service,
+    })
+    try {
+      const computers = JSON.parse(
+        (await hub.app.inject({ method: 'GET', url: '/api/computers' })).body,
+      ).computers as Array<{ id: string }>
+
+      const created = await hub.app.inject({
+        method: 'POST',
+        url: '/api/knowledge/roots',
+        payload: { computerId: computers[0].id, path: '/home/tester/docs' },
+      })
+      expect(created.statusCode).toBe(201)
+      const root = JSON.parse(created.body).root as {
+        id: string
+        name: string
+        computerName: string
+      }
+      // The name defaults to the folder and the owning computer is recorded.
+      expect(root.name).toBe('docs')
+      expect(root.computerName).toBeTruthy()
+
+      const listed = await hub.app.inject({
+        method: 'GET',
+        url: '/api/knowledge/roots',
+      })
+      expect(JSON.parse(listed.body).roots).toHaveLength(1)
+
+      const entries = await hub.app.inject({
+        method: 'GET',
+        url: `/api/knowledge/roots/${root.id}/entries?path=.`,
+      })
+      expect(entries.statusCode).toBe(200)
+      expect(JSON.parse(entries.body).entries[0].name).toBe('note.md')
+
+      const file = await hub.app.inject({
+        method: 'GET',
+        url: `/api/knowledge/roots/${root.id}/file?path=note.md`,
+      })
+      expect(file.statusCode).toBe(200)
+      expect(JSON.parse(file.body).content).toContain('/home/tester/docs')
+
+      // A root survives having no sessions at all.
+      expect(
+        JSON.parse(
+          (await hub.app.inject({ method: 'GET', url: '/api/knowledge/roots' }))
+            .body,
+        ).roots[0].id,
+      ).toBe(root.id)
+
+      const removed = await hub.app.inject({
+        method: 'DELETE',
+        url: `/api/knowledge/roots/${root.id}`,
+      })
+      expect(removed.statusCode).toBe(204)
+      expect(
+        (
+          await hub.app.inject({
+            method: 'GET',
+            url: `/api/knowledge/roots/${root.id}/entries`,
+          })
+        ).statusCode,
+      ).toBe(404)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it('rejects a knowledge root on an unregistered computer', async () => {
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-knowledge-bad'),
+      logger: false,
+      role: 'hub',
+      service,
+    })
+    try {
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: '/api/knowledge/roots',
+        payload: { computerId: 'nope', path: '/tmp' },
+      })
+      expect(response.statusCode).toBe(404)
     } finally {
       await hub.app.close()
     }

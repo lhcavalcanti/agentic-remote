@@ -206,6 +206,14 @@ export class ProviderSessionService
     return this.copilot.listDirectories(path)
   }
 
+  listKnowledge(root: string, path?: string): Promise<WorkspaceListing> {
+    return this.copilot.listKnowledge(root, path)
+  }
+
+  readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile> {
+    return this.copilot.readKnowledgeFile(root, path)
+  }
+
   listWorkspace(
     sessionId: string,
     path?: string,

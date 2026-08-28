@@ -107,6 +107,21 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
+  async listKnowledge(root: string, path = '.'): Promise<WorkspaceListing> {
+    return this.request<WorkspaceListing>(
+      `/node-api/knowledge/entries?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+    )
+  }
+
+  async readKnowledgeFile(
+    root: string,
+    path: string,
+  ): Promise<WorkspaceFile> {
+    return this.request<WorkspaceFile>(
+      `/node-api/knowledge/file?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+    )
+  }
+
   async listWorkspace(
     sessionId: string,
     path = '.',

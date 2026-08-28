@@ -29,6 +29,7 @@ export interface SessionService {
     terminalBacked?: boolean,
     allowAllPermissions?: boolean,
     provider?: AgentProvider,
+    model?: string,
   ): Promise<SessionDetail>
   uploadFile(
     sessionId: string,

@@ -153,12 +153,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 Questions and permissions are the highest-priority UI state.
 
-- SDK `ask_user` requests MUST render as actionable cards.
+- SDK `ask_user` requests MUST render as actionable cards, including the
+  structured `message`/`requestedSchema` form supported by current Copilot
+  runtimes.
 - Terminal ask-user and permission dialogs MUST be parsed from the live pane.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
 - Safe Yes/choice and Stop actions MUST be available.
 - Pending SDK questions MUST be reconstructed from persisted tool events after
-  a service restart.
+  a service restart, including structured ask-user forms.
 - If an SDK callback was lost, answering the recovered question MUST resume as a
   normal user turn.
 - A newly arriving question or permission MUST scroll into view.
@@ -283,6 +285,10 @@ switches, failed sends, and clear replacement IDs.
 
 - The UI MUST expose model, reasoning effort, numeric context capacity, and
   agent mode.
+- App settings MUST expose independent optional default model IDs for Copilot
+  and Claude. Blank defaults MUST preserve each provider's own default.
+- Provider defaults MUST apply only when creating a new session; existing
+  sessions MUST keep their selected runtime model.
 - Context choices MUST show token capacity rather than labels such as Default or
   Long.
 - Supported modes are Interactive, Plan, and Autopilot.

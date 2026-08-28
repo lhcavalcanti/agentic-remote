@@ -11,3 +11,12 @@
   rollout.
 - After an approved production update, verify node health, connectivity, and
   the behavior affected by the fix.
+
+## Branch and worktree hygiene
+
+- Keep the primary checkout on `main` and clean after each change is pushed or
+  merged.
+- Use temporary branches and worktrees for feature work. After testing and
+  pushing or merging the change, delete the local temporary branch and
+  worktree.
+- Never discard unrelated uncommitted changes without explicit approval.

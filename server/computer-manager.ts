@@ -259,6 +259,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.terminalBacked,
             input.allowAllPermissions,
             input.provider,
+            input.model,
           )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)

@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import type {
+  AgentProvider,
   ConfigureRuntimeInput,
   DirectoryListing,
   HubEvent,
@@ -28,6 +29,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
   private readonly sessions = new Map<string, SessionDetail>()
   lastCreateTerminalBacked?: boolean
   lastCreateAllowAllPermissions?: boolean
+  lastCreateModel?: string
   lastUpload?: { sessionId: string; filename: string; data: Buffer }
 
   constructor(...sessions: SessionDetail[]) {
@@ -150,12 +152,15 @@ class FakeSessionService extends EventEmitter implements SessionService {
     cwd: string,
     terminalBacked?: boolean,
     allowAllPermissions?: boolean,
+    _provider?: AgentProvider,
+    model?: string,
   ): Promise<SessionDetail> {
     if (this.createError) {
       throw this.createError
     }
     this.lastCreateTerminalBacked = terminalBacked
     this.lastCreateAllowAllPermissions = allowAllPermissions
+    this.lastCreateModel = model
     const session: SessionDetail = {
       id: randomUUID(),
       cwd,
@@ -801,11 +806,12 @@ describe('multi-node hub', () => {
       const created = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions`,
-        payload: { cwd: '/srv/new-session' },
+        payload: { cwd: '/srv/new-session', model: 'remote-model' },
       })
       expect(created.statusCode, created.body).toBe(201)
       expect(remoteService.lastCreateTerminalBacked).toBe(true)
       expect(remoteService.lastCreateAllowAllPermissions).toBe(true)
+      expect(remoteService.lastCreateModel).toBe('remote-model')
 
       const document = multipartFile('statement.pdf', 'financial data')
       const uploaded = await hub.app.inject({

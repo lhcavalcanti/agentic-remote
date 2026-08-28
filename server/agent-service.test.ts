@@ -570,6 +570,97 @@ describe('AgentService deletion', () => {
     ).toBeUndefined()
   })
 
+  it('reconstructs structured ask-user forms from the current CLI schema', () => {
+    const question = {
+      type: 'tool.execution_start',
+      id: 'structured-ask-start',
+      parentId: null,
+      timestamp: '2026-08-28T17:49:20.845Z',
+      data: {
+        toolCallId: 'structured-ask-call',
+        toolName: 'ask_user',
+        arguments: {
+          message: 'What should I inspect?',
+          requestedSchema: {
+            properties: {
+              target: {
+                type: 'string',
+                title: 'Inspection target',
+                description: 'Repository or behavior to inspect.',
+              },
+              scope: {
+                type: 'string',
+                title: 'Scope',
+                oneOf: [
+                  { const: 'worktree', title: 'Current worktree' },
+                  { const: 'code', title: 'Code behavior' },
+                ],
+              },
+              includeHistory: {
+                type: 'boolean',
+                title: 'Include history',
+                default: true,
+              },
+              areas: {
+                type: 'array',
+                title: 'Areas',
+                items: {
+                  type: 'string',
+                  enum: ['server', 'web'],
+                },
+                minItems: 1,
+              },
+            },
+          },
+        },
+      },
+    }
+
+    expect(
+      pendingUserInputFromEvents(
+        JSON.parse(JSON.stringify([question])) as SessionEvent[],
+      ),
+    ).toMatchObject({
+      requestId: 'persisted-user-input:structured-ask-call',
+      question: 'What should I inspect?',
+      choices: [],
+      allowFreeform: false,
+      form: {
+        fields: [
+          {
+            name: 'target',
+            title: 'Inspection target',
+            type: 'string',
+            required: false,
+          },
+          {
+            name: 'scope',
+            title: 'Scope',
+            type: 'string',
+            required: false,
+            options: [
+              { value: 'worktree', label: 'Current worktree' },
+              { value: 'code', label: 'Code behavior' },
+            ],
+          },
+          {
+            name: 'includeHistory',
+            type: 'boolean',
+            default: true,
+          },
+          {
+            name: 'areas',
+            type: 'array',
+            options: [
+              { value: 'server', label: 'server' },
+              { value: 'web', label: 'web' },
+            ],
+          },
+        ],
+      },
+    })
+  })
+
   it('extracts model, effort, tier, and estimated context usage', () => {
     const events = JSON.parse(`[
       {
@@ -1012,6 +1103,102 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('handles SDK elicitation forms through the session UI state', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    const handler = client.createdConfigs.at(-1)?.onElicitationRequest
+    if (!handler) {
+      throw new Error('Elicitation handler was not configured')
+    }
+
+    const values = {
+      target: 'agentic remote setup',
+      scope: 'code',
+      includeHistory: true,
+      areas: ['server'],
+    }
+    const response = handler({
+      sessionId: created.id,
+      message: 'What should I inspect?',
+      mode: 'form',
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          target: {
+            type: 'string',
+            title: 'Inspection target',
+          },
+          scope: {
+            type: 'string',
+            title: 'Scope',
+            oneOf: [
+              { const: 'worktree', title: 'Current worktree' },
+              { const: 'code', title: 'Code behavior' },
+            ],
+          },
+          includeHistory: {
+            type: 'boolean',
+            title: 'Include history',
+            default: true,
+          },
+          areas: {
+            type: 'array',
+            title: 'Areas',
+            items: {
+              type: 'string',
+              enum: ['server', 'web'],
+            },
+            minItems: 1,
+          },
+        },
+        required: ['target', 'scope'],
+      },
+    })
+    await vi.waitFor(() => {
+      const pending = service.store.get(created.id)?.pendingUserInput
+      expect(pending?.question).toBe('What should I inspect?')
+      expect(pending?.form?.fields).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'target', required: true }),
+          expect.objectContaining({
+            name: 'scope',
+            options: [
+              { value: 'worktree', label: 'Current worktree' },
+              { value: 'code', label: 'Code behavior' },
+            ],
+          }),
+        ]),
+      )
+    })
+    const requestId = service.store.get(created.id)?.pendingUserInput?.requestId
+    if (!requestId) {
+      throw new Error('Elicitation request was not stored')
+    }
+
+    const updated = await service.replyUserInput(created.id, requestId, {
+      answer: JSON.stringify(values),
+      wasFreeform: false,
+      values,
+    })
+
+    await expect(response).resolves.toEqual({
+      action: 'accept',
+      content: values,
+    })
+    expect(updated.pendingUserInput).toBeUndefined()
+    expect(updated.status).toBe('running')
+    await service.stop()
+  })
+
   it('defaults new SDK sessions to allow all and can require approval', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -1075,6 +1262,33 @@ describe('AgentService deletion', () => {
     await expect(response).resolves.toEqual({ kind: 'approve-once' })
     expect(guarded.runtime?.allowAllPermissions).toBe(false)
 
+    await service.stop()
+  })
+
+  it('applies a requested model to new SDK sessions', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    const created = await service.createSession(
+      directory,
+      false,
+      true,
+      'copilot',
+      'gpt-configurable',
+    )
+
+    expect(client.createdConfigs.at(-1)).toMatchObject({
+      model: 'gpt-configurable',
+    })
+    expect(created.runtime?.model).toBe('gpt-configurable')
     await service.stop()
   })
 
@@ -1287,6 +1501,21 @@ describe('AgentService deletion', () => {
     expect(service.listSessions()).toEqual([
       expect.objectContaining({ id: created.id, isOpen: true }),
     ])
+    const modelSession = await service.createSession(
+      directory,
+      true,
+      true,
+      'copilot',
+      'gpt-configurable',
+    )
+    expect(terminal.create).toHaveBeenLastCalledWith(
+      modelSession.id,
+      directory,
+      path.basename(directory),
+      true,
+      { model: 'gpt-configurable' },
+    )
+    expect(modelSession.runtime?.model).toBe('gpt-configurable')
     const guarded = await service.createSession(directory, true, false)
     expect(terminal.create).toHaveBeenCalledWith(
       guarded.id,

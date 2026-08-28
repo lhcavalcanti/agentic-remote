@@ -131,11 +131,13 @@ matrix.
 
 ## Use
 
-- **New session**: choose computer, provider, and folder.
+- **New session**: choose computer, provider, folder, and the configured provider
+  default model.
 - **Open previous**: resume provider history known to Agentic Remote.
 - **Queue**: add, edit, or remove prompts while an agent runs.
 - **Stop**: cancel the active response.
 - **Runtime**: configure supported model, effort, context, and mode options.
+- **App settings**: configure separate default model IDs for Copilot and Claude.
 - **Session files**: browse, search, preview, and save Knowledge paths.
 - **Paperclip / microphone**: upload supported files or transcribe audio.
 

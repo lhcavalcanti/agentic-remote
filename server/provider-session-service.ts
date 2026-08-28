@@ -94,6 +94,7 @@ export class ProviderSessionService
     terminalBacked = true,
     allowAllPermissions = true,
     provider: AgentProvider = 'copilot',
+    model?: string,
   ): Promise<SessionDetail> {
     const service = provider === 'claude' ? this.claude : this.copilot
     return service.createSession(
@@ -101,6 +102,7 @@ export class ProviderSessionService
       terminalBacked,
       allowAllPermissions,
       provider,
+      model,
     )
   }
 

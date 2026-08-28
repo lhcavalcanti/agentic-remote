@@ -220,6 +220,7 @@ export class ClaudeAgentService
     _terminalBacked = false,
     allowAllPermissions = true,
     provider: AgentProvider = 'claude',
+    model?: string,
   ): Promise<SessionDetail> {
     if (provider !== 'claude') {
       throw new Error(`Provider ${provider} is not handled by Claude Agent`)
@@ -228,7 +229,12 @@ export class ClaudeAgentService
     const cwd = await this.validateDirectory(inputPath)
     const id = randomUUID()
     const now = new Date().toISOString()
-    const defaultModel = this.models[0]
+    const defaultModel = model
+      ? this.models.find((candidate) => candidate.id === model.trim())
+      : this.models[0]
+    if (model?.trim() && !defaultModel) {
+      throw new Error('Selected Claude model is not available')
+    }
     const session = await this.store.create(
       {
         id,

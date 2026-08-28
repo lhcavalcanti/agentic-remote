@@ -15,6 +15,7 @@ const createSessionSchema = z.object({
   provider: z.enum(['copilot', 'claude']).default('copilot'),
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
+  model: z.string().trim().min(1).max(200).optional(),
 })
 
 const renameSessionSchema = z.object({
@@ -42,10 +43,19 @@ const permissionReplySchema = z.object({
   optionId: z.string().trim().min(1).max(500),
 })
 
+const userInputValueSchema = z.union([
+  z.string().max(20_000),
+  z.number().finite(),
+  z.boolean(),
+  z.array(z.string().max(20_000)).max(32),
+])
+
 const userInputReplySchema = z.object({
-  answer: z.string().trim().min(1).max(20_000),
-  wasFreeform: z.boolean(),
+  answer: z.string().trim().max(20_000).default(''),
+  wasFreeform: z.boolean().default(false),
   answers: z.array(z.string().trim().min(1).max(20_000)).min(1).max(32).optional(),
+  values: z.record(z.string(), userInputValueSchema).optional(),
+  action: z.enum(['accept', 'decline', 'cancel']).optional(),
 })
 
 const executeCommandSchema = z.object({

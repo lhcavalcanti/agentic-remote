@@ -199,6 +199,20 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(sessionId)).toBeUndefined()
   })
 
+  it('uses a requested Claude model for a new session', async () => {
+    const { directory, service } = await fixture(async function* () {})
+
+    const created = await service.createSession(
+      directory,
+      false,
+      true,
+      'claude',
+      'sonnet',
+    )
+
+    expect(created.runtime?.model).toBe('sonnet')
+  })
+
   it('surfaces and answers Claude tool permissions', async () => {
     let sessionId = ''
     const fixtureResult = await fixture(async function* (options) {

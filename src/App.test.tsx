@@ -533,6 +533,53 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
+  it('persists provider default models and applies them to new sessions', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.change(screen.getByLabelText('Copilot default model'), {
+      target: { value: 'gpt-5.6-sol' },
+    })
+    fireEvent.change(screen.getByLabelText('Claude default model'), {
+      target: { value: 'claude-sonnet-4-5' },
+    })
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+    ).toEqual({
+      copilot: 'gpt-5.6-sol',
+      claude: 'claude-sonnet-4-5',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+        model: 'gpt-5.6-sol',
+      }),
+    )
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Agent provider'), {
+      target: { value: 'claude' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'claude',
+        terminalBacked: false,
+        allowAllPermissions: true,
+        model: 'claude-sonnet-4-5',
+      }),
+    )
+  })
+
   it('dismisses the update toast without removing it from app settings', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -1592,6 +1639,103 @@ describe('App', () => {
         },
       ),
     )
+  })
+
+  it('shows and submits structured ask-user forms', async () => {
+    const askingSession: ManagedSession = {
+      ...session,
+      status: 'waiting',
+      pendingUserInput: {
+        requestId: 'form-1',
+        question: 'What should I inspect?',
+        choices: [],
+        allowFreeform: false,
+        form: {
+          fields: [
+            {
+              name: 'target',
+              title: 'Inspection target',
+              type: 'string',
+              required: true,
+            },
+            {
+              name: 'scope',
+              title: 'Scope',
+              type: 'string',
+              required: true,
+              options: [
+                { value: 'worktree', label: 'Current worktree' },
+                { value: 'code', label: 'Code behavior' },
+              ],
+            },
+            {
+              name: 'includeHistory',
+              title: 'Include history',
+              type: 'boolean',
+              required: false,
+              default: true,
+            },
+            {
+              name: 'areas',
+              title: 'Areas',
+              type: 'array',
+              required: false,
+              options: [
+                { value: 'server', label: 'Server' },
+                { value: 'web', label: 'Web' },
+              ],
+            },
+          ],
+        },
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([askingSession])
+    vi.mocked(getSession).mockResolvedValue(askingSession)
+    vi.mocked(replyUserInput).mockResolvedValue({
+      ...askingSession,
+      status: 'running',
+      pendingUserInput: undefined,
+    })
+    render(<App />)
+
+    expect(await screen.findByText('What should I inspect?')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Inspection target'), {
+      target: { value: 'agentic remote setup' },
+    })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Scope' }), {
+      key: 'j',
+    })
+    const scopeOptions = screen.getByRole('listbox', {
+      name: 'Scope options',
+    })
+    fireEvent.keyDown(scopeOptions, { key: 'j' })
+    fireEvent.keyDown(scopeOptions, { key: 'Enter' })
+    const areas = screen.getByRole('group', { name: 'Areas options' })
+    fireEvent.focus(areas)
+    fireEvent.keyDown(areas, { key: ' ' })
+    fireEvent.keyDown(areas, { key: 'j' })
+    fireEvent.keyDown(areas, { key: ' ' })
+    fireEvent.keyDown(areas, { key: 'Enter' })
+
+    const values = {
+      target: 'agentic remote setup',
+      scope: 'code',
+      includeHistory: true,
+      areas: ['server', 'web'],
+    }
+    await waitFor(() =>
+      expect(replyUserInput).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'form-1',
+        {
+          answer: JSON.stringify(values),
+          wasFreeform: false,
+          values,
+        },
+      ),
+    )
+    expect(screen.queryByText('What should I inspect?')).not.toBeInTheDocument()
   })
 
   it('scrolls a newly received question into view', async () => {

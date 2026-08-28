@@ -37,12 +37,41 @@ export interface PendingPermission {
   options: PermissionOption[]
 }
 
+export type UserInputFieldValue = string | number | boolean | string[]
+
+export interface UserInputFieldOption {
+  value: string
+  label: string
+}
+
+export interface UserInputField {
+  name: string
+  title: string
+  description?: string
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'array'
+  required: boolean
+  default?: UserInputFieldValue
+  options?: UserInputFieldOption[]
+  minLength?: number
+  maxLength?: number
+  minimum?: number
+  maximum?: number
+  minItems?: number
+  maxItems?: number
+  format?: 'email' | 'uri' | 'date' | 'date-time'
+}
+
+export interface UserInputForm {
+  fields: UserInputField[]
+}
+
 export interface PendingUserInput {
   requestId: string
   question: string
   choices: string[]
   allowFreeform: boolean
   multiSelect?: boolean
+  form?: UserInputForm
 }
 
 export interface QueuedPrompt {
@@ -155,6 +184,7 @@ export interface CreateSessionInput {
   provider?: AgentProvider
   terminalBacked?: boolean
   allowAllPermissions?: boolean
+  model?: string
 }
 
 export interface SendMessageInput {
@@ -190,6 +220,8 @@ export interface UserInputReplyInput {
   answer: string
   wasFreeform: boolean
   answers?: string[]
+  values?: Record<string, UserInputFieldValue>
+  action?: 'accept' | 'decline' | 'cancel'
 }
 
 export interface AddComputerInput {

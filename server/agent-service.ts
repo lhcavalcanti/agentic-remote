@@ -7,6 +7,7 @@ import {
   RuntimeConnection,
   type AssistantMessageEvent,
   type CopilotSession,
+  type ElicitationResult,
   type PermissionRequest,
   type PermissionRequestResult,
   type ModelInfo,
@@ -30,6 +31,10 @@ import type {
   SessionFileUpload,
   SessionRuntimeInfo,
   UserInputReplyInput,
+  UserInputField,
+  UserInputFieldOption,
+  UserInputFieldValue,
+  UserInputForm,
   RuntimeModelOption,
   RuntimeOptions,
   SessionStatus,
@@ -69,6 +74,8 @@ interface ActivePrompt {
 type UserInputHandler = NonNullable<SessionConfig['onUserInputRequest']>
 type UserInputRequest = Parameters<UserInputHandler>[0]
 type UserInputResponse = Awaited<ReturnType<UserInputHandler>>
+type ElicitationHandler = NonNullable<SessionConfig['onElicitationRequest']>
+type ElicitationContext = Parameters<ElicitationHandler>[0]
 
 interface PendingSdkPermission {
   sessionId: string
@@ -78,6 +85,11 @@ interface PendingSdkPermission {
 interface PendingSdkUserInput {
   sessionId: string
   resolve: (response: UserInputResponse) => void
+}
+
+interface PendingSdkElicitation {
+  sessionId: string
+  resolve: (response: ElicitationResult) => void
 }
 
 export interface CopilotSessionLike {
@@ -271,6 +283,282 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   return messages
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((entry) =>
+        typeof entry === 'string' && entry.trim() ? [entry.trim()] : [],
+      )
+    : []
+}
+
+function stringArrayValue(value: unknown): string[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry) => typeof entry === 'string')
+  ) {
+    return undefined
+  }
+  return value.map((entry) => entry.trim())
+}
+
+function userInputFormat(value: unknown): UserInputField['format'] {
+  return value === 'email' ||
+    value === 'uri' ||
+    value === 'date' ||
+    value === 'date-time'
+    ? value
+    : undefined
+}
+
+function userInputOptions(
+  field: Record<string, unknown>,
+): UserInputFieldOption[] | undefined {
+  if (Array.isArray(field.enum)) {
+    const names = Array.isArray(field.enumNames)
+      ? field.enumNames.map((name) =>
+          typeof name === 'string' ? name.trim() : '',
+        )
+      : []
+    return field.enum.flatMap((value, index) =>
+      typeof value === 'string' && value.trim()
+        ? [
+            {
+              value: value.trim(),
+              label: names[index] || value.trim(),
+            },
+          ]
+        : [],
+    )
+  }
+  const labeledOptions = Array.isArray(field.oneOf)
+    ? field.oneOf
+    : Array.isArray(field.anyOf)
+      ? field.anyOf
+      : undefined
+  if (labeledOptions) {
+    return labeledOptions.flatMap((value) => {
+      const option = recordValue(value)
+      const optionValue = stringValue(option.const)
+      const label = stringValue(option.title)
+      return optionValue && label
+        ? [{ value: optionValue, label }]
+        : []
+    })
+  }
+  return undefined
+}
+
+export function userInputFormFromSchema(
+  schemaValue: unknown,
+): UserInputForm | undefined {
+  const schema = recordValue(schemaValue)
+  if (schema.type !== undefined && schema.type !== 'object') {
+    return undefined
+  }
+  if (
+    !schema.properties ||
+    typeof schema.properties !== 'object' ||
+    Array.isArray(schema.properties)
+  ) {
+    return undefined
+  }
+  const properties = recordValue(schema.properties)
+  const required = new Set(stringArray(schema.required))
+  let unsupported = false
+  const fields: UserInputField[] = []
+  for (const [name, value] of Object.entries(properties)) {
+    const field = recordValue(value)
+    const type = field.type
+    const common = {
+      name,
+      title: stringValue(field.title) || name,
+      description: stringValue(field.description),
+      required: required.has(name),
+    }
+
+    if (type === 'string') {
+      const options = userInputOptions(field)
+      const hasOptions =
+        Array.isArray(field.enum) || Array.isArray(field.oneOf)
+      if (hasOptions && (!options || options.length === 0)) {
+        unsupported = true
+        continue
+      }
+      const defaultValue =
+        typeof field.default === 'string' ? field.default : undefined
+      fields.push({
+        ...common,
+        type: 'string',
+        ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+        ...(options ? { options } : {}),
+        ...(numberValue(field.minLength) !== undefined
+          ? { minLength: numberValue(field.minLength) }
+          : {}),
+        ...(numberValue(field.maxLength) !== undefined
+          ? { maxLength: numberValue(field.maxLength) }
+          : {}),
+        ...(userInputFormat(field.format)
+          ? { format: userInputFormat(field.format) }
+          : {}),
+      })
+      continue
+    }
+
+    if (type === 'array') {
+      const items = recordValue(field.items)
+      const options = userInputOptions(items)
+      const hasOptions =
+        Array.isArray(items.enum) || Array.isArray(items.anyOf)
+      if (hasOptions && (!options || options.length === 0)) {
+        unsupported = true
+        continue
+      }
+      const defaultValue = stringArrayValue(field.default)
+      fields.push({
+        ...common,
+        type: 'array',
+        ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+        ...(options ? { options } : {}),
+        ...(numberValue(field.minItems) !== undefined
+          ? { minItems: numberValue(field.minItems) }
+          : {}),
+        ...(numberValue(field.maxItems) !== undefined
+          ? { maxItems: numberValue(field.maxItems) }
+          : {}),
+      })
+      continue
+    }
+
+    if (type === 'boolean') {
+      fields.push({
+        ...common,
+        type: 'boolean',
+        ...(typeof field.default === 'boolean'
+          ? { default: field.default }
+          : {}),
+      })
+      continue
+    }
+
+    if (type === 'number' || type === 'integer') {
+      const defaultValue = numberValue(field.default)
+      fields.push({
+        ...common,
+        type,
+        ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+        ...(numberValue(field.minimum) !== undefined
+          ? { minimum: numberValue(field.minimum) }
+          : {}),
+        ...(numberValue(field.maximum) !== undefined
+          ? { maximum: numberValue(field.maximum) }
+          : {}),
+      })
+      continue
+    }
+
+    unsupported = true
+  }
+
+  return unsupported ? undefined : { fields }
+}
+
+function validateUserInputForm(
+  form: UserInputForm,
+  values: Record<string, UserInputFieldValue>,
+): void {
+  const fields = new Map(form.fields.map((field) => [field.name, field]))
+  for (const name of Object.keys(values)) {
+    if (!fields.has(name)) {
+      throw new Error(`Unknown elicitation field: ${name}`)
+    }
+  }
+
+  for (const field of form.fields) {
+    const value = values[field.name]
+    if (value === undefined) {
+      if (field.required) {
+        throw new Error(`Elicitation field is required: ${field.title}`)
+      }
+      continue
+    }
+    const options = field.options
+      ? new Set(field.options.map((option) => option.value))
+      : undefined
+    if (field.type === 'string') {
+      if (typeof value !== 'string') {
+        throw new Error(`Invalid value for elicitation field: ${field.title}`)
+      }
+      if (options && !options.has(value)) {
+        throw new Error(`Invalid value for elicitation field: ${field.title}`)
+      }
+      if (
+        field.minLength !== undefined &&
+        value.length < field.minLength
+      ) {
+        throw new Error(`Elicitation field is too short: ${field.title}`)
+      }
+      if (
+        field.maxLength !== undefined &&
+        value.length > field.maxLength
+      ) {
+        throw new Error(`Elicitation field is too long: ${field.title}`)
+      }
+      continue
+    }
+    if (field.type === 'array') {
+      if (
+        !Array.isArray(value) ||
+        !value.every((entry) => typeof entry === 'string')
+      ) {
+        throw new Error(`Invalid value for elicitation field: ${field.title}`)
+      }
+      if (options && value.some((entry) => !options.has(entry))) {
+        throw new Error(`Invalid value for elicitation field: ${field.title}`)
+      }
+      if (
+        field.minItems !== undefined &&
+        value.length < field.minItems
+      ) {
+        throw new Error(`Elicitation field has too few values: ${field.title}`)
+      }
+      if (
+        field.maxItems !== undefined &&
+        value.length > field.maxItems
+      ) {
+        throw new Error(`Elicitation field has too many values: ${field.title}`)
+      }
+      continue
+    }
+    if (field.type === 'boolean') {
+      if (typeof value !== 'boolean') {
+        throw new Error(`Invalid value for elicitation field: ${field.title}`)
+      }
+      continue
+    }
+    if (field.type === 'number' || field.type === 'integer') {
+      if (
+        typeof value !== 'number' ||
+        !Number.isFinite(value) ||
+        (field.type === 'integer' && !Number.isInteger(value))
+      ) {
+        throw new Error(`Invalid value for elicitation field: ${field.title}`)
+      }
+      if (
+        field.minimum !== undefined &&
+        value < field.minimum
+      ) {
+        throw new Error(`Elicitation value is below minimum: ${field.title}`)
+      }
+      if (
+        field.maximum !== undefined &&
+        value > field.maximum
+      ) {
+        throw new Error(`Elicitation value is above maximum: ${field.title}`)
+      }
+    }
+  }
+}
+
 export function pendingUserInputFromEvents(
   events: SessionEvent[],
 ): PendingUserInput | undefined {
@@ -297,7 +585,12 @@ export function pendingUserInputFromEvents(
         continue
       }
       const argumentsValue = recordValue(data.arguments)
-      const question = (stringValue(argumentsValue.question) || '').trim()
+      const question =
+        (
+          stringValue(argumentsValue.question) ||
+          stringValue(argumentsValue.message) ||
+          ''
+        ).trim()
       if (!question) {
         continue
       }
@@ -308,6 +601,7 @@ export function pendingUserInputFromEvents(
               : [],
           )
         : []
+      const form = userInputFormFromSchema(argumentsValue.requestedSchema)
       const toolCallId = stringValue(data.toolCallId)
       if (!toolCallId) {
         continue
@@ -319,9 +613,12 @@ export function pendingUserInputFromEvents(
           question,
           choices,
           allowFreeform:
-            typeof argumentsValue.allowFreeform === 'boolean'
+            form
+              ? false
+              : typeof argumentsValue.allowFreeform === 'boolean'
               ? argumentsValue.allowFreeform
               : true,
+          ...(form ? { form } : {}),
         },
       }
       continue
@@ -386,7 +683,8 @@ function toolActivityContent(data: unknown): string {
   const toolDescription = recordValue(tool.toolDescription)
   const description =
     previewText(toolDescription.description) ||
-    previewText(argumentsValue.description)
+    previewText(argumentsValue.description) ||
+    previewText(argumentsValue.message)
   const command = previewText(argumentsValue.command, true)
   const detail =
     command ||
@@ -701,6 +999,7 @@ function permissionTitle(request: PermissionRequest): string {
     case 'extension-permission-access':
       return `Allow extension ${request.extensionName}`
   }
+  return 'Permission required'
 }
 
 export class AgentService extends EventEmitter<AgentServiceEvents> {
@@ -728,6 +1027,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
   >()
+  private readonly elicitations = new Map<string, PendingSdkElicitation>()
   private discoveryTimer?: NodeJS.Timeout
   private discoveryInFlight?: Promise<void>
   private transcriptTimer?: NodeJS.Timeout
@@ -839,6 +1139,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       input.resolve({ answer: '', wasFreeform: true })
     }
     this.userInputs.clear()
+    for (const elicitation of this.elicitations.values()) {
+      elicitation.resolve({ action: 'cancel' })
+    }
+    this.elicitations.clear()
     this.terminalUserInputChecks.clear()
     this.answeredTerminalPermissions.clear()
     this.answeredTerminalInputs.clear()
@@ -1052,23 +1356,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     terminalBacked = false,
     allowAllPermissions = true,
     provider: AgentProvider = 'copilot',
+    model?: string,
   ): Promise<SessionDetail> {
     if (provider !== 'copilot') {
       throw new Error(`Provider ${provider} is not handled by Copilot`)
     }
     const cwd = await this.validateDirectory(inputPath)
+    const selectedModel = model?.trim() || undefined
     if (terminalBacked) {
-      return this.createTerminalSession(cwd, allowAllPermissions)
+      return this.createTerminalSession(cwd, allowAllPermissions, selectedModel)
     }
     const sdkSession = await this.client.createSession({
       workingDirectory: cwd,
       streaming: true,
+      ...(selectedModel ? { model: selectedModel } : {}),
       onPermissionRequest: allowAllPermissions
         ? async () => ({ kind: 'approve-once' })
         : (request, invocation) =>
             this.requestPermission(invocation.sessionId, request),
       onUserInputRequest: (request, invocation) =>
         this.requestUserInput(invocation.sessionId, request),
+      onElicitationRequest: (context) => this.requestElicitation(context),
     })
     this.attachSession(sdkSession)
     this.sessions.set(sdkSession.sessionId, sdkSession)
@@ -1084,7 +1392,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         status: 'idle',
         isOpen: true,
         messages: [],
-        runtime: { allowAllPermissions },
+        runtime: {
+          allowAllPermissions,
+          ...(selectedModel ? { model: selectedModel } : {}),
+        },
       },
       { managedOpen: true, backend: 'sdk' },
     )
@@ -1461,6 +1772,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                   this.requestPermission(invocation.sessionId, request),
             onUserInputRequest: (request, invocation) =>
               this.requestUserInput(invocation.sessionId, request),
+            onElicitationRequest: (context) => this.requestElicitation(context),
           })
         } catch (error) {
           this.publishError(replacementId, error)
@@ -1527,6 +1839,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async createTerminalSession(
     cwd: string,
     allowAllPermissions: boolean,
+    model?: string,
   ): Promise<SessionDetail> {
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
@@ -1536,12 +1849,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.launchingTerminalSessionIds.add(sessionId)
     this.discoveryGeneration += 1
     try {
-      await this.terminalController.create(
-        sessionId,
-        cwd,
-        title,
-        allowAllPermissions,
-      )
+      if (model) {
+        await this.terminalController.create(
+          sessionId,
+          cwd,
+          title,
+          allowAllPermissions,
+          { model },
+        )
+      } else {
+        await this.terminalController.create(
+          sessionId,
+          cwd,
+          title,
+          allowAllPermissions,
+        )
+      }
       const now = new Date().toISOString()
       const session = await this.store.create(
         {
@@ -1552,7 +1875,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           status: 'idle',
           isOpen: true,
           messages: [],
-          runtime: { allowAllPermissions },
+          runtime: {
+            allowAllPermissions,
+            ...(model ? { model } : {}),
+          },
         },
         { managedOpen: true, backend: 'terminal' },
       )
@@ -1996,6 +2322,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.userInputs.delete(requestId)
         }
       }
+      for (const [requestId, elicitation] of this.elicitations) {
+        if (elicitation.sessionId === sessionId) {
+          elicitation.resolve({ action: 'cancel' })
+          this.elicitations.delete(requestId)
+        }
+      }
 
       if (terminalBacked) {
         await removeCopilotSessionFiles(sessionId)
@@ -2111,15 +2443,58 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored || !request || request.requestId !== requestId) {
       throw new Error('User input request is no longer pending')
     }
+    const action = input.action || 'accept'
+    const sdkElicitation = this.elicitations.get(requestId)
+    if (sdkElicitation) {
+      if (sdkElicitation.sessionId !== sessionId) {
+        throw new Error('Elicitation request belongs to another session')
+      }
+      if (action === 'accept') {
+        if (!request.form || !input.values) {
+          throw new Error('Structured elicitation values are required')
+        }
+        validateUserInputForm(request.form, input.values)
+        sdkElicitation.resolve({ action, content: input.values })
+      } else {
+        sdkElicitation.resolve({ action })
+      }
+      this.elicitations.delete(requestId)
+      const updated = await this.store.update(sessionId, (session) => {
+        session.pendingUserInput = undefined
+        session.status = 'running'
+        session.activity = 'Continuing'
+      })
+      this.publish(updated)
+      return updated
+    }
+    if (action !== 'accept') {
+      if (requestId.startsWith('persisted-user-input:')) {
+        const cleared = await this.store.update(sessionId, (session) => {
+          session.pendingUserInput = undefined
+          session.status = 'idle'
+          session.activity = undefined
+        })
+        this.publish(cleared)
+        return cleared
+      }
+      throw new Error('This user input request cannot be dismissed')
+    }
     const answer = input.answer.trim()
     if (!answer) {
       throw new Error('Answer cannot be empty')
     }
-    if (input.wasFreeform && !request.allowFreeform) {
-      throw new Error('This question does not allow a freeform response')
-    }
-    if (!input.wasFreeform && !request.choices.includes(answer)) {
-      throw new Error('The selected answer is not available')
+    if (request.form) {
+      if (!input.values) {
+        throw new Error('Structured elicitation values are required')
+      }
+      validateUserInputForm(request.form, input.values)
+    } else {
+      if (input.wasFreeform && !request.allowFreeform) {
+        throw new Error('This question does not allow a freeform response')
+      }
+      if (!input.wasFreeform && !request.choices.includes(answer)) {
+        throw new Error('The selected answer is not available')
+      }
     }
     const sdkPending = this.userInputs.get(requestId)
     let terminalReplied = false
@@ -2136,7 +2511,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         session.activity = undefined
       })
       this.publish(cleared)
-      return this.sendMessage(sessionId, answer, false)
+      return this.sendMessage(
+        sessionId,
+        request.form ? JSON.stringify(input.values) : answer,
+        false,
+      )
     } else {
       if (!this.terminalController.replyUserInput) {
         throw new Error('Terminal user input is not available')
@@ -2215,6 +2594,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               this.requestPermission(invocation.sessionId, request),
         onUserInputRequest: (request, invocation) =>
           this.requestUserInput(invocation.sessionId, request),
+        onElicitationRequest: (context) => this.requestElicitation(context),
         suppressResumeEvent: true,
       })
     } catch (error) {
@@ -2231,6 +2611,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               this.requestPermission(invocation.sessionId, request),
         onUserInputRequest: (request, invocation) =>
           this.requestUserInput(invocation.sessionId, request),
+        onElicitationRequest: (context) => this.requestElicitation(context),
       })
     }
     this.attachSession(sdkSession)
@@ -2452,11 +2833,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return
         }
         const stored = this.store.get(sessionId)
-        const syncedUserInput = this.externalSessionIds.has(sessionId)
-          ? undefined
-          : stored?.pendingUserInput ||
-            pendingUserInputFromEvents(events) ||
-            null
+        const storedUserInput =
+          !this.externalSessionIds.has(sessionId) ||
+          stored?.pendingUserInput?.requestId.startsWith('terminal:')
+            ? stored?.pendingUserInput
+            : undefined
+        const syncedUserInput =
+          storedUserInput || pendingUserInputFromEvents(events) || null
         const messages = [
           ...messagesFromHistory(events),
           ...(stored?.messages.filter((message) => message.role === 'notice') ||
@@ -3043,6 +3426,50 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           resolve({ kind: 'user-not-available' })
           this.publishError(sessionId, error)
         })
+    })
+  }
+
+  private requestElicitation(
+    context: ElicitationContext,
+  ): Promise<ElicitationResult> {
+    const sessionId = context.sessionId
+    if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+        return Promise.resolve({ action: 'cancel' })
+    }
+    if (context.mode === 'url') {
+        return Promise.reject(
+          new Error('URL elicitation is not supported by Agentic Remote'),
+        )
+    }
+    const question = context.message.trim()
+    const form = userInputFormFromSchema(context.requestedSchema)
+    if (!question || !form) {
+        return Promise.reject(
+          new Error('Agentic Remote received an unsupported elicitation form'),
+        )
+    }
+    const requestId = randomUUID()
+    const pending: PendingUserInput = {
+        requestId,
+        question,
+        choices: [],
+        allowFreeform: false,
+        form,
+    }
+    return new Promise<ElicitationResult>((resolve) => {
+        this.elicitations.set(requestId, { sessionId, resolve })
+        void this.store
+          .update(sessionId, (session) => {
+            session.pendingUserInput = pending
+            session.status = 'waiting'
+            session.activity = pending.question
+          })
+          .then((session) => this.publish(session))
+          .catch((error: unknown) => {
+            this.elicitations.delete(requestId)
+            resolve({ action: 'cancel' })
+            this.publishError(sessionId, error)
+          })
     })
   }
 

@@ -18,7 +18,7 @@ history is not transferred between providers.
 | Context tier | Default and long-context when advertised | Automatic provider-managed context | Provider-specific; Claude advertises only the default UI option |
 | Interactive/plan/autonomous mode | Native Copilot modes | Claude permission-mode mapping | Partial; labels are shared but semantics differ |
 | Permission prompts | SDK and terminal prompts | Agent SDK `canUseTool` | Compatible through the shared approval card |
-| Clarifying questions | Copilot user-input request | Claude `AskUserQuestion`, including `multiSelect` | Compatible through the shared question card; multi-select answers are returned comma-separated |
+| Clarifying questions | Copilot user-input request and structured elicitation form | Claude `AskUserQuestion`, including `multiSelect` | Compatible through the shared question/form card; structured answers preserve field values |
 | Editable Agentic Remote queue | Supported | Supported | Compatible |
 | Cancel | SDK abort or terminal interrupt | Agent SDK abort controller | Compatible |
 | Slash commands | Copilot command catalog plus web commands | Web commands only | Provider-specific |

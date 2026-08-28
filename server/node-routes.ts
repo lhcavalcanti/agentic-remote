@@ -63,6 +63,16 @@ const configureRuntimeSchema = z.object({
 const directoryQuerySchema = z.object({
   path: z.string().trim().max(4096).optional(),
 })
+const knowledgeQuerySchema = z.object({
+  root: z.string().trim().min(1).max(4096),
+  path: z.string().trim().max(4096).optional(),
+})
+
+const knowledgeFileQuerySchema = z.object({
+  root: z.string().trim().min(1).max(4096),
+  path: z.string().trim().min(1).max(4096),
+})
+
 const workspaceFileQuerySchema = z.object({
   path: z.string().trim().min(1).max(4096),
 })
@@ -120,6 +130,22 @@ export async function registerNodeRoutes(
         async (request) => {
           const query = directoryQuerySchema.parse(request.query)
           return service.listDirectories(query.path)
+        },
+      )
+
+      node.get<{ Querystring: { root?: string; path?: string } }>(
+        '/knowledge/entries',
+        async (request) => {
+          const query = knowledgeQuerySchema.parse(request.query)
+          return service.listKnowledge(query.root, query.path)
+        },
+      )
+
+      node.get<{ Querystring: { root?: string; path?: string } }>(
+        '/knowledge/file',
+        async (request) => {
+          const query = knowledgeFileQuerySchema.parse(request.query)
+          return service.readKnowledgeFile(query.root, query.path)
         },
       )
 

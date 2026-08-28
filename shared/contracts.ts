@@ -259,6 +259,23 @@ export interface WorkspaceSearchResponse {
   truncated: boolean
 }
 
+/** A folder on a computer that is browsable without any session existing. */
+export interface KnowledgeRoot {
+  id: string
+  computerId: string
+  computerName: string
+  /** Absolute path on the owning computer. */
+  path: string
+  name: string
+  createdAt: string
+}
+
+export interface AddKnowledgeRootInput {
+  computerId: string
+  path: string
+  name?: string
+}
+
 export interface KnowledgeBookmark {
   id: string
   kind: 'file' | 'folder'

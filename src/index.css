@@ -188,6 +188,119 @@ button {
   cursor: pointer;
 }
 
+.sidebar-switch {
+  display: flex;
+  margin: 0 14px 12px;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+
+.sidebar-switch button {
+  flex: 1;
+  padding: 6px 0;
+  color: var(--muted);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.sidebar-switch button.is-active {
+  color: #111210;
+  background: var(--accent);
+}
+
+.knowledge-tree .workspace-entry {
+  width: 100%;
+}
+
+.knowledge-root {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 3px;
+}
+
+.knowledge-root > button:first-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  color: var(--muted-strong);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.knowledge-root > button:first-child.is-active {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--panel-raised);
+}
+
+.knowledge-root span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.knowledge-root strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.knowledge-root small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation--knowledge {
+  grid-template-areas: 'header' 'banner' 'timeline';
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.knowledge-reader {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  grid-area: timeline;
+}
+
+.knowledge-reader--empty {
+  display: grid;
+  gap: 10px;
+  place-content: center;
+  justify-items: center;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.knowledge-reader__crumbs {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.add-root-dialog__list {
+  display: flex;
+  max-height: 260px;
+  flex-direction: column;
+  margin-top: 8px;
+  overflow-y: auto;
+}
+
 .sidebar-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;
@@ -540,6 +653,13 @@ button {
     "composer";
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   overflow: hidden;
+}
+
+/* `display: grid` outranks the user-agent [hidden] rule, so the inactive
+   mode would stay laid out, focusable, and exposed as a second main. */
+.conversation[hidden],
+.session-list[hidden] {
+  display: none;
 }
 
 .conversation > * {

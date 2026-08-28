@@ -102,4 +102,21 @@ describe('validateSessionDirectory', () => {
     expect((error as SessionDirectoryError).statusCode).toBe(400)
     expect((error as Error).message).toContain('Folder is not readable')
   })
+  it('confines a knowledge root the same way as a session directory', async () => {
+    const home = await homeFixture()
+    const outside = await mkdtemp(path.join(tmpdir(), 'knowledge-outside-'))
+    directories.push(outside)
+    const inside = path.join(home, 'docs')
+    await mkdir(inside)
+
+    // A knowledge root is validated through the same helper, so a root outside
+    // the allowed roots is refused before anything is listed.
+    await expect(validateSessionDirectory(inside)).resolves.toBe(inside)
+    await expect(validateSessionDirectory(outside)).rejects.toThrow(
+      'Sessions are restricted to the user home directory',
+    )
+    await expect(validateSessionDirectory('/')).rejects.toThrow(
+      'Sessions are restricted to the user home directory',
+    )
+  })
 })

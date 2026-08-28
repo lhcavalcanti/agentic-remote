@@ -185,6 +185,28 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : this.requireClient(computerId).listDirectories(path)
   }
 
+  async listKnowledge(
+    computerId: string,
+    root: string,
+    path?: string,
+  ): Promise<WorkspaceListing> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.listKnowledge(root, path)
+      : this.requireClient(computerId).listKnowledge(root, path)
+  }
+
+  async readKnowledgeFile(
+    computerId: string,
+    root: string,
+    path: string,
+  ): Promise<WorkspaceFile> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.readKnowledgeFile(root, path)
+      : this.requireClient(computerId).readKnowledgeFile(root, path)
+  }
+
   async listWorkspace(
     computerId: string,
     sessionId: string,

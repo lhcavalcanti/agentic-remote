@@ -146,7 +146,12 @@ class FakeSessionService extends EventEmitter implements SessionService {
 
   createError?: Error
 
+  knowledgeError?: Error
+
   async listKnowledge(root: string, path = '.') {
+    if (this.knowledgeError) {
+      throw this.knowledgeError
+    }
     return { path, entries: [{ name: 'note.md', path: 'note.md', kind: 'markdown' as const, size: 12 }], root }
   }
 
@@ -1150,6 +1155,41 @@ describe('multi-node hub', () => {
         payload: { computerId: 'nope', path: '/tmp' },
       })
       expect(response.statusCode).toBe(404)
+    } finally {
+      await hub.app.close()
+    }
+  })
+  it('explains that a legacy node cannot host knowledge roots', async () => {
+    const service = new FakeSessionService(session('local-session', 'Local'))
+    service.knowledgeError = Object.assign(new Error('Not Found'), {
+      statusCode: 404,
+    })
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-legacy-root'),
+      logger: false,
+      role: 'hub',
+      service,
+    })
+    try {
+      const computers = JSON.parse(
+        (await hub.app.inject({ method: 'GET', url: '/api/computers' })).body,
+      ).computers as Array<{ id: string }>
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: '/api/knowledge/roots',
+        payload: { computerId: computers[0].id, path: '/home/tester/docs' },
+      })
+      expect(response.statusCode).toBe(409)
+      expect(JSON.parse(response.body).error).toContain(
+        'does not support knowledge roots yet',
+      )
+      // Nothing is stored when the owning computer cannot serve it.
+      expect(
+        JSON.parse(
+          (await hub.app.inject({ method: 'GET', url: '/api/knowledge/roots' }))
+            .body,
+        ).roots,
+      ).toHaveLength(0)
     } finally {
       await hub.app.close()
     }

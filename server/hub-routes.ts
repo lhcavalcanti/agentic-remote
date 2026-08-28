@@ -259,7 +259,19 @@ export async function registerHubRoutes(
     }
     // Browse the folder first so an unreachable or refused root is reported
     // before it is stored, and so the owning computer resolves it.
-    const listing = await manager.listKnowledge(input.computerId, input.path)
+    let listing
+    try {
+      listing = await manager.listKnowledge(input.computerId, input.path)
+    } catch (error) {
+      // A node released before knowledge roots has no such route, which would
+      // otherwise surface as a bare "Not Found".
+      if (Reflect.get(error as object, 'statusCode') === 404) {
+        return reply.code(409).send({
+          error: `${computer.name} does not support knowledge roots yet. Update it to the latest release.`,
+        })
+      }
+      throw error
+    }
     const root = await knowledge.addRoot({
       computerId: input.computerId,
       computerName: computer.name,

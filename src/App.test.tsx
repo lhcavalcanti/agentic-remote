@@ -8,6 +8,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
@@ -186,7 +187,14 @@ const secondSession: ManagedSession = {
   messages: [],
 }
 
+let restoreScrollTop: (() => void) | undefined
+
 describe('App', () => {
+  afterEach(() => {
+    restoreScrollTop?.()
+    restoreScrollTop = undefined
+  })
+
   it('caps composer growth for iPhone viewport heights', () => {
     expect(composerMaximumHeight(true, 844)).toBe(104)
     expect(composerMaximumHeight(true, 430)).toBe(72)
@@ -705,7 +713,11 @@ describe('App', () => {
         '.',
       ),
     )
-    expect(screen.getByText(session.cwd)).toBeInTheDocument()
+    // The path is now a breadcrumb trail rooted at the workspace folder.
+    expect(
+      screen.getByRole('navigation', { name: 'Folder breadcrumb' }),
+    ).toBeInTheDocument()
+    expect(screen.getByTitle(session.cwd)).toBeInTheDocument()
 
     fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
     expect(await screen.findByRole('heading', { name: 'Workspace guide' }))
@@ -2622,5 +2634,131 @@ describe('App', () => {
       expect(groups[1].textContent).toContain(computer.name)
     })
     expect(loaded).toEqual([computer, secondComputer])
+  })
+  it('navigates with breadcrumbs and offers a document outline', async () => {
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      name: 'knowledge.md',
+      path: 'docs/knowledge.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 90,
+      content:
+        '# Knowledge base\n\nIntro.\n\n## Session model\n\nOne computer.\n\n## Files\n\nStay put.',
+    })
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: /knowledge.md/ }),
+    )
+
+    // Headings are anchored so the outline can jump to them.
+    const heading = await screen.findByRole('heading', {
+      name: 'Session model',
+    })
+    expect(heading).toHaveAttribute('id', 'session-model')
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Document outline' }),
+    )
+    const outline = await screen.findByRole('navigation', {
+      name: 'Document outline',
+    })
+    expect(
+      within(outline).getByRole('button', { name: 'Session model' }),
+    ).toBeInTheDocument()
+    expect(
+      within(outline).getByRole('button', { name: 'Knowledge base' }),
+    ).toBeInTheDocument()
+
+    // A breadcrumb segment returns to its folder.
+    fireEvent.click(screen.getByRole('button', { name: 'Back to files' }))
+    const crumbs = screen.getByRole('navigation', { name: 'Folder breadcrumb' })
+    expect(
+      within(crumbs).getByRole('button', { name: 'docs' }),
+    ).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(within(crumbs).getByRole('button', { name: 'project' }))
+    await waitFor(() =>
+      expect(listWorkspace).toHaveBeenLastCalledWith(
+        computer.id,
+        session.id,
+        '.',
+      ),
+    )
+  })
+
+  it('returns to the previous document at its previous scroll position', async () => {
+    // jsdom performs no layout, so scrollTop is inert. Back it with a real
+    // accessor for this test so the reader's scroll bookkeeping is observable.
+    const offsets = new WeakMap<HTMLElement, number>()
+    const original = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'scrollTop',
+    )
+    Object.defineProperty(HTMLElement.prototype, 'scrollTop', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return offsets.get(this) ?? 0
+      },
+      set(this: HTMLElement, value: number) {
+        offsets.set(this, value)
+      },
+    })
+    if (original) {
+      restoreScrollTop = () =>
+        Object.defineProperty(HTMLElement.prototype, 'scrollTop', original)
+    }
+
+    vi.mocked(readWorkspaceFile).mockImplementation(
+      async (_computerId, _sessionId, path) => ({
+        name: path.split('/').at(-1) || path,
+        path,
+        kind: 'markdown' as const,
+        mimeType: 'text/plain; charset=utf-8',
+        size: 40,
+        content: `# ${path}\n\nBody of ${path}.`,
+      }),
+    )
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    await screen.findByRole('heading', { name: 'README.md' })
+
+    // Scroll the first document, then open a second one.
+    const content = document.querySelector('.workspace-preview__content')
+    if (content) {
+      content.scrollTop = 240
+      fireEvent.scroll(content)
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Back to files' }))
+    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: /knowledge.md/ }),
+    )
+    await screen.findByRole('heading', { name: 'docs/knowledge.md' })
+
+    // Back returns to the first document and restores where it was.
+    fireEvent.click(screen.getByRole('button', { name: 'Previous document' }))
+    await screen.findByRole('heading', { name: 'README.md' })
+    await waitFor(() =>
+      expect(readWorkspaceFile).toHaveBeenLastCalledWith(
+        computer.id,
+        session.id,
+        'README.md',
+      ),
+    )
+    await waitFor(() =>
+      expect(
+        document.querySelector('.workspace-preview__content')?.scrollTop,
+      ).toBe(240),
+    )
   })
 })

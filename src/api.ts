@@ -7,7 +7,9 @@ import type {
   DirectoryListing,
   ExecuteCommandInput,
   ManagedSession,
+  AddKnowledgeRootInput,
   KnowledgeBookmark,
+  KnowledgeRoot,
   PushSettings,
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
@@ -108,6 +110,47 @@ export async function listSessions(): Promise<ManagedSession[]> {
 export async function listHistory(): Promise<ManagedSession[]> {
   const response = await request<{ sessions: ManagedSession[] }>('/api/history')
   return response.sessions
+}
+
+export async function listKnowledgeRoots(): Promise<KnowledgeRoot[]> {
+  const response = await request<{ roots: KnowledgeRoot[] }>(
+    '/api/knowledge/roots',
+  )
+  return response.roots
+}
+
+export async function addKnowledgeRoot(
+  input: AddKnowledgeRootInput,
+): Promise<KnowledgeRoot> {
+  const response = await request<{ root: KnowledgeRoot }>(
+    '/api/knowledge/roots',
+    { method: 'POST', body: JSON.stringify(input) },
+  )
+  return response.root
+}
+
+export async function deleteKnowledgeRoot(rootId: string): Promise<void> {
+  await requestVoid(`/api/knowledge/roots/${encodeURIComponent(rootId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function listKnowledgeEntries(
+  rootId: string,
+  path = '.',
+): Promise<WorkspaceListing> {
+  return request<WorkspaceListing>(
+    `/api/knowledge/roots/${encodeURIComponent(rootId)}/entries?path=${encodeURIComponent(path)}`,
+  )
+}
+
+export async function readKnowledgeFile(
+  rootId: string,
+  path: string,
+): Promise<WorkspaceFile> {
+  return request<WorkspaceFile>(
+    `/api/knowledge/roots/${encodeURIComponent(rootId)}/file?path=${encodeURIComponent(path)}`,
+  )
 }
 
 export async function listKnowledgeBookmarks(): Promise<KnowledgeBookmark[]> {

@@ -95,6 +95,7 @@ import type {
   HubEvent,
   ManagedSession,
   KnowledgeBookmark,
+  KnowledgeRoot,
   PendingPermission,
   PendingUserInput,
   UserInputField,
@@ -124,6 +125,11 @@ import {
   listCommands,
   listHistory,
   listKnowledgeBookmarks,
+  listKnowledgeEntries,
+  listKnowledgeRoots,
+  addKnowledgeRoot,
+  deleteKnowledgeRoot,
+  readKnowledgeFile,
   listDirectories,
   listSessions,
   listWorkspace,
@@ -2688,6 +2694,310 @@ function PdfViewer({ file }: { file: WorkspaceFile }) {
   )
 }
 
+/**
+ * Slugs come from the heading text alone so an id stays stable across
+ * re-renders; a render-time counter would renumber on every pass.
+ */
+function AddKnowledgeRootDialog({
+  computers,
+  onClose,
+  onCreate,
+}: {
+  computers: ComputerSummary[]
+  onClose: () => void
+  onCreate: (computerId: string, path: string) => Promise<void>
+}) {
+  const online = computers.filter((computer) => computer.online)
+  const [computerId, setComputerId] = useState(online[0]?.id || '')
+  const [listing, setListing] = useState<DirectoryListing>()
+  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string>()
+
+  async function browse(path: string) {
+    if (!computerId) {
+      return
+    }
+    setLoading(true)
+    setError(undefined)
+    try {
+      setListing(await listDirectories(computerId, path))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    void listDirectories(computerId, '~')
+      .then((next) => {
+        if (active) {
+          setListing(next)
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [computerId])
+
+  return (
+    <DialogFrame
+      className="add-root-dialog"
+      eyebrow="Read files without a session"
+      onClose={onClose}
+      title="Add knowledge root"
+    >
+      <label className="dialog-field">
+        <span>Computer</span>
+        <select
+          className="dialog-select"
+          onChange={(event) => setComputerId(event.target.value)}
+          value={computerId}
+        >
+          {online.map((computer) => (
+            <option key={computer.id} value={computer.id}>
+              {computer.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="dialog-message">{listing?.path || 'Loading…'}</p>
+      <div className="add-root-dialog__list">
+        {listing?.parent !== undefined ? (
+          <button
+            className="workspace-entry"
+            disabled={loading}
+            onClick={() => void browse(listing.parent || '~')}
+            type="button"
+          >
+            <ArrowUp size={15} />
+            <span>
+              <strong>Parent folder</strong>
+            </span>
+          </button>
+        ) : null}
+        {listing?.directories.map((directory) => (
+          <button
+            className="workspace-entry"
+            disabled={loading}
+            key={directory.path}
+            onClick={() => void browse(directory.path)}
+            type="button"
+          >
+            <FolderOpen size={15} />
+            <span>
+              <strong>{directory.name}</strong>
+            </span>
+          </button>
+        ))}
+      </div>
+      {error ? <p className="dialog-error">{error}</p> : null}
+      <div className="dialog-actions">
+        <button className="secondary-button" onClick={onClose} type="button">
+          Cancel
+        </button>
+        <button
+          className="primary-button"
+          disabled={!listing || submitting || loading}
+          onClick={() => {
+            if (!listing) {
+              return
+            }
+            setSubmitting(true)
+            setError(undefined)
+            void onCreate(computerId, listing.path)
+              .catch((caught: unknown) =>
+                setError(
+                  caught instanceof Error ? caught.message : String(caught),
+                ),
+              )
+              .finally(() => setSubmitting(false))
+          }}
+          type="button"
+        >
+          {submitting ? 'Adding…' : 'Add this folder'}
+        </button>
+      </div>
+    </DialogFrame>
+  )
+}
+
+function markdownHeading(level: 1 | 2 | 3 | 4 | 5 | 6) {
+  return function Heading({ children }: { children?: ReactNode }) {
+    const Tag = `h${level}` as const
+    return <Tag id={headingSlug(headingText(children))}>{children}</Tag>
+  }
+}
+
+const knowledgeHeadingComponents = {
+  h1: markdownHeading(1),
+  h2: markdownHeading(2),
+  h3: markdownHeading(3),
+  h4: markdownHeading(4),
+  h5: markdownHeading(5),
+  h6: markdownHeading(6),
+}
+
+function KnowledgeReader({
+  file,
+  listing,
+  loading,
+  root,
+  onOpenFolder,
+}: {
+  file?: WorkspaceFile
+  listing?: WorkspaceListing
+  loading: boolean
+  root: KnowledgeRoot
+  onOpenFolder: (path: string) => void
+}) {
+  const [raw, setRaw] = useState(false)
+  const [outlineOpen, setOutlineOpen] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    // Raw and outline state reset through the component key, so this only has
+    // to put the new document back at the top.
+    const frame = requestAnimationFrame(() => {
+      if (contentRef.current) {
+        contentRef.current.scrollTop = 0
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [file?.path])
+
+  const outline = useMemo<DocumentHeading[]>(
+    () =>
+      file?.kind === 'markdown' && !raw
+        ? outlineFromMarkdown(file.content || '')
+        : [],
+    [file, raw],
+  )
+  const crumbs = breadcrumbSegments(file?.path ?? listing?.path ?? '.', root.name)
+
+  if (!file) {
+    return (
+      <div className="knowledge-reader knowledge-reader--empty">
+        <BookOpen size={26} />
+        <p>
+          {loading
+            ? 'Loading…'
+            : 'Select a Markdown, text, or PDF file to read it here.'}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="knowledge-reader">
+      <div className="workspace-preview__header">
+        <div>
+          <strong>{file.name}</strong>
+          <small>
+            {root.computerName} · {root.path}/{file.path}
+          </small>
+        </div>
+        {outline.length > 1 ? (
+          <button
+            aria-expanded={outlineOpen}
+            aria-label="Document outline"
+            onClick={() => setOutlineOpen(!outlineOpen)}
+            type="button"
+          >
+            <List size={15} />
+          </button>
+        ) : null}
+        {file.kind === 'markdown' ? (
+          <button onClick={() => setRaw(!raw)} type="button">
+            {raw ? 'Rendered' : 'Raw'}
+          </button>
+        ) : null}
+      </div>
+      <nav
+        aria-label="Knowledge breadcrumb"
+        className="workspace-crumbs knowledge-reader__crumbs"
+      >
+        {crumbs.map((crumb, index) => (
+          <span key={crumb.path}>
+            {index > 0 ? (
+              <span aria-hidden="true" className="workspace-crumbs__sep">
+                /
+              </span>
+            ) : null}
+            <button
+              aria-current={index === crumbs.length - 1 ? 'page' : undefined}
+              disabled={loading}
+              onClick={() => {
+                if (index === crumbs.length - 1) {
+                  return
+                }
+                onOpenFolder(crumb.path)
+              }}
+              type="button"
+            >
+              {crumb.name}
+            </button>
+          </span>
+        ))}
+      </nav>
+      {outlineOpen && outline.length > 0 ? (
+        <nav aria-label="Document outline" className="workspace-outline">
+          {outline.map((heading) => (
+            <button
+              className={`workspace-outline__item workspace-outline__item--${Math.min(
+                heading.level,
+                3,
+              )}`}
+              key={`${heading.index}-${heading.id}`}
+              onClick={() => {
+                contentRef.current
+                  ?.querySelectorAll('h1, h2, h3, h4, h5, h6')
+                  ?.[heading.index]?.scrollIntoView({ block: 'start' })
+                setOutlineOpen(false)
+              }}
+              type="button"
+            >
+              {heading.text}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+      <div
+        className={`workspace-preview__content${
+          file.kind === 'markdown' && !raw ? ' markdown-body' : ''
+        }`}
+        ref={contentRef}
+      >
+        {file.kind === 'pdf' ? (
+          <PdfViewer file={file} />
+        ) : file.kind === 'markdown' && !raw ? (
+          <ReactMarkdown
+            components={knowledgeHeadingComponents}
+            remarkPlugins={[remarkGfm]}
+          >
+            {file.content || ''}
+          </ReactMarkdown>
+        ) : (
+          <pre>{file.content}</pre>
+        )}
+      </div>
+    </div>
+  )
+}
+
 interface WorkspaceBookmarkTarget {
   kind: 'file' | 'folder'
   name: string
@@ -2984,23 +3294,7 @@ function WorkspaceDialog({
     [file, raw],
   )
 
-  const markdownComponents = useMemo(() => {
-    // Slugs come from the heading text alone so an id stays stable across
-    // re-renders; a render-time counter would renumber on every pass.
-    const heading = (level: 1 | 2 | 3 | 4 | 5 | 6) =>
-      function Heading({ children }: { children?: ReactNode }) {
-        const Tag = `h${level}` as const
-        return <Tag id={headingSlug(headingText(children))}>{children}</Tag>
-      }
-    return {
-      h1: heading(1),
-      h2: heading(2),
-      h3: heading(3),
-      h4: heading(4),
-      h5: heading(5),
-      h6: heading(6),
-    }
-  }, [])
+  const markdownComponents = knowledgeHeadingComponents
 
   const crumbs = breadcrumbSegments(
     listing?.path ?? '.',
@@ -3511,6 +3805,16 @@ function App() {
     'file' | 'folder'
   >()
   const [knowledgeOpen, setKnowledgeOpen] = useState(false)
+  const [sidebarMode, setSidebarMode] = useState<'sessions' | 'knowledge'>(
+    'sessions',
+  )
+  const [roots, setRoots] = useState<KnowledgeRoot[]>([])
+  const [activeRootId, setActiveRootId] = useState<string>()
+  const [knowledgeListing, setKnowledgeListing] = useState<WorkspaceListing>()
+  const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false)
+  const [addRootOpen, setAddRootOpen] = useState(false)
+  const knowledgeRequest = useRef(0)
   const [bookmarks, setBookmarks] = useState<KnowledgeBookmark[]>([])
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
@@ -3739,6 +4043,14 @@ function App() {
   useEffect(() => {
     void listKnowledgeBookmarks()
       .then(setBookmarks)
+      .catch((caught: unknown) =>
+        setError(caught instanceof Error ? caught.message : String(caught)),
+      )
+  }, [])
+
+  useEffect(() => {
+    void listKnowledgeRoots()
+      .then(setRoots)
       .catch((caught: unknown) =>
         setError(caught instanceof Error ? caught.message : String(caught)),
       )
@@ -4302,6 +4614,96 @@ function App() {
       const end = textarea?.value.length || 0
       textarea?.setSelectionRange(end, end)
     })
+  }
+
+  const activeRoot = roots.find((root) => root.id === activeRootId)
+
+  async function openKnowledgeFolder(path = '.', rootId = activeRootId) {
+    if (!rootId) {
+      return
+    }
+    // Responses can land out of order while roots or folders are switched, so
+    // only the newest request is allowed to write shared state.
+    const request = ++knowledgeRequest.current
+    setKnowledgeLoading(true)
+    setError(undefined)
+    try {
+      const listing = await listKnowledgeEntries(rootId, path)
+      if (request !== knowledgeRequest.current) {
+        return
+      }
+      setKnowledgeListing(listing)
+      setKnowledgeFile(undefined)
+    } catch (caught) {
+      if (request === knowledgeRequest.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    } finally {
+      if (request === knowledgeRequest.current) {
+        setKnowledgeLoading(false)
+      }
+    }
+  }
+
+  async function openKnowledgeFile(path: string) {
+    const rootId = activeRootId
+    if (!rootId) {
+      return
+    }
+    const request = ++knowledgeRequest.current
+    setKnowledgeLoading(true)
+    setError(undefined)
+    try {
+      const opened = await readKnowledgeFile(rootId, path)
+      if (request !== knowledgeRequest.current) {
+        return
+      }
+      setKnowledgeFile(opened)
+      // Reading is full-screen on a phone, matching how selecting a session
+      // hands the view over to the conversation.
+      setSidebarOpen(false)
+    } catch (caught) {
+      if (request === knowledgeRequest.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    } finally {
+      if (request === knowledgeRequest.current) {
+        setKnowledgeLoading(false)
+      }
+    }
+  }
+
+  async function selectRoot(rootId: string) {
+    setActiveRootId(rootId)
+    setKnowledgeFile(undefined)
+    setKnowledgeListing(undefined)
+    await openKnowledgeFolder('.', rootId)
+  }
+
+  async function removeRoot(rootId: string) {
+    try {
+      await deleteKnowledgeRoot(rootId)
+      setRoots((current) => current.filter((root) => root.id !== rootId))
+      if (rootId === activeRootId) {
+        knowledgeRequest.current += 1
+        setActiveRootId(undefined)
+        setKnowledgeListing(undefined)
+        setKnowledgeFile(undefined)
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }
+
+  async function createRoot(computerId: string, path: string) {
+    const root = await addKnowledgeRoot({ computerId, path })
+    setRoots((current) =>
+      current.some((entry) => entry.id === root.id)
+        ? current
+        : [root, ...current],
+    )
+    setAddRootOpen(false)
+    await selectRoot(root.id)
   }
 
   function selectSession(session: ManagedSession) {
@@ -5114,26 +5516,146 @@ function App() {
           </button>
         </div>
 
-        <div className="sidebar-actions">
+        <div aria-label="Sidebar section" className="sidebar-switch" role="tablist">
           <button
-            className="new-session-button"
-            onClick={() => setNewSessionOpen(true)}
+            aria-selected={sidebarMode === 'sessions'}
+            className={sidebarMode === 'sessions' ? 'is-active' : ''}
+            onClick={() => setSidebarMode('sessions')}
+            role="tab"
             type="button"
           >
-            <Plus size={18} />
-            New session
+            Sessions
           </button>
           <button
-            aria-label="Manage computers"
-            className="manage-computers-button"
-            onClick={() => setComputersOpen(true)}
+            aria-selected={sidebarMode === 'knowledge'}
+            className={sidebarMode === 'knowledge' ? 'is-active' : ''}
+            onClick={() => {
+              setSidebarMode('knowledge')
+              if (!activeRootId && roots[0]) {
+                void selectRoot(roots[0].id)
+              }
+            }}
+            role="tab"
             type="button"
           >
-            <MonitorCog size={18} />
+            Knowledge
           </button>
         </div>
 
-        <nav aria-label="Sessions" className="session-list">
+        {sidebarMode === 'sessions' ? (
+          <div className="sidebar-actions">
+            <button
+              className="new-session-button"
+              onClick={() => setNewSessionOpen(true)}
+              type="button"
+            >
+              <Plus size={18} />
+              New session
+            </button>
+            <button
+              aria-label="Manage computers"
+              className="manage-computers-button"
+              onClick={() => setComputersOpen(true)}
+              type="button"
+            >
+              <MonitorCog size={18} />
+            </button>
+          </div>
+        ) : null}
+
+        {sidebarMode === 'knowledge' ? (
+          <nav aria-label="Knowledge" className="session-list knowledge-tree">
+            {roots.length === 0 ? (
+              <p className="sidebar-message">
+                Add a knowledge root to browse a folder on any computer.
+              </p>
+            ) : null}
+            {roots.length > 0 ? (
+              <>
+                <p className="sidebar-label">Roots</p>
+                {roots.map((root) => (
+                  <div className="knowledge-root" key={root.id}>
+                    <button
+                      aria-current={root.id === activeRootId ? 'true' : undefined}
+                      className={root.id === activeRootId ? 'is-active' : ''}
+                      onClick={() => void selectRoot(root.id)}
+                      type="button"
+                    >
+                      <FolderOpen size={15} />
+                      <span>
+                        <strong>{root.name}</strong>
+                        <small>
+                          {root.computerName} · {root.path}
+                        </small>
+                      </span>
+                    </button>
+                    <button
+                      aria-label={`Remove ${root.name} root`}
+                      className="icon-button icon-button--danger"
+                      onClick={() => void removeRoot(root.id)}
+                      type="button"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </>
+            ) : null}
+            {activeRoot && knowledgeListing ? (
+              <>
+                <p className="sidebar-label">
+                  {knowledgeListing.path === '.'
+                    ? activeRoot.name
+                    : knowledgeListing.path}
+                </p>
+                {knowledgeListing.parent !== undefined ? (
+                  <button
+                    className="workspace-entry"
+                    onClick={() =>
+                      void openKnowledgeFolder(knowledgeListing.parent)
+                    }
+                    type="button"
+                  >
+                    <ArrowUp size={15} />
+                    <span>
+                      <strong>Parent folder</strong>
+                    </span>
+                  </button>
+                ) : null}
+                {knowledgeListing.entries.length === 0 ? (
+                  <p className="sidebar-message">This folder is empty.</p>
+                ) : null}
+                {knowledgeListing.entries.map((entry) => (
+                  <button
+                    className="workspace-entry"
+                    key={entry.path}
+                    onClick={() =>
+                      entry.kind === 'directory'
+                        ? void openKnowledgeFolder(entry.path)
+                        : void openKnowledgeFile(entry.path)
+                    }
+                    type="button"
+                  >
+                    {entry.kind === 'directory' ? (
+                      <FolderOpen size={15} />
+                    ) : (
+                      <FileText size={15} />
+                    )}
+                    <span>
+                      <strong>{entry.name}</strong>
+                    </span>
+                  </button>
+                ))}
+              </>
+            ) : null}
+          </nav>
+        ) : null}
+
+        <nav
+          aria-label="Sessions"
+          className="session-list"
+          hidden={sidebarMode !== 'sessions'}
+        >
           <p className="sidebar-label">Recent</p>
           {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
           {!loading && sessions.length === 0 ? (
@@ -5166,21 +5688,36 @@ function App() {
           </DndContext>
         </nav>
         <div className="sidebar-settings">
-          <button
-            aria-label="Knowledge"
-            className="sidebar-settings__button"
-            onClick={() => {
-              setSidebarOpen(false)
-              setKnowledgeOpen(true)
-            }}
-            type="button"
-          >
-            <BookOpen size={18} />
-            <span>
-              <strong>Knowledge</strong>
-              <small>Workspace folders and saved paths</small>
-            </span>
-          </button>
+          {sidebarMode === 'knowledge' ? (
+            <button
+              aria-label="Add knowledge root"
+              className="sidebar-settings__button"
+              onClick={() => setAddRootOpen(true)}
+              type="button"
+            >
+              <Plus size={18} />
+              <span>
+                <strong>Add knowledge root</strong>
+                <small>Pick a computer and folder</small>
+              </span>
+            </button>
+          ) : (
+            <button
+              aria-label="Knowledge"
+              className="sidebar-settings__button"
+              onClick={() => {
+                setSidebarOpen(false)
+                setKnowledgeOpen(true)
+              }}
+              type="button"
+            >
+              <BookOpen size={18} />
+              <span>
+                <strong>Saved paths</strong>
+                <small>Bookmarked session files and folders</small>
+              </span>
+            </button>
+          )}
           <button
             aria-label="App settings"
             className="sidebar-settings__button"
@@ -5208,7 +5745,59 @@ function App() {
         />
       ) : null}
 
-      <main className="conversation">
+      {sidebarMode === 'knowledge' ? (
+        <main className="conversation conversation--knowledge">
+          <header className="conversation-header">
+            <button
+              aria-label="Open sessions"
+              className="icon-button mobile-menu"
+              onClick={() => setSidebarOpen(true)}
+              type="button"
+            >
+              <Menu size={21} />
+            </button>
+            <div className="conversation-header__title">
+              <strong>{activeRoot?.name || 'Knowledge'}</strong>
+              <span>
+                {activeRoot
+                  ? `${activeRoot.computerName} · ${activeRoot.path}`
+                  : 'Browse folders on any computer'}
+              </span>
+            </div>
+          </header>
+          {error ? (
+            <div className="error-banner">
+              <span>{error}</span>
+              <button
+                aria-label="Dismiss error"
+                onClick={() => setError(undefined)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          ) : null}
+          {activeRoot ? (
+            <KnowledgeReader
+              file={knowledgeFile}
+              key={knowledgeFile?.path || activeRoot.id}
+              listing={knowledgeListing}
+              loading={knowledgeLoading}
+              onOpenFolder={(path) => void openKnowledgeFolder(path)}
+              root={activeRoot}
+            />
+          ) : (
+            <div className="knowledge-reader knowledge-reader--empty">
+              <BookOpen size={26} />
+              <p>
+                Add a knowledge root to read Markdown from any computer without
+                opening a session.
+              </p>
+            </div>
+          )}
+        </main>
+      ) : null}
+
+      <main className="conversation" hidden={sidebarMode === 'knowledge'}>
         <header className="conversation-header">
           <button
             aria-label="Open sessions"
@@ -5863,6 +6452,14 @@ function App() {
           session={selected}
         />
       ) : null}
+      {addRootOpen ? (
+        <AddKnowledgeRootDialog
+          computers={computers}
+          onClose={() => setAddRootOpen(false)}
+          onCreate={createRoot}
+        />
+      ) : null}
+
       {knowledgeOpen ? (
         <KnowledgeDialog
           bookmarks={bookmarks}

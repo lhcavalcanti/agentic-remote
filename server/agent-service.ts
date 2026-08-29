@@ -1200,6 +1200,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return listHomeDirectories(path)
   }
 
+  /**
+   * Browses a knowledge root. The root is confined exactly like a session
+   * working directory, and the requested path is confined within it by
+   * `listWorkspace`, so no session is involved.
+   */
+  async listKnowledge(root: string, path = '.') {
+    return listWorkspace(await validateSessionDirectory(root), path)
+  }
+
+  async readKnowledgeFile(root: string, path: string) {
+    return readWorkspaceFile(await validateSessionDirectory(root), path)
+  }
+
   listWorkspace(
     sessionId: string,
     requestedPath?: string,

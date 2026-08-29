@@ -73,6 +73,20 @@ const configureRuntimeSchema = z.object({
 const directoryQuerySchema = z.object({
   path: z.string().trim().max(4096).optional(),
 })
+const knowledgeRootSchema = z.object({
+  computerId: z.string().min(1).max(256),
+  path: z.string().trim().min(1).max(4096),
+  name: z.string().trim().max(200).optional(),
+})
+
+const knowledgePathSchema = z.object({
+  path: z.string().trim().max(4096).optional(),
+})
+
+const knowledgeFileSchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+})
+
 const workspaceFileQuerySchema = z.object({
   path: z.string().trim().min(1).max(4096),
 })
@@ -240,6 +254,79 @@ export async function registerHubRoutes(
   app.get('/api/knowledge', async () => ({
     bookmarks: knowledge.list(),
   }))
+
+  app.get('/api/knowledge/roots', async () => ({
+    roots: knowledge.listRoots(),
+  }))
+
+  app.post('/api/knowledge/roots', async (request, reply) => {
+    const input = knowledgeRootSchema.parse(request.body)
+    const computer = manager
+      .listComputers()
+      .find((entry) => entry.id === input.computerId)
+    if (!computer) {
+      return reply.code(404).send({ error: 'Computer is not registered' })
+    }
+    // Browse the folder first so an unreachable or refused root is reported
+    // before it is stored, and so the owning computer resolves it.
+    let listing
+    try {
+      listing = await manager.listKnowledge(input.computerId, input.path)
+    } catch (error) {
+      // A node released before knowledge roots has no such route, which would
+      // otherwise surface as a bare "Not Found".
+      if (Reflect.get(error as object, 'statusCode') === 404) {
+        return reply.code(409).send({
+          error: `${computer.name} does not support knowledge roots yet. Update it to the latest release.`,
+        })
+      }
+      throw error
+    }
+    const root = await knowledge.addRoot({
+      computerId: input.computerId,
+      computerName: computer.name,
+      path: input.path,
+      name:
+        input.name?.trim() ||
+        input.path.split('/').filter(Boolean).at(-1) ||
+        input.path,
+    })
+    return reply.code(201).send({ root, listing })
+  })
+
+  app.delete<{ Params: { rootId: string } }>(
+    '/api/knowledge/roots/:rootId',
+    async (request, reply) => {
+      if (!(await knowledge.removeRoot(request.params.rootId))) {
+        return reply.code(404).send({ error: 'Knowledge root not found' })
+      }
+      return reply.code(204).send()
+    },
+  )
+
+  app.get<{ Params: { rootId: string }; Querystring: { path?: string } }>(
+    '/api/knowledge/roots/:rootId/entries',
+    async (request, reply) => {
+      const root = knowledge.getRoot(request.params.rootId)
+      if (!root) {
+        return reply.code(404).send({ error: 'Knowledge root not found' })
+      }
+      const query = knowledgePathSchema.parse(request.query)
+      return manager.listKnowledge(root.computerId, root.path, query.path)
+    },
+  )
+
+  app.get<{ Params: { rootId: string }; Querystring: { path?: string } }>(
+    '/api/knowledge/roots/:rootId/file',
+    async (request, reply) => {
+      const root = knowledge.getRoot(request.params.rootId)
+      if (!root) {
+        return reply.code(404).send({ error: 'Knowledge root not found' })
+      }
+      const query = knowledgeFileSchema.parse(request.query)
+      return manager.readKnowledgeFile(root.computerId, root.path, query.path)
+    },
+  )
 
   app.post('/api/knowledge', async (request, reply) => {
     const input = bookmarkSchema.parse(request.body)

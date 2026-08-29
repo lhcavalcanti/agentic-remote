@@ -516,6 +516,16 @@ export class ClaudeAgentService
     return listHomeDirectories(path)
   }
 
+  // Confine the root exactly as a session working directory is confined, so
+  // this stays safe even though the provider aggregator routes to Copilot.
+  async listKnowledge(root: string, path = '.') {
+    return listWorkspace(await validateSessionDirectory(root), path)
+  }
+
+  async readKnowledgeFile(root: string, path: string) {
+    return readWorkspaceFile(await validateSessionDirectory(root), path)
+  }
+
   listWorkspace(
     sessionId: string,
     requestedPath?: string,

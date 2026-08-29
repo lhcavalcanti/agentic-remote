@@ -75,6 +75,8 @@ export interface SessionService {
   on(event: 'event', listener: (event: ServerEvent) => void): unknown
   off(event: 'event', listener: (event: ServerEvent) => void): unknown
   listDirectories(path?: string): Promise<DirectoryListing>
+  listKnowledge(root: string, path?: string): Promise<WorkspaceListing>
+  readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile>
   listWorkspace(
     sessionId: string,
     path?: string,

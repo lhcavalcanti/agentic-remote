@@ -19,13 +19,11 @@ import type {
 import App from './App'
 import {
   activateSession,
-  addKnowledgeBookmark,
   cancelSession,
   clearConversation,
   createSession,
   configureRuntime,
   deleteSession,
-  deleteKnowledgeBookmark,
   executeCommand,
   getPushSettings,
   getSession,
@@ -34,7 +32,6 @@ import {
   listComputers,
   listDirectories,
   listHistory,
-  listKnowledgeBookmarks,
   listKnowledgeRoots,
   listKnowledgeEntries,
   readKnowledgeFile,
@@ -63,14 +60,11 @@ vi.mock('./api', () => ({
   removeQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
-  listKnowledgeBookmarks: vi.fn(),
   listKnowledgeRoots: vi.fn(),
   addKnowledgeRoot: vi.fn(),
   deleteKnowledgeRoot: vi.fn(),
   listKnowledgeEntries: vi.fn(),
   readKnowledgeFile: vi.fn(),
-  addKnowledgeBookmark: vi.fn(),
-  deleteKnowledgeBookmark: vi.fn(),
   listDirectories: vi.fn(),
   listWorkspace: vi.fn(),
   moveSessionToTmux: vi.fn(),
@@ -297,7 +291,6 @@ describe('App', () => {
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
-    vi.mocked(listKnowledgeBookmarks).mockResolvedValue([])
     vi.mocked(listKnowledgeRoots).mockResolvedValue([])
     vi.mocked(listWorkspace).mockImplementation(
       async (_computerId, _sessionId, path = '.') =>
@@ -356,14 +349,6 @@ describe('App', () => {
       ],
       truncated: false,
     })
-    vi.mocked(addKnowledgeBookmark).mockImplementation(async (input) => ({
-      id: `bookmark-${input.kind}-${input.path}`,
-      computerName: computer.name,
-      sessionTitle: session.title,
-      ...input,
-      createdAt: '2026-08-04T00:00:00.000Z',
-    }))
-    vi.mocked(deleteKnowledgeBookmark).mockResolvedValue()
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') =>
         path === '~'

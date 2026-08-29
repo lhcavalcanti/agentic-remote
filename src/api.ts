@@ -8,7 +8,6 @@ import type {
   ExecuteCommandInput,
   ManagedSession,
   AddKnowledgeRootInput,
-  KnowledgeBookmark,
   KnowledgeRoot,
   PushSettings,
   ManagedRemovedQueuedPrompt,
@@ -151,38 +150,6 @@ export async function readKnowledgeFile(
   return request<WorkspaceFile>(
     `/api/knowledge/roots/${encodeURIComponent(rootId)}/file?path=${encodeURIComponent(path)}`,
   )
-}
-
-export async function listKnowledgeBookmarks(): Promise<KnowledgeBookmark[]> {
-  const response = await request<{ bookmarks: KnowledgeBookmark[] }>(
-    '/api/knowledge',
-  )
-  return response.bookmarks
-}
-
-export async function addKnowledgeBookmark(input: {
-  computerId: string
-  sessionId: string
-  path: string
-  name: string
-  kind: 'file' | 'folder'
-}): Promise<KnowledgeBookmark> {
-  const response = await request<{ bookmark: KnowledgeBookmark }>(
-    '/api/knowledge',
-    {
-      method: 'POST',
-      body: JSON.stringify(input),
-    },
-  )
-  return response.bookmark
-}
-
-export async function deleteKnowledgeBookmark(
-  bookmarkId: string,
-): Promise<void> {
-  await requestVoid(`/api/knowledge/${encodeURIComponent(bookmarkId)}`, {
-    method: 'DELETE',
-  })
 }
 
 export async function listDirectories(

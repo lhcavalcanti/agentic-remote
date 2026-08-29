@@ -20,6 +20,7 @@ product specification and wins over this skill whenever the two disagree.
 | How do hub and node relate? | `docs/architecture.md` |
 | What differs between providers? | `docs/provider-compatibility.md` |
 | How is it installed and secured? | `README.md` |
+| How are builds promoted and cleaned up? | `docs/deployment-promotion.md` |
 | Rollout approval policy | `.github/copilot-instructions.md` |
 | Host topology and deployment | `homelab-development-navigation` skill |
 
@@ -91,6 +92,24 @@ This is the area most likely to be extended, so its current limits matter.
   its session is deleted, and there is no session-independent knowledge root.
 - Opening a bookmark selects its session and reopens the session-scoped
   workspace dialog; Knowledge itself has no tree, search, or sorting.
+
+## Deployment topology
+
+Keep the deployment channel separate from the runtime role. `hub` and `node`
+describe where sessions and UI traffic execute; `development` and `production`
+describe which checkout or release serves them.
+
+For every machine setup, prefer a machine-local profile outside the repository
+with explicit development root, production runtime root, immutable release
+root, service name, health/external checks, validation policy, promotion policy,
+and rollback policy. Do not store credentials or pairing tokens in that
+profile.
+
+The production service must run from the immutable `current` release. A
+local-only monitor may pull and validate the development checkout, then
+graduate the exact validated commit to the production runtime. It must not run
+tests against or replace the externally reachable service before validation
+completes. See `docs/deployment-promotion.md` for the full contract.
 
 ## Security invariants
 
@@ -171,6 +190,21 @@ Notes:
   tree is left untouched.
 - The service runs from a published release, so merging alone changes nothing
   on either host until a rollout.
+
+### Post-merge cleanup
+
+After the PR is merged and the commit is graduated:
+
+1. Verify the PR merge SHA and promoted SHA.
+2. Delete the merged remote branch.
+3. Remove the temporary worktree and local branch created for the task.
+4. Prune stale worktree metadata and leave the primary checkout clean on
+   `main`.
+5. Preserve the intentional production runtime worktree, if present; keep it
+   detached and clean.
+
+Only clean up paths owned by the task. Do not remove dirty, unmerged, or
+unowned worktrees without explicit approval.
 
 ## Rolling out
 

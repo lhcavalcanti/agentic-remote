@@ -28,7 +28,12 @@
   external checks, validation policy, promotion policy, and rollback policy.
 - Keep scheduled pull/test/promote orchestration outside this repository. The
   application repository owns service setup, release publication, and rollback;
-  a local opt-in monitor owns the machine-specific schedule.
+  the checked-in promotion setup assets install a machine-local opt-in monitor
+  that owns the machine-specific schedule.
+- Keep `bin/agentic-remote-promotion-monitor`,
+  `bin/agentic-remote-promotion-setup`, and
+  `config/agentic-remote-promotion.env.example` generic. Installed profiles,
+  systemd units, state, and credentials remain outside the repository.
 - Promote only the exact commit that passed development validation and the
   matching CI gate. Record the promoted and previous release identifiers.
 - If validation, health checks, or promotion fail, keep the previous release

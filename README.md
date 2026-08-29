@@ -101,6 +101,17 @@ break the external access path.
 See [Deployment and promotion](docs/deployment-promotion.md) for the profile
 contract, promotion gates, rollback behavior, and post-merge cleanup rules.
 
+For a reproducible setup on another machine:
+
+```bash
+./bin/agentic-remote-promotion-setup init
+$EDITOR ~/.config/agentic-remote/promotion.env
+./bin/agentic-remote-promotion-setup install --create-runtime --enable
+```
+
+The setup script copies the monitor and profile into machine-local paths. The
+monitor is optional and disabled unless `--enable` is supplied.
+
 ## Add another computer
 
 A paired **node** runs sessions but does not serve the UI.

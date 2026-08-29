@@ -117,9 +117,14 @@ EOF
 Description=Check and graduate Agentic Remote builds every two hours
 
 [Timer]
-OnBootSec=15min
-OnUnitActiveSec=2h
+# A calendar schedule so the next run is always defined. Monotonic triggers do
+# not survive a long-lived session: a boot-relative trigger elapses once and
+# never returns, and a unit-active-relative one can leave the timer with no
+# next elapse at all, so an enabled timer would silently never run. Catching up
+# a missed run also requires a calendar schedule.
+OnCalendar=*-*-* 0/2:00:00
 Persistent=true
+RandomizedDelaySec=5min
 Unit=$SERVICE_NAME
 
 [Install]
@@ -249,7 +254,12 @@ enable_monitor() {
 
   systemctl --user daemon-reload
   systemctl --user enable --now "$TIMER_NAME"
-  printf 'Local promotion monitor enabled.\n'
+  # An already-running timer keeps the schedule it started with, so a changed
+  # unit would not take effect until the next session. Restart it so the
+  # installed schedule is the one that is armed.
+  systemctl --user restart "$TIMER_NAME"
+  printf 'Local promotion monitor enabled. Next run: %s\n' \
+    "$(systemctl --user show "$TIMER_NAME" -p NextElapseUSecRealtime --value)"
 }
 
 disable_monitor() {

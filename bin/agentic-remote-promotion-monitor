@@ -46,6 +46,10 @@ readonly DOWNSTREAM_HOSTS="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HOS
 readonly DOWNSTREAM_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT '')"
 readonly DOWNSTREAM_HEALTH_URL="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL '')"
 readonly DOWNSTREAM_SSH="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_SSH 'ssh -o BatchMode=yes')"
+# How long to wait for a restarted service to answer. A slow machine may need
+# more; a constrained test or a fast one may want less.
+readonly READY_ATTEMPTS="$(profile_value AGENTIC_REMOTE_MONITOR_READY_ATTEMPTS 30)"
+readonly READY_INTERVAL="$(profile_value AGENTIC_REMOTE_MONITOR_READY_INTERVAL 2)"
 readonly PRODUCTION_HOST="$(profile_value AGENTIC_REMOTE_MONITOR_HOST '')"
 readonly PRODUCTION_PORT="$(profile_value AGENTIC_REMOTE_MONITOR_PORT '')"
 readonly PRODUCTION_ROLE="$(profile_value AGENTIC_REMOTE_MONITOR_ROLE '')"
@@ -139,7 +143,9 @@ promote_downstream() {
     log "promoting $commit to $host"
 
     # Capture the commit to return to before anything is mutated.
-    if ! status="$(run_remote "$host" "cd $root_q && git rev-parse HEAD")"; then
+    if ! status="$(run_remote "$host" "cd $root_q && git rev-parse HEAD")" ||
+      [[ -z "$status" ]]; then
+      # An empty answer would later restore the host to an empty revision.
       log "ERROR: cannot read the checkout on $host: $DOWNSTREAM_ROOT"
       restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
       return 1
@@ -175,12 +181,12 @@ promote_downstream() {
       url_q="$(printf '%q' "$DOWNSTREAM_HEALTH_URL")"
       healthy=0
       # Match the local readiness wait; a single probe races the restart.
-      for attempt in $(seq 1 30); do
+      for attempt in $(seq 1 "$READY_ATTEMPTS"); do
         if run_remote "$host" "curl -fsS --max-time 5 $url_q >/dev/null"; then
           healthy=1
           break
         fi
-        sleep 2
+        sleep "$READY_INTERVAL"
       done
       if [[ "$healthy" != 1 ]]; then
         log "ERROR: health check failed on $host"
@@ -385,13 +391,13 @@ run() {
 
   if [[ -z "$failure" ]]; then
     local attempt healthy=0
-    for attempt in $(seq 1 30); do
+    for attempt in $(seq 1 "$READY_ATTEMPTS"); do
       if systemctl --user is-active --quiet "$SERVICE_NAME" &&
         curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
         healthy=1
         break
       fi
-      sleep 2
+      sleep "$READY_INTERVAL"
     done
     [[ "$healthy" == 1 ]] ||
       failure="production runtime health check failed after graduation"

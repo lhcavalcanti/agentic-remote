@@ -1,6 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
+// Behavior of the monitor is covered by executing it in
+// server/promotion-monitor.test.ts. What remains here are assertions about
+// shipped artifacts that are not executed: the profile template, the systemd
+// units, and the absence of installation-specific values.
 describe('reproducible promotion setup', () => {
   it('keeps the promotion runner profile-driven and validation-gated', async () => {
     const script = await readFile(
@@ -14,126 +18,6 @@ describe('reproducible promotion setup', () => {
     expect(script).toContain('git -C "$PROD_ROOT" switch --detach "$candidate_commit"')
     expect(script).toContain('"$RELEASE_ROOT/current"')
     expect(script).toContain('production runtime health check failed after graduation')
-  })
-
-  it('inherits the installed runtime identity unless the profile overrides it', async () => {
-    const script = await readFile(
-      new URL('../bin/agentic-remote-promotion-monitor', import.meta.url),
-      'utf8',
-    )
-
-    for (const key of ['HOST', 'PORT', 'ROLE', 'NAME']) {
-      expect(script).toContain(`profile_value AGENTIC_REMOTE_MONITOR_${key} ''`)
-    }
-
-    expect(script).toContain('[[ -z "$PRODUCTION_ROLE" ]] || setup_arguments+=(--role "$PRODUCTION_ROLE")')
-    expect(script).toContain('[[ -z "$PRODUCTION_NAME" ]] || setup_arguments+=(--name "$PRODUCTION_NAME")')
-    expect(script).toContain('[[ -z "$PRODUCTION_HOST" ]] || setup_arguments+=(--host "$PRODUCTION_HOST")')
-    expect(script).toContain('[[ -z "$PRODUCTION_PORT" ]] || setup_arguments+=(--port "$PRODUCTION_PORT")')
-    expect(script).toContain('setup "${setup_arguments[@]}"')
-    expect(script).not.toContain('--role "$PRODUCTION_ROLE" \\')
-  })
-
-  it('graduates only what origin/main already contains', async () => {
-    const script = await readFile(
-      new URL('../bin/agentic-remote-promotion-monitor', import.meta.url),
-      'utf8',
-    )
-
-    expect(script).toContain('git -C "$DEV_ROOT" rev-parse refs/remotes/origin/main')
-    expect(script).toContain('development main is not at origin/main')
-  })
-
-  it('restores the previous runtime when graduation fails after the switch', async () => {
-    const script = await readFile(
-      new URL('../bin/agentic-remote-promotion-monitor', import.meta.url),
-      'utf8',
-    )
-
-    expect(script).toContain('rollback_runtime()')
-    expect(script).toContain('rollback_runtime "$prod_commit" "$previous_release"')
-    expect(script).toContain('graduation failed and the previous runtime was restored')
-
-    // Every post-switch check must record a failure and fall through to the
-    // rollback rather than exiting and leaving the candidate active.
-    for (const message of [
-      'setup failed for $candidate_commit',
-      'production runtime health check failed after graduation',
-      'production release pointer is missing: $RELEASE_ROOT/current',
-      'external access check failed: $EXTERNAL_URL',
-    ]) {
-      expect(script).toContain(`failure="${message}"`)
-    }
-
-    const stateOrder = script.indexOf('mv -f -- "$temporary_record" "$STATE_RECORD"')
-    const markerOrder = script.indexOf('mv -f -- "$temporary_state" "$STATE_FILE"')
-    expect(stateOrder).toBeGreaterThan(-1)
-    expect(stateOrder).toBeLessThan(markerOrder)
-  })
-
-  it('promotes the validated commit to downstream hosts and verifies each', async () => {
-    const script = await readFile(
-      new URL('../bin/agentic-remote-promotion-monitor', import.meta.url),
-      'utf8',
-    )
-
-    // Downstream promotion runs before the marker advances, so a failure leaves
-    // the commit ungraduated for the next run.
-    const downstream = script.indexOf('promote_downstream "$candidate_commit"')
-    const marker = script.indexOf('mv -f -- "$temporary_record" "$STATE_RECORD"')
-    expect(downstream).toBeGreaterThan(-1)
-    expect(downstream).toBeLessThan(marker)
-
-    // The exact validated commit is installed. Pulling a branch would build
-    // whatever the tip points at now, which is not what was validated.
-    expect(script).toContain('git checkout --detach $commit_q && ./bin/agentic-remote setup')
-    expect(script).not.toContain('./bin/agentic-remote update')
-
-    // A failing git must not read as a clean worktree.
-    expect(script).toContain('changes=\\$(git status --porcelain) && test -z')
-
-    expect(script).toContain('not the validated $commit')
-    expect(script).toContain('restore_promoted')
-    expect(script).toContain('downstream promotion failed')
-  })
-
-  it('quotes profile values so they cannot execute on a remote host', async () => {
-    const script = await readFile(
-      new URL('../bin/agentic-remote-promotion-monitor', import.meta.url),
-      'utf8',
-    )
-
-    expect(script).toContain('"bash -lc $(printf \'%q\' "$script")"')
-    for (const value of ['DOWNSTREAM_ROOT', 'DOWNSTREAM_HEALTH_URL']) {
-      expect(script).toContain(`printf '%q' "$${value}"`)
-    }
-  })
-
-  it('waits for downstream readiness and restores an exact commit on failure', async () => {
-    const script = await readFile(
-      new URL('../bin/agentic-remote-promotion-monitor', import.meta.url),
-      'utf8',
-    )
-
-    // A single probe would race the restart the install just triggered.
-    expect(script).toContain('for attempt in $(seq 1 30); do')
-    expect(script).toContain('curl -fsS --max-time 5 $url_q')
-
-    // Recovery rebuilds a captured commit rather than trusting release mtimes.
-    expect(script).toContain('restore_downstream "$host" "$previous_head"')
-    expect(script).toContain('git checkout --detach $commit_q && ./bin/agentic-remote setup')
-  })
-
-  it('validates downstream settings before anything local is mutated', async () => {
-    const script = await readFile(
-      new URL('../bin/agentic-remote-promotion-monitor', import.meta.url),
-      'utf8',
-    )
-
-    const validation = script.indexOf('AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT "$DOWNSTREAM_ROOT"')
-    const build = script.indexOf('building development release')
-    expect(validation).toBeGreaterThan(-1)
-    expect(validation).toBeLessThan(build)
   })
 
   it('stays single-machine when no downstream host is configured', async () => {

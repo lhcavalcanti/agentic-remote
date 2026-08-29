@@ -69,6 +69,9 @@ describe('reproducible promotion setup', () => {
 
     expect(script).toContain('AGENTIC_REMOTE_MONITOR_HEALTH_URL in $PROFILE_DEST before enabling')
     expect(script).toContain('health URL did not answer: $health_url')
+    // An already-active timer keeps its original schedule, so enabling must
+    // restart it or a changed unit silently does not take effect.
+    expect(script).toContain('systemctl --user restart "$TIMER_NAME"')
   })
 
   it('ships a profile that must be completed before it can be armed', async () => {
@@ -96,8 +99,12 @@ describe('reproducible promotion setup', () => {
     )
 
     expect(script).toContain('Local promotion monitor installed and disabled by default.')
-    expect(script).toContain('OnUnitActiveSec=2h')
+    // A monotonic-only schedule can leave an enabled timer with no next
+    // elapse, so it must be a calendar schedule for Persistent= to apply.
+    expect(script).toContain('OnCalendar=*-*-* 0/2:00:00')
     expect(script).toContain('Persistent=true')
+    expect(script).not.toContain('OnUnitActiveSec=')
+    expect(script).not.toContain('OnBootSec=')
     expect(script).toContain('TimeoutStartSec=30min')
     expect(script).toContain('Environment=$(systemd_quote "AGENTIC_REMOTE_MONITOR_PROFILE=$PROFILE_DEST")')
     expect(script).toContain('--create-runtime')

@@ -511,6 +511,30 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('shows the skill name in skill activity titles', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"skill-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"skill-call",
+          "toolName":"skill",
+          "arguments":{"skill":"agentic-remote-navigation"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:skill-call',
+        content: 'Skill (agentic-remote-navigation)',
+        activityStatus: 'running',
+      }),
+    ])
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',

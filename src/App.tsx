@@ -480,7 +480,6 @@ function NewSessionDialog({
   computers,
   defaultComputerId,
   defaultRuntimes,
-  onDefaultRuntimesChange,
   onClose,
   onCreated,
 }: {
@@ -488,7 +487,6 @@ function NewSessionDialog({
   computers: ComputerSummary[]
   defaultComputerId?: string
   defaultRuntimes: DefaultRuntimeSettings
-  onDefaultRuntimesChange: (settings: DefaultRuntimeSettings) => void
   onClose: () => void
   onCreated: (session: ManagedSession) => void
 }) {
@@ -509,6 +507,8 @@ function NewSessionDialog({
   const [error, setError] = useState<string>()
   const [runtimeLoading, setRuntimeLoading] = useState(false)
   const [runtimeError, setRuntimeError] = useState<string>()
+  const [providerRuntimeModels, setProviderRuntimeModels] =
+    useState<RuntimeModelOption[]>()
   const available = useMemo(
     () => computers.filter((computer) => computer.online),
     [computers],
@@ -572,26 +572,11 @@ function NewSessionDialog({
     let active = true
     setRuntimeLoading(true)
     setRuntimeError(undefined)
+    setProviderRuntimeModels(undefined)
     void getProviderRuntimeOptions(computerId, provider)
       .then(({ models }) => {
-        if (!active) {
-          return
-        }
-        if (!defaultRuntimes[provider].model) {
-          return
-        }
-        const normalized = normalizedRuntimeSelection(
-          defaultRuntimes[provider],
-          models,
-        )
-        if (
-          normalized &&
-          !sameRuntimeSelection(normalized, defaultRuntimes[provider])
-        ) {
-          onDefaultRuntimesChange({
-            ...defaultRuntimes,
-            [provider]: normalized,
-          })
+        if (active) {
+          setProviderRuntimeModels(models)
         }
       })
       .catch((caught: unknown) => {
@@ -611,9 +596,7 @@ function NewSessionDialog({
     }
   }, [
     computerId,
-    defaultRuntimes,
     mode,
-    onDefaultRuntimesChange,
     open,
     provider,
   ])
@@ -649,8 +632,13 @@ function NewSessionDialog({
     setError(undefined)
     try {
       if (mode === 'new') {
-        const defaultRuntime = defaultRuntimes[provider]
-        const defaultModel = defaultRuntime.model.trim()
+        const defaultRuntime = providerRuntimeModels
+          ? normalizedRuntimeSelection(
+              defaultRuntimes[provider],
+              providerRuntimeModels,
+            )
+          : undefined
+        const defaultModel = defaultRuntime?.model.trim()
         onCreated(
           await createSession(computerId, {
             cwd,
@@ -662,7 +650,7 @@ function NewSessionDialog({
                 ? terminalBacked
                 : false,
             allowAllPermissions,
-            ...(defaultModel
+            ...(defaultModel && defaultRuntime
               ? {
                   model: defaultModel,
                   ...(defaultRuntime.reasoningEffort
@@ -701,8 +689,11 @@ function NewSessionDialog({
   )
   const providers = computerProviders(selectedComputer)
   const selectedProvider = providers.find((entry) => entry.id === provider)
-  const defaultRuntime = defaultRuntimes[provider]
-  const defaultModel = defaultRuntime.model.trim()
+  const savedDefaultRuntime = defaultRuntimes[provider]
+  const defaultRuntime = providerRuntimeModels
+    ? normalizedRuntimeSelection(savedDefaultRuntime, providerRuntimeModels)
+    : savedDefaultRuntime
+  const defaultModel = defaultRuntime?.model.trim() || ''
 
   return (
     <DialogFrame
@@ -786,12 +777,14 @@ function NewSessionDialog({
             {defaultModel ? (
               <small className="field__hint">
                 New sessions use <strong>{defaultModel}</strong> with{' '}
-                {defaultRuntime.reasoningEffort ? (
+                {defaultRuntime?.reasoningEffort ? (
                   <>
                     <strong>{defaultRuntime.reasoningEffort}</strong> effort and{' '}
                   </>
                 ) : null}
-                <strong>{defaultRuntime.contextTier.replace('_', ' ')}</strong>{' '}
+                <strong>
+                  {defaultRuntime?.contextTier.replace('_', ' ')}
+                </strong>{' '}
                 context.
               </small>
             ) : null}
@@ -1296,6 +1289,46 @@ function normalizedRuntimeSelection(
   }
 }
 
+function mergeRuntimeModelOptions(
+  catalogs: RuntimeModelOption[][],
+): RuntimeModelOption[] {
+  const merged = new Map<string, RuntimeModelOption>()
+  for (const catalog of catalogs) {
+    for (const model of catalog) {
+      const existing = merged.get(model.id)
+      if (!existing) {
+        merged.set(model.id, {
+          ...model,
+          reasoningEfforts: [...model.reasoningEfforts],
+          contextTiers: [...model.contextTiers],
+          contextTokenLimits: model.contextTokenLimits
+            ? { ...model.contextTokenLimits }
+            : undefined,
+        })
+        continue
+      }
+      merged.set(model.id, {
+        ...existing,
+        description: existing.description || model.description,
+        reasoningEfforts: [
+          ...new Set([
+            ...existing.reasoningEfforts,
+            ...model.reasoningEfforts,
+          ]),
+        ],
+        contextTiers: [
+          ...new Set([...existing.contextTiers, ...model.contextTiers]),
+        ],
+        contextTokenLimits: {
+          ...model.contextTokenLimits,
+          ...existing.contextTokenLimits,
+        },
+      })
+    }
+  }
+  return [...merged.values()]
+}
+
 function sameRuntimeSelection(
   left: DefaultRuntimeSelection,
   right: DefaultRuntimeSelection,
@@ -1324,6 +1357,7 @@ function DefaultRuntimeControls({
 }) {
   const name = providerName(provider)
   const selectedModel = models.find((model) => model.id === selection.model)
+  const unavailableModel = selection.model.trim() && !selectedModel
 
   return (
     <div className="default-runtime">
@@ -1357,9 +1391,14 @@ function DefaultRuntimeControls({
                   contextTier: 'default',
                 })
               }}
-              value={selectedModel?.id || ''}
+              value={selection.model.trim()}
             >
               <option value="">Provider default</option>
+              {unavailableModel ? (
+                <option value={selection.model.trim()}>
+                  {selection.model.trim()} (unavailable)
+                </option>
+              ) : null}
               {models.map((model) => (
                 <option key={model.id} value={model.id}>
                   {model.name}
@@ -1464,6 +1503,9 @@ function AppSettingsDialog({
   const [runtimeModels, setRuntimeModels] = useState<
     Partial<Record<AgentProvider, RuntimeModelOption[]>>
   >({})
+  const [runtimeCatalogsComplete, setRuntimeCatalogsComplete] = useState<
+    Partial<Record<AgentProvider, boolean>>
+  >({})
   const [runtimeLoading, setRuntimeLoading] = useState(false)
   const [runtimeErrors, setRuntimeErrors] = useState<
     Partial<Record<AgentProvider, string>>
@@ -1513,7 +1555,7 @@ function AppSettingsDialog({
     let active = true
     const providers: AgentProvider[] = ['copilot', 'claude']
     const sources = providers.flatMap((provider) => {
-      const computer = computers.find(
+      const providerComputers = computers.filter(
         (candidate) =>
           candidate.online &&
           computerProviders(candidate).some(
@@ -1521,10 +1563,11 @@ function AppSettingsDialog({
               capability.id === provider && capability.available,
           ),
       )
-      return computer ? [{ provider, computer }] : []
+      return providerComputers.map((computer) => ({ provider, computer }))
     })
     setRuntimeLoading(true)
     setRuntimeModels({})
+    setRuntimeCatalogsComplete({})
     setRuntimeErrors(
       Object.fromEntries(
         providers
@@ -1548,25 +1591,39 @@ function AppSettingsDialog({
         return
       }
       const models: Partial<Record<AgentProvider, RuntimeModelOption[]>> = {}
+      const complete: Partial<Record<AgentProvider, boolean>> = {}
       const errors: Partial<Record<AgentProvider, string>> = {}
-      for (const [index, result] of results.entries()) {
-        const provider = sources[index].provider
-        if (result.status === 'fulfilled') {
-          models[provider] = result.value.options.models
-        } else {
-          errors[provider] =
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason)
-        }
-      }
       for (const provider of providers) {
-        if (!sources.some((source) => source.provider === provider)) {
+        const providerResults = results.filter(
+          (_result, index) => sources[index].provider === provider,
+        )
+        const catalogs = providerResults.flatMap((result) =>
+          result.status === 'fulfilled'
+            ? [result.value.options.models]
+            : [],
+        )
+        if (catalogs.length > 0) {
+          models[provider] = mergeRuntimeModelOptions(catalogs)
+          complete[provider] = providerResults.every(
+            (result) => result.status === 'fulfilled',
+          )
+        } else if (providerResults.length === 0) {
           errors[provider] =
             `${providerName(provider)} is not available on an online computer.`
+        } else {
+          const failure = providerResults.find(
+            (result) => result.status === 'rejected',
+          )
+          errors[provider] =
+            failure?.status === 'rejected'
+              ? failure.reason instanceof Error
+                ? failure.reason.message
+                : String(failure.reason)
+              : `Unable to load ${providerName(provider)} models.`
         }
       }
       setRuntimeModels(models)
+      setRuntimeCatalogsComplete(complete)
       setRuntimeErrors(errors)
       setRuntimeLoading(false)
     })
@@ -1580,7 +1637,7 @@ function AppSettingsDialog({
     const next = { ...defaultRuntimes }
     for (const provider of ['copilot', 'claude'] as const) {
       const models = runtimeModels[provider]
-      if (!models) {
+      if (!models || !runtimeCatalogsComplete[provider]) {
         continue
       }
       const normalized = normalizedRuntimeSelection(
@@ -1598,7 +1655,12 @@ function AppSettingsDialog({
     if (changed) {
       onDefaultRuntimesChange(next)
     }
-  }, [defaultRuntimes, onDefaultRuntimesChange, runtimeModels])
+  }, [
+    defaultRuntimes,
+    onDefaultRuntimesChange,
+    runtimeCatalogsComplete,
+    runtimeModels,
+  ])
 
   if (!open) {
     return null
@@ -6655,7 +6717,6 @@ function App() {
         computers={computers}
         defaultComputerId={defaultComputerId}
         defaultRuntimes={defaultRuntimes}
-        onDefaultRuntimesChange={setDefaultRuntimes}
         onClose={() => setNewSessionOpen(false)}
         onCreated={created}
         open={newSessionOpen}

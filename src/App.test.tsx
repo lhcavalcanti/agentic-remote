@@ -720,7 +720,86 @@ describe('App', () => {
     )
   })
 
-  it('repairs saved runtime defaults before creating a new session', async () => {
+  it('aggregates model catalogs without overwriting a node-specific default', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-models',
+      JSON.stringify({
+        copilot: {
+          model: 'node-model',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
+        claude: {
+          model: '',
+          reasoningEffort: '',
+          contextTier: 'default',
+        },
+      }),
+    )
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (computerId, provider) => ({
+        models:
+          provider === 'claude'
+            ? [
+                {
+                  id: 'sonnet',
+                  name: 'Sonnet',
+                  reasoningEfforts: ['low', 'medium', 'high'],
+                  contextTiers: ['default'],
+                },
+              ]
+            : computerId === secondComputer.id
+              ? [
+                  {
+                    id: 'node-model',
+                    name: 'Node Model',
+                    reasoningEfforts: ['high'],
+                    contextTiers: ['default', 'long_context'],
+                  },
+                ]
+              : [
+                  {
+                    id: 'hub-model',
+                    name: 'Hub Model',
+                    reasoningEfforts: ['medium'],
+                    contextTiers: ['default'],
+                  },
+                ],
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    const model = await screen.findByLabelText(
+      'GitHub Copilot default model',
+    )
+    await waitFor(() => expect(model).toHaveValue('node-model'))
+    expect(screen.getByRole('option', { name: 'Hub Model' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Node Model' })).toBeInTheDocument()
+    expect(getProviderRuntimeOptions).toHaveBeenCalledWith(
+      secondComputer.id,
+      'copilot',
+    )
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+    ).toEqual({
+      copilot: {
+        model: 'node-model',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      },
+      claude: {
+        model: '',
+        reasoningEffort: '',
+        contextTier: 'default',
+      },
+    })
+  })
+
+  it('uses a computer-specific fallback without replacing the saved default', async () => {
     localStorage.setItem(
       'agentic-remote:default-models',
       JSON.stringify({
@@ -741,24 +820,6 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
 
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          localStorage.getItem('agentic-remote:default-models') || '{}',
-        ),
-      ).toEqual({
-        copilot: {
-          model: 'gpt-5.6-sol',
-          reasoningEffort: 'medium',
-          contextTier: 'long_context',
-        },
-        claude: {
-          model: 'sonnet',
-          reasoningEffort: 'max',
-          contextTier: 'long_context',
-        },
-      }),
-    )
     const createButton = screen.getByRole('button', { name: 'Create session' })
     await waitFor(() => expect(createButton).toBeEnabled())
     fireEvent.click(createButton)
@@ -773,6 +834,20 @@ describe('App', () => {
         contextTier: 'long_context',
       }),
     )
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+    ).toEqual({
+      copilot: {
+        model: 'removed-model',
+        reasoningEffort: 'max',
+        contextTier: 'long_context',
+      },
+      claude: {
+        model: 'sonnet',
+        reasoningEffort: 'max',
+        contextTier: 'long_context',
+      },
+    })
   })
 
   it('dismisses the update toast without removing it from app settings', async () => {

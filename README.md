@@ -134,7 +134,9 @@ commit ungraduated so the next run retries.
 This needs key-based SSH, a clean checkout that can fetch, and a build
 toolchain on each host — no configuration, credentials, or state are copied
 between machines. All destinations share one repository path and one health
-URL, so machines that differ need their own profile.
+URL, so machines that differ need their own profile. Downstream checkouts are
+managed detached, so the monitor replaces `agentic-remote update` as the way
+those hosts are updated.
 
 Leave `DOWNSTREAM_HOSTS` empty for a single-machine setup.
 

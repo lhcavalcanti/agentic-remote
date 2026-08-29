@@ -8,6 +8,10 @@ readonly REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
 readonly SERVICE_NAME="agentic-remote.service"
 readonly SYSTEMD_DIR="$HOME/.config/systemd/user"
 readonly SERVICE_FILE="$SYSTEMD_DIR/$SERVICE_NAME"
+readonly AUTO_UPDATE_SERVICE_NAME="agentic-remote-auto-update.service"
+readonly AUTO_UPDATE_TIMER_NAME="agentic-remote-auto-update.timer"
+readonly AUTO_UPDATE_SERVICE_FILE="$SYSTEMD_DIR/$AUTO_UPDATE_SERVICE_NAME"
+readonly AUTO_UPDATE_TIMER_FILE="$SYSTEMD_DIR/$AUTO_UPDATE_TIMER_NAME"
 readonly CONFIG_DIR="$HOME/.config/agentic-remote"
 readonly ENV_FILE="$CONFIG_DIR/environment"
 readonly COMMAND_LINK="$HOME/.local/bin/agentic-remote"
@@ -33,6 +37,12 @@ Commands:
       Follow service logs.
   update
       Pull the current branch, install dependencies, build, and restart.
+  auto-update enable
+      Enable safe two-hour updates from the clean main branch.
+  auto-update disable
+      Disable the automatic update timer.
+  auto-update status
+      Show the automatic update timer status.
   rollback
       Activate the previous immutable release and restart the service.
   uninstall
@@ -176,6 +186,93 @@ enable_linger() {
       "Warning: boot startup requires an administrator to run:" \
       "  sudo loginctl enable-linger $USER" >&2
   fi
+}
+
+write_auto_update_units() {
+  local pnpm_bin node_bin copilot_bin runtime_path temporary
+  [[ "$REPO_ROOT" != *[[:space:]]* ]] ||
+    die "repository paths containing whitespace are not supported by systemd setup"
+  pnpm_bin="$(command -v pnpm)"
+  node_bin="$(command -v node)"
+  copilot_bin="$(command -v copilot)"
+  runtime_path="$(dirname "$node_bin"):$(dirname "$pnpm_bin"):$(dirname "$copilot_bin"):/usr/local/bin:/usr/bin:/bin"
+
+  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-auto-update.service.XXXXXX")"
+  cat >"$temporary" <<EOF
+[Unit]
+Description=Update Agentic Remote from main
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$REPO_ROOT
+Environment=$(systemd_quote "HOME=$HOME")
+Environment=$(systemd_quote "PATH=$runtime_path")
+EnvironmentFile=-$ENV_FILE
+ExecStart=$(systemd_quote "$SCRIPT_PATH") auto-update-run
+EOF
+  install -m 0644 "$temporary" "$AUTO_UPDATE_SERVICE_FILE"
+  rm -f -- "$temporary"
+
+  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-auto-update.timer.XXXXXX")"
+  cat >"$temporary" <<EOF
+[Unit]
+Description=Run Agentic Remote update every two hours
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=2h
+Persistent=true
+Unit=$AUTO_UPDATE_SERVICE_NAME
+
+[Install]
+WantedBy=timers.target
+EOF
+  install -m 0644 "$temporary" "$AUTO_UPDATE_TIMER_FILE"
+  rm -f -- "$temporary"
+}
+
+enable_auto_update() {
+  require_command systemctl
+  [[ -f "$SERVICE_FILE" ]] ||
+    die "Agentic Remote service is not installed; run setup first"
+  mkdir -p "$SYSTEMD_DIR"
+  write_auto_update_units
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$AUTO_UPDATE_TIMER_NAME"
+  printf 'Automatic Agentic Remote updates enabled: every 2 hours.\n'
+}
+
+disable_auto_update() {
+  require_command systemctl
+  systemctl --user disable --now "$AUTO_UPDATE_TIMER_NAME" 2>/dev/null || true
+  rm -f -- "$AUTO_UPDATE_SERVICE_FILE" "$AUTO_UPDATE_TIMER_FILE"
+  systemctl --user daemon-reload
+  printf 'Automatic Agentic Remote updates disabled.\n'
+}
+
+status_auto_update() {
+  require_command systemctl
+  systemctl --user --no-pager --full status "$AUTO_UPDATE_TIMER_NAME"
+}
+
+auto_update_service() {
+  require_command git
+  local branch before after
+  branch="$(git -C "$REPO_ROOT" branch --show-current)"
+  [[ "$branch" == "main" ]] ||
+    die "automatic updates require the repository to be on main"
+  [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] ||
+    die "automatic updates require a clean main worktree"
+  before="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  git -C "$REPO_ROOT" pull --ff-only
+  after="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  if [[ "$before" == "$after" ]]; then
+    printf 'Agentic Remote is already up to date at %s.\n' "$after"
+    return
+  fi
+  setup_service
 }
 
 setup_service() {
@@ -340,6 +437,8 @@ rollback_service() {
 }
 
 uninstall_service() {
+  systemctl --user disable --now "$AUTO_UPDATE_TIMER_NAME" 2>/dev/null || true
+  rm -f -- "$AUTO_UPDATE_SERVICE_FILE" "$AUTO_UPDATE_TIMER_FILE"
   systemctl --user disable --now "$SERVICE_NAME" 2>/dev/null || true
   rm -f -- "$SERVICE_FILE"
   systemctl --user daemon-reload
@@ -377,6 +476,27 @@ case "$command" in
   update)
     (($# == 0)) || die "update does not accept options"
     update_service
+    ;;
+  auto-update)
+    (($# == 1)) || die "auto-update requires enable, disable, or status"
+    case "$1" in
+      enable)
+        enable_auto_update
+        ;;
+      disable)
+        disable_auto_update
+        ;;
+      status)
+        status_auto_update
+        ;;
+      *)
+        die "auto-update requires enable, disable, or status"
+        ;;
+    esac
+    ;;
+  auto-update-run)
+    (($# == 0)) || die "auto-update-run does not accept options"
+    auto_update_service
     ;;
   rollback)
     (($# == 0)) || die "rollback does not accept options"

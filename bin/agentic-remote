@@ -346,7 +346,7 @@ setup_service() {
   fi
 
   printf 'Installing dependencies...\n'
-  pnpm --dir "$REPO_ROOT" install --frozen-lockfile
+  CI=true pnpm --dir "$REPO_ROOT" install --frozen-lockfile
   printf 'Building production app...\n'
   pnpm --dir "$REPO_ROOT" build
 

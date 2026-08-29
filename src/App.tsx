@@ -38,7 +38,6 @@ import {
   Bell,
   BellOff,
   BookOpen,
-  Bookmark,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -96,7 +95,6 @@ import type {
   DirectoryListing,
   HubEvent,
   ManagedSession,
-  KnowledgeBookmark,
   KnowledgeRoot,
   PendingPermission,
   PendingUserInput,
@@ -111,14 +109,12 @@ import type {
 } from '../shared/contracts'
 import {
   activateSession,
-  addKnowledgeBookmark,
   addComputer,
   cancelSession,
   clearConversation,
   configureRuntime,
   createSession,
   deleteSession,
-  deleteKnowledgeBookmark,
   executeCommand,
   getPushSettings,
   getSession,
@@ -126,7 +122,6 @@ import {
   listComputers,
   listCommands,
   listHistory,
-  listKnowledgeBookmarks,
   listKnowledgeEntries,
   listKnowledgeRoots,
   addKnowledgeRoot,
@@ -2723,7 +2718,7 @@ function AddKnowledgeRootDialog({
     setLoading(true)
     setError(undefined)
     try {
-      setListing(await listDirectories(computerId, path))
+      setListing(await listDirectories(computerId, path, 'all'))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -2734,7 +2729,7 @@ function AddKnowledgeRootDialog({
   useEffect(() => {
     let active = true
     setLoading(true)
-    void listDirectories(computerId, '~')
+    void listDirectories(computerId, '~', 'all')
       .then((next) => {
         if (active) {
           setListing(next)
@@ -2758,7 +2753,7 @@ function AddKnowledgeRootDialog({
   return (
     <DialogFrame
       className="add-root-dialog"
-      eyebrow="Read files without a session"
+      eyebrow="Any folder on the computer"
       onClose={onClose}
       title="Add knowledge root"
     >
@@ -3115,18 +3110,10 @@ function KnowledgeReader({
   )
 }
 
-interface WorkspaceBookmarkTarget {
-  kind: 'file' | 'folder'
-  name: string
-  path: string
-}
-
 function WorkspaceDialog({
   initialKind,
   initialPath,
   session,
-  bookmarks,
-  onBookmark,
   onClose,
   onInsert,
   onMoved,
@@ -3134,8 +3121,6 @@ function WorkspaceDialog({
   initialKind?: 'file' | 'folder'
   initialPath?: string
   session: ManagedSession
-  bookmarks: KnowledgeBookmark[]
-  onBookmark: (target: WorkspaceBookmarkTarget) => Promise<void>
   onClose: () => void
   onInsert: (file: WorkspaceFile, ask: boolean) => void
   onMoved: (session: ManagedSession) => void
@@ -3423,29 +3408,6 @@ function WorkspaceDialog({
     listing?.path ?? '.',
     session.cwd.split('/').filter(Boolean).at(-1) || '~',
   )
-
-  const bookmarked = file
-    ? bookmarks.some(
-        (bookmark) =>
-          bookmark.computerId === session.computerId &&
-          bookmark.sessionId === session.id &&
-          bookmark.path === file.path &&
-          bookmark.kind === 'file',
-      )
-    : false
-  const folderBookmarked = listing
-    ? bookmarks.some(
-        (bookmark) =>
-          bookmark.computerId === session.computerId &&
-          bookmark.sessionId === session.id &&
-          bookmark.path === listing.path &&
-          bookmark.kind === 'folder',
-      )
-    : false
-  const folderName =
-    listing?.path === '.'
-      ? session.cwd.split('/').filter(Boolean).at(-1) || session.cwd
-      : listing?.path.split('/').filter(Boolean).at(-1) || listing?.path
   const selectedFolder = workspaceAbsolutePath(
     session.cwd,
     listing?.path || '.',
@@ -3590,21 +3552,6 @@ function WorkspaceDialog({
                     <FolderOpen size={14} />
                     {moving ? 'Moving…' : 'Move here'}
                   </button>
-                  <button
-                    aria-label="Save current folder to Knowledge"
-                    disabled={folderBookmarked}
-                    onClick={() =>
-                      void onBookmark({
-                        kind: 'folder',
-                        name: folderName || listing.path,
-                        path: listing.path,
-                      })
-                    }
-                    type="button"
-                  >
-                    <Bookmark size={14} />
-                    {folderBookmarked ? 'Saved' : 'Save folder'}
-                  </button>
                 </>
               ) : null}
             </div>
@@ -3715,21 +3662,6 @@ function WorkspaceDialog({
                     {raw ? 'Rendered' : 'Raw'}
                   </button>
                 ) : null}
-                <button
-                  aria-pressed={bookmarked}
-                  disabled={bookmarked}
-                  onClick={() =>
-                    void onBookmark({
-                      kind: 'file',
-                      name: file.name,
-                      path: file.path,
-                    })
-                  }
-                  type="button"
-                >
-                  <Bookmark size={15} />
-                  {bookmarked ? 'Saved' : 'Save'}
-                </button>
               </div>
               <div className="workspace-preview__actions">
                 <button onClick={() => onInsert(file, false)} type="button">
@@ -3793,126 +3725,6 @@ function WorkspaceDialog({
   )
 }
 
-function KnowledgeDialog({
-  bookmarks,
-  onClose,
-  onDelete,
-  onOpen,
-  onOpenSession,
-  sessions,
-}: {
-  bookmarks: KnowledgeBookmark[]
-  onClose: () => void
-  onDelete: (bookmark: KnowledgeBookmark) => Promise<void>
-  onOpen: (bookmark: KnowledgeBookmark) => void
-  onOpenSession: (session: ManagedSession) => void
-  sessions: ManagedSession[]
-}) {
-  const workspaceSessions = [
-    ...new Map(
-      sessions.map((session) => [
-        `${session.computerId}:${session.cwd}`,
-        session,
-      ]),
-    ).values(),
-  ]
-  const savedFolders = bookmarks.filter(
-    (bookmark) => bookmark.kind === 'folder',
-  )
-  const savedFiles = bookmarks.filter((bookmark) => bookmark.kind === 'file')
-
-  function bookmarkItems(items: KnowledgeBookmark[]) {
-    return items.map((bookmark) => (
-      <div className="knowledge-item" key={bookmark.id}>
-        <button
-          aria-label={`Open ${bookmark.name} ${bookmark.kind}`}
-          onClick={() => onOpen(bookmark)}
-          type="button"
-        >
-          {bookmark.kind === 'folder' ? (
-            <FolderOpen size={17} />
-          ) : (
-            <FileText size={17} />
-          )}
-          <span>
-            <strong>{bookmark.name}</strong>
-            <small>
-              {bookmark.computerName} · {bookmark.sessionTitle} ·{' '}
-              {bookmark.path}
-            </small>
-          </span>
-        </button>
-        <button
-          aria-label={`Remove ${bookmark.name} bookmark`}
-          className="icon-button icon-button--danger"
-          onClick={() => void onDelete(bookmark)}
-          type="button"
-        >
-          <Trash2 size={16} />
-        </button>
-      </div>
-    ))
-  }
-
-  return (
-    <DialogFrame
-      className="knowledge-dialog"
-      eyebrow="Central workspace access"
-      onClose={onClose}
-      title="Knowledge"
-    >
-      {workspaceSessions.length === 0 && bookmarks.length === 0 ? (
-        <p className="dialog-message">
-          Save folders or useful Markdown, text, and PDF files from Session
-          files for central access.
-        </p>
-      ) : (
-        <div className="knowledge-list">
-          {workspaceSessions.length ? (
-            <section className="knowledge-section">
-              <h3>Workspace folders</h3>
-              {workspaceSessions.map((session) => (
-                <div
-                  className="knowledge-item knowledge-item--workspace"
-                  key={`${session.computerId}:${session.cwd}`}
-                >
-                  <button
-                    aria-label={`Open ${session.title} workspace folder`}
-                    onClick={() => onOpenSession(session)}
-                    type="button"
-                  >
-                    <FolderOpen size={17} />
-                    <span>
-                      <strong>
-                        {session.cwd.split('/').filter(Boolean).at(-1) ||
-                          session.cwd}
-                      </strong>
-                      <small>
-                        {session.computerName} · {session.title} · {session.cwd}
-                      </small>
-                    </span>
-                  </button>
-                </div>
-              ))}
-            </section>
-          ) : null}
-          {savedFolders.length ? (
-            <section className="knowledge-section">
-              <h3>Saved folders</h3>
-              {bookmarkItems(savedFolders)}
-            </section>
-          ) : null}
-          {savedFiles.length ? (
-            <section className="knowledge-section">
-              <h3>Saved files</h3>
-              {bookmarkItems(savedFiles)}
-            </section>
-          ) : null}
-        </div>
-      )}
-    </DialogFrame>
-  )
-}
 
 function App() {
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -3929,18 +3741,32 @@ function App() {
   const [workspaceInitialKind, setWorkspaceInitialKind] = useState<
     'file' | 'folder'
   >()
-  const [knowledgeOpen, setKnowledgeOpen] = useState(false)
   const [sidebarMode, setSidebarMode] = useState<'sessions' | 'knowledge'>(
     'sessions',
   )
   const [roots, setRoots] = useState<KnowledgeRoot[]>([])
-  const [activeRootId, setActiveRootId] = useState<string>()
+  const [activeRootId, setActiveRootId] = useState<string | undefined>(() =>
+    readStoredOrder<string | undefined>(
+      'agentic-remote:knowledge-root',
+      undefined,
+    ),
+  )
   const [knowledgeListing, setKnowledgeListing] = useState<WorkspaceListing>()
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
   const knowledgeRequest = useRef(0)
-  const [bookmarks, setBookmarks] = useState<KnowledgeBookmark[]>([])
+  // Where the reader was left, so the next visit reopens it instead of asking
+  // for the folder again.
+  // Persisting is held back until the remembered position has been applied, so
+  // a slow or failed restore cannot erase it.
+  const knowledgeHydrated = useRef(false)
+  const restoredKnowledge = useRef(
+    readStoredOrder<{ rootId?: string; path?: string; file?: string }>(
+      'agentic-remote:knowledge-position',
+      {},
+    ),
+  )
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -4165,17 +3991,71 @@ function App() {
     }
   }, [])
 
+
   useEffect(() => {
-    void listKnowledgeBookmarks()
-      .then(setBookmarks)
-      .catch((caught: unknown) =>
-        setError(caught instanceof Error ? caught.message : String(caught)),
-      )
-  }, [])
+    if (!knowledgeHydrated.current) {
+      return
+    }
+    localStorage.setItem(
+      'agentic-remote:knowledge-root',
+      JSON.stringify(activeRootId),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify({
+        rootId: activeRootId,
+        path: knowledgeListing?.path,
+        file: knowledgeFile?.path,
+      }),
+    )
+  }, [activeRootId, knowledgeFile?.path, knowledgeListing?.path])
 
   useEffect(() => {
     void listKnowledgeRoots()
-      .then(setRoots)
+      .then(async (loaded) => {
+        setRoots(loaded)
+        // Reopen whatever was being read, so returning to Knowledge does not
+        // mean picking the folder and the document again.
+        const remembered = restoredKnowledge.current
+        const root =
+          loaded.find((entry) => entry.id === remembered.rootId) || loaded[0]
+        if (!root) {
+          // Nothing to restore, so later changes are safe to persist.
+          knowledgeHydrated.current = true
+          return
+        }
+        setActiveRootId(root.id)
+        const request = ++knowledgeRequest.current
+        const folder =
+          root.id === remembered.rootId && remembered.path
+            ? remembered.path
+            : '.'
+        try {
+          const listing = await listKnowledgeEntries(root.id, folder).catch(
+            () => listKnowledgeEntries(root.id, '.'),
+          )
+          if (request !== knowledgeRequest.current) {
+            return
+          }
+          setKnowledgeListing(listing)
+          if (root.id === remembered.rootId && remembered.file) {
+            const opened = await readKnowledgeFile(
+              root.id,
+              remembered.file,
+            ).catch(() => undefined)
+            if (opened && request === knowledgeRequest.current) {
+              setKnowledgeFile(opened)
+            }
+          }
+          knowledgeHydrated.current = true
+        } catch (caught) {
+          // Leave the position unhydrated so a transient failure — an offline
+          // computer, say — keeps it for the next visit instead of clearing it.
+          if (request === knowledgeRequest.current) {
+            setError(caught instanceof Error ? caught.message : String(caught))
+          }
+        }
+      })
       .catch((caught: unknown) =>
         setError(caught instanceof Error ? caught.message : String(caught)),
       )
@@ -4778,6 +4658,7 @@ function App() {
   }
 
   async function openKnowledgeFile(path: string) {
+    knowledgeHydrated.current = true
     const rootId = activeRootId
     if (!rootId) {
       return
@@ -4806,6 +4687,7 @@ function App() {
   }
 
   async function selectRoot(rootId: string) {
+    knowledgeHydrated.current = true
     setActiveRootId(rootId)
     setKnowledgeFile(undefined)
     setKnowledgeListing(undefined)
@@ -5189,23 +5071,6 @@ function App() {
     void attachedFiles(files)
   }
 
-  async function bookmarkWorkspaceTarget(target: WorkspaceBookmarkTarget) {
-    if (!selected) return
-    try {
-      const bookmark = await addKnowledgeBookmark({
-        computerId: selected.computerId,
-        sessionId: selected.id,
-        ...target,
-      })
-      setBookmarks((current) =>
-        current.some((entry) => entry.id === bookmark.id)
-          ? current
-          : [bookmark, ...current],
-      )
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    }
-  }
 
   function insertWorkspaceFile(file: WorkspaceFile, ask: boolean) {
     if (!selected) return
@@ -5223,43 +5088,8 @@ function App() {
     window.requestAnimationFrame(() => focusComposer(targetKey))
   }
 
-  async function removeBookmark(bookmark: KnowledgeBookmark) {
-    try {
-      await deleteKnowledgeBookmark(bookmark.id)
-      setBookmarks((current) =>
-        current.filter((entry) => entry.id !== bookmark.id),
-      )
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    }
-  }
 
-  async function openBookmark(bookmark: KnowledgeBookmark) {
-    try {
-      const target =
-        sessions.find(
-          (entry) =>
-            entry.computerId === bookmark.computerId &&
-            entry.id === bookmark.sessionId,
-        ) || (await getSession(bookmark.computerId, bookmark.sessionId))
-      setSessions((current) => upsertSession(current, target))
-      setSelectedKey(sessionKey(target))
-      setWorkspaceInitialPath(bookmark.path)
-      setWorkspaceInitialKind(bookmark.kind)
-      setKnowledgeOpen(false)
-      setWorkspaceOpen(true)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    }
-  }
 
-  function openSessionWorkspace(session: ManagedSession) {
-    setSelectedKey(sessionKey(session))
-    setWorkspaceInitialPath('.')
-    setWorkspaceInitialKind('folder')
-    setKnowledgeOpen(false)
-    setWorkspaceOpen(true)
-  }
 
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
     if (!selected || queueActionId) {
@@ -5661,12 +5491,7 @@ function App() {
           <button
             aria-selected={sidebarMode === 'knowledge'}
             className={sidebarMode === 'knowledge' ? 'is-active' : ''}
-            onClick={() => {
-              setSidebarMode('knowledge')
-              if (!activeRootId && roots[0]) {
-                void selectRoot(roots[0].id)
-              }
-            }}
+            onClick={() => setSidebarMode('knowledge')}
             role="tab"
             type="button"
           >
@@ -5820,36 +5645,21 @@ function App() {
           </DndContext>
         </nav>
         <div className="sidebar-settings">
-          {sidebarMode === 'knowledge' ? (
-            <button
-              aria-label="Add knowledge root"
-              className="sidebar-settings__button"
-              onClick={() => setAddRootOpen(true)}
-              type="button"
-            >
-              <Plus size={18} />
-              <span>
-                <strong>Add knowledge root</strong>
-                <small>Pick a computer and folder</small>
-              </span>
-            </button>
-          ) : (
-            <button
-              aria-label="Knowledge"
-              className="sidebar-settings__button"
-              onClick={() => {
-                setSidebarOpen(false)
-                setKnowledgeOpen(true)
-              }}
-              type="button"
-            >
-              <BookOpen size={18} />
-              <span>
-                <strong>Saved paths</strong>
-                <small>Bookmarked session files and folders</small>
-              </span>
-            </button>
-          )}
+          <button
+            aria-label="Add knowledge root"
+            className="sidebar-settings__button"
+            onClick={() => {
+              setSidebarMode('knowledge')
+              setAddRootOpen(true)
+            }}
+            type="button"
+          >
+            <Plus size={18} />
+            <span>
+              <strong>Add knowledge root</strong>
+              <small>Any folder on any computer</small>
+            </span>
+          </button>
           <button
             aria-label="App settings"
             className="sidebar-settings__button"
@@ -6566,10 +6376,8 @@ function App() {
       ) : null}
       {workspaceOpen && selected ? (
         <WorkspaceDialog
-          bookmarks={bookmarks}
           initialKind={workspaceInitialKind}
           initialPath={workspaceInitialPath}
-          onBookmark={bookmarkWorkspaceTarget}
           onClose={() => {
             setWorkspaceOpen(false)
             setWorkspaceInitialPath(undefined)
@@ -6593,16 +6401,6 @@ function App() {
         />
       ) : null}
 
-      {knowledgeOpen ? (
-        <KnowledgeDialog
-          bookmarks={bookmarks}
-          onClose={() => setKnowledgeOpen(false)}
-          onDelete={removeBookmark}
-          onOpen={(bookmark) => void openBookmark(bookmark)}
-          onOpenSession={openSessionWorkspace}
-          sessions={sessions}
-        />
-      ) : null}
     </div>
   )
 }

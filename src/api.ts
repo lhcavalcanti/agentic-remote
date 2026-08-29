@@ -188,9 +188,10 @@ export async function deleteKnowledgeBookmark(
 export async function listDirectories(
   computerId: string,
   path = '~',
+  scope: 'home' | 'all' = 'home',
 ): Promise<DirectoryListing> {
   return request<DirectoryListing>(
-    `/api/computers/${encodeURIComponent(computerId)}/directories?path=${encodeURIComponent(path)}`,
+    `/api/computers/${encodeURIComponent(computerId)}/directories?path=${encodeURIComponent(path)}&scope=${encodeURIComponent(scope)}`,
   )
 }
 

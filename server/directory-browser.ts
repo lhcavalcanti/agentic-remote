@@ -3,11 +3,20 @@ import path from 'node:path'
 import type { DirectoryListing } from '../shared/contracts.js'
 import { homeDirectory, isWithin } from './session-directory.js'
 
+/**
+ * `home` keeps browsing inside the user's home directory, which is what a
+ * session working directory is allowed to be. `all` walks the whole filesystem
+ * so a knowledge root can be any folder the user can read.
+ */
+export type DirectoryScope = 'home' | 'all'
+
 export async function listHomeDirectories(
   requestedPath = '~',
+  scope: DirectoryScope = 'home',
 ): Promise<DirectoryListing> {
   const home = await homeDirectory()
-  const resolved = await resolveRequestedPath(home, requestedPath)
+  const confined = scope === 'home'
+  const resolved = await resolveRequestedPath(home, requestedPath, confined)
   const metadata = await stat(resolved)
   if (!metadata.isDirectory()) {
     throw new Error('Folder path must point to a directory')
@@ -29,7 +38,7 @@ export async function listHomeDirectories(
     } catch {
       continue
     }
-    if (!isWithin(home, realCandidate)) {
+    if (confined && !isWithin(home, realCandidate)) {
       continue
     }
     try {
@@ -41,19 +50,19 @@ export async function listHomeDirectories(
     }
     directories.push({
       name: entry.name,
-      path: displayPath(home, realCandidate),
+      path: displayPath(home, realCandidate, confined),
     })
   }
   directories.sort((left, right) =>
     left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
   )
 
+  const atTop = confined ? resolved === home : resolved === path.parse(resolved).root
   return {
-    path: displayPath(home, resolved),
-    parent:
-      resolved === home
-        ? undefined
-        : displayPath(home, path.dirname(resolved)),
+    path: displayPath(home, resolved, confined),
+    parent: atTop
+      ? undefined
+      : displayPath(home, path.dirname(resolved), confined),
     directories,
   }
 }
@@ -61,8 +70,9 @@ export async function listHomeDirectories(
 async function resolveRequestedPath(
   home: string,
   requestedPath: string,
+  confined: boolean,
 ): Promise<string> {
-  const value = requestedPath.trim() || '~'
+  const value = requestedPath.trim() || (confined ? '~' : home)
   const candidate =
     value === '~'
       ? home
@@ -72,13 +82,20 @@ async function resolveRequestedPath(
           ? value
           : path.join(home, value)
   const resolved = await realpath(candidate)
-  if (!isWithin(home, resolved)) {
+  if (confined && !isWithin(home, resolved)) {
     throw new Error('Folder browsing is restricted to the user home directory')
   }
   return resolved
 }
 
-function displayPath(home: string, candidate: string): string {
+function displayPath(
+  home: string,
+  candidate: string,
+  confined: boolean,
+): string {
+  if (!confined) {
+    return candidate
+  }
   const relative = path.relative(home, candidate)
   return relative ? `~/${relative}` : '~'
 }

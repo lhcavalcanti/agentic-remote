@@ -1,3 +1,4 @@
+import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import type {
@@ -101,9 +102,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.sessions
   }
 
-  async listDirectories(path = '~'): Promise<DirectoryListing> {
+  async listDirectories(
+    path = '~',
+    scope: DirectoryScope = 'home',
+  ): Promise<DirectoryListing> {
     return this.request<DirectoryListing>(
-      `/node-api/directories?path=${encodeURIComponent(path)}`,
+      `/node-api/directories?path=${encodeURIComponent(path)}&scope=${encodeURIComponent(scope)}`,
     )
   }
 

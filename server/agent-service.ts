@@ -55,8 +55,13 @@ import {
   sessionEventLogVersion,
   sessionWorkspaceVersion,
 } from './event-log.js'
-import { listHomeDirectories } from './directory-browser.js'
-import { validateSessionDirectory } from './session-directory.js'
+import { listHomeDirectories,
+  type DirectoryScope,
+} from './directory-browser.js'
+import {
+  validateKnowledgeRoot,
+  validateSessionDirectory,
+} from './session-directory.js'
 import {
   listWorkspace,
   readWorkspaceFile,
@@ -1207,8 +1212,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }))
   }
 
-  listDirectories(path?: string) {
-    return listHomeDirectories(path)
+  listDirectories(path?: string, scope?: DirectoryScope) {
+    return listHomeDirectories(path, scope)
   }
 
   /**
@@ -1217,11 +1222,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * `listWorkspace`, so no session is involved.
    */
   async listKnowledge(root: string, path = '.') {
-    return listWorkspace(await validateSessionDirectory(root), path)
+    return listWorkspace(await validateKnowledgeRoot(root), path)
   }
 
   async readKnowledgeFile(root: string, path: string) {
-    return readWorkspaceFile(await validateSessionDirectory(root), path)
+    return readWorkspaceFile(await validateKnowledgeRoot(root), path)
   }
 
   listWorkspace(

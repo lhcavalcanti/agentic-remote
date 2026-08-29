@@ -71,6 +71,7 @@ const configureRuntimeSchema = z.object({
 })
 
 const directoryQuerySchema = z.object({
+  scope: z.enum(['home', 'all']).optional(),
   path: z.string().trim().max(4096).optional(),
 })
 const knowledgeQuerySchema = z.object({
@@ -135,11 +136,11 @@ export async function registerNodeRoutes(
         sessions: service.listHistory(),
       }))
 
-      node.get<{ Querystring: { path?: string } }>(
+      node.get<{ Querystring: { path?: string; scope?: string } }>(
         '/directories',
         async (request) => {
           const query = directoryQuerySchema.parse(request.query)
-          return service.listDirectories(query.path)
+          return service.listDirectories(query.path, query.scope)
         },
       )
 

@@ -908,103 +908,8 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('searches workspace files and saves knowledge bookmarks', async () => {
-    render(<App />)
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Browse current session folder',
-      }),
-    )
-    const search = await screen.findByLabelText('Search workspace')
-    fireEvent.change(search, { target: { value: 'knowledge' } })
-    fireEvent.submit(search.closest('form')!)
 
-    await waitFor(() =>
-      expect(searchWorkspace).toHaveBeenCalledWith(
-        computer.id,
-        session.id,
-        'knowledge',
-        '.',
-      ),
-    )
-    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(addKnowledgeBookmark).toHaveBeenCalledOnce())
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Knowledge' }))
-    expect(await screen.findByText('README.md')).toBeInTheDocument()
-    expect(screen.getAllByText(/Project chat/).length).toBeGreaterThan(0)
-  })
-
-  it('saves and reopens a central Knowledge folder', async () => {
-    render(<App />)
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Browse current session folder',
-      }),
-    )
-    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
-    await waitFor(() =>
-      expect(listWorkspace).toHaveBeenCalledWith(
-        computer.id,
-        session.id,
-        'docs',
-      ),
-    )
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Save current folder to Knowledge',
-      }),
-    )
-    await waitFor(() =>
-      expect(addKnowledgeBookmark).toHaveBeenCalledWith({
-        computerId: computer.id,
-        sessionId: session.id,
-        kind: 'folder',
-        name: 'docs',
-        path: 'docs',
-      }),
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Knowledge' }))
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: 'Open docs folder',
-      }),
-    )
-    await waitFor(() =>
-      expect(document.querySelector('.workspace-dialog')).toBeInTheDocument(),
-    )
-    expect(listWorkspace).toHaveBeenLastCalledWith(
-      computer.id,
-      session.id,
-      'docs',
-    )
-  })
-
-  it('shows session workspace folders before anything is saved', async () => {
-    render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Knowledge' }))
-
-    expect(
-      await screen.findByRole('heading', { name: 'Workspace folders' }),
-    ).toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Open Project chat workspace folder',
-      }),
-    )
-    await waitFor(() =>
-      expect(listWorkspace).toHaveBeenCalledWith(
-        computer.id,
-        session.id,
-        '.',
-      ),
-    )
-    expect(document.querySelector('.workspace-dialog')).toBeInTheDocument()
-  })
 
   it('records microphone audio and transcribes it into the draft', async () => {
     class MockMediaRecorder extends EventTarget {
@@ -2967,6 +2872,169 @@ describe('App', () => {
     expect(image).toHaveAttribute(
       'src',
       'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+    )
+  })
+  it('searches workspace files and opens a result', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    const search = await screen.findByLabelText('Search workspace')
+    fireEvent.change(search, { target: { value: 'knowledge' } })
+    fireEvent.submit(search.closest('form')!)
+
+    await waitFor(() =>
+      expect(searchWorkspace).toHaveBeenCalledWith(
+        computer.id,
+        session.id,
+        'knowledge',
+        '.',
+      ),
+    )
+    expect(await screen.findByText('Useful knowledge.')).toBeInTheDocument()
+  })
+
+  it('reopens the document that was being read', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify({
+        rootId: 'root-1',
+        path: 'guides',
+        file: 'guides/setup.md',
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: 'guides',
+      parent: '.',
+      entries: [
+        {
+          name: 'setup.md',
+          path: 'guides/setup.md',
+          kind: 'markdown',
+          size: 20,
+        },
+      ],
+    })
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'setup.md',
+      path: 'guides/setup.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 20,
+      content: '# Setup guide',
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // No folder picking on return: the previous root, folder, and document all
+    // come back on their own.
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', 'guides'),
+    )
+    await waitFor(() =>
+      expect(readKnowledgeFile).toHaveBeenCalledWith(
+        'root-1',
+        'guides/setup.md',
+      ),
+    )
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Setup guide' }),
+    ).toBeInTheDocument()
+  })
+
+  it('picks a knowledge root from anywhere on the computer', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockResolvedValue({
+      path: '/srv',
+      parent: '/',
+      directories: [{ name: 'docs', path: '/srv/docs' }],
+    })
+    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+      id: 'root-new',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/srv/docs',
+      name: 'docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    })
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add knowledge root' }),
+    )
+    // The picker walks the whole filesystem, not just the home directory.
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(computer.id, '~', 'all'),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add this folder' }),
+    )
+    await waitFor(() =>
+      expect(addKnowledgeRoot).toHaveBeenCalledWith({
+        computerId: computer.id,
+        path: '/srv',
+      }),
+    )
+  })
+
+  it('no longer offers a separate saved paths panel', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(screen.queryByLabelText('Knowledge')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Add knowledge root' }),
+    ).toBeInTheDocument()
+  })
+  it('keeps the remembered position when it cannot be restored', async () => {
+    const remembered = {
+      rootId: 'root-1',
+      path: 'guides',
+      file: 'guides/setup.md',
+    }
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify(remembered),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    // The owning computer is unreachable this time.
+    vi.mocked(listKnowledgeEntries).mockRejectedValue(new Error('offline'))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
+
+    // A failed restore must not erase where the reader was.
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-position') || '{}',
+        ),
+      ).toEqual(remembered),
     )
   })
 })

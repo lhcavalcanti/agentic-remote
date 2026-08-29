@@ -1,3 +1,4 @@
+import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
   AddComputerInput,
@@ -179,10 +180,11 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   async listDirectories(
     computerId: string,
     path?: string,
+    scope?: DirectoryScope,
   ): Promise<DirectoryListing> {
     return computerId === this.identity.info.id
-      ? this.localService.listDirectories(path)
-      : this.requireClient(computerId).listDirectories(path)
+      ? this.localService.listDirectories(path, scope)
+      : this.requireClient(computerId).listDirectories(path, scope)
   }
 
   async listKnowledge(

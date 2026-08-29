@@ -1,3 +1,4 @@
+import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
   AgentProvider,
@@ -204,8 +205,11 @@ export class ProviderSessionService
     )
   }
 
-  listDirectories(path?: string): Promise<DirectoryListing> {
-    return this.copilot.listDirectories(path)
+  listDirectories(
+    path?: string,
+    scope?: DirectoryScope,
+  ): Promise<DirectoryListing> {
+    return this.copilot.listDirectories(path, scope)
   }
 
   listKnowledge(root: string, path?: string): Promise<WorkspaceListing> {

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   SessionDirectoryError,
+  validateKnowledgeRoot,
   validateSessionDirectory,
 } from './session-directory.js'
 
@@ -117,6 +118,45 @@ describe('validateSessionDirectory', () => {
     )
     await expect(validateSessionDirectory('/')).rejects.toThrow(
       'Sessions are restricted to the user home directory',
+    )
+  })
+})
+
+describe('validateKnowledgeRoot', () => {
+  it('accepts a readable folder anywhere on the computer', async () => {
+    await homeFixture()
+    const outside = await mkdtemp(path.join(tmpdir(), 'knowledge-anywhere-'))
+    directories.push(outside)
+
+    // A session may not run there, but reading is allowed.
+    await expect(validateSessionDirectory(outside)).rejects.toThrow(
+      'Sessions are restricted to the user home directory',
+    )
+    await expect(validateKnowledgeRoot(outside)).resolves.toBe(outside)
+  })
+
+  it('still refuses what cannot be read or is not a folder', async () => {
+    const home = await homeFixture()
+    const file = path.join(home, 'note.txt')
+    await writeFile(file, 'not a folder')
+    const locked = path.join(home, 'locked')
+    await mkdir(locked, { mode: 0o000 })
+
+    await expect(validateKnowledgeRoot(file)).rejects.toThrow(
+      'Folder path must point to a directory',
+    )
+    await expect(
+      validateKnowledgeRoot(path.join(home, 'missing')),
+    ).rejects.toThrow('Folder does not exist')
+    const lockedError = await validateKnowledgeRoot(locked).catch(
+      (caught: unknown) => caught,
+    )
+    await chmod(locked, 0o700)
+    expect(lockedError).toBeInstanceOf(SessionDirectoryError)
+    expect((lockedError as Error).message).toContain('not readable')
+
+    await expect(validateKnowledgeRoot('relative')).rejects.toThrow(
+      'Use an absolute folder path',
     )
   })
 })

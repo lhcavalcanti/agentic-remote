@@ -71,6 +71,7 @@ const configureRuntimeSchema = z.object({
 })
 
 const directoryQuerySchema = z.object({
+  scope: z.enum(['home', 'all']).optional(),
   path: z.string().trim().max(4096).optional(),
 })
 const knowledgeRootSchema = z.object({
@@ -351,12 +352,16 @@ export async function registerHubRoutes(
 
   app.get<{
     Params: { computerId: string }
-    Querystring: { path?: string }
+    Querystring: { path?: string; scope?: string }
   }>(
     '/api/computers/:computerId/directories',
     async (request) => {
       const query = directoryQuerySchema.parse(request.query)
-      return manager.listDirectories(request.params.computerId, query.path)
+      return manager.listDirectories(
+        request.params.computerId,
+        query.path,
+        query.scope,
+      )
     },
   )
 

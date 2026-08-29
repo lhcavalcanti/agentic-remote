@@ -266,20 +266,23 @@ switches, failed sends, and clear replacement IDs.
 - PDF page controls MUST remain reachable without overlapping the home
   indicator.
 
-### 8.3 Central Knowledge
+### 8.3 Knowledge
 
-- Knowledge MUST open as a full-height mobile panel.
-- It MUST always list unique available session workspace folders, even when
-  there are no saved bookmarks.
-- Workspace folders, saved folders, and saved files MUST be visually separated.
-- The current browser folder MAY be saved directly to Knowledge.
-- Saved entries MUST persist computer, session, kind, name, relative path, and
-  creation time.
-- Opening a workspace folder MUST browse its session root.
-- Opening a saved folder MUST browse the saved path.
-- Opening a saved file MUST open its preview.
-- Knowledge stores metadata on the hub; file content MUST remain on the owning
-  computer.
+- Knowledge MUST be the single place for reading files; there is no separate
+  saved-paths panel.
+- A knowledge root is a computer plus an absolute folder and MUST be browsable
+  with no session in existence.
+- Choosing a root MUST allow any folder on the owning computer that the user can
+  read, not only the home directory. Session working directories remain
+  confined; a root is read-only.
+- A root MUST be validated on its owning computer, and every path browsed under
+  it MUST stay inside it.
+- The reader MUST reopen the root, folder, and document last being read, so
+  returning does not mean choosing them again. Changing folder MUST remain an
+  explicit action.
+- Knowledge stores root metadata on the hub; file content MUST remain on the
+  owning computer.
+
 
 ## 9. Runtime configuration
 

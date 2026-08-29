@@ -32,8 +32,13 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
-import { listHomeDirectories } from './directory-browser.js'
-import { validateSessionDirectory } from './session-directory.js'
+import { listHomeDirectories,
+  type DirectoryScope,
+} from './directory-browser.js'
+import {
+  validateKnowledgeRoot,
+  validateSessionDirectory,
+} from './session-directory.js'
 import type { SessionService } from './session-service.js'
 import { SessionStore } from './session-store.js'
 import {
@@ -512,18 +517,18 @@ export class ClaudeAgentService
     return updated
   }
 
-  listDirectories(path?: string) {
-    return listHomeDirectories(path)
+  listDirectories(path?: string, scope?: DirectoryScope) {
+    return listHomeDirectories(path, scope)
   }
 
   // Confine the root exactly as a session working directory is confined, so
   // this stays safe even though the provider aggregator routes to Copilot.
   async listKnowledge(root: string, path = '.') {
-    return listWorkspace(await validateSessionDirectory(root), path)
+    return listWorkspace(await validateKnowledgeRoot(root), path)
   }
 
   async readKnowledgeFile(root: string, path: string) {
-    return readWorkspaceFile(await validateSessionDirectory(root), path)
+    return readWorkspaceFile(await validateKnowledgeRoot(root), path)
   }
 
   listWorkspace(

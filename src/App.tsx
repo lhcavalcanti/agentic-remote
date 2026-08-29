@@ -263,6 +263,8 @@ const defaultStatusline: StatuslineSettings = {
   permissions: true,
 }
 
+const timelineBottomThreshold = 48
+
 const statuslineOptions: Array<{
   key: keyof Omit<StatuslineSettings, 'enabled'>
   label: string
@@ -3825,6 +3827,8 @@ function App() {
   )
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const autoScrollRef = useRef(true)
+  const autoScrollSessionRef = useRef<string | undefined>(undefined)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
@@ -4522,6 +4526,13 @@ function App() {
 
   const latestContent = selected?.messages.at(-1)?.content
   useEffect(() => {
+    if (autoScrollSessionRef.current !== selectedKey) {
+      autoScrollSessionRef.current = selectedKey
+      autoScrollRef.current = true
+    }
+    if (!autoScrollRef.current) {
+      return
+    }
     const frame = window.requestAnimationFrame(() => {
       bottomRef.current?.scrollIntoView({ block: 'end' })
     })
@@ -4532,6 +4543,16 @@ function App() {
     latestContent,
     pendingActionId,
   ])
+
+  function timelineScrolled() {
+    const timeline = timelineRef.current
+    if (!timeline) {
+      return
+    }
+    const distanceFromBottom =
+      timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight
+    autoScrollRef.current = distanceFromBottom <= timelineBottomThreshold
+  }
 
   useLayoutEffect(() => {
     const textarea = composerRef.current
@@ -5874,7 +5895,7 @@ function App() {
           </div>
         ) : null}
 
-        <div className="timeline" ref={timelineRef}>
+        <div className="timeline" onScroll={timelineScrolled} ref={timelineRef}>
           {!selected ? (
             <EmptyConversation onCreate={() => setNewSessionOpen(true)} />
           ) : loadingTranscript && selected.messages.length === 0 ? (

@@ -1665,16 +1665,16 @@ describe('App', () => {
     expect(screen.queryByText('What should I inspect?')).not.toBeInTheDocument()
   })
 
-  it('scrolls a newly received question into view', async () => {
+  it('opens at the latest messages and scrolls a new question into view', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     await waitFor(() =>
       expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1'),
     )
-    await act(async () => {
-      await Promise.resolve()
-    })
     const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
+    )
     scrollIntoView.mockClear()
 
     act(() => {
@@ -1698,6 +1698,96 @@ describe('App', () => {
     expect(
       await screen.findByText('Choose the deployment target'),
     ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
+    )
+  })
+
+  it('preserves a scrolled-up timeline through complete and streaming messages', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+
+    const timeline = document.querySelector<HTMLElement>('.timeline')
+    expect(timeline).not.toBeNull()
+    Object.defineProperties(timeline!, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+    })
+    fireEvent.scroll(timeline!)
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+
+    const streamedMessage = {
+      id: 'streamed-message',
+      role: 'assistant' as const,
+      content: 'A complete response',
+      createdAt: '2026-07-22T00:00:03.000Z',
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            messages: [...session.messages, streamedMessage],
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(await screen.findByText('A complete response')).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(timeline!.scrollTop).toBe(100)
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            messages: [
+              ...session.messages,
+              {
+                ...streamedMessage,
+                content: 'A complete response with a streamed update',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(
+      await screen.findByText('A complete response with a streamed update'),
+    ).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(timeline!.scrollTop).toBe(100)
+
+    timeline!.scrollTop = 470
+    fireEvent.scroll(timeline!)
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            messages: [
+              ...session.messages,
+              {
+                ...streamedMessage,
+                content: 'A later streamed update',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+
+    expect(await screen.findByText('A later streamed update')).toBeInTheDocument()
     await waitFor(() =>
       expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
     )

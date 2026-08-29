@@ -1272,8 +1272,13 @@ function normalizedRuntimeSelection(
   selection: DefaultRuntimeSelection,
   models: RuntimeModelOption[],
 ): DefaultRuntimeSelection | undefined {
+  const modelId = selection.model.trim()
+  if (!modelId) {
+    return undefined
+  }
+
   const model =
-    models.find((candidate) => candidate.id === selection.model) || models[0]
+    models.find((candidate) => candidate.id === modelId) || models[0]
   if (!model) {
     return undefined
   }
@@ -1328,7 +1333,7 @@ function DefaultRuntimeControls({
       {!loading && !error && models.length === 0 ? (
         <p className="dialog-message">No models are available.</p>
       ) : null}
-      {selectedModel ? (
+      {models.length > 0 ? (
         <>
           <label className="field">
             <span>Model</span>
@@ -1336,6 +1341,10 @@ function DefaultRuntimeControls({
               aria-label={`${name} default model`}
               className="dialog-select"
               onChange={(event) => {
+                if (!event.target.value) {
+                  onChange({ ...emptyRuntimeSelection })
+                  return
+                }
                 const model = models.find(
                   (candidate) => candidate.id === event.target.value,
                 )
@@ -1348,8 +1357,9 @@ function DefaultRuntimeControls({
                   contextTier: 'default',
                 })
               }}
-              value={selection.model}
+              value={selectedModel?.id || ''}
             >
+              <option value="">Provider default</option>
               {models.map((model) => (
                 <option key={model.id} value={model.id}>
                   {model.name}
@@ -1357,14 +1367,14 @@ function DefaultRuntimeControls({
               ))}
             </select>
           </label>
-          {selectedModel.description ? (
+          {selectedModel?.description ? (
             <div className="default-runtime__description">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {selectedModel.description}
               </ReactMarkdown>
             </div>
           ) : null}
-          {selectedModel.reasoningEfforts.length > 0 ? (
+          {selectedModel && selectedModel.reasoningEfforts.length > 0 ? (
             <label className="field">
               <span>Reasoning effort</span>
               <select
@@ -1388,28 +1398,30 @@ function DefaultRuntimeControls({
               </select>
             </label>
           ) : null}
-          <label className="field">
-            <span>Context size</span>
-            <select
-              aria-label={`${name} default context size`}
-              className="dialog-select"
-              onChange={(event) =>
-                onChange({
-                  ...selection,
-                  contextTier: event.target.value as
-                    | 'default'
-                    | 'long_context',
-                })
-              }
-              value={selection.contextTier}
-            >
-              {selectedModel.contextTiers.map((tier) => (
-                <option key={tier} value={tier}>
-                  {contextSizeLabel(selectedModel, tier)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {selectedModel ? (
+            <label className="field">
+              <span>Context size</span>
+              <select
+                aria-label={`${name} default context size`}
+                className="dialog-select"
+                onChange={(event) =>
+                  onChange({
+                    ...selection,
+                    contextTier: event.target.value as
+                      | 'default'
+                      | 'long_context',
+                  })
+                }
+                value={selection.contextTier}
+              >
+                {selectedModel.contextTiers.map((tier) => (
+                  <option key={tier} value={tier}>
+                    {contextSizeLabel(selectedModel, tier)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </>
       ) : null}
     </div>

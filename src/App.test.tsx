@@ -596,6 +596,12 @@ describe('App', () => {
       'computer-1',
       'copilot',
     )
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default model'), {
+      target: { value: 'gpt-5.6-sol' },
+    })
+    fireEvent.change(screen.getByLabelText('Claude Agent default model'), {
+      target: { value: 'sonnet' },
+    })
     expect(screen.getByText('Efficient')).toBeInTheDocument()
     fireEvent.change(
       screen.getByLabelText('GitHub Copilot default reasoning effort'),
@@ -661,6 +667,55 @@ describe('App', () => {
         model: 'sonnet',
         reasoningEffort: 'low',
         contextTier: 'default',
+      }),
+    )
+  })
+
+  it('preserves provider-managed defaults when app settings are opened', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const copilotModel = await screen.findByLabelText(
+      'GitHub Copilot default model',
+    )
+    const claudeModel = screen.getByLabelText('Claude Agent default model')
+
+    expect(copilotModel).toHaveValue('')
+    expect(claudeModel).toHaveValue('')
+    expect(screen.getAllByRole('option', { name: 'Provider default' })).toHaveLength(
+      2,
+    )
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:default-models') || '{}',
+        ),
+      ).toEqual({
+        copilot: {
+          model: '',
+          reasoningEffort: '',
+          contextTier: 'default',
+        },
+        claude: {
+          model: '',
+          reasoningEffort: '',
+          contextTier: 'default',
+        },
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    const createButton = screen.getByRole('button', { name: 'Create session' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
       }),
     )
   })

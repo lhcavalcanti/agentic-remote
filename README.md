@@ -32,20 +32,6 @@ Open <http://192.168.1.10:4317/>.
 `--role hub` enables the UI. `--host` only chooses the address to bind. They
 are options for the same service, not separate setup steps.
 
-Automatic updates are optional and disabled by default. Setup never enables
-them. On a computer where you want to opt in, check the clean `main` branch
-every two hours and update the service when a new commit is available:
-
-```bash
-./bin/agentic-remote auto-update enable
-./bin/agentic-remote auto-update status
-```
-
-The timer starts 15 minutes after boot and then runs every two hours. It uses
-fast-forward-only Git updates and skips the update when the repository is not
-on `main` or has uncommitted changes. Updates are recorded in the user
-systemd journal; disable it with `./bin/agentic-remote auto-update disable`.
-
 ## Architecture
 
 ```mermaid

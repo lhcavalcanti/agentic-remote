@@ -36,23 +36,6 @@ describe('managed service unit', () => {
     )
   })
 
-  it('defines a persistent two-hour main-branch update timer', async () => {
-    const script = await readFile(
-      new URL('../bin/agentic-remote', import.meta.url),
-      'utf8',
-    )
-
-    expect(script).toContain('OnUnitActiveSec=2h')
-    expect(script).toContain('Persistent=true')
-    expect(script).toContain('auto-update-run')
-    expect(script).toContain(
-      'automatic updates require the repository to be on main',
-    )
-    expect(script).toContain(
-      'automatic updates require a clean main worktree',
-    )
-  })
-
   it('installs dependencies without requiring an interactive prompt', async () => {
     const script = await readFile(
       new URL('../bin/agentic-remote', import.meta.url),

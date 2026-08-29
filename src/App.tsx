@@ -80,6 +80,8 @@ import {
   headingSlug,
   headingText,
   outlineFromMarkdown,
+  resolveDocumentPath,
+  isExternalSource,
   pushNavigation,
   rememberScroll,
   type DocumentHeading,
@@ -2835,6 +2837,113 @@ function AddKnowledgeRootDialog({
   )
 }
 
+function WorkspaceImage({ file }: { file: WorkspaceFile }) {
+  if (!file.base64) {
+    return <p className="workspace-preview__empty">This image cannot be shown.</p>
+  }
+  return (
+    <img
+      alt={file.name}
+      className="workspace-image"
+      src={`data:${file.mimeType};base64,${file.base64}`}
+    />
+  )
+}
+
+type MarkdownImageLoader = (path: string) => Promise<WorkspaceFile>
+
+/**
+ * Markdown images live beside their document, so a relative source has to be
+ * resolved against it and fetched through the owning computer. The bytes are
+ * rendered as a data URL: there is no same-origin asset URL to navigate to,
+ * which keeps a scripted SVG inert.
+ */
+function MarkdownImage({
+  alt,
+  documentPath,
+  load,
+  src,
+  title,
+}: {
+  alt?: string
+  documentPath: string
+  load: MarkdownImageLoader
+  src?: string
+  title?: string
+}) {
+  // The loaded target is stored alongside the result so a changed source is
+  // simply stale rather than needing a synchronous reset.
+  const [loaded, setLoaded] = useState<{
+    target: string
+    source?: string
+  }>()
+  const target = src && !isExternalSource(src)
+    ? resolveDocumentPath(documentPath, src)
+    : undefined
+
+  useEffect(() => {
+    if (!target) {
+      return
+    }
+    let active = true
+    void load(target)
+      .then((file) => {
+        if (active) {
+          setLoaded({
+            target,
+            source: file.base64
+              ? `data:${file.mimeType};base64,${file.base64}`
+              : undefined,
+          })
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setLoaded({ target })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [load, target])
+
+  const current = loaded?.target === target ? loaded : undefined
+  const failed = current !== undefined && current.source === undefined
+  const source = current?.source
+
+  if (src && isExternalSource(src)) {
+    return <img alt={alt || ''} loading="lazy" src={src} title={title} />
+  }
+  if (!target || failed) {
+    // Degrade to the alt text instead of a broken image.
+    return <span className="markdown-image markdown-image--missing">{alt || src}</span>
+  }
+  if (!source) {
+    return <span className="markdown-image markdown-image--loading">{alt || 'Loading image…'}</span>
+  }
+  return <img alt={alt || ''} loading="lazy" src={source} title={title} />
+}
+
+function markdownComponentsFor(
+  documentPath: string,
+  load: MarkdownImageLoader,
+) {
+  return {
+    ...knowledgeHeadingComponents,
+    img({ alt, src, title }: { alt?: string; src?: unknown; title?: string }) {
+      return (
+        <MarkdownImage
+          alt={alt}
+          documentPath={documentPath}
+          load={load}
+          src={typeof src === 'string' ? src : undefined}
+          title={title}
+        />
+      )
+    },
+  }
+}
+
 function markdownHeading(level: 1 | 2 | 3 | 4 | 5 | 6) {
   return function Heading({ children }: { children?: ReactNode }) {
     const Tag = `h${level}` as const
@@ -2857,12 +2966,14 @@ function KnowledgeReader({
   loading,
   root,
   onOpenFolder,
+  onLoadAsset,
 }: {
   file?: WorkspaceFile
   listing?: WorkspaceListing
   loading: boolean
   root: KnowledgeRoot
   onOpenFolder: (path: string) => void
+  onLoadAsset: MarkdownImageLoader
 }) {
   const [raw, setRaw] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
@@ -2887,6 +2998,10 @@ function KnowledgeReader({
     [file, raw],
   )
   const crumbs = breadcrumbSegments(file?.path ?? listing?.path ?? '.', root.name)
+  const components = useMemo(
+    () => markdownComponentsFor(file?.path || '.', onLoadAsset),
+    [file?.path, onLoadAsset],
+  )
 
   if (!file) {
     return (
@@ -2983,9 +3098,11 @@ function KnowledgeReader({
       >
         {file.kind === 'pdf' ? (
           <PdfViewer file={file} />
+        ) : file.kind === 'image' ? (
+          <WorkspaceImage file={file} />
         ) : file.kind === 'markdown' && !raw ? (
           <ReactMarkdown
-            components={knowledgeHeadingComponents}
+            components={components}
             remarkPlugins={[remarkGfm]}
           >
             {file.content || ''}
@@ -3294,7 +3411,13 @@ function WorkspaceDialog({
     [file, raw],
   )
 
-  const markdownComponents = knowledgeHeadingComponents
+  const markdownComponents = useMemo(
+    () =>
+      markdownComponentsFor(file?.path || '.', (assetPath) =>
+        readWorkspaceFile(session.computerId, session.id, assetPath),
+      ),
+    [file?.path, session.computerId, session.id],
+  )
 
   const crumbs = breadcrumbSegments(
     listing?.path ?? '.',
@@ -3649,6 +3772,8 @@ function WorkspaceDialog({
               >
                 {file.kind === 'pdf' ? (
                   <PdfViewer file={file} />
+                ) : file.kind === 'image' ? (
+                  <WorkspaceImage file={file} />
                 ) : file.kind === 'markdown' && !raw ? (
                   <ReactMarkdown
                     components={markdownComponents}
@@ -4617,6 +4742,13 @@ function App() {
   }
 
   const activeRoot = roots.find((root) => root.id === activeRootId)
+
+  // Stable identity: a new loader each render would remount every image and
+  // restart its download.
+  const loadKnowledgeAsset = useCallback(
+    (assetPath: string) => readKnowledgeFile(activeRootId || '', assetPath),
+    [activeRootId],
+  )
 
   async function openKnowledgeFolder(path = '.', rootId = activeRootId) {
     if (!rootId) {
@@ -5782,6 +5914,7 @@ function App() {
               key={knowledgeFile?.path || activeRoot.id}
               listing={knowledgeListing}
               loading={knowledgeLoading}
+              onLoadAsset={loadKnowledgeAsset}
               onOpenFolder={(path) => void openKnowledgeFolder(path)}
               root={activeRoot}
             />

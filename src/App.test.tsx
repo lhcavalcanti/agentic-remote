@@ -2885,4 +2885,88 @@ describe('App', () => {
       }),
     )
   })
+  it('renders an image referenced from a workspace document', async () => {
+    vi.mocked(readWorkspaceFile).mockImplementation(async (_c, _s, target) =>
+      target === 'docs/diagram.svg'
+        ? {
+            name: 'diagram.svg',
+            path: 'docs/diagram.svg',
+            kind: 'image' as const,
+            mimeType: 'image/svg+xml',
+            size: 40,
+            base64: 'PHN2Zz48L3N2Zz4=',
+          }
+        : {
+            name: 'knowledge.md',
+            path: 'docs/knowledge.md',
+            kind: 'markdown' as const,
+            mimeType: 'text/plain; charset=utf-8',
+            size: 60,
+            content:
+              '# Diagram\n\n![Flow](./diagram.svg)\n\n![Remote](https://example.test/x.png)\n\n![Gone](./missing.svg)',
+          },
+    )
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
+    fireEvent.click(
+      await screen.findByRole('button', { name: /knowledge.md/ }),
+    )
+    await screen.findByRole('heading', { name: 'Diagram' })
+
+    // The relative image is resolved against the document and inlined.
+    const image = await screen.findByAltText('Flow')
+    expect(image).toHaveAttribute(
+      'src',
+      'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+    )
+    expect(readWorkspaceFile).toHaveBeenCalledWith(
+      computer.id,
+      session.id,
+      'docs/diagram.svg',
+    )
+
+    // An absolute source is left for the browser to load.
+    expect(screen.getByAltText('Remote')).toHaveAttribute(
+      'src',
+      'https://example.test/x.png',
+    )
+
+    // A missing image degrades to its alt text rather than breaking the page.
+    expect(await screen.findByText('Gone')).toBeInTheDocument()
+  })
+  it('previews an image selected directly from the workspace', async () => {
+    vi.mocked(listWorkspace).mockResolvedValue({
+      path: '.',
+      entries: [
+        { name: 'diagram.svg', path: 'diagram.svg', kind: 'image', size: 40 },
+      ],
+    })
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      name: 'diagram.svg',
+      path: 'diagram.svg',
+      kind: 'image',
+      mimeType: 'image/svg+xml',
+      size: 40,
+      base64: 'PHN2Zz48L3N2Zz4=',
+    })
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Browse current session folder',
+      }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /diagram.svg/ }))
+
+    // An image opened on its own renders instead of an empty <pre>.
+    const image = await screen.findByAltText('diagram.svg')
+    expect(image).toHaveAttribute(
+      'src',
+      'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+    )
+  })
 })

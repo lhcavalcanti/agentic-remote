@@ -52,4 +52,15 @@ describe('managed service unit', () => {
       'automatic updates require a clean main worktree',
     )
   })
+
+  it('installs dependencies without requiring an interactive prompt', async () => {
+    const script = await readFile(
+      new URL('../bin/agentic-remote', import.meta.url),
+      'utf8',
+    )
+
+    expect(script).toContain(
+      'CI=true pnpm --dir "$REPO_ROOT" install --frozen-lockfile',
+    )
+  })
 })

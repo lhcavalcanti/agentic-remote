@@ -110,7 +110,33 @@ $EDITOR ~/.config/agentic-remote/promotion.env
 ```
 
 The setup script copies the monitor and profile into machine-local paths. The
-monitor is optional and disabled unless `--enable` is supplied.
+monitor is optional and disabled unless `--enable` is supplied. `enable` probes
+the configured health URL first and refuses to arm the timer until it answers,
+so a mistyped address fails before it can restart a service.
+
+### Promoting to a second machine
+
+To keep the machine people use separate from the machine that rebuilds, add
+downstream hosts to the same profile:
+
+```text
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HOSTS=prod-host
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT=/home/USER/src/agentic-remote
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL=http://127.0.0.1:4317/health
+```
+
+After the local runtime proves a commit, each downstream host installs that
+exact commit as a detached checkout, must land on it, and is health-checked with
+the same readiness wait used locally. Any failure restores that host, and any
+host already promoted in the same run, to the commit it was on, and leaves the
+commit ungraduated so the next run retries.
+
+This needs key-based SSH, a clean checkout that can fetch, and a build
+toolchain on each host — no configuration, credentials, or state are copied
+between machines. All destinations share one repository path and one health
+URL, so machines that differ need their own profile.
+
+Leave `DOWNSTREAM_HOSTS` empty for a single-machine setup.
 
 ## Add another computer
 

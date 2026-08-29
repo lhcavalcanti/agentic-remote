@@ -175,6 +175,80 @@ Cleanup is part of completing the change:
 Only remove branches and worktrees owned by the current task. Stop and ask
 before touching a dirty, unmerged, or otherwise unowned worktree.
 
+## Promoting to other machines
+
+A single profile can describe a two-phase promotion: validate on the machine
+that builds, then install the same commit elsewhere.
+
+```text
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HOSTS=prod-a prod-b
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT=/home/USER/src/agentic-remote
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL=http://127.0.0.1:4317/health
+```
+
+Phase one graduates the commit into the local runtime and checks it. Phase two
+then runs, for each host in order:
+
+1. Refuse to continue if the remote checkout is dirty or unreachable.
+2. Run `./bin/agentic-remote update` there.
+3. Require the remote `HEAD` to equal the validated commit. A host that landed
+   on a different tip did not install what was validated, so it is rolled back.
+4. Probe the health URL on that host.
+5. Roll that host back with `./bin/agentic-remote rollback` if any step fails.
+
+The success marker only advances after every host succeeds, so a failure leaves
+the commit ungraduated and the next run retries it.
+
+Downstream promotion is opt-in. Leave `DOWNSTREAM_HOSTS` empty and the monitor
+stays single-machine.
+
+### Requirements
+
+- Key-based SSH from the monitor host to each downstream host, with the host key
+  already accepted. The monitor runs unattended and must never be prompted; it
+  uses `BatchMode=yes` by default.
+- A clean checkout at `DOWNSTREAM_ROOT` that can fetch from the same remote.
+  Downstream checkouts are managed detached at the promoted commit, so do not
+  use a checkout someone also develops on.
+- A build toolchain reachable from a non-interactive login shell on that host,
+  plus `curl` and `git`.
+- The downstream account must be able to manage its own service, which for the
+  default installation means a user systemd service with lingering enabled.
+- At least one previous release, so a failed promotion has something to fall
+  back to.
+- Each host keeps its own identity. The monitor never copies configuration,
+  pairing tokens, credentials, or state between machines.
+
+Every destination shares one `DOWNSTREAM_ROOT` and one
+`DOWNSTREAM_HEALTH_URL`, so hosts must agree on their repository path and on a
+health address that is valid from each host. Machines that differ need separate
+profiles on separate monitor hosts.
+
+### Failure behavior
+
+A failure on any host restores that host to the commit it was on, then restores
+any host already promoted earlier in the same run, so the fleet is not left
+split across two commits. The success marker is not advanced, so the next run
+retries the same commit.
+
+The local runtime stays graduated, because it validated the commit and is
+healthy. A retry therefore rebuilds and restarts the local runtime again before
+reaching the downstream phase.
+
+### Choosing which machine serves the UI
+
+Role and release channel are independent. A common arrangement is to build on a
+development machine while a separate machine serves users, so a rebuild never
+restarts the UI someone is using. That machine is the downstream target, and it
+keeps `role = hub` so it serves the UI; the development machine can remain a
+hub too, unrouted, so a build can be validated with its UI before promotion.
+
+Changing which machine serves users is a topology change, not a promotion.
+Hub-owned state does not move: `computers.json`, `knowledge.json`, and push
+subscriptions belong to whichever host is the hub, so re-pair the other host,
+recreate knowledge roots, and re-subscribe to notifications. VAPID keys are
+per-hub, so subscriptions minted against the old hub stop working.
+
 ## Setup variants
 
 Profiles can describe different machine classes without changing the

@@ -42,6 +42,10 @@ readonly RELEASE_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_RELEASE_ROOT "$USE
 readonly HEALTH_URL="$(profile_value AGENTIC_REMOTE_MONITOR_HEALTH_URL '')"
 readonly EXTERNAL_URL="$(profile_value AGENTIC_REMOTE_MONITOR_EXTERNAL_URL '')"
 readonly EXTERNAL_STATUS="$(profile_value AGENTIC_REMOTE_MONITOR_EXTERNAL_STATUS '')"
+readonly DOWNSTREAM_HOSTS="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HOSTS '')"
+readonly DOWNSTREAM_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT '')"
+readonly DOWNSTREAM_HEALTH_URL="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL '')"
+readonly DOWNSTREAM_SSH="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_SSH 'ssh -o BatchMode=yes')"
 readonly PRODUCTION_HOST="$(profile_value AGENTIC_REMOTE_MONITOR_HOST '')"
 readonly PRODUCTION_PORT="$(profile_value AGENTIC_REMOTE_MONITOR_PORT '')"
 readonly PRODUCTION_ROLE="$(profile_value AGENTIC_REMOTE_MONITOR_ROLE '')"
@@ -100,6 +104,109 @@ rollback_runtime() {
     log "WARNING: could not restart $SERVICE_NAME"
 }
 
+# Second promotion phase. Values reach a remote bash through printf %q so a
+# path or URL containing spaces, quotes, or substitutions is data rather than
+# code.
+run_remote() {
+  local host="$1" script="$2"
+  $DOWNSTREAM_SSH "$host" "bash -lc $(printf '%q' "$script")"
+}
+
+# Rebuild an exact known-good commit rather than reactivating whatever release
+# happens to be newest, so recovery does not depend on directory timestamps.
+restore_downstream() {
+  local host="$1" commit="$2" root_q commit_q
+  root_q="$(printf '%q' "$DOWNSTREAM_ROOT")"
+  commit_q="$(printf '%q' "$commit")"
+  log "restoring $host to $commit"
+  run_remote "$host" \
+    "cd $root_q && git checkout --detach $commit_q && ./bin/agentic-remote setup" ||
+    log "WARNING: could not restore $host to $commit"
+}
+
+# The local runtime has already proven this commit, so each host installs that
+# exact commit. Using the branch tip instead would build and activate whatever
+# main points at now, which is not what was validated.
+promote_downstream() {
+  local commit="$1" host root_q commit_q url_q status head attempt healthy
+  local -a promoted=()
+  [[ -n "$DOWNSTREAM_HOSTS" ]] || return 0
+
+  root_q="$(printf '%q' "$DOWNSTREAM_ROOT")"
+  commit_q="$(printf '%q' "$commit")"
+
+  for host in $DOWNSTREAM_HOSTS; do
+    log "promoting $commit to $host"
+
+    # Capture the commit to return to before anything is mutated.
+    if ! status="$(run_remote "$host" "cd $root_q && git rev-parse HEAD")"; then
+      log "ERROR: cannot read the checkout on $host: $DOWNSTREAM_ROOT"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
+    fi
+    local previous_head="$status"
+
+    # Assigning first makes a failing git fail the check; testing its output
+    # directly would treat a git error as a clean worktree.
+    if ! run_remote "$host" \
+      "cd $root_q && changes=\$(git status --porcelain) && test -z \"\$changes\""; then
+      log "ERROR: $host checkout is dirty or unreadable: $DOWNSTREAM_ROOT"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
+    fi
+
+    if ! run_remote "$host" \
+      "cd $root_q && git fetch --prune origin && git checkout --detach $commit_q && ./bin/agentic-remote setup"; then
+      log "ERROR: install failed on $host"
+      restore_downstream "$host" "$previous_head"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
+    fi
+
+    head="$(run_remote "$host" "cd $root_q && git rev-parse HEAD")" || head=""
+    if [[ "$head" != "$commit" ]]; then
+      log "ERROR: $host is at ${head:-unknown}, not the validated $commit"
+      restore_downstream "$host" "$previous_head"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
+    fi
+
+    if [[ -n "$DOWNSTREAM_HEALTH_URL" ]]; then
+      url_q="$(printf '%q' "$DOWNSTREAM_HEALTH_URL")"
+      healthy=0
+      # Match the local readiness wait; a single probe races the restart.
+      for attempt in $(seq 1 30); do
+        if run_remote "$host" "curl -fsS --max-time 5 $url_q >/dev/null"; then
+          healthy=1
+          break
+        fi
+        sleep 2
+      done
+      if [[ "$healthy" != 1 ]]; then
+        log "ERROR: health check failed on $host"
+        restore_downstream "$host" "$previous_head"
+        restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+        return 1
+      fi
+    fi
+
+    promoted+=("$host:$previous_head")
+    log "promoted $commit to $host"
+  done
+}
+
+# Return hosts already promoted in this run so a partial failure does not leave
+# the fleet split across two commits.
+restore_promoted() {
+  shift
+  local entry host previous
+  for entry in "$@"; do
+    host="${entry%%:*}"
+    previous="${entry##*:}"
+    restore_downstream "$host" "$previous"
+  done
+}
+
 package_manager_version() {
   python3 - "$1/package.json" <<'PY'
 import json
@@ -127,6 +234,13 @@ run() {
   require_value AGENTIC_REMOTE_MONITOR_GITHUB_USER "$GITHUB_USER"
   require_value AGENTIC_REMOTE_MONITOR_REPOSITORY "$GITHUB_REPOSITORY"
   require_value AGENTIC_REMOTE_MONITOR_HEALTH_URL "$HEALTH_URL"
+  # Validate cross-field requirements before anything is built or restarted, so
+  # an incomplete downstream profile cannot be discovered after local promotion.
+  if [[ -n "$DOWNSTREAM_HOSTS" ]]; then
+    require_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT "$DOWNSTREAM_ROOT"
+    require_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL \
+      "$DOWNSTREAM_HEALTH_URL"
+  fi
 
   mkdir -p "$STATE_DIR"
   require_command flock
@@ -142,6 +256,7 @@ run() {
   require_command git
   require_command python3
   require_command systemctl
+  [[ -z "$DOWNSTREAM_HOSTS" ]] || require_command ssh
 
   assert_repository "$DEV_ROOT"
   assert_repository "$PROD_ROOT"
@@ -306,6 +421,12 @@ run() {
     log "ERROR: $failure"
     rollback_runtime "$prod_commit" "$previous_release"
     die "graduation failed and the previous runtime was restored"
+  fi
+
+  # Downstream hosts are promoted before the success marker advances, so a
+  # failure there leaves the candidate ungraduated and the next run retries.
+  if ! promote_downstream "$candidate_commit"; then
+    die "downstream promotion failed; the success marker was left unchanged"
   fi
 
   local temporary_state temporary_record

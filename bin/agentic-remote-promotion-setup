@@ -5,6 +5,9 @@ set -Eeuo pipefail
 readonly SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
 readonly REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+# AGENTIC_REMOTE_PROMOTION_HOME relocates the profile, monitor, and unit files
+# only. systemctl --user still acts on the caller's own systemd session, so
+# `enable` from an overridden home arms the real timer. It is not a sandbox.
 readonly USER_HOME="${AGENTIC_REMOTE_PROMOTION_HOME:-${HOME:-}}"
 readonly CONFIG_DIR="$USER_HOME/.config/agentic-remote"
 readonly SYSTEMD_DIR="$USER_HOME/.config/systemd/user"
@@ -220,8 +223,9 @@ install_monitor() {
   write_units
   systemctl --user daemon-reload
   if [[ "$enable" == 1 ]]; then
-    systemctl --user enable --now "$TIMER_NAME"
-    printf 'Local promotion monitor installed and enabled.\n'
+    # Route through enable_monitor so --enable gets the same health preflight as
+    # the standalone command instead of arming an unverified timer.
+    enable_monitor
   else
     printf 'Local promotion monitor installed and disabled by default.\n'
   fi

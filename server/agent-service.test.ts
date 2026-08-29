@@ -953,6 +953,53 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('reports a failed prompt write instead of raising an unhandled rejection', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    const errors: string[] = []
+    service.on('event', (event) => {
+      if (event.type === 'error') {
+        errors.push(event.message)
+      }
+    })
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+
+    try {
+      await service.createSession(directory)
+      await service.sendMessage(client.session.sessionId, 'keep working')
+
+      // The state directory disappearing mid-prompt is what happens when a
+      // write outlives its data directory; runPrompt persists from its own
+      // completion and failure paths, and it is dispatched fire-and-forget.
+      vi.spyOn(store, 'update').mockRejectedValue(
+        new Error('state directory is gone'),
+      )
+      client.session.resolvePrompt()
+      for (let attempt = 0; attempt < 100 && errors.length === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+
+      expect(errors).toContain('state directory is gone')
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+      vi.restoreAllMocks()
+      await service.stop()
+    }
+  })
+
   it('keeps UI-created sessions open across service restarts', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

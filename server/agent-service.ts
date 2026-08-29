@@ -2111,7 +2111,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.activePrompts.set(sessionId, { assistantMessageId })
     this.publish(updated)
 
-    void this.runPrompt(sdkSession, content, assistantMessageId)
+    // runPrompt writes to the store from its own catch and finally paths, so a
+    // failure there would escape this fire-and-forget call as an unhandled
+    // rejection and abort the process.
+    void this.runPrompt(sdkSession, content, assistantMessageId).catch(
+      (error: unknown) => {
+        this.publishError(sessionId, error)
+      },
+    )
     return updated
   }
 

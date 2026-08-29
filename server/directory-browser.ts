@@ -1,7 +1,11 @@
 import { readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { DirectoryListing } from '../shared/contracts.js'
-import { homeDirectory, isWithin } from './session-directory.js'
+import {
+  SessionDirectoryError,
+  homeDirectory,
+  isWithin,
+} from './session-directory.js'
 
 /**
  * `home` keeps browsing inside the user's home directory, which is what a
@@ -19,7 +23,7 @@ export async function listHomeDirectories(
   const resolved = await resolveRequestedPath(home, requestedPath, confined)
   const metadata = await stat(resolved)
   if (!metadata.isDirectory()) {
-    throw new Error('Folder path must point to a directory')
+    throw new SessionDirectoryError('Folder path must point to a directory')
   }
 
   const entries = await readdir(resolved, { withFileTypes: true })
@@ -83,7 +87,9 @@ async function resolveRequestedPath(
           : path.join(home, value)
   const resolved = await realpath(candidate)
   if (confined && !isWithin(home, resolved)) {
-    throw new Error('Folder browsing is restricted to the user home directory')
+    throw new SessionDirectoryError(
+      'Folder browsing is restricted to the user home directory',
+    )
   }
   return resolved
 }

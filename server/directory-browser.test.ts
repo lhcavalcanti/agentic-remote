@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { listHomeDirectories } from './directory-browser.js'
+import { SessionDirectoryError } from './session-directory.js'
 
 const directories: string[] = []
 
@@ -100,5 +101,23 @@ describe('whole-computer browsing', () => {
     const listing = await listHomeDirectories('/', 'all')
     expect(listing.path).toBe('/')
     expect(listing.parent).toBeUndefined()
+  })
+})
+
+describe('directory browsing errors', () => {
+  it('reports a refused folder as a 400 with its reason', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'browse-home-'))
+    directories.push(home)
+    vi.stubEnv('HOME', home)
+    const outside = await mkdtemp(path.join(tmpdir(), 'browse-outside-'))
+    directories.push(outside)
+
+    const error = await listHomeDirectories(outside).catch(
+      (caught: unknown) => caught,
+    )
+    // Without a status the API handler would replace this with a generic 500.
+    expect(error).toBeInstanceOf(SessionDirectoryError)
+    expect((error as SessionDirectoryError).statusCode).toBe(400)
+    expect((error as Error).message).toContain('restricted to the user home')
   })
 })

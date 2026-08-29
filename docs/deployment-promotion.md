@@ -55,10 +55,47 @@ AGENTIC_REMOTE_MONITOR_DEV_ROOT=/path/to/development/checkout
 AGENTIC_REMOTE_MONITOR_PROD_ROOT=/path/to/production/runtime
 AGENTIC_REMOTE_MONITOR_RELEASE_ROOT=/path/to/releases
 AGENTIC_REMOTE_MONITOR_SERVICE=agentic-remote.service
-AGENTIC_REMOTE_MONITOR_HEALTH_URL=http://127.0.0.1:4317/api/health
+AGENTIC_REMOTE_MONITOR_HEALTH_URL=http://127.0.0.1:4317/health
 AGENTIC_REMOTE_MONITOR_REPOSITORY=owner/repository
 AGENTIC_REMOTE_MONITOR_WORKFLOW=ci.yml
 ```
+
+### Inherit the runtime identity by default
+
+A monitor promotes a build; it does not decide what the host is. Leave
+`AGENTIC_REMOTE_MONITOR_HOST`, `PORT`, `ROLE`, and `NAME` empty so each
+graduation reuses the role, name, and bind address already installed on the
+host. Set one only to change the runtime deliberately.
+
+This matters most on a node. A profile that asserts `ROLE=hub` converts a
+paired node into a hub on its first graduation, rebinds it, and renames the
+computer the hub has registered.
+
+Use `/health` for `health_url`. It reports `{ok, role, node}` for both roles,
+whereas `/api/health` is registered only for a hub and returns `404` on a node
+— so a node configured with `/api/health` fails its check after the service has
+already restarted, and never records the promotion.
+
+Point `health_url` at the address the service actually binds. A host
+configured with a LAN `HOST` does not answer on `127.0.0.1`. The hub Host
+allowlist applies only to `/api/` URLs, so `/health` needs no allowlist entry
+while `/api/health` does. `agentic-remote-promotion-setup enable` probes the
+configured URL and refuses to arm the timer until it answers.
+
+### Graduation is transactional
+
+The release pointer and the managed service are replaced before the health and
+external checks run, and the release directory keeps only the current release
+plus two rollbacks. A failure that simply exits would therefore leave the failed
+candidate serving traffic, and repeated retries would evict the last known-good
+release. On any failure after the switch, restore the previous commit and
+release pointer, restart the service, and leave the success marker unchanged so
+the next run retries from a known state.
+
+Graduate only what `origin/main` already contains. A clean local `main` can sit
+ahead of its upstream, and a CI run matched only by commit SHA can come from a
+feature branch, so comparing `HEAD` against `refs/remotes/origin/main` after the
+fetch is what prevents promoting an unmerged commit.
 
 ## Reproducible setup from the repository
 

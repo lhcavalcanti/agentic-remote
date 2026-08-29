@@ -229,8 +229,20 @@ install_monitor() {
 
 enable_monitor() {
   require_command systemctl
+  require_command curl
   [[ -f "$SERVICE_FILE" && -f "$TIMER_FILE" ]] ||
     die "monitor is not installed; run install first"
+
+  # The health check runs after the service has already been replaced, so an
+  # unreachable URL turns every promotion into a restart that then reports
+  # failure. Refuse to arm the timer until the URL actually answers.
+  local health_url
+  health_url="$(profile_value "$PROFILE_DEST" AGENTIC_REMOTE_MONITOR_HEALTH_URL)"
+  [[ -n "$health_url" ]] ||
+    die "set AGENTIC_REMOTE_MONITOR_HEALTH_URL in $PROFILE_DEST before enabling"
+  curl -fsS --max-time 10 "$health_url" >/dev/null ||
+    die "health URL did not answer: $health_url"
+
   systemctl --user daemon-reload
   systemctl --user enable --now "$TIMER_NAME"
   printf 'Local promotion monitor enabled.\n'

@@ -104,5 +104,11 @@ describe('reproducible promotion setup', () => {
     expect(script).toContain('git -C "$dev_root" worktree add --detach "$prod_root" HEAD')
     expect(script).toContain('replace the placeholders in the profile before installing it')
     expect(script).toContain('preserving profile and state')
+
+    // systemctl show prints Environment= entries, so the units must not be
+    // more readable than the profile they point at.
+    expect(script).toContain('install -m 0600 "$temporary" "$SERVICE_FILE"')
+    expect(script).toContain('install -m 0600 "$temporary" "$TIMER_FILE"')
+    expect(script).not.toContain('install -m 0644')
   })
 })

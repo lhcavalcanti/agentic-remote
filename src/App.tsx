@@ -3829,6 +3829,7 @@ function App() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
   const autoScrollSessionRef = useRef<string | undefined>(undefined)
+  const previousPendingActionRef = useRef<string | undefined>(undefined)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
@@ -4530,7 +4531,11 @@ function App() {
       autoScrollSessionRef.current = selectedKey
       autoScrollRef.current = true
     }
-    if (!autoScrollRef.current) {
+    const pendingActionArrived =
+      pendingActionId !== undefined &&
+      pendingActionId !== previousPendingActionRef.current
+    previousPendingActionRef.current = pendingActionId
+    if (!autoScrollRef.current && !pendingActionArrived) {
       return
     }
     const frame = window.requestAnimationFrame(() => {

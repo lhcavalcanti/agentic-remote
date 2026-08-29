@@ -1665,7 +1665,7 @@ describe('App', () => {
     expect(screen.queryByText('What should I inspect?')).not.toBeInTheDocument()
   })
 
-  it('opens at the latest messages and scrolls a new question into view', async () => {
+  it('opens at the latest messages and scrolls a new question into view while scrolled up', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     await waitFor(() =>
@@ -1675,6 +1675,15 @@ describe('App', () => {
     await waitFor(() =>
       expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
     )
+
+    const timeline = document.querySelector<HTMLElement>('.timeline')
+    expect(timeline).not.toBeNull()
+    Object.defineProperties(timeline!, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+    })
+    fireEvent.scroll(timeline!)
     scrollIntoView.mockClear()
 
     act(() => {
@@ -1697,6 +1706,52 @@ describe('App', () => {
 
     expect(
       await screen.findByText('Choose the deployment target'),
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
+    )
+  })
+
+  it('scrolls a new permission into view while scrolled up', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+
+    const timeline = document.querySelector<HTMLElement>('.timeline')
+    expect(timeline).not.toBeNull()
+    Object.defineProperties(timeline!, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+    })
+    fireEvent.scroll(timeline!)
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            status: 'waiting',
+            pendingPermission: {
+              requestId: 'new-permission',
+              title: 'Run the deployment command?',
+              options: [
+                { optionId: 'allow', name: 'Allow', kind: 'allow' },
+                { optionId: 'deny', name: 'Deny', kind: 'deny' },
+              ],
+            },
+          },
+        }),
+      } as MessageEvent)
+    })
+
+    expect(
+      await screen.findByText('Run the deployment command?'),
     ).toBeInTheDocument()
     await waitFor(() =>
       expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),

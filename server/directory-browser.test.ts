@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -67,5 +67,38 @@ describe('listHomeDirectories', () => {
       { name: 'projects', path: '~/projects' },
       { name: 'work', path: '~/projects' },
     ])
+  })
+})
+
+describe('whole-computer browsing', () => {
+  it('walks outside the home directory when the scope allows it', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'browse-home-'))
+    directories.push(home)
+    vi.stubEnv('HOME', home)
+    const outside = await mkdtemp(path.join(tmpdir(), 'browse-outside-'))
+    directories.push(outside)
+    await mkdir(path.join(outside, 'docs'))
+
+    // Confined browsing still refuses it.
+    await expect(listHomeDirectories(outside)).rejects.toThrow(
+      'Folder browsing is restricted to the user home directory',
+    )
+
+    const listing = await listHomeDirectories(outside, 'all')
+    expect(listing.path).toBe(await realpath(outside))
+    expect(listing.directories.map((entry) => entry.name)).toContain('docs')
+    // Absolute paths are returned so the folder can be stored as a root.
+    expect(listing.directories[0].path.startsWith('/')).toBe(true)
+    expect(listing.parent).toBeDefined()
+  })
+
+  it('stops at the filesystem root', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'browse-home-'))
+    directories.push(home)
+    vi.stubEnv('HOME', home)
+
+    const listing = await listHomeDirectories('/', 'all')
+    expect(listing.path).toBe('/')
+    expect(listing.parent).toBeUndefined()
   })
 })

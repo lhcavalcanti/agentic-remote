@@ -95,3 +95,41 @@ export async function validateSessionDirectory(
   }
   return resolved
 }
+
+/**
+ * A knowledge root is read-only browsing, so it may be any directory the user
+ * can actually read. Session working directories stay confined, because that is
+ * where an agent executes.
+ */
+export async function validateKnowledgeRoot(inputPath: string): Promise<string> {
+  const trimmed = inputPath.trim()
+  if (!trimmed) {
+    throw new SessionDirectoryError('Folder path is required')
+  }
+  const home = await homeDirectory()
+  const expanded =
+    trimmed === '~' || trimmed.startsWith('~/')
+      ? path.join(home, trimmed.slice(1))
+      : trimmed
+  if (!path.isAbsolute(expanded)) {
+    throw new SessionDirectoryError('Use an absolute folder path')
+  }
+  let resolved: string
+  try {
+    resolved = await realpath(expanded)
+    if (!(await stat(resolved)).isDirectory()) {
+      throw new SessionDirectoryError('Folder path must point to a directory')
+    }
+    await access(resolved, constants.R_OK | constants.X_OK)
+  } catch (error) {
+    if (error instanceof SessionDirectoryError) {
+      throw error
+    }
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      throw new SessionDirectoryError(`Folder does not exist: ${expanded}`)
+    }
+    throw new SessionDirectoryError(`Folder is not readable: ${expanded}`)
+  }
+  return resolved
+}

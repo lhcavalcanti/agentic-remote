@@ -1,3 +1,4 @@
+import type { DirectoryScope } from './directory-browser.js'
 import type {
   AgentProvider,
   AgentProviderCapability,
@@ -74,7 +75,10 @@ export interface SessionService {
   ): Promise<SessionDetail>
   on(event: 'event', listener: (event: ServerEvent) => void): unknown
   off(event: 'event', listener: (event: ServerEvent) => void): unknown
-  listDirectories(path?: string): Promise<DirectoryListing>
+  listDirectories(
+    path?: string,
+    scope?: DirectoryScope,
+  ): Promise<DirectoryListing>
   listKnowledge(root: string, path?: string): Promise<WorkspaceListing>
   readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile>
   listWorkspace(

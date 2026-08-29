@@ -17,6 +17,33 @@ function applicationServerKey(value: string): Uint8Array<ArrayBuffer> {
   return bytes
 }
 
+function encodeServerKey(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value)
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary)
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/, '')
+}
+
+function normalizeServerKey(value: string): string {
+  return value.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+function subscriptionUsesKey(
+  subscription: PushSubscription,
+  serverKey: string,
+): boolean {
+  const applied = subscription.options?.applicationServerKey
+  if (!applied) {
+    return false
+  }
+  return encodeServerKey(applied) === normalizeServerKey(serverKey)
+}
+
 export function pushNotificationsSupported(): boolean {
   return (
     'serviceWorker' in navigator &&
@@ -40,6 +67,22 @@ export async function pushSubscription(): Promise<PushSubscription | null> {
   return (await navigator.serviceWorker.ready).pushManager.getSubscription()
 }
 
+// A subscription is bound to the VAPID key of the hub that minted it, so one
+// left over from a different hub can never receive a push. Treat it as absent
+// rather than reporting notifications as enabled.
+export async function activePushSubscription(): Promise<PushSubscription | null> {
+  const subscription = await pushSubscription()
+  if (!subscription) {
+    return null
+  }
+  try {
+    const serverKey = await getPushPublicKey()
+    return subscriptionUsesKey(subscription, serverKey) ? subscription : null
+  } catch {
+    return subscription
+  }
+}
+
 export async function enablePushNotifications(): Promise<PushSubscription> {
   if (!pushNotificationsSupported()) {
     throw new Error('Push notifications are not supported in this browser')
@@ -49,13 +92,16 @@ export async function enablePushNotifications(): Promise<PushSubscription> {
     throw new Error('Notification permission was not granted')
   }
   const registration = await navigator.serviceWorker.ready
-  const existing = await registration.pushManager.getSubscription()
-  const subscription =
-    existing ||
-    (await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: applicationServerKey(await getPushPublicKey()),
-    }))
+  const serverKey = await getPushPublicKey()
+  let subscription = await registration.pushManager.getSubscription()
+  if (subscription && !subscriptionUsesKey(subscription, serverKey)) {
+    await subscription.unsubscribe()
+    subscription = null
+  }
+  subscription ??= await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: applicationServerKey(serverKey),
+  })
   await savePushSubscription(subscription.toJSON())
   return subscription
 }

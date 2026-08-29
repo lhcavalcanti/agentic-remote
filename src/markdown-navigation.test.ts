@@ -6,6 +6,8 @@ import {
   headingText,
   inlineText,
   outlineFromMarkdown,
+  resolveDocumentPath,
+  isExternalSource,
   pushNavigation,
   rememberScroll,
   type NavigationEntry,
@@ -201,5 +203,57 @@ describe('outlineFromMarkdown edge cases', () => {
       '\n',
     )
     expect(outlineFromMarkdown(content)).toEqual([])
+  })
+})
+
+describe('resolveDocumentPath', () => {
+  it('resolves a sibling image against its document', () => {
+    expect(resolveDocumentPath('docs/guide.md', './diagram.svg')).toBe(
+      'docs/diagram.svg',
+    )
+    expect(resolveDocumentPath('docs/guide.md', 'img/shot.png')).toBe(
+      'docs/img/shot.png',
+    )
+    expect(resolveDocumentPath('guide.md', 'shot.png')).toBe('shot.png')
+  })
+
+  it('walks up without leaving the root', () => {
+    expect(resolveDocumentPath('docs/guides/setup.md', '../diagram.svg')).toBe(
+      'docs/diagram.svg',
+    )
+    expect(
+      resolveDocumentPath('docs/guides/setup.md', '../../top.png'),
+    ).toBe('top.png')
+    // One level further would escape the root.
+    expect(
+      resolveDocumentPath('docs/guides/setup.md', '../../../escape.png'),
+    ).toBeUndefined()
+    expect(resolveDocumentPath('guide.md', '../escape.png')).toBeUndefined()
+  })
+
+  it('refuses absolute paths and bare fragments', () => {
+    expect(resolveDocumentPath('docs/guide.md', '/etc/passwd')).toBeUndefined()
+    expect(resolveDocumentPath('docs/guide.md', '#section')).toBeUndefined()
+    expect(resolveDocumentPath('docs/guide.md', '   ')).toBeUndefined()
+  })
+
+  it('drops a query or fragment and decodes escapes', () => {
+    expect(resolveDocumentPath('docs/guide.md', 'shot.png?v=2')).toBe(
+      'docs/shot.png',
+    )
+    expect(resolveDocumentPath('docs/guide.md', 'my%20shot.png')).toBe(
+      'docs/my shot.png',
+    )
+  })
+})
+
+describe('isExternalSource', () => {
+  it('recognises sources the browser should load itself', () => {
+    expect(isExternalSource('https://example.com/a.png')).toBe(true)
+    expect(isExternalSource('http://example.com/a.png')).toBe(true)
+    expect(isExternalSource('data:image/png;base64,AAA')).toBe(true)
+    expect(isExternalSource('//example.com/a.png')).toBe(true)
+    expect(isExternalSource('./local.png')).toBe(false)
+    expect(isExternalSource('img/local.png')).toBe(false)
   })
 })

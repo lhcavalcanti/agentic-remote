@@ -87,3 +87,57 @@ describe('workspace browser', () => {
     })
   })
 })
+
+describe('workspace images', () => {
+  it('reads an image as base64 with its real mime type', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'workspace-image-'))
+    directories.push(root)
+    await mkdir(path.join(root, 'docs'))
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+    await writeFile(path.join(root, 'docs', 'diagram.svg'), svg)
+    await writeFile(path.join(root, 'docs', 'shot.png'), Buffer.from([0x89, 0x50]))
+
+    const listing = await listWorkspace(root, 'docs')
+    expect(
+      listing.entries.map((entry) => [entry.name, entry.kind]),
+    ).toEqual(
+      expect.arrayContaining([
+        ['diagram.svg', 'image'],
+        ['shot.png', 'image'],
+      ]),
+    )
+
+    const file = await readWorkspaceFile(root, 'docs/diagram.svg')
+    expect(file.kind).toBe('image')
+    expect(file.mimeType).toBe('image/svg+xml')
+    expect(file.content).toBeUndefined()
+    expect(Buffer.from(file.base64 || '', 'base64').toString('utf8')).toBe(svg)
+
+    expect((await readWorkspaceFile(root, 'docs/shot.png')).mimeType).toBe(
+      'image/png',
+    )
+  })
+
+  it('keeps refusing types that are not previewable', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'workspace-image-'))
+    directories.push(root)
+    await writeFile(path.join(root, 'app.bin'), 'binary')
+
+    await expect(readWorkspaceFile(root, 'app.bin')).rejects.toThrow(
+      'This file type cannot be previewed',
+    )
+  })
+
+  it('refuses an image outside the root', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'workspace-image-'))
+    directories.push(root)
+    const outside = await mkdtemp(path.join(tmpdir(), 'workspace-outside-'))
+    directories.push(outside)
+    await writeFile(path.join(outside, 'secret.png'), 'x')
+    await mkdir(path.join(root, 'docs'))
+
+    await expect(
+      readWorkspaceFile(root, '../' + path.basename(outside) + '/secret.png'),
+    ).rejects.toThrow()
+  })
+})

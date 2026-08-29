@@ -12,6 +12,15 @@ import type {
 const MAX_DIRECTORY_ENTRIES = 2_000
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
 const MAX_PDF_BYTES = 25 * 1024 * 1024
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+const imageMimeTypes = new Map([
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'],
+  ['.webp', 'image/webp'],
+  ['.svg', 'image/svg+xml'],
+])
 const MAX_SEARCH_FILES = 5_000
 const MAX_SEARCH_RESULTS = 50
 const MAX_SEARCH_TEXT_BYTES = 20 * 1024 * 1024
@@ -110,25 +119,37 @@ export async function readWorkspaceFile(
   if (!metadata.isFile()) {
     throw new WorkspaceBrowserError('Workspace path must be a file', 400)
   }
+  const extension = path.extname(resolved).toLowerCase()
   const kind = fileKind(resolved)
-  const limit = kind === 'pdf' ? MAX_PDF_BYTES : MAX_TEXT_BYTES
+  const limit =
+    kind === 'pdf'
+      ? MAX_PDF_BYTES
+      : kind === 'image'
+        ? MAX_IMAGE_BYTES
+        : MAX_TEXT_BYTES
   if (metadata.size > limit) {
     throw new WorkspaceBrowserError(
       `File is too large to preview (maximum ${Math.floor(limit / 1024 / 1024)} MiB)`,
       413,
     )
   }
-  if (kind === 'file' && !searchableExtensions.has(path.extname(resolved).toLowerCase())) {
+  if (kind === 'file' && !searchableExtensions.has(extension)) {
     throw new WorkspaceBrowserError('This file type cannot be previewed', 415)
   }
   const data = await readFile(resolved)
+  const binary = kind === 'pdf' || kind === 'image'
   return {
     name: path.basename(resolved),
     path: relativePath(root, resolved),
     kind,
-    mimeType: kind === 'pdf' ? 'application/pdf' : 'text/plain; charset=utf-8',
+    mimeType:
+      kind === 'pdf'
+        ? 'application/pdf'
+        : kind === 'image'
+          ? imageMimeTypes.get(extension) || 'application/octet-stream'
+          : 'text/plain; charset=utf-8',
     size: metadata.size,
-    ...(kind === 'pdf'
+    ...(binary
       ? { base64: data.toString('base64') }
       : { content: data.toString('utf8') }),
   }
@@ -271,6 +292,7 @@ function fileKind(filename: string): Exclude<WorkspaceEntryKind, 'directory'> {
   const extension = path.extname(filename).toLowerCase()
   if (extension === '.md' || extension === '.markdown') return 'markdown'
   if (extension === '.pdf') return 'pdf'
+  if (imageMimeTypes.has(extension)) return 'image'
   return 'file'
 }
 

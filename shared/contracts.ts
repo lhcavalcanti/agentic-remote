@@ -253,7 +253,12 @@ export interface DirectoryListing {
   }>
 }
 
-export type WorkspaceEntryKind = 'directory' | 'markdown' | 'pdf' | 'file'
+export type WorkspaceEntryKind =
+  | 'directory'
+  | 'markdown'
+  | 'pdf'
+  | 'image'
+  | 'file'
 
 export interface WorkspaceEntry {
   name: string

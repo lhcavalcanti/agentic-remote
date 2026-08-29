@@ -180,3 +180,55 @@ export function rememberScroll(
   next[index] = { ...next[index], scrollTop }
   return next
 }
+
+/**
+ * Resolves a Markdown image or link source against the document that contains
+ * it, keeping the result inside the workspace or knowledge root. Returns
+ * undefined for anything that escapes, so the caller can leave it unresolved
+ * rather than issuing a request that the server would refuse anyway.
+ */
+export function resolveDocumentPath(
+  documentPath: string,
+  source: string,
+): string | undefined {
+  const raw = source.trim()
+  if (!raw || raw.startsWith('#')) {
+    return undefined
+  }
+  const withoutQuery = raw.split(/[?#]/, 1)[0]
+  if (!withoutQuery) {
+    return undefined
+  }
+  let decoded = withoutQuery
+  try {
+    decoded = decodeURIComponent(withoutQuery)
+  } catch {
+    // A malformed escape is used as written rather than failing outright.
+  }
+  if (decoded.startsWith('/')) {
+    return undefined
+  }
+  const base = documentPath.includes('/')
+    ? documentPath.slice(0, documentPath.lastIndexOf('/'))
+    : ''
+  const segments = base ? base.split('/') : []
+  for (const segment of decoded.split('/')) {
+    if (!segment || segment === '.') {
+      continue
+    }
+    if (segment === '..') {
+      if (segments.length === 0) {
+        return undefined
+      }
+      segments.pop()
+      continue
+    }
+    segments.push(segment)
+  }
+  return segments.length > 0 ? segments.join('/') : undefined
+}
+
+/** True for sources the browser should load itself rather than the workspace. */
+export function isExternalSource(source: string): boolean {
+  return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(source.trim())
+}

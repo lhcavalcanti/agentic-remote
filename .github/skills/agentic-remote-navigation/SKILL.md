@@ -178,15 +178,22 @@ Notes:
 2. `./bin/agentic-remote update` pulls the branch, installs, builds, publishes
    an immutable release, and restarts the service. `KillMode=process` keeps
    tmux sessions alive across the restart.
-3. Verify: service active, `/api/health` 200 for the hub, computers still
-   `online`, sessions preserved.
-4. **Ask the user explicitly before updating production.** Approval for
-   development never implies approval for production
-   (`.github/copilot-instructions.md`).
-5. Update production over the approved operator SSH path, then verify node
-   health, hub connectivity, and the behavior the change affected. A node
-   answers `404` on `/`; check it through the hub's computer list instead.
-6. `./bin/agentic-remote rollback` activates the previous release.
+3. Verify development: service active, `/api/health` 200, computers still
+   `online`, sessions preserved, and **the behavior the change was made for
+   actually exercised**. That last part is what makes development "stable"; a
+   green deploy alone does not.
+4. **Once development is stable, continue to production without asking.** Run
+   the same `update` over the approved operator SSH path
+   (`homelab-prod-agent`).
+5. Ask first only when development could not prove the change — node-only
+   behavior that was never exercised through the hub, anything that migrates or
+   deletes stored state, inconclusive verification, or a rollout that
+   `rollback` cannot undo (`.github/copilot-instructions.md`).
+6. Verify production: node health, hub connectivity, and the affected behavior.
+   A node answers `404` on `/`, so check it through the hub's computer list.
+7. `./bin/agentic-remote rollback` activates the previous release. If
+   production verification fails, roll it back rather than leaving the hosts
+   diverged.
 
 The service runs from `~/.config/agentic-remote/releases/current`, not from the
 working tree, so uncommitted edits are never live.

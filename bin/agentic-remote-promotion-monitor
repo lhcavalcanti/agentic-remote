@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly USER_HOME_DEFAULT="${AGENTIC_REMOTE_MONITOR_HOME:-${HOME:-}}"
+readonly PROFILE_FILE="${AGENTIC_REMOTE_MONITOR_PROFILE:-$USER_HOME_DEFAULT/.config/agentic-remote/promotion.env}"
+
+profile_value() {
+  local key="$1" default="$2" value
+  value="${!key-}"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return
+  fi
+  if [[ -f "$PROFILE_FILE" ]]; then
+    value="$(sed -n "s/^${key}=//p" "$PROFILE_FILE" | tail -n 1)"
+    if [[ -n "$value" ]]; then
+      printf '%s' "$value"
+      return
+    fi
+  fi
+  printf '%s' "$default"
+}
+
+readonly DEV_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_DEV_ROOT '')"
+readonly PROD_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_PROD_ROOT '')"
+readonly USER_HOME="$(profile_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME_DEFAULT")"
+readonly GH_CLI_CONFIG_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR '')"
+readonly GITHUB_USER="$(profile_value AGENTIC_REMOTE_MONITOR_GITHUB_USER '')"
+readonly GITHUB_REPOSITORY="$(profile_value AGENTIC_REMOTE_MONITOR_REPOSITORY '')"
+readonly CI_WORKFLOW="$(profile_value AGENTIC_REMOTE_MONITOR_WORKFLOW ci.yml)"
+readonly STATE_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_STATE_DIR "$USER_HOME/.local/state/agentic-remote-monitor")"
+readonly STATE_FILE="$STATE_DIR/last-graduated-commit"
+readonly STATE_RECORD="$STATE_DIR/promotion-state"
+readonly LOCK_FILE="$STATE_DIR/lock"
+readonly SERVICE_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_SERVICE agentic-remote.service)"
+readonly DATA_DIR="$(profile_value AGENTIC_REMOTE_DATA_DIR '')"
+readonly ALLOWED_ROOTS="$(profile_value AGENTIC_REMOTE_ALLOWED_ROOTS '')"
+readonly ALLOWED_ORIGINS="$(profile_value AGENTIC_REMOTE_ALLOWED_ORIGINS '')"
+readonly RUNTIME_TOOLS="$(profile_value AGENTIC_REMOTE_RUNTIME_TOOLS "$USER_HOME/.local/share/agentic-remote-runtime-tools")"
+readonly RELEASE_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_RELEASE_ROOT "$USER_HOME/.config/agentic-remote/releases")"
+readonly HEALTH_URL="$(profile_value AGENTIC_REMOTE_MONITOR_HEALTH_URL '')"
+readonly EXTERNAL_URL="$(profile_value AGENTIC_REMOTE_MONITOR_EXTERNAL_URL '')"
+readonly EXTERNAL_STATUS="$(profile_value AGENTIC_REMOTE_MONITOR_EXTERNAL_STATUS '')"
+readonly PRODUCTION_HOST="$(profile_value AGENTIC_REMOTE_MONITOR_HOST 0.0.0.0)"
+readonly PRODUCTION_PORT="$(profile_value AGENTIC_REMOTE_MONITOR_PORT 4317)"
+readonly PRODUCTION_ROLE="$(profile_value AGENTIC_REMOTE_MONITOR_ROLE hub)"
+readonly PRODUCTION_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_NAME agentic-remote)"
+
+export GH_CONFIG_DIR="$GH_CLI_CONFIG_DIR"
+
+log() {
+  printf '[agentic-remote-promotion] %s\n' "$*"
+}
+
+die() {
+  log "ERROR: $*"
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+require_value() {
+  local name="$1" value="$2"
+  [[ -n "$value" ]] || die "$name is required in $PROFILE_FILE"
+}
+
+assert_repository() {
+  local root="$1"
+  git -C "$root" rev-parse --show-toplevel >/dev/null 2>&1 ||
+    die "not a Git repository: $root"
+}
+
+assert_clean() {
+  local root="$1"
+  [[ -z "$(git -C "$root" status --porcelain)" ]] ||
+    die "worktree is not clean: $root"
+}
+
+package_manager_version() {
+  python3 - "$1/package.json" <<'PY'
+import json
+import sys
+
+package_manager = json.load(open(sys.argv[1], encoding="utf-8"))["packageManager"]
+name, version = package_manager.split("@", 1)
+if name != "pnpm" or not version:
+    raise SystemExit(f"Unsupported packageManager: {package_manager}")
+print(version)
+PY
+}
+
+run_pnpm() {
+  local root="$1"
+  shift
+  corepack "pnpm@$(package_manager_version "$root")" --dir "$root" "$@"
+}
+
+run() {
+  require_value AGENTIC_REMOTE_MONITOR_DEV_ROOT "$DEV_ROOT"
+  require_value AGENTIC_REMOTE_MONITOR_PROD_ROOT "$PROD_ROOT"
+  require_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME"
+  require_value AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR "$GH_CLI_CONFIG_DIR"
+  require_value AGENTIC_REMOTE_MONITOR_GITHUB_USER "$GITHUB_USER"
+  require_value AGENTIC_REMOTE_MONITOR_REPOSITORY "$GITHUB_REPOSITORY"
+  require_value AGENTIC_REMOTE_MONITOR_HEALTH_URL "$HEALTH_URL"
+
+  mkdir -p "$STATE_DIR"
+  exec 9>"$LOCK_FILE"
+  if ! flock -n 9; then
+    log "another promotion run is already active; skipping"
+    return
+  fi
+
+  require_command corepack
+  require_command curl
+  require_command flock
+  require_command gh
+  require_command git
+  require_command python3
+  require_command systemctl
+
+  assert_repository "$DEV_ROOT"
+  assert_repository "$PROD_ROOT"
+
+  local dev_branch before_commit candidate_commit
+  dev_branch="$(git -C "$DEV_ROOT" branch --show-current)"
+  [[ "$dev_branch" == "main" ]] ||
+    die "development checkout must be on main: $DEV_ROOT"
+  assert_clean "$DEV_ROOT"
+
+  before_commit="$(git -C "$DEV_ROOT" rev-parse HEAD)"
+  log "pulling development main at $before_commit"
+  git -C "$DEV_ROOT" fetch --prune origin
+  git -C "$DEV_ROOT" pull --ff-only
+  candidate_commit="$(git -C "$DEV_ROOT" rev-parse HEAD)"
+  assert_clean "$DEV_ROOT"
+
+  local prod_branch prod_commit last_commit
+  prod_branch="$(git -C "$PROD_ROOT" branch --show-current)"
+  [[ -z "$prod_branch" ]] ||
+    die "production runtime checkout must remain detached: $PROD_ROOT"
+  assert_clean "$PROD_ROOT"
+  prod_commit="$(git -C "$PROD_ROOT" rev-parse HEAD)"
+  last_commit=""
+  if [[ -f "$STATE_RECORD" ]]; then
+    last_commit="$(sed -n 's/^promoted_commit=//p' "$STATE_RECORD" | tail -n 1)"
+  fi
+  if [[ -z "$last_commit" && -f "$STATE_FILE" ]]; then
+    last_commit="$(cat "$STATE_FILE")"
+  fi
+
+  if [[ "$candidate_commit" == "$prod_commit" && "$candidate_commit" == "$last_commit" ]]; then
+    log "no ungraduated commit; development and production are at $candidate_commit"
+    return
+  fi
+
+  if [[ "$candidate_commit" == "$before_commit" ]]; then
+    log "main did not advance; retrying the unrecorded production state"
+  else
+    log "main advanced to $candidate_commit"
+  fi
+
+  log "installing development dependencies"
+  CI=true run_pnpm "$DEV_ROOT" install --frozen-lockfile
+  log "running development lint"
+  CI=true run_pnpm "$DEV_ROOT" lint
+  log "building development release"
+  CI=true run_pnpm "$DEV_ROOT" build
+  assert_clean "$DEV_ROOT"
+
+  local github_token ci_run ci_run_id ci_status ci_conclusion
+  github_token="$(gh auth token --hostname github.com --user "$GITHUB_USER")" ||
+    die "GitHub CLI has no token for $GITHUB_USER in $GH_CLI_CONFIG_DIR"
+  [[ -n "$github_token" ]] || die "GitHub CLI returned an empty token"
+  export GH_TOKEN="$github_token"
+
+  ci_run="$(
+    gh run list \
+      --repo "$GITHUB_REPOSITORY" \
+      --workflow "$CI_WORKFLOW" \
+      --commit "$candidate_commit" \
+      --limit 1 \
+      --json databaseId,status,conclusion \
+      --jq 'if length == 0 then "" else .[0] | [.databaseId,.status,(.conclusion // "")] | @tsv end'
+  )"
+  [[ -n "$ci_run" ]] || die "no GitHub CI run found for $candidate_commit"
+  IFS=$'\t' read -r ci_run_id ci_status ci_conclusion <<<"$ci_run"
+  if [[ "$ci_status" != "completed" ]]; then
+    log "waiting for GitHub CI run $ci_run_id"
+    gh run watch "$ci_run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+    ci_conclusion="$(
+      gh run view "$ci_run_id" \
+        --repo "$GITHUB_REPOSITORY" \
+        --json conclusion \
+        --jq '.conclusion'
+    )"
+  fi
+  [[ "$ci_conclusion" == "success" ]] ||
+    die "GitHub CI run $ci_run_id did not pass: ${ci_conclusion:-unknown}"
+  log "GitHub CI passed for $candidate_commit"
+
+  assert_clean "$PROD_ROOT"
+  prod_branch="$(git -C "$PROD_ROOT" branch --show-current)"
+  [[ -z "$prod_branch" ]] ||
+    die "production runtime checkout changed to a branch during validation"
+
+  log "graduating $candidate_commit to the production runtime source"
+  git -C "$PROD_ROOT" switch --detach "$candidate_commit"
+
+  local setup_environment=()
+  [[ -z "$DATA_DIR" ]] || setup_environment+=("AGENTIC_REMOTE_DATA_DIR=$DATA_DIR")
+  [[ -z "$ALLOWED_ROOTS" ]] || setup_environment+=("AGENTIC_REMOTE_ALLOWED_ROOTS=$ALLOWED_ROOTS")
+  [[ -z "$ALLOWED_ORIGINS" ]] || setup_environment+=("AGENTIC_REMOTE_ALLOWED_ORIGINS=$ALLOWED_ORIGINS")
+  env \
+    HOME="$USER_HOME" \
+    PATH="$RUNTIME_TOOLS:$PATH" \
+    CI=true \
+    "${setup_environment[@]}" \
+    "$PROD_ROOT/bin/agentic-remote" setup \
+      --host "$PRODUCTION_HOST" \
+      --port "$PRODUCTION_PORT" \
+      --role "$PRODUCTION_ROLE" \
+      --name "$PRODUCTION_NAME"
+
+  local attempt
+  for attempt in $(seq 1 30); do
+    if systemctl --user is-active --quiet "$SERVICE_NAME" &&
+      curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
+      break
+    fi
+    if [[ "$attempt" == 30 ]]; then
+      die "production hub health check failed after graduation"
+    fi
+    sleep 2
+  done
+
+  [[ -L "$RELEASE_ROOT/current" ]] ||
+    die "production release pointer is missing: $RELEASE_ROOT/current"
+
+  if [[ -n "$EXTERNAL_URL" ]]; then
+    local external_status
+    external_status="$(
+      curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$EXTERNAL_URL"
+    )" || die "external access check failed: $EXTERNAL_URL"
+    if [[ -n "$EXTERNAL_STATUS" ]]; then
+      [[ "$external_status" == "$EXTERNAL_STATUS" ]] ||
+        die "external access returned HTTP $external_status; expected $EXTERNAL_STATUS"
+    elif [[ ! "$external_status" =~ ^[23][0-9][0-9]$ ]]; then
+      die "external access returned unexpected HTTP $external_status"
+    fi
+  fi
+
+  local temporary_state temporary_record
+  temporary_state="$STATE_FILE.$$"
+  printf '%s\n' "$candidate_commit" >"$temporary_state"
+  chmod 0600 "$temporary_state"
+  mv -f -- "$temporary_state" "$STATE_FILE"
+  temporary_record="$STATE_RECORD.$$"
+  {
+    printf 'candidate_commit=%s\n' "$candidate_commit"
+    printf 'tested_commit=%s\n' "$candidate_commit"
+    printf 'promoted_commit=%s\n' "$candidate_commit"
+    printf 'previous_runtime_commit=%s\n' "$prod_commit"
+    printf 'promoted_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary_record"
+  chmod 0600 "$temporary_record"
+  mv -f -- "$temporary_record" "$STATE_RECORD"
+  log "graduated $candidate_commit successfully"
+}
+
+command="${1:-run}"
+case "$command" in
+  run)
+    (($# == 1)) || die "run does not accept options"
+    run
+    ;;
+  *)
+    die "usage: agentic-remote-promotion-monitor [run]"
+    ;;
+esac

@@ -60,6 +60,31 @@ AGENTIC_REMOTE_MONITOR_REPOSITORY=owner/repository
 AGENTIC_REMOTE_MONITOR_WORKFLOW=ci.yml
 ```
 
+## Reproducible setup from the repository
+
+The repository includes the reproducible setup assets, while the installed
+monitor, profile, systemd units, state, releases, and credentials remain
+machine-local:
+
+- `bin/agentic-remote-promotion-monitor` performs pull, validation, promotion,
+  and health checks.
+- `bin/agentic-remote-promotion-setup` installs the monitor and user systemd
+  units.
+- `config/agentic-remote-promotion.env.example` is a portable profile template.
+
+On a new machine:
+
+```bash
+./bin/agentic-remote-promotion-setup init
+$EDITOR ~/.config/agentic-remote/promotion.env
+./bin/agentic-remote-promotion-setup install --create-runtime --enable
+```
+
+`--create-runtime` creates the second detached worktree from the clean
+development `main` checkout. `install` copies the monitor to a stable
+machine-local path, so the systemd timer does not execute from the mutable
+development checkout. Omit `--enable` when the machine should remain opt-out.
+
 ## Pull, validate, and graduate
 
 A local-only monitor may run this sequence on an opt-in machine:

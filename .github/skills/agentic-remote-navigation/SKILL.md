@@ -105,11 +105,16 @@ root, service name, health/external checks, validation policy, promotion policy,
 and rollback policy. Do not store credentials or pairing tokens in that
 profile.
 
-The production service must run from the immutable `current` release. A
-local-only monitor may pull and validate the development checkout, then
-graduate the exact validated commit to the production runtime. It must not run
-tests against or replace the externally reachable service before validation
-completes. See `docs/deployment-promotion.md` for the full contract.
+The production service must run from the immutable `current` release. The
+repository provides generic `bin/agentic-remote-promotion-monitor`,
+`bin/agentic-remote-promotion-setup`, and
+`config/agentic-remote-promotion.env.example` assets. Installing them copies
+the monitor and profile into machine-local paths; the systemd timer must not
+execute from the mutable development checkout. The local-only monitor may pull
+and validate the development checkout, then graduate the exact validated
+commit to the production runtime. It must not run tests against or replace the
+externally reachable service before validation completes. See
+`docs/deployment-promotion.md` for the full contract.
 
 ## Security invariants
 

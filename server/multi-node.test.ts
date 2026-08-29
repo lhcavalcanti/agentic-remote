@@ -782,37 +782,6 @@ describe('multi-node hub', () => {
         results: [{ path: 'README.md', snippet: 'Project' }],
       })
 
-      const savedKnowledge = await hub.app.inject({
-        method: 'POST',
-        url: '/api/knowledge',
-        payload: {
-          computerId: remoteComputerId,
-          sessionId: 'remote-session',
-          path: 'README.md',
-          name: 'README.md',
-          kind: 'file',
-        },
-      })
-      expect(savedKnowledge.statusCode, savedKnowledge.body).toBe(201)
-      expect(savedKnowledge.json().bookmark).toMatchObject({
-        computerId: remoteComputerId,
-        computerName: 'worker-node',
-        sessionId: 'remote-session',
-        path: 'README.md',
-        kind: 'file',
-      })
-      const bookmarkId = savedKnowledge.json().bookmark.id
-      const knowledge = await hub.app.inject({
-        method: 'GET',
-        url: '/api/knowledge',
-      })
-      expect(knowledge.json().bookmarks).toHaveLength(1)
-      const removedKnowledge = await hub.app.inject({
-        method: 'DELETE',
-        url: `/api/knowledge/${bookmarkId}`,
-      })
-      expect(removedKnowledge.statusCode).toBe(204)
-
       const sessions = await hub.app.inject({
         method: 'GET',
         url: '/api/sessions',

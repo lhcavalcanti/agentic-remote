@@ -35,4 +35,21 @@ describe('managed service unit', () => {
       "printf 'AGENTIC_REMOTE_ALLOWED_ROOTS=%s\\n' \"$allowed_roots\"",
     )
   })
+
+  it('defines a persistent two-hour main-branch update timer', async () => {
+    const script = await readFile(
+      new URL('../bin/agentic-remote', import.meta.url),
+      'utf8',
+    )
+
+    expect(script).toContain('OnUnitActiveSec=2h')
+    expect(script).toContain('Persistent=true')
+    expect(script).toContain('auto-update-run')
+    expect(script).toContain(
+      'automatic updates require the repository to be on main',
+    )
+    expect(script).toContain(
+      'automatic updates require a clean main worktree',
+    )
+  })
 })

@@ -38,7 +38,7 @@ Commands:
   update
       Pull the current branch, install dependencies, build, and restart.
   auto-update enable
-      Enable safe two-hour updates from the clean main branch.
+      Opt in to safe two-hour updates from the clean main branch.
   auto-update disable
       Disable the automatic update timer.
   auto-update status

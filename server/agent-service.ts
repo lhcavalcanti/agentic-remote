@@ -681,22 +681,33 @@ function toolActivityContent(data: unknown): string {
   const toolName = stringValue(tool.toolName) || 'tool'
   const argumentsValue = recordValue(tool.arguments)
   const toolDescription = recordValue(tool.toolDescription)
+  const normalizedToolName = toolName.toLowerCase().replaceAll('-', '_')
+  const skillName =
+    normalizedToolName === 'skill'
+      ? previewText(argumentsValue.skill) || previewText(argumentsValue.name)
+      : undefined
   const description =
     previewText(toolDescription.description) ||
     previewText(argumentsValue.description) ||
     previewText(argumentsValue.message)
   const command = previewText(argumentsValue.command, true)
   const detail =
-    command ||
-    previewText(argumentsValue.path) ||
-    previewText(argumentsValue.file_path) ||
-    previewText(argumentsValue.query) ||
-    previewText(argumentsValue.pattern) ||
-    previewText(argumentsValue.url) ||
-    previewText(argumentsValue.agent_type) ||
-    previewText(argumentsValue.name)
+    normalizedToolName === 'skill'
+      ? undefined
+      : command ||
+        previewText(argumentsValue.path) ||
+        previewText(argumentsValue.file_path) ||
+        previewText(argumentsValue.query) ||
+        previewText(argumentsValue.pattern) ||
+        previewText(argumentsValue.url) ||
+        previewText(argumentsValue.agent_type) ||
+        previewText(argumentsValue.name)
   const title = `${readableToolName(toolName)}${
-    description ? ` · ${description}` : ''
+    skillName
+      ? ` (${skillName})${description ? ` · ${description}` : ''}`
+      : description
+        ? ` · ${description}`
+        : ''
   }`
   if (!detail) {
     return title

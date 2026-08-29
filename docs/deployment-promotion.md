@@ -47,8 +47,7 @@ not infer a production path from the current working directory or from an
 arbitrary Git worktree.
 
 A simple implementation can use a machine-local key-value file such as
-`~/.config/agentic-remote/promotion.env`; environment variables supplied by the
-service may override the file for one-off operator runs. For example:
+`~/.config/agentic-remote/promotion.env`. For example:
 
 ```text
 AGENTIC_REMOTE_MONITOR_DEV_ROOT=/path/to/development/checkout
@@ -96,6 +95,28 @@ Graduate only what `origin/main` already contains. A clean local `main` can sit
 ahead of its upstream, and a CI run matched only by commit SHA can come from a
 feature branch, so comparing `HEAD` against `refs/remotes/origin/main` after the
 fetch is what prevents promoting an unmerged commit.
+
+### Where values live, and what each location exposes
+
+Every setting resolves in this order: an environment variable of the same name,
+then the profile file, then a built-in default. Any value can therefore be
+supplied per run without touching the file:
+
+```bash
+AGENTIC_REMOTE_MONITOR_DEV_ROOT=/other/checkout agentic-remote-promotion-monitor run
+```
+
+Moving values into the systemd unit looks like it hides them but does the
+opposite. The profile is written `0600`, while `systemctl show -p Environment`
+prints every `Environment=` entry in the unit. Keep values in the profile, or in
+a separate `EnvironmentFile=` whose permissions you control.
+
+The profile is not a secret store in the first place. It holds paths, URLs, a
+service name, and the repository to watch. The GitHub token is read at run time
+from the GitHub CLI configuration and exported only into the monitor's own
+process, so this tooling never writes it to disk. Keep credentials, pairing
+tokens, and SSH keys out of the profile: name an SSH destination and let the SSH
+client resolve the key.
 
 ## Reproducible setup from the repository
 

@@ -317,6 +317,22 @@ describe('promotion monitor', () => {
     )
   })
 
+  it('lets an environment variable override the profile', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Precedence matters for secrecy: a value can be supplied per run instead
+    // of being written to a file.
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_DEV_ROOT: '/tmp/not-a-repository-fixture',
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain(
+      'not a Git repository: /tmp/not-a-repository-fixture',
+    )
+  })
+
   it('exits without touching the service when nothing is ungraduated', async () => {
     const context = await fixture()
     const candidate = await git(context.dev, 'rev-parse', 'HEAD')

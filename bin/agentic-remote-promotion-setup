@@ -108,7 +108,7 @@ Environment=$(systemd_quote "PATH=$runtime_path")
 TimeoutStartSec=30min
 ExecStart=$(systemd_quote "$MONITOR_DEST") run
 EOF
-  install -m 0644 "$temporary" "$SERVICE_FILE"
+  install -m 0600 "$temporary" "$SERVICE_FILE"
   rm -f -- "$temporary"
 
   temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.timer.XXXXXX")"
@@ -125,7 +125,7 @@ Unit=$SERVICE_NAME
 [Install]
 WantedBy=timers.target
 EOF
-  install -m 0644 "$temporary" "$TIMER_FILE"
+  install -m 0600 "$temporary" "$TIMER_FILE"
   rm -f -- "$temporary"
 }
 

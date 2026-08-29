@@ -209,7 +209,9 @@ stays single-machine.
   uses `BatchMode=yes` by default.
 - A clean checkout at `DOWNSTREAM_ROOT` that can fetch from the same remote.
   Downstream checkouts are managed detached at the promoted commit, so do not
-  use a checkout someone also develops on.
+  use a checkout someone also develops on. A detached checkout also means
+  `agentic-remote update` no longer works on that host, because it runs
+  `git pull --ff-only`; the monitor becomes the way that host is updated.
 - A build toolchain reachable from a non-interactive login shell on that host,
   plus `curl` and `git`.
 - The downstream account must be able to manage its own service, which for the

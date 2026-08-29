@@ -84,6 +84,23 @@ claude auth status   # only when Claude Agent support is wanted
 Agentic Remote uses existing local provider authentication. It does not copy or
 store GitHub, Copilot, or Claude credentials.
 
+## Development and production separation
+
+Keep the writable development checkout separate from the runtime that serves
+the UI and accepts external connections. Build and test in development, then
+promote the exact validated commit to a separate runtime source that publishes
+an immutable release under `~/.config/agentic-remote/releases/current`.
+
+`--role hub|node` describes the runtime topology; it does not select the
+development or production channel. A machine-local, opt-in monitor may pull
+`main`, run the configured validation and matching CI gate, promote the exact
+commit, restart the managed service, and verify recovery. The monitor and its
+machine paths belong outside this repository so application development cannot
+break the external access path.
+
+See [Deployment and promotion](docs/deployment-promotion.md) for the profile
+contract, promotion gates, rollback behavior, and post-merge cleanup rules.
+
 ## Add another computer
 
 A paired **node** runs sessions but does not serve the UI.

@@ -3830,6 +3830,7 @@ function App() {
   const autoScrollRef = useRef(true)
   const autoScrollSessionRef = useRef<string | undefined>(undefined)
   const previousPendingActionRef = useRef<string | undefined>(undefined)
+  const requiredActionScrollRef = useRef(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
@@ -4538,10 +4539,25 @@ function App() {
     if (!autoScrollRef.current && !pendingActionArrived) {
       return
     }
+    const preserveDisabledAutoScroll =
+      !autoScrollRef.current && pendingActionArrived
+    let releaseFrame: number | undefined
     const frame = window.requestAnimationFrame(() => {
+      requiredActionScrollRef.current = preserveDisabledAutoScroll
       bottomRef.current?.scrollIntoView({ block: 'end' })
+      if (preserveDisabledAutoScroll) {
+        releaseFrame = window.requestAnimationFrame(() => {
+          requiredActionScrollRef.current = false
+        })
+      }
     })
-    return () => window.cancelAnimationFrame(frame)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (releaseFrame !== undefined) {
+        window.cancelAnimationFrame(releaseFrame)
+      }
+      requiredActionScrollRef.current = false
+    }
   }, [
     selectedKey,
     selected?.messages.length,
@@ -4552,6 +4568,10 @@ function App() {
   function timelineScrolled() {
     const timeline = timelineRef.current
     if (!timeline) {
+      return
+    }
+    if (requiredActionScrollRef.current) {
+      autoScrollRef.current = false
       return
     }
     const distanceFromBottom =

@@ -1685,6 +1685,10 @@ describe('App', () => {
     })
     fireEvent.scroll(timeline!)
     scrollIntoView.mockClear()
+    scrollIntoView.mockImplementation(() => {
+      timeline!.scrollTop = 500
+      fireEvent.scroll(timeline!)
+    })
 
     act(() => {
       MockWebSocket.instances[0]?.onmessage?.({
@@ -1710,6 +1714,38 @@ describe('App', () => {
     await waitFor(() =>
       expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
     )
+    scrollIntoView.mockClear()
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            status: 'waiting',
+            pendingUserInput: {
+              requestId: 'new-question',
+              question: 'Choose the deployment target',
+              choices: ['Development', 'Production'],
+              allowFreeform: false,
+            },
+            messages: [
+              ...session.messages,
+              {
+                id: 'later-message',
+                role: 'assistant',
+                content: 'A later transcript update',
+                createdAt: '2026-07-22T00:00:04.000Z',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+
+    expect(await screen.findByText('A later transcript update')).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 
   it('scrolls a new permission into view while scrolled up', async () => {

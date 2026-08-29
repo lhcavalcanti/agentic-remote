@@ -2,9 +2,9 @@
 
 ## Production rollout
 
-- Implement, validate, and deploy every change to the development hub first.
-- Development counts as stable only when the release is active, the hub answers
-  `/api/health`, paired computers are still `online`, sessions survived the
+- Implement, validate, and deploy every change to the development runtime first.
+- Development counts as stable only when the release is active, the runtime
+  answers `/health`, paired computers are still `online`, sessions survived the
   restart, and the behavior the change was made for has been exercised.
 - Once development is stable, roll the same commit out to production without
   asking again.
@@ -13,11 +13,12 @@
   - the change migrates, rewrites, or deletes stored state,
   - development verification was inconclusive, or
   - the rollout is not reversible with `agentic-remote rollback`.
-- After a production update, verify node health, hub connectivity, and the
-  behavior the change affected. A node answers `404` on `/`, so check it
-  through the hub's computer list.
+- After a production update, verify runtime health, hub connectivity, and the
+  behavior the change affected. Both roles answer `/health`; only a hub answers
+  `/api/health`, and only `/api/` URLs are subject to the Host allowlist. A node
+  answers `404` on `/`, so check it through the hub's computer list.
 - If production verification fails, roll production back and report rather than
-  leaving the two hosts diverged.
+  leaving the hosts diverged.
 
 ## Deployment profiles and promotion
 
@@ -36,6 +37,12 @@
   systemd units, state, and credentials remain outside the repository.
 - Promote only the exact commit that passed development validation and the
   matching CI gate. Record the promoted and previous release identifiers.
+- Reaching other machines is part of the profile, not of this repository. Use
+  the profile's downstream settings rather than hard-coding a host, account, or
+  SSH alias anywhere in the repository.
+- Changing which machine serves the UI is a topology change, not a promotion.
+  Hub-owned state does not migrate, so treat it as a state-migrating change and
+  ask first.
 - If validation, health checks, or promotion fail, keep the previous release
   active and leave the success marker unchanged so a later run can retry or
   roll back.

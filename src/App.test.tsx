@@ -586,6 +586,19 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
+  it('falls back to blank runtime defaults when stored settings are null', async () => {
+    localStorage.setItem('agentic-remote:default-models', 'null')
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    expect(
+      await screen.findByLabelText('GitHub Copilot default model'),
+    ).toHaveValue('')
+    expect(screen.getByLabelText('Claude Agent default model')).toHaveValue('')
+  })
+
   it('persists SDK-backed provider runtime defaults and applies them to new sessions', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

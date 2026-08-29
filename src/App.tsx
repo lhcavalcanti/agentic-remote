@@ -255,10 +255,14 @@ function isRuntimeReasoningEffort(
 }
 
 function readDefaultRuntimeSettings(): DefaultRuntimeSettings {
-  const stored = readStoredOrder<Record<string, unknown>>(
+  const parsed = readStoredOrder<unknown>(
     'agentic-remote:default-models',
     {},
   )
+  const stored =
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
   const selection = (provider: AgentProvider): DefaultRuntimeSelection => {
     const value = stored[provider]
     if (typeof value === 'string') {

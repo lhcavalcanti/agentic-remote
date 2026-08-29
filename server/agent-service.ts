@@ -24,6 +24,7 @@ import type {
   ConfigureRuntimeInput,
   PendingPermission,
   PendingUserInput,
+  ProviderRuntimeOptions,
   QueuedPrompt,
   RemovedQueuedPrompt,
   ServerEvent,
@@ -37,6 +38,7 @@ import type {
   UserInputForm,
   RuntimeModelOption,
   RuntimeOptions,
+  RuntimeReasoningEffort,
   SessionStatus,
   SlashCommand,
   WorkspaceFile,
@@ -136,6 +138,26 @@ interface ModelPromptLimits {
   default?: number
   long?: number
   maximum?: number
+}
+
+interface CreationRuntime {
+  model: string
+  reasoningEffort?: RuntimeReasoningEffort
+  contextTier: 'default' | 'long_context'
+  contextTokenLimit?: number
+  contextEstimated: true
+}
+
+function isRuntimeReasoningEffort(
+  value: unknown,
+): value is RuntimeReasoningEffort {
+  return (
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh' ||
+    value === 'max'
+  )
 }
 
 class RuntimeConfigurationError extends Error {
@@ -1273,6 +1295,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.runtimeModels.size > 0) {
       return Promise.resolve()
     }
+    return this.refreshRuntimeModels()
+  }
+
+  private refreshRuntimeModels(): Promise<void> {
     if (this.runtimeModelLoad) {
       return this.runtimeModelLoad
     }
@@ -1299,8 +1325,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         503,
       )
     }
-    this.modelPromptLimits.clear()
-    this.runtimeModels.clear()
+    const promptLimits = new Map<string, ModelPromptLimits>()
+    const runtimeModels = new Map<string, RuntimeModelOption>()
     for (const model of models) {
       const value = recordValue(model)
       const capabilities = recordValue(value.capabilities)
@@ -1313,19 +1339,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         long: numberValue(longContext.maxPromptTokens),
         maximum: numberValue(capabilityLimits.max_prompt_tokens),
       }
-      this.modelPromptLimits.set(model.id, limits)
+      promptLimits.set(model.id, limits)
       const supportedEfforts = Array.isArray(value.supportedReasoningEfforts)
         ? value.supportedReasoningEfforts.filter(
-            (effort): effort is string => typeof effort === 'string',
+            isRuntimeReasoningEffort,
           )
         : []
-      this.runtimeModels.set(model.id, {
+      runtimeModels.set(model.id, {
         id: model.id,
         name: stringValue(value.name) || model.id,
-        reasoningEfforts:
-          supportedEfforts.length > 0
-            ? supportedEfforts
-            : [stringValue(value.defaultReasoningEffort) || 'medium'],
+        reasoningEfforts: supportedEfforts,
         contextTiers:
           Object.keys(longContext).length > 0
             ? ['default', 'long_context']
@@ -1335,6 +1358,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           long_context: limits.long || limits.maximum,
         },
       })
+    }
+    this.modelPromptLimits.clear()
+    this.runtimeModels.clear()
+    for (const [id, limits] of promptLimits) {
+      this.modelPromptLimits.set(id, limits)
+    }
+    for (const [id, model] of runtimeModels) {
+      this.runtimeModels.set(id, model)
     }
   }
 
@@ -1388,19 +1419,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     allowAllPermissions = true,
     provider: AgentProvider = 'copilot',
     model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
   ): Promise<SessionDetail> {
     if (provider !== 'copilot') {
       throw new Error(`Provider ${provider} is not handled by Copilot`)
     }
     const cwd = await this.validateDirectory(inputPath)
-    const selectedModel = model?.trim() || undefined
+    const runtime = await this.creationRuntime(
+      model,
+      reasoningEffort,
+      contextTier,
+    )
     if (terminalBacked) {
-      return this.createTerminalSession(cwd, allowAllPermissions, selectedModel)
+      return this.createTerminalSession(cwd, allowAllPermissions, runtime)
     }
     const sdkSession = await this.client.createSession({
       workingDirectory: cwd,
       streaming: true,
-      ...(selectedModel ? { model: selectedModel } : {}),
+      ...runtime,
       onPermissionRequest: allowAllPermissions
         ? async () => ({ kind: 'approve-once' })
         : (request, invocation) =>
@@ -1425,7 +1462,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         messages: [],
         runtime: {
           allowAllPermissions,
-          ...(selectedModel ? { model: selectedModel } : {}),
+          ...runtime,
         },
       },
       { managedOpen: true, backend: 'sdk' },
@@ -1458,14 +1495,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return renamed
   }
 
-  async runtimeOptions(id: string): Promise<RuntimeOptions> {
-    let stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
+  async providerRuntimeOptions(
+    provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    if (provider !== 'copilot') {
+      throw new Error(`Provider ${provider} is not handled by Copilot`)
     }
-    stored = await this.reconcileRuntimeStatus(stored)
     try {
-      await this.ensureRuntimeModels()
+      await this.refreshRuntimeModels()
     } catch (error) {
       throw new RuntimeConfigurationError(
         'Runtime models are temporarily unavailable. Try again.',
@@ -1473,9 +1510,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         { cause: error },
       )
     }
+    return { models: [...this.runtimeModels.values()] }
+  }
+
+  async runtimeOptions(id: string): Promise<RuntimeOptions> {
+    let stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    stored = await this.reconcileRuntimeStatus(stored)
+    const options = await this.providerRuntimeOptions('copilot')
     return {
       current: stored.runtime || {},
-      models: [...this.runtimeModels.values()],
+      models: options.models,
       status: stored.status,
     }
   }
@@ -1496,7 +1543,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     try {
-      await this.ensureRuntimeModels()
+      await this.refreshRuntimeModels()
     } catch (error) {
       throw new RuntimeConfigurationError(
         'Runtime models are temporarily unavailable. Try again.',
@@ -1508,7 +1555,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!model) {
       throw new RuntimeConfigurationError('Selected model is not available', 400)
     }
-    if (!model.reasoningEfforts.includes(input.reasoningEffort)) {
+    if (
+      input.reasoningEffort &&
+      !model.reasoningEfforts.includes(input.reasoningEffort)
+    ) {
       throw new RuntimeConfigurationError(
         'Selected reasoning effort is not supported by this model',
         400,
@@ -1733,12 +1783,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const runtime: ConfigureRuntimeInput | undefined =
       stored.runtime?.model &&
-      stored.runtime.reasoningEffort &&
       (stored.runtime.contextTier === 'default' ||
         stored.runtime.contextTier === 'long_context')
         ? {
             model: stored.runtime.model,
-            reasoningEffort: stored.runtime.reasoningEffort,
+            ...(isRuntimeReasoningEffort(stored.runtime.reasoningEffort)
+              ? { reasoningEffort: stored.runtime.reasoningEffort }
+              : {}),
             contextTier: stored.runtime.contextTier,
             mode: agentMode(stored.runtime.mode) || 'interactive',
           }
@@ -1870,7 +1921,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async createTerminalSession(
     cwd: string,
     allowAllPermissions: boolean,
-    model?: string,
+    runtime?: SessionRuntimeInfo,
   ): Promise<SessionDetail> {
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
@@ -1880,13 +1931,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.launchingTerminalSessionIds.add(sessionId)
     this.discoveryGeneration += 1
     try {
-      if (model) {
+      if (runtime) {
         await this.terminalController.create(
           sessionId,
           cwd,
           title,
           allowAllPermissions,
-          { model },
+          runtime,
         )
       } else {
         await this.terminalController.create(
@@ -1908,7 +1959,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           messages: [],
           runtime: {
             allowAllPermissions,
-            ...(model ? { model } : {}),
+            ...runtime,
           },
         },
         { managedOpen: true, backend: 'terminal' },
@@ -1922,6 +1973,53 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       this.launchingTerminalSessionIds.delete(sessionId)
       this.discoveryGeneration += 1
+    }
+  }
+
+  private async creationRuntime(
+    model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
+  ): Promise<CreationRuntime | undefined> {
+    const modelId = model?.trim()
+    if (!modelId) {
+      if (reasoningEffort?.trim() || contextTier) {
+        throw new RuntimeConfigurationError(
+          'A model is required when setting effort or context',
+          400,
+        )
+      }
+      return undefined
+    }
+    const options = await this.providerRuntimeOptions('copilot')
+    const selected = options.models.find((candidate) => candidate.id === modelId)
+    if (!selected) {
+      throw new RuntimeConfigurationError('Selected model is not available', 400)
+    }
+    const effort = reasoningEffort || selected.reasoningEfforts[0]
+    const tier = contextTier || 'default'
+    if (effort && !selected.reasoningEfforts.includes(effort)) {
+      throw new RuntimeConfigurationError(
+        'Selected reasoning effort is not supported by this model',
+        400,
+      )
+    }
+    if (!selected.contextTiers.includes(tier)) {
+      throw new RuntimeConfigurationError(
+        'Selected context tier is not supported by this model',
+        400,
+      )
+    }
+    const limits = this.modelPromptLimits.get(modelId)
+    return {
+      model: modelId,
+      ...(effort ? { reasoningEffort: effort } : {}),
+      contextTier: tier,
+      contextTokenLimit:
+        tier === 'long_context'
+          ? limits?.long || limits?.maximum
+          : limits?.default || limits?.maximum,
+      contextEstimated: true,
     }
   }
 

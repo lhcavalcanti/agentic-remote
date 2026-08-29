@@ -28,6 +28,7 @@ import {
   deleteKnowledgeBookmark,
   executeCommand,
   getPushSettings,
+  getProviderRuntimeOptions,
   getSession,
   getRuntimeOptions,
   listCommands,
@@ -83,6 +84,7 @@ vi.mock('./api', () => ({
   createSession: vi.fn(),
   configureRuntime: vi.fn(),
   getRuntimeOptions: vi.fn(),
+  getProviderRuntimeOptions: vi.fn(),
   clearConversation: vi.fn(),
   restartSession: vi.fn(),
   activateSession: vi.fn(),
@@ -399,6 +401,39 @@ describe('App', () => {
         },
       ],
     })
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (_computerId, provider) => ({
+        models:
+          provider === 'copilot'
+            ? [
+                {
+                  id: 'gpt-5.6-sol',
+                  name: 'GPT-5.6 Sol',
+                  reasoningEfforts: ['medium', 'high', 'xhigh'],
+                  contextTiers: ['default', 'long_context'],
+                  contextTokenLimits: {
+                    default: 114_000,
+                    long_context: 922_000,
+                  },
+                },
+                {
+                  id: 'gpt-fast',
+                  name: 'GPT Fast',
+                  reasoningEfforts: ['low', 'medium'],
+                  contextTiers: ['default'],
+                },
+              ]
+            : [
+                {
+                  id: 'sonnet',
+                  name: 'Sonnet',
+                  description: '**Efficient** for routine tasks',
+                  reasoningEfforts: ['low', 'medium', 'high'],
+                  contextTiers: ['default'],
+                },
+              ],
+      }),
+    )
     vi.mocked(configureRuntime).mockResolvedValue(session)
     vi.mocked(clearConversation).mockResolvedValue({
       ...session,
@@ -551,27 +586,50 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
-  it('persists provider default models and applies them to new sessions', async () => {
+  it('persists SDK-backed provider runtime defaults and applies them to new sessions', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-    fireEvent.change(screen.getByLabelText('Copilot default model'), {
-      target: { value: 'gpt-5.6-sol' },
+    await screen.findByLabelText('GitHub Copilot default model')
+    expect(getProviderRuntimeOptions).toHaveBeenCalledWith(
+      'computer-1',
+      'copilot',
+    )
+    expect(screen.getByText('Efficient')).toBeInTheDocument()
+    fireEvent.change(
+      screen.getByLabelText('GitHub Copilot default reasoning effort'),
+      {
+        target: { value: 'xhigh' },
+      },
+    )
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default context size'), {
+      target: { value: 'long_context' },
     })
-    fireEvent.change(screen.getByLabelText('Claude default model'), {
-      target: { value: 'claude-sonnet-4-5' },
-    })
+    fireEvent.change(
+      screen.getByLabelText('Claude Agent default reasoning effort'),
+      { target: { value: 'low' } },
+    )
     expect(
       JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
     ).toEqual({
-      copilot: 'gpt-5.6-sol',
-      claude: 'claude-sonnet-4-5',
+      copilot: {
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'xhigh',
+        contextTier: 'long_context',
+      },
+      claude: {
+        model: 'sonnet',
+        reasoningEffort: 'low',
+        contextTier: 'default',
+      },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 
     fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
-    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    const createButton = screen.getByRole('button', { name: 'Create session' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith('computer-1', {
         cwd: '~',
@@ -579,6 +637,8 @@ describe('App', () => {
         terminalBacked: true,
         allowAllPermissions: true,
         model: 'gpt-5.6-sol',
+        reasoningEffort: 'xhigh',
+        contextTier: 'long_context',
       }),
     )
 
@@ -586,6 +646,11 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Agent provider'), {
       target: { value: 'claude' },
     })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Create session' }),
+      ).toBeEnabled(),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith('computer-1', {
@@ -593,7 +658,64 @@ describe('App', () => {
         provider: 'claude',
         terminalBacked: false,
         allowAllPermissions: true,
-        model: 'claude-sonnet-4-5',
+        model: 'sonnet',
+        reasoningEffort: 'low',
+        contextTier: 'default',
+      }),
+    )
+  })
+
+  it('repairs saved runtime defaults before creating a new session', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-models',
+      JSON.stringify({
+        copilot: {
+          model: 'removed-model',
+          reasoningEffort: 'max',
+          contextTier: 'long_context',
+        },
+        claude: {
+          model: 'sonnet',
+          reasoningEffort: 'max',
+          contextTier: 'long_context',
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:default-models') || '{}',
+        ),
+      ).toEqual({
+        copilot: {
+          model: 'gpt-5.6-sol',
+          reasoningEffort: 'medium',
+          contextTier: 'long_context',
+        },
+        claude: {
+          model: 'sonnet',
+          reasoningEffort: 'max',
+          contextTier: 'long_context',
+        },
+      }),
+    )
+    const createButton = screen.getByRole('button', { name: 'Create session' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'medium',
+        contextTier: 'long_context',
       }),
     )
   })

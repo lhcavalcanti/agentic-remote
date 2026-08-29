@@ -8,6 +8,7 @@ import type {
   ExecuteCommandInput,
   NodeInfo,
   PermissionReplyInput,
+  ProviderRuntimeOptions,
   RenameSessionInput,
   RemovedQueuedPrompt,
   RuntimeOptions,
@@ -179,6 +180,14 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       },
     )
     return response.session
+  }
+
+  async providerRuntimeOptions(
+    provider: 'copilot' | 'claude',
+  ): Promise<ProviderRuntimeOptions> {
+    return this.request<ProviderRuntimeOptions>(
+      `/node-api/providers/${encodeURIComponent(provider)}/runtime`,
+    )
   }
 
   async uploadFile(

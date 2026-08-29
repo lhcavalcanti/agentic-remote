@@ -2,6 +2,7 @@ import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
   AddComputerInput,
+  AgentProvider,
   ConfigureRuntimeInput,
   ComputerSummary,
   CreateSessionInput,
@@ -11,6 +12,7 @@ import type {
   ManagedSession,
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
+  ProviderRuntimeOptions,
   RenameSessionInput,
   SendMessageInput,
   UserInputReplyInput,
@@ -284,9 +286,21 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.allowAllPermissions,
             input.provider,
             input.model,
+            input.reasoningEffort,
+            input.contextTier,
           )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)
+  }
+
+  async providerRuntimeOptions(
+    computerId: string,
+    provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.providerRuntimeOptions(provider)
+      : this.requireClient(computerId).providerRuntimeOptions(provider)
   }
 
   async uploadFile(

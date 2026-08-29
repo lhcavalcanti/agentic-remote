@@ -199,7 +199,7 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(sessionId)).toBeUndefined()
   })
 
-  it('uses a requested Claude model for a new session', async () => {
+  it('uses requested Claude runtime defaults for a new session', async () => {
     const { directory, service } = await fixture(async function* () {})
 
     const created = await service.createSession(
@@ -208,9 +208,24 @@ describe('ClaudeAgentService', () => {
       true,
       'claude',
       'sonnet',
+      'low',
+      'default',
     )
 
-    expect(created.runtime?.model).toBe('sonnet')
+    expect(created.runtime).toMatchObject({
+      model: 'sonnet',
+      reasoningEffort: 'low',
+      contextTier: 'default',
+    })
+    await expect(service.providerRuntimeOptions('claude')).resolves.toEqual({
+      models: [
+        expect.objectContaining({
+          id: 'sonnet',
+          description: 'Efficient for routine tasks',
+          reasoningEfforts: ['low', 'medium', 'high'],
+        }),
+      ],
+    })
   })
 
   it('surfaces and answers Claude tool permissions', async () => {

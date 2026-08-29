@@ -16,6 +16,8 @@ import type {
   SlashCommand,
   UserInputReplyInput,
   RuntimeOptions,
+  ProviderRuntimeOptions,
+  RuntimeReasoningEffort,
   SessionFileUpload,
   WorkspaceFile,
   WorkspaceListing,
@@ -30,6 +32,8 @@ class FakeSessionService extends EventEmitter implements SessionService {
   lastCreateTerminalBacked?: boolean
   lastCreateAllowAllPermissions?: boolean
   lastCreateModel?: string
+  lastCreateReasoningEffort?: RuntimeReasoningEffort
+  lastCreateContextTier?: 'default' | 'long_context'
   lastUpload?: { sessionId: string; filename: string; data: Buffer }
 
   constructor(...sessions: SessionDetail[]) {
@@ -174,6 +178,8 @@ class FakeSessionService extends EventEmitter implements SessionService {
     allowAllPermissions?: boolean,
     _provider?: AgentProvider,
     model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
   ): Promise<SessionDetail> {
     if (this.createError) {
       throw this.createError
@@ -181,6 +187,8 @@ class FakeSessionService extends EventEmitter implements SessionService {
     this.lastCreateTerminalBacked = terminalBacked
     this.lastCreateAllowAllPermissions = allowAllPermissions
     this.lastCreateModel = model
+    this.lastCreateReasoningEffort = reasoningEffort
+    this.lastCreateContextTier = contextTier
     const session: SessionDetail = {
       id: randomUUID(),
       cwd,
@@ -225,10 +233,19 @@ class FakeSessionService extends EventEmitter implements SessionService {
     }
     return {
       current: session.runtime || {},
+      models: (await this.providerRuntimeOptions('copilot')).models,
+    }
+  }
+
+  async providerRuntimeOptions(
+    _provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    return {
       models: [
         {
           id: 'remote-model',
           name: 'Remote model',
+          description: '**Remote** model description',
           reasoningEfforts: ['medium', 'high'],
           contextTiers: ['default', 'long_context'],
           contextTokenLimits: {
@@ -826,12 +843,19 @@ describe('multi-node hub', () => {
       const created = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions`,
-        payload: { cwd: '/srv/new-session', model: 'remote-model' },
+        payload: {
+          cwd: '/srv/new-session',
+          model: 'remote-model',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
       })
       expect(created.statusCode, created.body).toBe(201)
       expect(remoteService.lastCreateTerminalBacked).toBe(true)
       expect(remoteService.lastCreateAllowAllPermissions).toBe(true)
       expect(remoteService.lastCreateModel).toBe('remote-model')
+      expect(remoteService.lastCreateReasoningEffort).toBe('high')
+      expect(remoteService.lastCreateContextTier).toBe('long_context')
 
       const document = multipartFile('statement.pdf', 'financial data')
       const uploaded = await hub.app.inject({
@@ -895,6 +919,17 @@ describe('multi-node hub', () => {
       })
       expect(runtimeOptions.json().models).toEqual([
         expect.objectContaining({ id: 'remote-model' }),
+      ])
+      const providerOptions = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/providers/copilot/runtime`,
+      })
+      expect(providerOptions.statusCode, providerOptions.body).toBe(200)
+      expect(providerOptions.json().models).toEqual([
+        expect.objectContaining({
+          id: 'remote-model',
+          description: '**Remote** model description',
+        }),
       ])
       const configuredRuntime = await hub.app.inject({
         method: 'PATCH',

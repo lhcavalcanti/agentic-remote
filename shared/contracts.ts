@@ -2,6 +2,7 @@ export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
 export type AgentProvider = 'copilot' | 'claude'
 export type SessionExecutionMode = 'tmux' | 'sdk'
+export type RuntimeReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface AgentProviderCapability {
   id: AgentProvider
@@ -94,7 +95,8 @@ export interface SessionRuntimeInfo {
 export interface RuntimeModelOption {
   id: string
   name: string
-  reasoningEfforts: string[]
+  description?: string
+  reasoningEfforts: RuntimeReasoningEffort[]
   contextTiers: Array<'default' | 'long_context'>
   contextTokenLimits?: {
     default?: number
@@ -108,9 +110,13 @@ export interface RuntimeOptions {
   status?: SessionStatus
 }
 
+export interface ProviderRuntimeOptions {
+  models: RuntimeModelOption[]
+}
+
 export interface ConfigureRuntimeInput {
   model: string
-  reasoningEffort: string
+  reasoningEffort?: RuntimeReasoningEffort
   contextTier: 'default' | 'long_context'
   mode?: AgentMode
 }
@@ -185,6 +191,8 @@ export interface CreateSessionInput {
   terminalBacked?: boolean
   allowAllPermissions?: boolean
   model?: string
+  reasoningEffort?: RuntimeReasoningEffort
+  contextTier?: 'default' | 'long_context'
 }
 
 export interface SendMessageInput {

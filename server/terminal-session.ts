@@ -912,10 +912,11 @@ async function copilotCommand(
     result.push(
       '--model',
       runtime.model,
-      '--effort',
-      runtime.reasoningEffort,
       '--context',
       runtime.contextTier,
+      ...(runtime.reasoningEffort
+        ? ['--effort', runtime.reasoningEffort]
+        : []),
       ...(runtime.mode ? ['--mode', runtime.mode] : []),
     )
   }

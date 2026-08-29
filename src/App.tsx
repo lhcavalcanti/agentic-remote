@@ -102,6 +102,8 @@ import type {
   UserInputFieldValue,
   UserInputReplyInput,
   RuntimeOptions,
+  RuntimeModelOption,
+  RuntimeReasoningEffort,
   SlashCommand,
   WorkspaceFile,
   WorkspaceListing,
@@ -118,6 +120,7 @@ import {
   executeCommand,
   getPushSettings,
   getSession,
+  getProviderRuntimeOptions,
   getRuntimeOptions,
   listComputers,
   listCommands,
@@ -225,25 +228,58 @@ type StatuslineSettings = {
   permissions: boolean
 }
 
-type DefaultModelSettings = {
-  copilot: string
-  claude: string
+type DefaultRuntimeSelection = {
+  model: string
+  reasoningEffort: RuntimeReasoningEffort | ''
+  contextTier: 'default' | 'long_context'
 }
 
-const defaultModelSettings: DefaultModelSettings = {
-  copilot: '',
-  claude: '',
+type DefaultRuntimeSettings = Record<AgentProvider, DefaultRuntimeSelection>
+
+const emptyRuntimeSelection: DefaultRuntimeSelection = {
+  model: '',
+  reasoningEffort: '',
+  contextTier: 'default',
 }
 
-function readDefaultModelSettings(): DefaultModelSettings {
-  const stored = readStoredOrder<Partial<DefaultModelSettings>>(
+function isRuntimeReasoningEffort(
+  value: unknown,
+): value is RuntimeReasoningEffort {
+  return (
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh' ||
+    value === 'max'
+  )
+}
+
+function readDefaultRuntimeSettings(): DefaultRuntimeSettings {
+  const stored = readStoredOrder<Record<string, unknown>>(
     'agentic-remote:default-models',
     {},
   )
+  const selection = (provider: AgentProvider): DefaultRuntimeSelection => {
+    const value = stored[provider]
+    if (typeof value === 'string') {
+      return { ...emptyRuntimeSelection, model: value }
+    }
+    if (!value || typeof value !== 'object') {
+      return { ...emptyRuntimeSelection }
+    }
+    const fields = value as Record<string, unknown>
+    return {
+      model: typeof fields.model === 'string' ? fields.model : '',
+      reasoningEffort: isRuntimeReasoningEffort(fields.reasoningEffort)
+        ? fields.reasoningEffort
+        : '',
+      contextTier:
+        fields.contextTier === 'long_context' ? 'long_context' : 'default',
+    }
+  }
   return {
-    ...defaultModelSettings,
-    copilot: typeof stored.copilot === 'string' ? stored.copilot : '',
-    claude: typeof stored.claude === 'string' ? stored.claude : '',
+    copilot: selection('copilot'),
+    claude: selection('claude'),
   }
 }
 
@@ -443,14 +479,16 @@ function NewSessionDialog({
   open,
   computers,
   defaultComputerId,
-  defaultModels,
+  defaultRuntimes,
+  onDefaultRuntimesChange,
   onClose,
   onCreated,
 }: {
   open: boolean
   computers: ComputerSummary[]
   defaultComputerId?: string
-  defaultModels: DefaultModelSettings
+  defaultRuntimes: DefaultRuntimeSettings
+  onDefaultRuntimesChange: (settings: DefaultRuntimeSettings) => void
   onClose: () => void
   onCreated: (session: ManagedSession) => void
 }) {
@@ -469,6 +507,8 @@ function NewSessionDialog({
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const [runtimeLoading, setRuntimeLoading] = useState(false)
+  const [runtimeError, setRuntimeError] = useState<string>()
   const available = useMemo(
     () => computers.filter((computer) => computer.online),
     [computers],
@@ -525,6 +565,59 @@ function NewSessionDialog({
     }
   }, [computerId, mode, open])
 
+  useEffect(() => {
+    if (!open || mode !== 'new' || !computerId) {
+      return
+    }
+    let active = true
+    setRuntimeLoading(true)
+    setRuntimeError(undefined)
+    void getProviderRuntimeOptions(computerId, provider)
+      .then(({ models }) => {
+        if (!active) {
+          return
+        }
+        if (!defaultRuntimes[provider].model) {
+          return
+        }
+        const normalized = normalizedRuntimeSelection(
+          defaultRuntimes[provider],
+          models,
+        )
+        if (
+          normalized &&
+          !sameRuntimeSelection(normalized, defaultRuntimes[provider])
+        ) {
+          onDefaultRuntimesChange({
+            ...defaultRuntimes,
+            [provider]: normalized,
+          })
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setRuntimeError(
+            caught instanceof Error ? caught.message : String(caught),
+          )
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setRuntimeLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    computerId,
+    defaultRuntimes,
+    mode,
+    onDefaultRuntimesChange,
+    open,
+    provider,
+  ])
+
   if (!open) {
     return null
   }
@@ -556,7 +649,8 @@ function NewSessionDialog({
     setError(undefined)
     try {
       if (mode === 'new') {
-        const defaultModel = defaultModels[provider].trim()
+        const defaultRuntime = defaultRuntimes[provider]
+        const defaultModel = defaultRuntime.model.trim()
         onCreated(
           await createSession(computerId, {
             cwd,
@@ -568,7 +662,17 @@ function NewSessionDialog({
                 ? terminalBacked
                 : false,
             allowAllPermissions,
-            ...(defaultModel ? { model: defaultModel } : {}),
+            ...(defaultModel
+              ? {
+                  model: defaultModel,
+                  ...(defaultRuntime.reasoningEffort
+                    ? {
+                        reasoningEffort: defaultRuntime.reasoningEffort,
+                      }
+                    : {}),
+                  contextTier: defaultRuntime.contextTier,
+                }
+              : {}),
           }),
         )
         setCwd('')
@@ -597,7 +701,8 @@ function NewSessionDialog({
   )
   const providers = computerProviders(selectedComputer)
   const selectedProvider = providers.find((entry) => entry.id === provider)
-  const defaultModel = defaultModels[provider].trim()
+  const defaultRuntime = defaultRuntimes[provider]
+  const defaultModel = defaultRuntime.model.trim()
 
   return (
     <DialogFrame
@@ -680,8 +785,18 @@ function NewSessionDialog({
             ) : null}
             {defaultModel ? (
               <small className="field__hint">
-                New sessions use <strong>{defaultModel}</strong> by default.
+                New sessions use <strong>{defaultModel}</strong> with{' '}
+                {defaultRuntime.reasoningEffort ? (
+                  <>
+                    <strong>{defaultRuntime.reasoningEffort}</strong> effort and{' '}
+                  </>
+                ) : null}
+                <strong>{defaultRuntime.contextTier.replace('_', ' ')}</strong>{' '}
+                context.
               </small>
+            ) : null}
+            {runtimeError ? (
+              <small className="field__hint">{runtimeError}</small>
             ) : null}
           </label>
         ) : null}
@@ -796,6 +911,8 @@ function NewSessionDialog({
           disabled={
             submitting ||
             !computerId ||
+            Boolean(defaultModel && runtimeLoading) ||
+            Boolean(defaultModel && runtimeError) ||
             (mode === 'new' && !selectedProvider?.available) ||
             (mode === 'new' ? !cwd.trim() : !historyKey)
           }
@@ -1151,24 +1268,174 @@ function StatuslineControls({
   )
 }
 
+function normalizedRuntimeSelection(
+  selection: DefaultRuntimeSelection,
+  models: RuntimeModelOption[],
+): DefaultRuntimeSelection | undefined {
+  const model =
+    models.find((candidate) => candidate.id === selection.model) || models[0]
+  if (!model) {
+    return undefined
+  }
+
+  return {
+    model: model.id,
+    reasoningEffort:
+      selection.reasoningEffort !== '' &&
+      model.reasoningEfforts.includes(selection.reasoningEffort)
+      ? selection.reasoningEffort
+      : model.reasoningEfforts[0] || '',
+    contextTier: model.contextTiers.includes(selection.contextTier)
+      ? selection.contextTier
+      : 'default',
+  }
+}
+
+function sameRuntimeSelection(
+  left: DefaultRuntimeSelection,
+  right: DefaultRuntimeSelection,
+): boolean {
+  return (
+    left.model === right.model &&
+    left.reasoningEffort === right.reasoningEffort &&
+    left.contextTier === right.contextTier
+  )
+}
+
+function DefaultRuntimeControls({
+  error,
+  loading,
+  models,
+  onChange,
+  provider,
+  selection,
+}: {
+  error?: string
+  loading: boolean
+  models: RuntimeModelOption[]
+  onChange: (selection: DefaultRuntimeSelection) => void
+  provider: AgentProvider
+  selection: DefaultRuntimeSelection
+}) {
+  const name = providerName(provider)
+  const selectedModel = models.find((model) => model.id === selection.model)
+
+  return (
+    <div className="default-runtime">
+      <h4>{name}</h4>
+      {loading ? <p className="dialog-message">Loading models…</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
+      {!loading && !error && models.length === 0 ? (
+        <p className="dialog-message">No models are available.</p>
+      ) : null}
+      {selectedModel ? (
+        <>
+          <label className="field">
+            <span>Model</span>
+            <select
+              aria-label={`${name} default model`}
+              className="dialog-select"
+              onChange={(event) => {
+                const model = models.find(
+                  (candidate) => candidate.id === event.target.value,
+                )
+                if (!model) {
+                  return
+                }
+                onChange({
+                  model: model.id,
+                  reasoningEffort: model.reasoningEfforts[0] || '',
+                  contextTier: 'default',
+                })
+              }}
+              value={selection.model}
+            >
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedModel.description ? (
+            <div className="default-runtime__description">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {selectedModel.description}
+              </ReactMarkdown>
+            </div>
+          ) : null}
+          {selectedModel.reasoningEfforts.length > 0 ? (
+            <label className="field">
+              <span>Reasoning effort</span>
+              <select
+                aria-label={`${name} default reasoning effort`}
+                className="dialog-select"
+                onChange={(event) =>
+                  isRuntimeReasoningEffort(event.target.value)
+                    ? onChange({
+                        ...selection,
+                        reasoningEffort: event.target.value,
+                      })
+                    : undefined
+                }
+                value={selection.reasoningEffort}
+              >
+                {selectedModel.reasoningEfforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label className="field">
+            <span>Context size</span>
+            <select
+              aria-label={`${name} default context size`}
+              className="dialog-select"
+              onChange={(event) =>
+                onChange({
+                  ...selection,
+                  contextTier: event.target.value as
+                    | 'default'
+                    | 'long_context',
+                })
+              }
+              value={selection.contextTier}
+            >
+              {selectedModel.contextTiers.map((tier) => (
+                <option key={tier} value={tier}>
+                  {contextSizeLabel(selectedModel, tier)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
 function AppSettingsDialog({
   open,
+  computers,
   onClose,
   onApplyUpdate,
   onUpdateReady,
-  defaultModels,
-  onDefaultModelsChange,
+  defaultRuntimes,
+  onDefaultRuntimesChange,
   statusline,
   onStatuslineChange,
   updateRegistration,
   updatingApp,
 }: {
   open: boolean
+  computers: ComputerSummary[]
   onClose: () => void
   onApplyUpdate: () => void
   onUpdateReady: (registration: ServiceWorkerRegistration) => void
-  defaultModels: DefaultModelSettings
-  onDefaultModelsChange: (settings: DefaultModelSettings) => void
+  defaultRuntimes: DefaultRuntimeSettings
+  onDefaultRuntimesChange: (settings: DefaultRuntimeSettings) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
   updateRegistration?: ServiceWorkerRegistration
@@ -1182,6 +1449,13 @@ function AppSettingsDialog({
   const [updateMessage, setUpdateMessage] = useState<string>()
   const [testingNotification, setTestingNotification] = useState(false)
   const [testMessage, setTestMessage] = useState<string>()
+  const [runtimeModels, setRuntimeModels] = useState<
+    Partial<Record<AgentProvider, RuntimeModelOption[]>>
+  >({})
+  const [runtimeLoading, setRuntimeLoading] = useState(false)
+  const [runtimeErrors, setRuntimeErrors] = useState<
+    Partial<Record<AgentProvider, string>>
+  >({})
   const supported = pushNotificationsSupported()
   const ios =
     typeof navigator !== 'undefined' &&
@@ -1219,6 +1493,100 @@ function AppSettingsDialog({
       active = false
     }
   }, [open, requiresInstall, supported])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    let active = true
+    const providers: AgentProvider[] = ['copilot', 'claude']
+    const sources = providers.flatMap((provider) => {
+      const computer = computers.find(
+        (candidate) =>
+          candidate.online &&
+          computerProviders(candidate).some(
+            (capability) =>
+              capability.id === provider && capability.available,
+          ),
+      )
+      return computer ? [{ provider, computer }] : []
+    })
+    setRuntimeLoading(true)
+    setRuntimeModels({})
+    setRuntimeErrors(
+      Object.fromEntries(
+        providers
+          .filter(
+            (provider) =>
+              !sources.some((source) => source.provider === provider),
+          )
+          .map((provider) => [
+            provider,
+            `${providerName(provider)} is not available on an online computer.`,
+          ]),
+      ),
+    )
+    void Promise.allSettled(
+      sources.map(async ({ provider, computer }) => ({
+        provider,
+        options: await getProviderRuntimeOptions(computer.id, provider),
+      })),
+    ).then((results) => {
+      if (!active) {
+        return
+      }
+      const models: Partial<Record<AgentProvider, RuntimeModelOption[]>> = {}
+      const errors: Partial<Record<AgentProvider, string>> = {}
+      for (const [index, result] of results.entries()) {
+        const provider = sources[index].provider
+        if (result.status === 'fulfilled') {
+          models[provider] = result.value.options.models
+        } else {
+          errors[provider] =
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason)
+        }
+      }
+      for (const provider of providers) {
+        if (!sources.some((source) => source.provider === provider)) {
+          errors[provider] =
+            `${providerName(provider)} is not available on an online computer.`
+        }
+      }
+      setRuntimeModels(models)
+      setRuntimeErrors(errors)
+      setRuntimeLoading(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [computers, open])
+
+  useEffect(() => {
+    let changed = false
+    const next = { ...defaultRuntimes }
+    for (const provider of ['copilot', 'claude'] as const) {
+      const models = runtimeModels[provider]
+      if (!models) {
+        continue
+      }
+      const normalized = normalizedRuntimeSelection(
+        defaultRuntimes[provider],
+        models,
+      )
+      if (
+        normalized &&
+        !sameRuntimeSelection(normalized, defaultRuntimes[provider])
+      ) {
+        next[provider] = normalized
+        changed = true
+      }
+    }
+    if (changed) {
+      onDefaultRuntimesChange(next)
+    }
+  }, [defaultRuntimes, onDefaultRuntimesChange, runtimeModels])
 
   if (!open) {
     return null
@@ -1287,43 +1655,27 @@ function AppSettingsDialog({
       title="App settings"
     >
       <section className="app-settings-section">
-        <h3>Default models</h3>
+        <h3>Session defaults</h3>
         <p className="dialog-message">
-          These model IDs are used for new sessions. Existing sessions keep
-          their current model. Leave a field blank to use the provider default.
+          New sessions use these provider settings. Existing sessions keep
+          their current model, effort, and context.
         </p>
-        <label className="field">
-          <span>Copilot default model</span>
-          <input
-            aria-label="Copilot default model"
-            className="dialog-input"
-            onChange={(event) =>
-              onDefaultModelsChange({
-                ...defaultModels,
-                copilot: event.target.value,
+        {(['copilot', 'claude'] as const).map((provider) => (
+          <DefaultRuntimeControls
+            error={runtimeErrors[provider]}
+            key={provider}
+            loading={runtimeLoading}
+            models={runtimeModels[provider] || []}
+            onChange={(selection) =>
+              onDefaultRuntimesChange({
+                ...defaultRuntimes,
+                [provider]: selection,
               })
             }
-            placeholder="e.g. gpt-5.6-sol"
-            spellCheck={false}
-            value={defaultModels.copilot}
+            provider={provider}
+            selection={defaultRuntimes[provider]}
           />
-        </label>
-        <label className="field">
-          <span>Claude default model</span>
-          <input
-            aria-label="Claude default model"
-            className="dialog-input"
-            onChange={(event) =>
-              onDefaultModelsChange({
-                ...defaultModels,
-                claude: event.target.value,
-              })
-            }
-            placeholder="e.g. sonnet"
-            spellCheck={false}
-            value={defaultModels.claude}
-          />
-        </label>
+        ))}
       </section>
 
       <section className="app-settings-section">
@@ -2325,7 +2677,7 @@ function RuntimeDialog({
           setConfiguration({
             model: model.id,
             reasoningEffort:
-              loaded.current.reasoningEffort &&
+              isRuntimeReasoningEffort(loaded.current.reasoningEffort) &&
               model.reasoningEfforts.includes(
                 loaded.current.reasoningEffort,
               )
@@ -2435,25 +2787,29 @@ function RuntimeDialog({
               ))}
             </select>
           </label>
-          <label className="field">
-            <span>Reasoning effort</span>
-            <select
-              className="dialog-select"
-              onChange={(event) =>
-                setConfiguration({
-                  ...configuration,
-                  reasoningEffort: event.target.value,
-                })
-              }
-              value={configuration.reasoningEffort}
-            >
-              {selectedModel.reasoningEfforts.map((effort) => (
-                <option key={effort} value={effort}>
-                  {effort}
-                </option>
-              ))}
-            </select>
-          </label>
+          {selectedModel.reasoningEfforts.length > 0 ? (
+            <label className="field">
+              <span>Reasoning effort</span>
+              <select
+                className="dialog-select"
+                onChange={(event) => {
+                  if (isRuntimeReasoningEffort(event.target.value)) {
+                    setConfiguration({
+                      ...configuration,
+                      reasoningEffort: event.target.value,
+                    })
+                  }
+                }}
+                value={configuration.reasoningEffort}
+              >
+                {selectedModel.reasoningEfforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="field">
             <span>Context size</span>
             <select
@@ -3813,8 +4169,8 @@ function App() {
       ),
     }),
   )
-  const [defaultModels, setDefaultModels] = useState<DefaultModelSettings>(
-    readDefaultModelSettings,
+  const [defaultRuntimes, setDefaultRuntimes] = useState<DefaultRuntimeSettings>(
+    readDefaultRuntimeSettings,
   )
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
@@ -4163,9 +4519,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       'agentic-remote:default-models',
-      JSON.stringify(defaultModels),
+      JSON.stringify(defaultRuntimes),
     )
-  }, [defaultModels])
+  }, [defaultRuntimes])
 
   useEffect(() => {
     localStorage.setItem(
@@ -6286,7 +6642,8 @@ function App() {
       <NewSessionDialog
         computers={computers}
         defaultComputerId={defaultComputerId}
-        defaultModels={defaultModels}
+        defaultRuntimes={defaultRuntimes}
+        onDefaultRuntimesChange={setDefaultRuntimes}
         onClose={() => setNewSessionOpen(false)}
         onCreated={created}
         open={newSessionOpen}
@@ -6316,8 +6673,9 @@ function App() {
       <AppSettingsDialog
         onApplyUpdate={() => void applyPwaUpdate()}
         onClose={() => setSettingsOpen(false)}
-        defaultModels={defaultModels}
-        onDefaultModelsChange={setDefaultModels}
+        computers={computers}
+        defaultRuntimes={defaultRuntimes}
+        onDefaultRuntimesChange={setDefaultRuntimes}
         onStatuslineChange={setStatusline}
         onUpdateReady={setUpdateRegistration}
         open={settingsOpen}

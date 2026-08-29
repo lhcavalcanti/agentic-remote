@@ -16,6 +16,8 @@ const createSessionSchema = z.object({
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
   model: z.string().trim().min(1).max(200).optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  contextTier: z.enum(['default', 'long_context']).optional(),
 })
 
 const renameSessionSchema = z.object({
@@ -65,7 +67,7 @@ const executeCommandSchema = z.object({
 
 const configureRuntimeSchema = z.object({
   model: z.string().trim().min(1).max(200),
-  reasoningEffort: z.string().trim().min(1).max(50),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   contextTier: z.enum(['default', 'long_context']),
   mode: z.enum(['interactive', 'plan', 'autopilot']).optional(),
 })
@@ -439,6 +441,17 @@ export async function registerHubRoutes(
         session: await manager.createSession(request.params.computerId, input),
       })
     },
+  )
+
+  app.get<{
+    Params: { computerId: string; provider: 'copilot' | 'claude' }
+  }>(
+    '/api/computers/:computerId/providers/:provider/runtime',
+    async (request) =>
+      manager.providerRuntimeOptions(
+        request.params.computerId,
+        z.enum(['copilot', 'claude']).parse(request.params.provider),
+      ),
   )
 
   app.post<{ Params: SessionParams }>(

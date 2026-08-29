@@ -148,13 +148,13 @@ import {
 import { composerMaximumHeight } from './composer-sizing'
 import {
   activatePwaUpdate,
+  activePushSubscription,
   checkForPwaUpdate,
   clearSessionPushNotifications,
   disablePushNotifications,
   enablePushNotifications,
   installedAsApp,
   pushNotificationsSupported,
-  pushSubscription,
   PWA_UPDATE_EVENT,
 } from './pwa'
 
@@ -1199,7 +1199,7 @@ function AppSettingsDialog({
     let active = true
     setLoading(true)
     setError(undefined)
-    void pushSubscription()
+    void activePushSubscription()
       .then((subscription) => {
         if (active) {
           setEnabled(Boolean(subscription))

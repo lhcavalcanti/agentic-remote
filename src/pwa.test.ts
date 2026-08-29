@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   activatePwaUpdate,
+  activePushSubscription,
   checkForPwaUpdate,
   clearSessionPushNotifications,
+  enablePushNotifications,
 } from './pwa'
 
 describe('PWA updates', () => {
@@ -124,5 +126,104 @@ describe('PWA updates', () => {
         'agentic-finished-computer-session',
       ],
     })
+  })
+})
+
+describe('push subscriptions across a hub change', () => {
+  const OLD_KEY = 'BFhKxls-Uy_DZlfDG5dJJN3kRBUJ'
+  const NEW_KEY = 'BNCEMkMlgyZAHlgRhKG0K3bCWoGW'
+
+  function keyBuffer(value: string): ArrayBuffer {
+    const padding = '='.repeat((4 - (value.length % 4)) % 4)
+    const decoded = atob(
+      (value + padding).replaceAll('-', '+').replaceAll('_', '/'),
+    )
+    const bytes = new Uint8Array(new ArrayBuffer(decoded.length))
+    for (let index = 0; index < decoded.length; index += 1) {
+      bytes[index] = decoded.charCodeAt(index)
+    }
+    return bytes.buffer
+  }
+
+  function install(existingKey: string | undefined, serverKey: string) {
+    const unsubscribe = vi.fn(async () => true)
+    const existing = existingKey
+      ? ({
+          endpoint: 'https://push.example.test/old',
+          options: { applicationServerKey: keyBuffer(existingKey) },
+          unsubscribe,
+          toJSON: () => ({ endpoint: 'https://push.example.test/old' }),
+        } as unknown as PushSubscription)
+      : null
+    const fresh = {
+      endpoint: 'https://push.example.test/new',
+      options: { applicationServerKey: keyBuffer(serverKey) },
+      toJSON: () => ({ endpoint: 'https://push.example.test/new' }),
+    } as unknown as PushSubscription
+    const subscribe = vi.fn(async () => fresh)
+
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        ready: Promise.resolve({
+          pushManager: {
+            getSubscription: async () => existing,
+            subscribe,
+          },
+        }),
+      },
+    })
+    Object.defineProperty(window, 'PushManager', {
+      configurable: true,
+      value: function PushManager() {},
+    })
+    Object.defineProperty(window, 'Notification', {
+      configurable: true,
+      value: { permission: 'granted', requestPermission: async () => 'granted' },
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/push/public-key')) {
+        return new Response(JSON.stringify({ publicKey: serverKey }), {
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response('{}', {
+        headers: { 'content-type': 'application/json' },
+      })
+    }))
+    return { subscribe, unsubscribe, fresh, existing }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reports a subscription from a previous hub as not enabled', async () => {
+    install(OLD_KEY, NEW_KEY)
+    await expect(activePushSubscription()).resolves.toBeNull()
+  })
+
+  it('reports a matching subscription as enabled', async () => {
+    const { existing } = install(NEW_KEY, NEW_KEY)
+    await expect(activePushSubscription()).resolves.toBe(existing)
+  })
+
+  it('replaces a subscription minted for a different hub key', async () => {
+    const { subscribe, unsubscribe, fresh } = install(OLD_KEY, NEW_KEY)
+
+    await expect(enablePushNotifications()).resolves.toBe(fresh)
+
+    expect(unsubscribe).toHaveBeenCalledOnce()
+    expect(subscribe).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a subscription that already matches the current hub', async () => {
+    const { subscribe, unsubscribe, existing } = install(NEW_KEY, NEW_KEY)
+
+    await expect(enablePushNotifications()).resolves.toBe(existing)
+
+    expect(unsubscribe).not.toHaveBeenCalled()
+    expect(subscribe).not.toHaveBeenCalled()
   })
 })

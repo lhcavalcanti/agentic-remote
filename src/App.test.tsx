@@ -482,6 +482,54 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('renders MCP activity as a compact, identifiable tool row', async () => {
+    const mcpSession: ManagedSession = {
+      ...session,
+      messages: [
+        session.messages[0]!,
+        {
+          id: 'mcp-activity',
+          role: 'activity',
+          content: 'MCP · GitHub · Search Repositories\nagentic-remote',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+        },
+        session.messages[2]!,
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([mcpSession])
+    vi.mocked(getSession).mockResolvedValue(mcpSession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      screen.getByText('MCP · GitHub · Search Repositories'),
+    ).toBeInTheDocument()
+    expect(document.querySelector('.activity-message--mcp')).toHaveTextContent(
+      'agentic-remote',
+    )
+  })
+
+  it('keeps sidebar actions outside the independently scrolling navigation', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const sidebar = document.querySelector<HTMLElement>('.sidebar')
+    const sidebarBody = document.querySelector<HTMLElement>('.sidebar__body')
+    const sidebarSettings =
+      document.querySelector<HTMLElement>('.sidebar-settings')
+    expect(sidebar).toContainElement(sidebarBody)
+    expect(sidebar).toContainElement(sidebarSettings)
+    expect(sidebarBody).not.toContainElement(sidebarSettings)
+    expect(sidebarSettings).toContainElement(
+      screen.getByRole('button', { name: 'App settings' }),
+    )
+    expect(sidebarSettings).toContainElement(
+      screen.getByRole('button', { name: 'Add knowledge root' }),
+    )
+  })
+
   it('keeps completed tools in history while the current tool stays sticky', async () => {
     const runningSession: ManagedSession = {
       ...session,

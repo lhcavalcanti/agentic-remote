@@ -536,6 +536,33 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('labels MCP tool activity with its server and operation', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"mcp-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"mcp-call",
+          "toolName":"github-mcp-server-search_repositories",
+          "toolTitle":"Search repositories",
+          "mcpServerName":"github-mcp-server",
+          "mcpToolName":"search_repositories",
+          "arguments":{"query":"agentic-remote"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:mcp-call',
+        content: 'MCP · GitHub · Search Repositories\nagentic-remote',
+        activityStatus: 'running',
+      }),
+    ])
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',

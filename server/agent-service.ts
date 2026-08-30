@@ -663,6 +663,20 @@ function readableToolName(value: string): string {
     .replace(/\b\w/g, (character) => character.toUpperCase())
 }
 
+function readableMcpServerName(value: string): string {
+  const label = readableToolName(
+    value
+      .replace(/^mcp:/i, '')
+      .replace(/(?:-mcp)?-server$/i, ''),
+  )
+  return label === 'Github' ? 'GitHub' : label
+}
+
+function sameToolLabel(left: string, right: string): boolean {
+  return left.replace(/[^a-z0-9]/gi, '').toLowerCase() ===
+    right.replace(/[^a-z0-9]/gi, '').toLowerCase()
+}
+
 function previewText(value: unknown, multiline = false): string | undefined {
   if (typeof value !== 'string') {
     return undefined
@@ -687,11 +701,19 @@ function toolActivityContent(data: unknown): string {
   const argumentsValue = recordValue(tool.arguments)
   const toolDescription = recordValue(tool.toolDescription)
   const normalizedToolName = toolName.toLowerCase().replaceAll('-', '_')
+  const mcpServerName = previewText(tool.mcpServerName)
+  const mcpToolName = previewText(tool.mcpToolName)
+  const rawToolName = toolName.replace(/^mcp:/i, '')
+  const inferredMcp = rawToolName.match(/^(.+?)-mcp-server-(.+)$/i)
+  const isMcp =
+    Boolean(mcpServerName || mcpToolName || inferredMcp) ||
+    /^mcp:/i.test(toolName)
   const skillName =
     normalizedToolName === 'skill'
       ? previewText(argumentsValue.skill) || previewText(argumentsValue.name)
       : undefined
   const description =
+    previewText(tool.toolTitle) ||
     previewText(toolDescription.description) ||
     previewText(argumentsValue.description) ||
     previewText(argumentsValue.message)
@@ -707,12 +729,33 @@ function toolActivityContent(data: unknown): string {
         previewText(argumentsValue.url) ||
         previewText(argumentsValue.agent_type) ||
         previewText(argumentsValue.name)
-  const title = `${readableToolName(toolName)}${
+  const baseTitle = isMcp
+    ? [
+        'MCP',
+        mcpServerName || inferredMcp?.[1]
+          ? readableMcpServerName(mcpServerName || inferredMcp?.[1] || '')
+          : undefined,
+        mcpToolName || inferredMcp?.[2]
+          ? readableToolName(mcpToolName || inferredMcp?.[2] || '')
+          : readableToolName(rawToolName),
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : readableToolName(toolName)
+  const titleDescription =
+    description &&
+    (isMcp
+      ? !sameToolLabel(
+          description,
+          mcpToolName || inferredMcp?.[2] || toolName,
+        )
+      : true)
+      ? ` · ${description}`
+      : ''
+  const title = `${baseTitle}${
     skillName
-      ? ` (${skillName})${description ? ` · ${description}` : ''}`
-      : description
-        ? ` · ${description}`
-        : ''
+      ? ` (${skillName})${titleDescription}`
+      : titleDescription
   }`
   if (!detail) {
     return title

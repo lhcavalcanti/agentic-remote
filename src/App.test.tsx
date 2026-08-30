@@ -530,6 +530,50 @@ describe('App', () => {
     )
   })
 
+  it('recalls previous sent messages with ArrowUp per session', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'First prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+        {
+          id: 'history-agent-1',
+          role: 'assistant',
+          content: 'First response',
+          createdAt: '2026-07-22T00:00:01.000Z',
+        },
+        {
+          id: 'history-user-2',
+          role: 'user',
+          content: 'Second prompt\nwith details',
+          createdAt: '2026-07-22T00:00:02.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Second prompt\nwith details')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('First prompt')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue('Second prompt\nwith details')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue('')
+
+    fireEvent.change(textarea, { target: { value: 'Draft text\nline two' } })
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Draft text\nline two')
+  })
+
   it('keeps completed tools in history while the current tool stays sticky', async () => {
     const runningSession: ManagedSession = {
       ...session,

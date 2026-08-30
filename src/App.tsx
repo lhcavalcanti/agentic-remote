@@ -230,6 +230,12 @@ type DefaultModelSettings = {
   claude: string
 }
 
+type ComposerHistoryState = {
+  messages: string[]
+  index: number
+  draft: string
+}
+
 const defaultModelSettings: DefaultModelSettings = {
   copilot: '',
   claude: '',
@@ -3740,6 +3746,7 @@ function App() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
   )
+  const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   const [cwdOpen, setCwdOpen] = useState(false)
@@ -4618,6 +4625,55 @@ function App() {
     })
   }
 
+  function resetComposerHistory(targetKey: string) {
+    delete composerHistoryRef.current[targetKey]
+  }
+
+  function navigateMessageHistory(direction: -1 | 1): boolean {
+    if (!selected || !selectedKey) {
+      return false
+    }
+    const messages = selected.messages
+      .filter((message) => message.role === 'user' && message.content.trim())
+      .map((message) => message.content)
+    if (messages.length === 0) {
+      return false
+    }
+
+    const existing = composerHistoryRef.current[selectedKey]
+    if (!existing && (direction > 0 || composer.trim())) {
+      return false
+    }
+    const history =
+      existing && existing.messages.join('\0') === messages.join('\0')
+        ? existing
+        : {
+            messages,
+            index: messages.length,
+            draft: composer,
+          }
+    const nextIndex = Math.min(
+      Math.max(history.index + direction, 0),
+      messages.length,
+    )
+    history.index = nextIndex
+    composerHistoryRef.current[selectedKey] = history
+    const value =
+      nextIndex === messages.length ? history.draft : messages[nextIndex] || ''
+    setComposerForKey(selectedKey, value)
+    window.requestAnimationFrame(() => {
+      if (
+        selectedRef.current &&
+        sessionKey(selectedRef.current) === selectedKey
+      ) {
+        const textarea = composerRef.current
+        textarea?.focus()
+        textarea?.setSelectionRange(value.length, value.length)
+      }
+    })
+    return true
+  }
+
   function prependComposerForKey(targetKey: string, value: string) {
     setComposerDrafts((current) => {
       const existing = current[targetKey] || ''
@@ -4837,6 +4893,7 @@ function App() {
       return
     }
     const targetKey = sessionKey(selected)
+    resetComposerHistory(targetKey)
 
     const isCommand = content.startsWith('/')
     const commandName = isCommand
@@ -5259,6 +5316,9 @@ function App() {
     const textarea = composerRef.current
     const start = textarea?.selectionStart ?? composer.length
     const end = textarea?.selectionEnd ?? start
+    if (selectedKey) {
+      resetComposerHistory(selectedKey)
+    }
     setComposer(
       `${composer.slice(0, start)}\n${composer.slice(end)}`,
     )
@@ -5286,6 +5346,30 @@ function App() {
           (current - 1 + commandSuggestions.length) %
           commandSuggestions.length,
       )
+      return
+    }
+    if (
+      event.key === 'ArrowUp' &&
+      !showCommandMenu &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      navigateMessageHistory(-1)
+    ) {
+      event.preventDefault()
+      return
+    }
+    if (
+      event.key === 'ArrowDown' &&
+      !showCommandMenu &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      navigateMessageHistory(1)
+    ) {
+      event.preventDefault()
       return
     }
     const selectedSuggestion =
@@ -6146,7 +6230,12 @@ function App() {
                 <textarea
                   aria-label="Message"
                   disabled={sending}
-                  onChange={(event) => setComposer(event.target.value)}
+                  onChange={(event) => {
+                    if (selectedKey) {
+                      resetComposerHistory(selectedKey)
+                    }
+                    setComposer(event.target.value)
+                  }}
                   onKeyDown={composerKeyDown}
                   placeholder={`Message agent on ${selected.computerName}…`}
                   ref={composerRef}

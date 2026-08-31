@@ -567,6 +567,58 @@ function validateUserInputForm(
 export function pendingUserInputFromEvents(
   events: SessionEvent[],
 ): PendingUserInput | undefined {
+  const pendingInputFromTool = (
+    toolCallIdValue: unknown,
+    toolNameValue: unknown,
+    argumentsValue: unknown,
+  ):
+    | {
+        toolCallId: string
+        input: PendingUserInput
+      }
+    | undefined => {
+    const toolCallId = stringValue(toolCallIdValue)
+    const toolName = (stringValue(toolNameValue) || '')
+      .toLowerCase()
+      .replaceAll('-', '_')
+    if (!toolCallId || toolName !== 'ask_user') {
+      return undefined
+    }
+    const argumentsRecord = recordValue(argumentsValue)
+    const question =
+      (
+        stringValue(argumentsRecord.question) ||
+        stringValue(argumentsRecord.message) ||
+        ''
+      ).trim()
+    if (!question) {
+      return undefined
+    }
+    const choices = Array.isArray(argumentsRecord.choices)
+      ? argumentsRecord.choices.flatMap((choice) =>
+          typeof choice === 'string' && choice.trim()
+            ? [choice.trim()]
+            : [],
+        )
+      : []
+    const form = userInputFormFromSchema(argumentsRecord.requestedSchema)
+    return {
+      toolCallId,
+      input: {
+        requestId: `persisted-user-input:${toolCallId}`,
+        question,
+        choices,
+        allowFreeform:
+          form
+            ? false
+            : typeof argumentsRecord.allowFreeform === 'boolean'
+              ? argumentsRecord.allowFreeform
+              : true,
+        ...(form ? { form } : {}),
+      },
+    }
+  }
+
   let pending:
     | {
         toolCallId: string
@@ -581,50 +633,32 @@ export function pendingUserInputFromEvents(
       pending = undefined
       continue
     }
+    if (event.type === 'assistant.message') {
+      const toolRequests = recordValue(event.data).toolRequests
+      if (Array.isArray(toolRequests)) {
+        for (const requestValue of toolRequests) {
+          const request = recordValue(requestValue)
+          const next = pendingInputFromTool(
+            request.toolCallId,
+            request.name || request.toolName,
+            request.arguments,
+          )
+          if (next) {
+            pending = next
+          }
+        }
+      }
+      continue
+    }
     if (event.type === 'tool.execution_start') {
       const data = recordValue(event.data)
-      const toolName = (stringValue(data.toolName) || '')
-        .toLowerCase()
-        .replaceAll('-', '_')
-      if (toolName !== 'ask_user') {
-        continue
-      }
-      const argumentsValue = recordValue(data.arguments)
-      const question =
-        (
-          stringValue(argumentsValue.question) ||
-          stringValue(argumentsValue.message) ||
-          ''
-        ).trim()
-      if (!question) {
-        continue
-      }
-      const choices = Array.isArray(argumentsValue.choices)
-        ? argumentsValue.choices.flatMap((choice) =>
-            typeof choice === 'string' && choice.trim()
-              ? [choice.trim()]
-              : [],
-          )
-        : []
-      const form = userInputFormFromSchema(argumentsValue.requestedSchema)
-      const toolCallId = stringValue(data.toolCallId)
-      if (!toolCallId) {
-        continue
-      }
-      pending = {
-        toolCallId,
-        input: {
-          requestId: `persisted-user-input:${toolCallId}`,
-          question,
-          choices,
-          allowFreeform:
-            form
-              ? false
-              : typeof argumentsValue.allowFreeform === 'boolean'
-              ? argumentsValue.allowFreeform
-              : true,
-          ...(form ? { form } : {}),
-        },
+      const next = pendingInputFromTool(
+        data.toolCallId,
+        data.toolName,
+        data.arguments,
+      )
+      if (next) {
+        pending = next
       }
       continue
     }

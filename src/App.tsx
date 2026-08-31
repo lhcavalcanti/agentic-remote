@@ -1619,6 +1619,13 @@ function AppSettingsDialog({
       const complete: Partial<Record<AgentProvider, boolean>> = {}
       const errors: Partial<Record<AgentProvider, string>> = {}
       for (const provider of providers) {
+        const hasOfflineProviderComputer = computers.some(
+          (computer) =>
+            !computer.online &&
+            computerProviders(computer).some(
+              (capability) => capability.id === provider,
+            ),
+        )
         const providerResults = results.filter(
           (_result, index) => sources[index].provider === provider,
         )
@@ -1629,9 +1636,9 @@ function AppSettingsDialog({
         )
         if (catalogs.length > 0) {
           models[provider] = mergeRuntimeModelOptions(catalogs)
-          complete[provider] = providerResults.every(
-            (result) => result.status === 'fulfilled',
-          )
+          complete[provider] =
+            !hasOfflineProviderComputer &&
+            providerResults.every((result) => result.status === 'fulfilled')
         } else if (providerResults.length === 0) {
           errors[provider] =
             `${providerName(provider)} is not available on an online computer.`

@@ -238,10 +238,11 @@ export class ClaudeAgentService
     const cwd = await this.validateDirectory(inputPath)
     const id = randomUUID()
     const now = new Date().toISOString()
-    const defaultModel = model
-      ? this.models.find((candidate) => candidate.id === model.trim())
-      : this.models[0]
-    if (model?.trim() && !defaultModel) {
+    const modelId = model?.trim()
+    const defaultModel = modelId
+      ? this.models.find((candidate) => candidate.id === modelId)
+      : undefined
+    if (modelId && !defaultModel) {
       throw new Error('Selected Claude model is not available')
     }
     const effort =
@@ -272,7 +273,7 @@ export class ClaudeAgentService
         messages: [],
         runtime: {
           allowAllPermissions,
-          model: defaultModel?.id || 'default',
+          ...(defaultModel ? { model: defaultModel.id } : {}),
           ...(effort ? { reasoningEffort: effort } : {}),
           contextTier: tier,
           mode: 'interactive',

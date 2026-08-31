@@ -1009,6 +1009,58 @@ describe('App', () => {
     })
   })
 
+  it('keeps model catalogs incomplete while a provider-capable computer is offline', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-models',
+      JSON.stringify({
+        copilot: {
+          model: 'node-model',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
+        claude: {
+          model: '',
+          reasoningEffort: '',
+          contextTier: 'default',
+        },
+      }),
+    )
+    vi.mocked(listComputers).mockResolvedValue([
+      computer,
+      { ...secondComputer, online: false },
+    ])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    const model = await screen.findByLabelText(
+      'GitHub Copilot default model',
+    )
+    await waitFor(() => expect(model).toHaveValue('node-model'))
+    expect(
+      screen.getByRole('option', { name: 'node-model (unavailable)' }),
+    ).toBeInTheDocument()
+    expect(getProviderRuntimeOptions).not.toHaveBeenCalledWith(
+      secondComputer.id,
+      'copilot',
+    )
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+    ).toEqual({
+      copilot: {
+        model: 'node-model',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      },
+      claude: {
+        model: '',
+        reasoningEffort: '',
+        contextTier: 'default',
+      },
+    })
+  })
+
   it('uses a computer-specific fallback without replacing the saved default', async () => {
     localStorage.setItem(
       'agentic-remote:default-models',

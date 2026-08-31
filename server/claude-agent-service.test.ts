@@ -161,8 +161,10 @@ describe('ClaudeAgentService', () => {
     expect(created).toMatchObject({
       provider: 'claude',
       status: 'idle',
-      runtime: { model: 'sonnet' },
+      runtime: { contextTier: 'default' },
     })
+    expect(created.runtime?.model).toBeUndefined()
+    expect(created.runtime?.reasoningEffort).toBeUndefined()
 
     await service.sendMessage(sessionId, 'hello')
     await waitForIdle(service, sessionId)
@@ -174,9 +176,10 @@ describe('ClaudeAgentService', () => {
     expect(queryCalls.at(-1)).toMatchObject({
       cwd: directory,
       sessionId,
-      model: 'sonnet',
       permissionMode: 'bypassPermissions',
     })
+    expect(queryCalls.at(-1)?.model).toBeUndefined()
+    expect(queryCalls.at(-1)?.effort).toBeUndefined()
 
     await service.sendMessage(sessionId, 'follow up')
     await waitForIdle(service, sessionId)

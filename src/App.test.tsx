@@ -574,6 +574,49 @@ describe('App', () => {
     expect(textarea).toHaveValue('Draft text\nline two')
   })
 
+  it('does not let history navigation overwrite dictated text', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'First prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+        {
+          id: 'history-user-2',
+          role: 'user',
+          content: 'Second prompt',
+          createdAt: '2026-07-22T00:00:02.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    // Start navigating, so history is active and tracking the empty draft.
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Second prompt')
+
+    // Dictation appends to the composer without replacing it, and without
+    // going through the textarea's change handler.
+    const file = new File(['audio'], 'idea.webm', { type: 'audio/webm' })
+    fireEvent.drop(textarea.closest('.composer')!, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Second prompt\n\nTranscribed walking idea'),
+    )
+
+    // Navigating again must not discard the dictated text.
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Second prompt\n\nTranscribed walking idea')
+  })
+
   it('does not let history navigation overwrite a programmatic draft', async () => {
     const queued = {
       id: 'queue-1',

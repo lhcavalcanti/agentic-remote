@@ -4615,15 +4615,23 @@ function App() {
     setComposerForKey(selectedKey, value)
   }
 
-  function setComposerForKey(targetKey: string, value: string, fromHistory = false) {
-    // Any write other than history navigation replaces the draft that
-    // navigation is tracking, so continuing to navigate afterwards would
-    // overwrite text the user never typed here. Editing a queued prompt,
-    // dictation, an upload, and path insertion all reach the composer this way.
-    if (!fromHistory) {
-      resetComposerHistory(targetKey)
+  // Every composer write goes through here so none can skip invalidation. Any
+  // write other than history navigation replaces the draft that navigation is
+  // tracking, so navigating afterwards would overwrite text the user never
+  // typed here and could not recover. Editing a queued prompt, dictation,
+  // uploads, and path insertion all reach the composer by different routes.
+  function updateComposerDrafts(
+    invalidateKeys: string[],
+    update: (current: Record<string, string>) => Record<string, string>,
+  ) {
+    for (const key of invalidateKeys) {
+      resetComposerHistory(key)
     }
-    setComposerDrafts((current) => {
+    setComposerDrafts(update)
+  }
+
+  function setComposerForKey(targetKey: string, value: string, fromHistory = false) {
+    updateComposerDrafts(fromHistory ? [] : [targetKey], (current) => {
       if (!value) {
         const { [targetKey]: _removed, ...remaining } = current
         return remaining
@@ -4682,7 +4690,7 @@ function App() {
   }
 
   function prependComposerForKey(targetKey: string, value: string) {
-    setComposerDrafts((current) => {
+    updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
         ? value.endsWith('\n')
@@ -4697,7 +4705,7 @@ function App() {
   }
 
   function appendComposerForKey(targetKey: string, value: string) {
-    setComposerDrafts((current) => {
+    updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
         ? existing.endsWith('\n')
@@ -4715,7 +4723,7 @@ function App() {
     if (fromKey === toKey) {
       return
     }
-    setComposerDrafts((current) => {
+    updateComposerDrafts([fromKey, toKey], (current) => {
       const value = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
       return value ? { ...remaining, [toKey]: value } : remaining
@@ -4986,18 +4994,7 @@ function App() {
     setError(undefined)
     try {
       const result = await transcribeAudio(file)
-      setComposerDrafts((current) => {
-        const existing = current[targetKey] || ''
-        const separator = existing
-          ? existing.endsWith('\n')
-            ? '\n'
-            : '\n\n'
-          : ''
-        return {
-          ...current,
-          [targetKey]: `${existing}${separator}${result.transcript}`,
-        }
-      })
+      appendComposerForKey(targetKey, result.transcript)
       if (
         selectedRef.current &&
         sessionKey(selectedRef.current) === targetKey

@@ -1889,11 +1889,7 @@ function AppSettingsDialog({
       const errors: Partial<Record<AgentProvider, string>> = {}
       for (const provider of providers) {
         const hasOfflineProviderComputer = computers.some(
-          (computer) =>
-            !computer.online &&
-            computerProviders(computer).some(
-              (capability) => capability.id === provider,
-            ),
+          (computer) => !computer.isLocal && !computer.online,
         )
         const providerResults = results.filter(
           (_result, index) => sources[index].provider === provider,

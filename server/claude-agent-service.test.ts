@@ -231,6 +231,48 @@ describe('ClaudeAgentService', () => {
     })
   })
 
+  it('retries model discovery after a transient startup failure', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'claude-retry-test-'))
+    directories.push(directory)
+    let discoveryAttempts = 0
+    const queryMock = vi.fn(() => {
+      const handle = queryHandle(async function* () {})
+      handle.supportedModels = async () => {
+        discoveryAttempts += 1
+        if (discoveryAttempts === 1) {
+          throw new Error('Temporary discovery failure')
+        }
+        return models()
+      }
+      return handle
+    })
+    const authStatus = vi.fn(async () => ({ loggedIn: true }))
+    const service = new ClaudeAgentService(
+      new SessionStore(path.join(directory, 'state')),
+      '/bin/true',
+      {
+        query: queryMock as ClaudeSdk['query'],
+        deleteSession: vi.fn(async () => undefined),
+        getSessionInfo: vi.fn(async () => undefined),
+        renameSession: vi.fn(async () => undefined),
+      },
+      authStatus,
+    )
+
+    await service.start()
+    expect(service.providers()).toEqual([
+      expect.objectContaining({ id: 'claude', available: false }),
+    ])
+
+    await expect(service.providerRuntimeOptions('claude')).resolves.toEqual({
+      models: [expect.objectContaining({ id: 'sonnet' })],
+    })
+    expect(authStatus).toHaveBeenCalledTimes(2)
+    expect(service.providers()).toEqual([
+      expect.objectContaining({ id: 'claude', available: true }),
+    ])
+  })
+
   it('surfaces and answers Claude tool permissions', async () => {
     let sessionId = ''
     const fixtureResult = await fixture(async function* (options) {

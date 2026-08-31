@@ -323,7 +323,11 @@ export class ClaudeAgentService
     if (provider !== 'claude') {
       throw new Error(`Provider ${provider} is not handled by Claude Agent`)
     }
-    this.requireAvailable()
+    if (!this.available) {
+      await this.detectAvailability()
+      this.requireAvailable()
+      return { models: this.models }
+    }
     this.models = await this.loadModels()
     return { models: this.models }
   }

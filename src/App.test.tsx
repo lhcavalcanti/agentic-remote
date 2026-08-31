@@ -1133,7 +1133,7 @@ describe('App', () => {
     })
   })
 
-  it('keeps model catalogs incomplete while a provider-capable computer is offline', async () => {
+  it('keeps model catalogs incomplete while a paired computer is offline', async () => {
     localStorage.setItem(
       'agentic-remote:default-models',
       JSON.stringify({
@@ -1143,8 +1143,8 @@ describe('App', () => {
           contextTier: 'long_context',
         },
         claude: {
-          model: '',
-          reasoningEffort: '',
+          model: 'node-claude-model',
+          reasoningEffort: 'high',
           contextTier: 'default',
         },
       }),
@@ -1165,6 +1165,13 @@ describe('App', () => {
     expect(
       screen.getByRole('option', { name: 'node-model (unavailable)' }),
     ).toBeInTheDocument()
+    const claudeModel = screen.getByLabelText('Claude Agent default model')
+    expect(claudeModel).toHaveValue('node-claude-model')
+    expect(
+      screen.getByRole('option', {
+        name: 'node-claude-model (unavailable)',
+      }),
+    ).toBeInTheDocument()
     expect(getProviderRuntimeOptions).not.toHaveBeenCalledWith(
       secondComputer.id,
       'copilot',
@@ -1178,8 +1185,8 @@ describe('App', () => {
         contextTier: 'long_context',
       },
       claude: {
-        model: '',
-        reasoningEffort: '',
+        model: 'node-claude-model',
+        reasoningEffort: 'high',
         contextTier: 'default',
       },
     })

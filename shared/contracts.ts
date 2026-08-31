@@ -320,4 +320,3 @@ export interface AddKnowledgeRootInput {
   path: string
   name?: string
 }
-

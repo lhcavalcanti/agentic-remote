@@ -4156,6 +4156,7 @@ function App() {
       }
     | undefined
   >(undefined)
+  const sortableDragActiveRef = useRef(false)
 
   const orderedComputers = useMemo(() => {
     const rank = new Map(computerOrder.map((id, index) => [id, index]))
@@ -4189,6 +4190,17 @@ function App() {
     [selectedKey, sessions],
   )
   const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
+  const hasBlockingUi =
+    newSessionOpen ||
+    computersOpen ||
+    statuslineOpen ||
+    settingsOpen ||
+    runtimeOpen ||
+    (renameOpen && Boolean(selected)) ||
+    (cwdOpen && Boolean(selected)) ||
+    (workspaceOpen && Boolean(selected)) ||
+    addRootOpen ||
+    Boolean(selected?.pendingPermission || selected?.pendingUserInput)
   selectedRef.current = selected
   const currentTool = selected?.messages.findLast(
     (message) =>
@@ -4942,7 +4954,10 @@ function App() {
     delete composerHistoryRef.current[targetKey]
   }
 
-  function navigateMessageHistory(direction: -1 | 1): boolean {
+  function navigateMessageHistory(
+    direction: -1 | 1,
+    force = false,
+  ): boolean {
     if (!selected || !selectedKey) {
       return false
     }
@@ -4954,7 +4969,7 @@ function App() {
     }
 
     const existing = composerHistoryRef.current[selectedKey]
-    if (!existing && (direction > 0 || composer.trim())) {
+    if (!existing && (direction > 0 || (!force && composer.trim()))) {
       return false
     }
     const history =
@@ -5705,6 +5720,36 @@ function App() {
     }
   }
 
+  function appKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (
+      event.key !== 'ArrowUp' ||
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      sidebarMode !== 'sessions' ||
+      hasBlockingUi ||
+      sortableDragActiveRef.current
+    ) {
+      return
+    }
+    const target = event.target
+    if (
+      target instanceof Element &&
+      target.closest(
+        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle',
+      )
+    ) {
+      return
+    }
+    if (navigateMessageHistory(-1, true)) {
+      event.preventDefault()
+      setSidebarOpen(false)
+    }
+  }
+
   async function replyToPermission(optionId: string) {
     if (!selected?.pendingPermission) {
       return
@@ -5880,6 +5925,7 @@ function App() {
       className={`app-shell ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
       }`}
+      onKeyDown={appKeyDown}
       onTouchCancel={() => {
         sidebarGestureRef.current = undefined
       }}
@@ -6054,7 +6100,16 @@ function App() {
             ) : null}
             <DndContext
               collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
+              onDragCancel={() => {
+                sortableDragActiveRef.current = false
+              }}
+              onDragEnd={(event) => {
+                sortableDragActiveRef.current = false
+                handleDragEnd(event)
+              }}
+              onDragStart={() => {
+                sortableDragActiveRef.current = true
+              }}
               sensors={sensors}
             >
               <SortableContext

@@ -604,6 +604,101 @@ describe('App', () => {
     expect(textarea).toHaveValue('Draft text\nline two')
   })
 
+  it('focuses the composer and recalls history from elsewhere in the app', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'First prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+        {
+          id: 'history-user-2',
+          role: 'user',
+          content: 'Second prompt',
+          createdAt: '2026-07-22T00:00:02.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const draft = 'Keep this draft'
+    fireEvent.change(textarea, { target: { value: draft } })
+    const sidebarButton = screen.getAllByRole('button', {
+      name: 'New session',
+    })[0]
+    sidebarButton?.focus()
+
+    fireEvent.keyDown(sidebarButton!, { key: 'ArrowUp' })
+
+    expect(textarea).toHaveValue('Second prompt')
+    await waitFor(() => expect(textarea).toHaveFocus())
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue(draft)
+  })
+
+  it('does not steal ArrowUp while a dialog is open', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'Previous prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const newSessionButton = screen.getAllByRole('button', {
+      name: 'New session',
+    })[0]
+    fireEvent.click(newSessionButton)
+    expect(
+      screen.getByRole('dialog', { name: 'Choose a folder' }),
+    ).toBeInTheDocument()
+
+    fireEvent.keyDown(newSessionButton, { key: 'ArrowUp' })
+
+    expect(textarea).toHaveValue('')
+    expect(textarea).not.toHaveFocus()
+  })
+
+  it('does not steal ArrowUp from sortable drag handles', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'Previous prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const dragHandle = screen.getByLabelText('Reorder Project chat')
+    dragHandle.focus()
+
+    fireEvent.keyDown(dragHandle, { key: 'ArrowUp' })
+
+    expect(textarea).toHaveValue('')
+    expect(textarea).not.toHaveFocus()
+  })
+
   it('does not let history navigation overwrite dictated text', async () => {
     const historySession: ManagedSession = {
       ...session,

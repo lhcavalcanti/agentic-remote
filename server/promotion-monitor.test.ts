@@ -126,12 +126,18 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       'exit 0',
     ].join('\n'),
   )
-  // sshd hands the command to a login shell, so the stub must evaluate it.
-  // A stub that only logged the string could not detect an injected expansion.
+  // sshd evaluates the command through the remote user's shell. Avoid starting
+  // a second login shell here because host profiles may replace the fixture
+  // PATH and bypass the stubbed remote tools.
   await stub(
     bin,
     'ssh',
-    ['shift', 'exec bash -c "$*"'].join('\n'),
+    [
+      'shift',
+      'command="$*"',
+      'command="${command/bash -lc /bash -c }"',
+      'exec bash -c "$command"',
+    ].join('\n'),
   )
 
   const settings: Record<string, string> = {

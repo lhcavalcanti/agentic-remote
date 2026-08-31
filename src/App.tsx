@@ -128,6 +128,7 @@ import {
   deleteKnowledgeRoot,
   readKnowledgeFile,
   listDirectories,
+  validateSessionDirectory,
   listSessions,
   listWorkspace,
   moveSessionToTmux,
@@ -243,6 +244,16 @@ type DefaultModelSettings = {
   claude: string
 }
 
+type DefaultSessionFolders = Record<string, string>
+
+type StoredDefaultSessionFolders = {
+  version?: number
+  folders?: Record<string, unknown>
+}
+
+const defaultSessionFoldersStorageKey =
+  'agentic-remote:default-session-folders'
+
 type ComposerHistoryState = {
   messages: string[]
   index: number
@@ -264,6 +275,30 @@ function readDefaultModelSettings(): DefaultModelSettings {
     copilot: typeof stored.copilot === 'string' ? stored.copilot : '',
     claude: typeof stored.claude === 'string' ? stored.claude : '',
   }
+}
+
+function readDefaultSessionFolders(): DefaultSessionFolders {
+  const stored = readStoredOrder<StoredDefaultSessionFolders>(
+    defaultSessionFoldersStorageKey,
+    {},
+  )
+  if (
+    !stored ||
+    typeof stored !== 'object' ||
+    stored.version !== 1 ||
+    !stored.folders ||
+    typeof stored.folders !== 'object' ||
+    Array.isArray(stored.folders)
+  ) {
+    return {}
+  }
+  const folders: DefaultSessionFolders = {}
+  for (const [computerId, value] of Object.entries(stored.folders)) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      folders[computerId] = value
+    }
+  }
+  return folders
 }
 
 const defaultStatusline: StatuslineSettings = {
@@ -465,6 +500,7 @@ function NewSessionDialog({
   computers,
   defaultComputerId,
   defaultModels,
+  defaultSessionFolders,
   onClose,
   onCreated,
 }: {
@@ -472,6 +508,7 @@ function NewSessionDialog({
   computers: ComputerSummary[]
   defaultComputerId?: string
   defaultModels: DefaultModelSettings
+  defaultSessionFolders: DefaultSessionFolders
   onClose: () => void
   onCreated: (session: ManagedSession) => void
 }) {
@@ -497,9 +534,10 @@ function NewSessionDialog({
 
   useEffect(() => {
     if (open) {
-      setComputerId(defaultComputerId || available[0]?.id || '')
+      const initialComputerId = defaultComputerId || available[0]?.id || ''
+      setComputerId(initialComputerId)
       setProvider('copilot')
-      setCwd('~')
+      setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
       setDirectoryListing(undefined)
       setTerminalBacked(true)
       setAllowAllPermissions(true)
@@ -514,7 +552,7 @@ function NewSessionDialog({
         })
         .finally(() => setLoadingHistory(false))
     }
-  }, [open, defaultComputerId, available])
+  }, [open, defaultComputerId, defaultSessionFolders, available])
 
   useEffect(() => {
     if (!open || mode !== 'new' || !computerId) {
@@ -522,9 +560,13 @@ function NewSessionDialog({
     }
     let active = true
     const request = ++directoryRequest.current
+    const initialPath = defaultSessionFolders[computerId]?.trim() || '~'
     setLoadingDirectories(true)
     setError(undefined)
-    void listDirectories(computerId, '~')
+    const listingRequest = initialPath.startsWith('/')
+      ? listDirectories(computerId, initialPath, 'all')
+      : listDirectories(computerId, initialPath)
+    void listingRequest
       .then((listing) => {
         if (active && request === directoryRequest.current) {
           setDirectoryListing(listing)
@@ -544,7 +586,7 @@ function NewSessionDialog({
     return () => {
       active = false
     }
-  }, [computerId, mode, open])
+  }, [computerId, defaultSessionFolders, mode, open])
 
   if (!open) {
     return null
@@ -555,7 +597,9 @@ function NewSessionDialog({
     setLoadingDirectories(true)
     setError(undefined)
     try {
-      const listing = await listDirectories(computerId, path)
+      const listing = await (cwd.startsWith('/')
+        ? listDirectories(computerId, path, 'all')
+        : listDirectories(computerId, path))
       if (request === directoryRequest.current) {
         setDirectoryListing(listing)
         setCwd(listing.path)
@@ -657,11 +701,12 @@ function NewSessionDialog({
           <select
             className="dialog-select"
             onChange={(event) => {
+              const nextComputerId = event.target.value
               directoryRequest.current += 1
-              setComputerId(event.target.value)
+              setComputerId(nextComputerId)
               setProvider('copilot')
               setHistoryKey('')
-              setCwd('~')
+              setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
             }}
             value={computerId}
           >
@@ -1172,6 +1217,204 @@ function StatuslineControls({
   )
 }
 
+function DefaultSessionFolderControl({
+  computer,
+  value,
+  onChange,
+}: {
+  computer: ComputerSummary
+  value?: string
+  onChange: (path?: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [listing, setListing] = useState<DirectoryListing>()
+  const [loading, setLoading] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [error, setError] = useState<string>()
+  const requestRef = useRef(0)
+
+  useEffect(() => {
+    if (!open || !computer.online) {
+      return
+    }
+    let active = true
+    const request = ++requestRef.current
+    const path = value?.trim() || '~'
+    setLoading(true)
+    setError(undefined)
+    void listDirectories(computer.id, path, 'all')
+      .then((nextListing) => {
+        if (active && request === requestRef.current) {
+          setListing(nextListing)
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active && request === requestRef.current) {
+          setListing(undefined)
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+      .finally(() => {
+        if (active && request === requestRef.current) {
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [computer.id, computer.online, open, value])
+
+  async function browse(path: string) {
+    const request = ++requestRef.current
+    setLoading(true)
+    setError(undefined)
+    try {
+      const nextListing = await listDirectories(computer.id, path, 'all')
+      if (request === requestRef.current) {
+        setListing(nextListing)
+      }
+    } catch (caught) {
+      if (request === requestRef.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    } finally {
+      if (request === requestRef.current) {
+        setLoading(false)
+      }
+    }
+  }
+
+  async function chooseFolder() {
+    if (!listing) {
+      return
+    }
+    setValidating(true)
+    setError(undefined)
+    try {
+      const normalized = (await validateSessionDirectory(
+        computer.id,
+        listing.path,
+      )).trim()
+      if (!normalized) {
+        throw new Error('The selected folder could not be validated')
+      }
+      onChange(normalized)
+      setOpen(false)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setValidating(false)
+    }
+  }
+
+  return (
+    <div className="default-session-folder">
+      <div className="default-session-folder__header">
+        <span>
+          <strong>{computer.name}</strong>
+          <small>{value ? shortPath(value) : 'Home directory (blank)'}</small>
+        </span>
+        <div className="default-session-folder__actions">
+          <button
+            aria-expanded={open}
+            aria-label={`Browse default session folder for ${computer.name}`}
+            className="secondary-button"
+            disabled={!computer.online}
+            onClick={() => {
+              setOpen((current) => !current)
+              setError(undefined)
+            }}
+            type="button"
+          >
+            {open ? 'Close' : 'Browse'}
+          </button>
+          {value ? (
+            <button
+              aria-label={`Remove default session folder for ${computer.name}`}
+              className="icon-button icon-button--danger"
+              disabled={validating}
+              onClick={() => {
+                setOpen(false)
+                setError(undefined)
+                onChange()
+              }}
+              type="button"
+            >
+              <X size={16} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {!computer.online ? (
+        <small className="default-session-folder__offline">
+          Connect to browse this computer.
+        </small>
+      ) : null}
+      {open ? (
+        <div className="folder-picker default-session-folder__picker">
+          <div className="folder-picker__toolbar">
+            <button
+              aria-label={`Parent folder for ${computer.name}`}
+              className="icon-button"
+              disabled={!listing?.parent || loading || validating}
+              onClick={() => void browse(listing?.parent || '~')}
+              type="button"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <div className="folder-picker__path">
+              <Folder size={15} />
+              <strong>{listing?.path || value || '~'}</strong>
+            </div>
+          </div>
+          <div
+            aria-label={`Folders on ${computer.name}`}
+            className="folder-picker__list"
+            role="listbox"
+          >
+            {loading ? (
+              <p>Loading folders…</p>
+            ) : listing?.directories.length ? (
+              listing.directories.map((directory) => (
+                <button
+                  disabled={validating}
+                  key={directory.path}
+                  onClick={() => void browse(directory.path)}
+                  role="option"
+                  type="button"
+                >
+                  <FolderOpen size={17} />
+                  <span>{directory.name}</span>
+                  <ChevronLeft
+                    className="folder-picker__chevron"
+                    size={15}
+                  />
+                </button>
+              ))
+            ) : (
+              <p>{listing ? 'No subfolders here.' : 'Folder unavailable.'}</p>
+            )}
+          </div>
+          <p className="folder-picker__hint">
+            Select <strong>{listing?.path || value || '~'}</strong> as the
+            default for new sessions. The folder is checked against this
+            computer’s session roots before it is saved.
+          </p>
+          {error ? <p className="form-error">{error}</p> : null}
+          <button
+            className="primary-button app-settings-section__action"
+            disabled={!listing || loading || validating}
+            onClick={() => void chooseFolder()}
+            type="button"
+          >
+            {validating ? 'Validating…' : 'Use this folder'}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function AppSettingsDialog({
   open,
   onClose,
@@ -1179,6 +1422,9 @@ function AppSettingsDialog({
   onUpdateReady,
   defaultModels,
   onDefaultModelsChange,
+  computers,
+  defaultSessionFolders,
+  onDefaultSessionFoldersChange,
   statusline,
   onStatuslineChange,
   updateRegistration,
@@ -1190,6 +1436,9 @@ function AppSettingsDialog({
   onUpdateReady: (registration: ServiceWorkerRegistration) => void
   defaultModels: DefaultModelSettings
   onDefaultModelsChange: (settings: DefaultModelSettings) => void
+  computers: ComputerSummary[]
+  defaultSessionFolders: DefaultSessionFolders
+  onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
   updateRegistration?: ServiceWorkerRegistration
@@ -1345,6 +1594,33 @@ function AppSettingsDialog({
             value={defaultModels.claude}
           />
         </label>
+      </section>
+
+      <section className="app-settings-section">
+        <h3>Default session folders</h3>
+        <p className="dialog-message">
+          Choose one optional folder per computer for new sessions. Existing
+          sessions keep their current working directories. Leave a computer
+          blank to start in its home directory.
+        </p>
+        <div className="default-session-folder-list">
+          {computers.map((computer) => (
+            <DefaultSessionFolderControl
+              computer={computer}
+              key={computer.id}
+              onChange={(path) => {
+                const next = { ...defaultSessionFolders }
+                if (path) {
+                  next[computer.id] = path
+                } else {
+                  delete next[computer.id]
+                }
+                onDefaultSessionFoldersChange(next)
+              }}
+              value={defaultSessionFolders[computer.id]}
+            />
+          ))}
+        </div>
       </section>
 
       <section className="app-settings-section">
@@ -3843,6 +4119,8 @@ function App() {
   const [defaultModels, setDefaultModels] = useState<DefaultModelSettings>(
     readDefaultModelSettings,
   )
+  const [defaultSessionFolders, setDefaultSessionFolders] =
+    useState<DefaultSessionFolders>(readDefaultSessionFolders)
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
     readStoredOrder('agentic-remote:computer-order', []),
@@ -4197,6 +4475,13 @@ function App() {
       JSON.stringify(defaultModels),
     )
   }, [defaultModels])
+
+  useEffect(() => {
+    localStorage.setItem(
+      defaultSessionFoldersStorageKey,
+      JSON.stringify({ version: 1, folders: defaultSessionFolders }),
+    )
+  }, [defaultSessionFolders])
 
   useEffect(() => {
     localStorage.setItem(
@@ -6452,6 +6737,7 @@ function App() {
         computers={computers}
         defaultComputerId={defaultComputerId}
         defaultModels={defaultModels}
+        defaultSessionFolders={defaultSessionFolders}
         onClose={() => setNewSessionOpen(false)}
         onCreated={created}
         open={newSessionOpen}
@@ -6481,8 +6767,11 @@ function App() {
       <AppSettingsDialog
         onApplyUpdate={() => void applyPwaUpdate()}
         onClose={() => setSettingsOpen(false)}
+        computers={computers}
         defaultModels={defaultModels}
+        defaultSessionFolders={defaultSessionFolders}
         onDefaultModelsChange={setDefaultModels}
+        onDefaultSessionFoldersChange={setDefaultSessionFolders}
         onStatuslineChange={setStatusline}
         onUpdateReady={setUpdateRegistration}
         open={settingsOpen}

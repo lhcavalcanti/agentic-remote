@@ -74,6 +74,9 @@ const directoryQuerySchema = z.object({
   scope: z.enum(['home', 'all']).optional(),
   path: z.string().trim().max(4096).optional(),
 })
+const directoryValidationSchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+})
 const knowledgeRootSchema = z.object({
   computerId: z.string().min(1).max(256),
   path: z.string().trim().min(1).max(4096),
@@ -329,6 +332,19 @@ export async function registerHubRoutes(
         query.path,
         query.scope,
       )
+    },
+  )
+
+  app.post<{ Params: { computerId: string } }>(
+    '/api/computers/:computerId/directories/validate',
+    async (request) => {
+      const input = directoryValidationSchema.parse(request.body)
+      return {
+        path: await manager.validateSessionDirectory(
+          request.params.computerId,
+          input.path,
+        ),
+      }
     },
   )
 

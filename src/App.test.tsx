@@ -515,6 +515,218 @@ describe('App', () => {
     expect(
       screen.getByText('tmux', { selector: '.session-mode-badge' }),
     ).toBeInTheDocument()
+
+    const displayedMessages = document.querySelectorAll(
+      '.message:not(.message--activity)',
+    )
+    const expectedTimestamps = [
+      '2026-07-22T00:00:00.000Z',
+      '2026-07-22T00:00:01.000Z',
+    ]
+    expect(displayedMessages).toHaveLength(expectedTimestamps.length)
+    expectedTimestamps.forEach((createdAt, index) => {
+      const timestamp = displayedMessages[index]?.querySelector('time')
+      expect(timestamp).toHaveAttribute('datetime', createdAt)
+      expect(timestamp).toHaveTextContent(
+        new Date(createdAt).toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+        }),
+      )
+    })
+    expect(displayedMessages[0]?.querySelector('.message__metadata')).toHaveTextContent(
+      'You',
+    )
+    expect(displayedMessages[1]?.querySelector('.message__metadata')).toHaveTextContent(
+      'Agent',
+    )
+  })
+
+  it('renders MCP activity as a compact, identifiable tool row', async () => {
+    const mcpSession: ManagedSession = {
+      ...session,
+      messages: [
+        session.messages[0]!,
+        {
+          id: 'mcp-activity',
+          role: 'activity',
+          content: 'MCP · GitHub · Search Repositories\nagentic-remote',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+        },
+        session.messages[2]!,
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([mcpSession])
+    vi.mocked(getSession).mockResolvedValue(mcpSession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      screen.getByText('MCP · GitHub · Search Repositories'),
+    ).toBeInTheDocument()
+    expect(document.querySelector('.activity-message--mcp')).toHaveTextContent(
+      'agentic-remote',
+    )
+  })
+
+  it('keeps sidebar actions outside the independently scrolling navigation', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const sidebar = document.querySelector<HTMLElement>('.sidebar')
+    const sidebarBody = document.querySelector<HTMLElement>('.sidebar__body')
+    const sidebarSettings =
+      document.querySelector<HTMLElement>('.sidebar-settings')
+    expect(sidebar).toContainElement(sidebarBody)
+    expect(sidebar).toContainElement(sidebarSettings)
+    expect(sidebarBody).not.toContainElement(sidebarSettings)
+    expect(sidebarSettings).toContainElement(
+      screen.getByRole('button', { name: 'App settings' }),
+    )
+    expect(sidebarSettings).toContainElement(
+      screen.getByRole('button', { name: 'Add knowledge root' }),
+    )
+  })
+
+  it('recalls previous sent messages with ArrowUp per session', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'First prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+        {
+          id: 'history-agent-1',
+          role: 'assistant',
+          content: 'First response',
+          createdAt: '2026-07-22T00:00:01.000Z',
+        },
+        {
+          id: 'history-user-2',
+          role: 'user',
+          content: 'Second prompt\nwith details',
+          createdAt: '2026-07-22T00:00:02.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Second prompt\nwith details')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('First prompt')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue('Second prompt\nwith details')
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue('')
+
+    fireEvent.change(textarea, { target: { value: 'Draft text\nline two' } })
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Draft text\nline two')
+  })
+
+  it('does not let history navigation overwrite dictated text', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'First prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+        {
+          id: 'history-user-2',
+          role: 'user',
+          content: 'Second prompt',
+          createdAt: '2026-07-22T00:00:02.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    // Start navigating, so history is active and tracking the empty draft.
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Second prompt')
+
+    // Dictation appends to the composer without replacing it, and without
+    // going through the textarea's change handler.
+    const file = new File(['audio'], 'idea.webm', { type: 'audio/webm' })
+    fireEvent.drop(textarea.closest('.composer')!, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Second prompt\n\nTranscribed walking idea'),
+    )
+
+    // Navigating again must not discard the dictated text.
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Second prompt\n\nTranscribed walking idea')
+  })
+
+  it('does not let history navigation overwrite a programmatic draft', async () => {
+    const queued = {
+      id: 'queue-1',
+      content: 'Queued prompt text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const historySession: ManagedSession = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'First prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+        {
+          id: 'history-user-2',
+          role: 'user',
+          content: 'Second prompt',
+          createdAt: '2026-07-22T00:00:02.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+    vi.mocked(removeQueuedPrompt).mockResolvedValue({
+      session: { ...historySession, queuedCount: 0, queuedPrompts: [] },
+      prompt: queued,
+    })
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    // Start navigating, so history is active and tracking the empty draft.
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Second prompt')
+
+    // Editing a queued prompt writes the composer without the user typing, so
+    // it never reaches the textarea's change handler.
+    fireEvent.click(await screen.findByLabelText('Edit queued prompt 1'))
+    await waitFor(() => expect(textarea).toHaveValue('Queued prompt text'))
+
+    // Navigating again must not discard it. The tracked draft is the empty
+    // string from before navigation, so without invalidation the recovered
+    // text would be unreachable.
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('Queued prompt text')
   })
 
   it('keeps completed tools in history while the current tool stays sticky', async () => {

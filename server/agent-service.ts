@@ -589,6 +589,58 @@ function validateUserInputForm(
 export function pendingUserInputFromEvents(
   events: SessionEvent[],
 ): PendingUserInput | undefined {
+  const pendingInputFromTool = (
+    toolCallIdValue: unknown,
+    toolNameValue: unknown,
+    argumentsValue: unknown,
+  ):
+    | {
+        toolCallId: string
+        input: PendingUserInput
+      }
+    | undefined => {
+    const toolCallId = stringValue(toolCallIdValue)
+    const toolName = (stringValue(toolNameValue) || '')
+      .toLowerCase()
+      .replaceAll('-', '_')
+    if (!toolCallId || toolName !== 'ask_user') {
+      return undefined
+    }
+    const argumentsRecord = recordValue(argumentsValue)
+    const question =
+      (
+        stringValue(argumentsRecord.question) ||
+        stringValue(argumentsRecord.message) ||
+        ''
+      ).trim()
+    if (!question) {
+      return undefined
+    }
+    const choices = Array.isArray(argumentsRecord.choices)
+      ? argumentsRecord.choices.flatMap((choice) =>
+          typeof choice === 'string' && choice.trim()
+            ? [choice.trim()]
+            : [],
+        )
+      : []
+    const form = userInputFormFromSchema(argumentsRecord.requestedSchema)
+    return {
+      toolCallId,
+      input: {
+        requestId: `persisted-user-input:${toolCallId}`,
+        question,
+        choices,
+        allowFreeform:
+          form
+            ? false
+            : typeof argumentsRecord.allowFreeform === 'boolean'
+              ? argumentsRecord.allowFreeform
+              : true,
+        ...(form ? { form } : {}),
+      },
+    }
+  }
+
   let pending:
     | {
         toolCallId: string
@@ -603,50 +655,32 @@ export function pendingUserInputFromEvents(
       pending = undefined
       continue
     }
+    if (event.type === 'assistant.message') {
+      const toolRequests = recordValue(event.data).toolRequests
+      if (Array.isArray(toolRequests)) {
+        for (const requestValue of toolRequests) {
+          const request = recordValue(requestValue)
+          const next = pendingInputFromTool(
+            request.toolCallId,
+            request.name || request.toolName,
+            request.arguments,
+          )
+          if (next) {
+            pending = next
+          }
+        }
+      }
+      continue
+    }
     if (event.type === 'tool.execution_start') {
       const data = recordValue(event.data)
-      const toolName = (stringValue(data.toolName) || '')
-        .toLowerCase()
-        .replaceAll('-', '_')
-      if (toolName !== 'ask_user') {
-        continue
-      }
-      const argumentsValue = recordValue(data.arguments)
-      const question =
-        (
-          stringValue(argumentsValue.question) ||
-          stringValue(argumentsValue.message) ||
-          ''
-        ).trim()
-      if (!question) {
-        continue
-      }
-      const choices = Array.isArray(argumentsValue.choices)
-        ? argumentsValue.choices.flatMap((choice) =>
-            typeof choice === 'string' && choice.trim()
-              ? [choice.trim()]
-              : [],
-          )
-        : []
-      const form = userInputFormFromSchema(argumentsValue.requestedSchema)
-      const toolCallId = stringValue(data.toolCallId)
-      if (!toolCallId) {
-        continue
-      }
-      pending = {
-        toolCallId,
-        input: {
-          requestId: `persisted-user-input:${toolCallId}`,
-          question,
-          choices,
-          allowFreeform:
-            form
-              ? false
-              : typeof argumentsValue.allowFreeform === 'boolean'
-              ? argumentsValue.allowFreeform
-              : true,
-          ...(form ? { form } : {}),
-        },
+      const next = pendingInputFromTool(
+        data.toolCallId,
+        data.toolName,
+        data.arguments,
+      )
+      if (next) {
+        pending = next
       }
       continue
     }
@@ -685,6 +719,20 @@ function readableToolName(value: string): string {
     .replace(/\b\w/g, (character) => character.toUpperCase())
 }
 
+function readableMcpServerName(value: string): string {
+  const label = readableToolName(
+    value
+      .replace(/^mcp:/i, '')
+      .replace(/(?:-mcp)?-server$/i, ''),
+  )
+  return label === 'Github' ? 'GitHub' : label
+}
+
+function sameToolLabel(left: string, right: string): boolean {
+  return left.replace(/[^a-z0-9]/gi, '').toLowerCase() ===
+    right.replace(/[^a-z0-9]/gi, '').toLowerCase()
+}
+
 function previewText(value: unknown, multiline = false): string | undefined {
   if (typeof value !== 'string') {
     return undefined
@@ -709,11 +757,19 @@ function toolActivityContent(data: unknown): string {
   const argumentsValue = recordValue(tool.arguments)
   const toolDescription = recordValue(tool.toolDescription)
   const normalizedToolName = toolName.toLowerCase().replaceAll('-', '_')
+  const mcpServerName = previewText(tool.mcpServerName)
+  const mcpToolName = previewText(tool.mcpToolName)
+  const rawToolName = toolName.replace(/^mcp:/i, '')
+  const inferredMcp = rawToolName.match(/^(.+?)-mcp-server-(.+)$/i)
+  const isMcp =
+    Boolean(mcpServerName || mcpToolName || inferredMcp) ||
+    /^mcp:/i.test(toolName)
   const skillName =
     normalizedToolName === 'skill'
       ? previewText(argumentsValue.skill) || previewText(argumentsValue.name)
       : undefined
   const description =
+    previewText(tool.toolTitle) ||
     previewText(toolDescription.description) ||
     previewText(argumentsValue.description) ||
     previewText(argumentsValue.message)
@@ -729,12 +785,33 @@ function toolActivityContent(data: unknown): string {
         previewText(argumentsValue.url) ||
         previewText(argumentsValue.agent_type) ||
         previewText(argumentsValue.name)
-  const title = `${readableToolName(toolName)}${
+  const baseTitle = isMcp
+    ? [
+        'MCP',
+        mcpServerName || inferredMcp?.[1]
+          ? readableMcpServerName(mcpServerName || inferredMcp?.[1] || '')
+          : undefined,
+        mcpToolName || inferredMcp?.[2]
+          ? readableToolName(mcpToolName || inferredMcp?.[2] || '')
+          : readableToolName(rawToolName),
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : readableToolName(toolName)
+  const titleDescription =
+    description &&
+    (isMcp
+      ? !sameToolLabel(
+          description,
+          mcpToolName || inferredMcp?.[2] || toolName,
+        )
+      : true)
+      ? ` · ${description}`
+      : ''
+  const title = `${baseTitle}${
     skillName
-      ? ` (${skillName})${description ? ` · ${description}` : ''}`
-      : description
-        ? ` · ${description}`
-        : ''
+      ? ` (${skillName})${titleDescription}`
+      : titleDescription
   }`
   if (!detail) {
     return title

@@ -178,6 +178,19 @@ function recordingDuration(seconds: number): string {
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
 }
 
+const messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+})
+
+const messageDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+})
+
 function phoneEnterCreatesNewline(): boolean {
   return (
     window.matchMedia?.('(pointer: coarse)').matches ||
@@ -240,6 +253,12 @@ const emptyRuntimeSelection: DefaultRuntimeSelection = {
   model: '',
   reasoningEffort: '',
   contextTier: 'default',
+}
+
+type ComposerHistoryState = {
+  messages: string[]
+  index: number
+  draft: string
 }
 
 function isRuntimeReasoningEffort(
@@ -2517,6 +2536,7 @@ function ActivityMessage({
 }) {
   const [title, ...detailLines] = content.split('\n')
   const detail = detailLines.join('\n').trim()
+  const isMcp = title.startsWith('MCP ·')
   const icon =
     status === 'failed' ? (
       <XCircle size={14} />
@@ -2526,7 +2546,11 @@ function ActivityMessage({
       <LoaderCircle className="activity-message__spinner" size={14} />
     )
   return (
-    <div className={`activity-message activity-message--${status || 'running'}`}>
+    <div
+      className={`activity-message activity-message--${status || 'running'}${
+        isMcp ? ' activity-message--mcp' : ''
+      }`}
+    >
       {icon}
       <span>
         <strong>{title}</strong>
@@ -4169,6 +4193,7 @@ function App() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
   )
+  const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   const [cwdOpen, setCwdOpen] = useState(false)
@@ -5037,8 +5062,23 @@ function App() {
     setComposerForKey(selectedKey, value)
   }
 
-  function setComposerForKey(targetKey: string, value: string) {
-    setComposerDrafts((current) => {
+  // Every composer write goes through here so none can skip invalidation. Any
+  // write other than history navigation replaces the draft that navigation is
+  // tracking, so navigating afterwards would overwrite text the user never
+  // typed here and could not recover. Editing a queued prompt, dictation,
+  // uploads, and path insertion all reach the composer by different routes.
+  function updateComposerDrafts(
+    invalidateKeys: string[],
+    update: (current: Record<string, string>) => Record<string, string>,
+  ) {
+    for (const key of invalidateKeys) {
+      resetComposerHistory(key)
+    }
+    setComposerDrafts(update)
+  }
+
+  function setComposerForKey(targetKey: string, value: string, fromHistory = false) {
+    updateComposerDrafts(fromHistory ? [] : [targetKey], (current) => {
       if (!value) {
         const { [targetKey]: _removed, ...remaining } = current
         return remaining
@@ -5047,8 +5087,57 @@ function App() {
     })
   }
 
+  function resetComposerHistory(targetKey: string) {
+    delete composerHistoryRef.current[targetKey]
+  }
+
+  function navigateMessageHistory(direction: -1 | 1): boolean {
+    if (!selected || !selectedKey) {
+      return false
+    }
+    const messages = selected.messages
+      .filter((message) => message.role === 'user' && message.content.trim())
+      .map((message) => message.content)
+    if (messages.length === 0) {
+      return false
+    }
+
+    const existing = composerHistoryRef.current[selectedKey]
+    if (!existing && (direction > 0 || composer.trim())) {
+      return false
+    }
+    const history =
+      existing && existing.messages.join('\0') === messages.join('\0')
+        ? existing
+        : {
+            messages,
+            index: messages.length,
+            draft: composer,
+          }
+    const nextIndex = Math.min(
+      Math.max(history.index + direction, 0),
+      messages.length,
+    )
+    history.index = nextIndex
+    composerHistoryRef.current[selectedKey] = history
+    const value =
+      nextIndex === messages.length ? history.draft : messages[nextIndex] || ''
+    setComposerForKey(selectedKey, value, true)
+    window.requestAnimationFrame(() => {
+      if (
+        selectedRef.current &&
+        sessionKey(selectedRef.current) === selectedKey
+      ) {
+        const textarea = composerRef.current
+        textarea?.focus()
+        textarea?.setSelectionRange(value.length, value.length)
+      }
+    })
+    return true
+  }
+
   function prependComposerForKey(targetKey: string, value: string) {
-    setComposerDrafts((current) => {
+    updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
         ? value.endsWith('\n')
@@ -5063,7 +5152,7 @@ function App() {
   }
 
   function appendComposerForKey(targetKey: string, value: string) {
-    setComposerDrafts((current) => {
+    updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
         ? existing.endsWith('\n')
@@ -5081,7 +5170,7 @@ function App() {
     if (fromKey === toKey) {
       return
     }
-    setComposerDrafts((current) => {
+    updateComposerDrafts([fromKey, toKey], (current) => {
       const value = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
       return value ? { ...remaining, [toKey]: value } : remaining
@@ -5352,18 +5441,7 @@ function App() {
     setError(undefined)
     try {
       const result = await transcribeAudio(file)
-      setComposerDrafts((current) => {
-        const existing = current[targetKey] || ''
-        const separator = existing
-          ? existing.endsWith('\n')
-            ? '\n'
-            : '\n\n'
-          : ''
-        return {
-          ...current,
-          [targetKey]: `${existing}${separator}${result.transcript}`,
-        }
-      })
+      appendComposerForKey(targetKey, result.transcript)
       if (
         selectedRef.current &&
         sessionKey(selectedRef.current) === targetKey
@@ -5717,6 +5795,30 @@ function App() {
       )
       return
     }
+    if (
+      event.key === 'ArrowUp' &&
+      !showCommandMenu &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      navigateMessageHistory(-1)
+    ) {
+      event.preventDefault()
+      return
+    }
+    if (
+      event.key === 'ArrowDown' &&
+      !showCommandMenu &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      navigateMessageHistory(1)
+    ) {
+      event.preventDefault()
+      return
+    }
     const selectedSuggestion =
       commandSuggestions[
         Math.min(selectedCommandIndex, commandSuggestions.length - 1)
@@ -6000,130 +6102,132 @@ function App() {
           </div>
         ) : null}
 
-        {sidebarMode === 'knowledge' ? (
-          <nav aria-label="Knowledge" className="session-list knowledge-tree">
-            {roots.length === 0 ? (
-              <p className="sidebar-message">
-                Add a knowledge root to browse a folder on any computer.
-              </p>
-            ) : null}
-            {roots.length > 0 ? (
-              <>
-                <p className="sidebar-label">Roots</p>
-                {roots.map((root) => (
-                  <div className="knowledge-root" key={root.id}>
+        <div className="sidebar__body">
+          {sidebarMode === 'knowledge' ? (
+            <nav aria-label="Knowledge" className="session-list knowledge-tree">
+              {roots.length === 0 ? (
+                <p className="sidebar-message">
+                  Add a knowledge root to browse a folder on any computer.
+                </p>
+              ) : null}
+              {roots.length > 0 ? (
+                <>
+                  <p className="sidebar-label">Roots</p>
+                  {roots.map((root) => (
+                    <div className="knowledge-root" key={root.id}>
+                      <button
+                        aria-current={root.id === activeRootId ? 'true' : undefined}
+                        className={root.id === activeRootId ? 'is-active' : ''}
+                        onClick={() => void selectRoot(root.id)}
+                        type="button"
+                      >
+                        <FolderOpen size={15} />
+                        <span>
+                          <strong>{root.name}</strong>
+                          <small>
+                            {root.computerName} · {root.path}
+                          </small>
+                        </span>
+                      </button>
+                      <button
+                        aria-label={`Remove ${root.name} root`}
+                        className="icon-button icon-button--danger"
+                        onClick={() => void removeRoot(root.id)}
+                        type="button"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </>
+              ) : null}
+              {activeRoot && knowledgeListing ? (
+                <>
+                  <p className="sidebar-label">
+                    {knowledgeListing.path === '.'
+                      ? activeRoot.name
+                      : knowledgeListing.path}
+                  </p>
+                  {knowledgeListing.parent !== undefined ? (
                     <button
-                      aria-current={root.id === activeRootId ? 'true' : undefined}
-                      className={root.id === activeRootId ? 'is-active' : ''}
-                      onClick={() => void selectRoot(root.id)}
+                      className="workspace-entry"
+                      onClick={() =>
+                        void openKnowledgeFolder(knowledgeListing.parent)
+                      }
                       type="button"
                     >
-                      <FolderOpen size={15} />
+                      <ArrowUp size={15} />
                       <span>
-                        <strong>{root.name}</strong>
-                        <small>
-                          {root.computerName} · {root.path}
-                        </small>
+                        <strong>Parent folder</strong>
                       </span>
                     </button>
+                  ) : null}
+                  {knowledgeListing.entries.length === 0 ? (
+                    <p className="sidebar-message">This folder is empty.</p>
+                  ) : null}
+                  {knowledgeListing.entries.map((entry) => (
                     <button
-                      aria-label={`Remove ${root.name} root`}
-                      className="icon-button icon-button--danger"
-                      onClick={() => void removeRoot(root.id)}
+                      className="workspace-entry"
+                      key={entry.path}
+                      onClick={() =>
+                        entry.kind === 'directory'
+                          ? void openKnowledgeFolder(entry.path)
+                          : void openKnowledgeFile(entry.path)
+                      }
                       type="button"
                     >
-                      <Trash2 size={14} />
+                      {entry.kind === 'directory' ? (
+                        <FolderOpen size={15} />
+                      ) : (
+                        <FileText size={15} />
+                      )}
+                      <span>
+                        <strong>{entry.name}</strong>
+                      </span>
                     </button>
-                  </div>
-                ))}
-              </>
-            ) : null}
-            {activeRoot && knowledgeListing ? (
-              <>
-                <p className="sidebar-label">
-                  {knowledgeListing.path === '.'
-                    ? activeRoot.name
-                    : knowledgeListing.path}
-                </p>
-                {knowledgeListing.parent !== undefined ? (
-                  <button
-                    className="workspace-entry"
-                    onClick={() =>
-                      void openKnowledgeFolder(knowledgeListing.parent)
-                    }
-                    type="button"
-                  >
-                    <ArrowUp size={15} />
-                    <span>
-                      <strong>Parent folder</strong>
-                    </span>
-                  </button>
-                ) : null}
-                {knowledgeListing.entries.length === 0 ? (
-                  <p className="sidebar-message">This folder is empty.</p>
-                ) : null}
-                {knowledgeListing.entries.map((entry) => (
-                  <button
-                    className="workspace-entry"
-                    key={entry.path}
-                    onClick={() =>
-                      entry.kind === 'directory'
-                        ? void openKnowledgeFolder(entry.path)
-                        : void openKnowledgeFile(entry.path)
-                    }
-                    type="button"
-                  >
-                    {entry.kind === 'directory' ? (
-                      <FolderOpen size={15} />
-                    ) : (
-                      <FileText size={15} />
-                    )}
-                    <span>
-                      <strong>{entry.name}</strong>
-                    </span>
-                  </button>
-                ))}
-              </>
-            ) : null}
-          </nav>
-        ) : null}
-
-        <nav
-          aria-label="Sessions"
-          className="session-list"
-          hidden={sidebarMode !== 'sessions'}
-        >
-          <p className="sidebar-label">Recent</p>
-          {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
-          {!loading && sessions.length === 0 ? (
-            <p className="sidebar-message">No sessions here.</p>
+                  ))}
+                </>
+              ) : null}
+            </nav>
           ) : null}
-          <DndContext
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-            sensors={sensors}
+
+          <nav
+            aria-label="Sessions"
+            className="session-list"
+            hidden={sidebarMode !== 'sessions'}
           >
-            <SortableContext
-              items={orderedComputers.map(
-                (computer) => `computer:${computer.id}`,
-              )}
-              strategy={verticalListSortingStrategy}
+            <p className="sidebar-label">Recent</p>
+            {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
+            {!loading && sessions.length === 0 ? (
+              <p className="sidebar-message">No sessions here.</p>
+            ) : null}
+            <DndContext
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+              sensors={sensors}
             >
-              <div className="computer-session-groups">
-                {orderedComputers.map((computer) => (
-                  <SortableComputerGroup
-                    computer={computer}
-                    key={computer.id}
-                    onSelectSession={selectSession}
-                    selectedKey={selectedKey}
-                    sessions={sessionsByComputer.get(computer.id) || []}
-                    showComputerHandle
-                  />
-                ))}
-              </div>
-            </SortableContext>
-          </DndContext>
-        </nav>
+              <SortableContext
+                items={orderedComputers.map(
+                  (computer) => `computer:${computer.id}`,
+                )}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="computer-session-groups">
+                  {orderedComputers.map((computer) => (
+                    <SortableComputerGroup
+                      computer={computer}
+                      key={computer.id}
+                      onSelectSession={selectSession}
+                      selectedKey={selectedKey}
+                      sessions={sessionsByComputer.get(computer.id) || []}
+                      showComputerHandle
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </nav>
+        </div>
         <div className="sidebar-settings">
           <button
             aria-label="Add knowledge root"
@@ -6400,12 +6504,25 @@ function App() {
                       className={`message message--${message.role}`}
                       key={message.id}
                     >
-                      <div className="message__label">
-                        {message.role === 'user'
-                          ? 'You'
-                          : message.role === 'notice'
-                            ? 'Command'
-                            : 'Agent'}
+                      <div className="message__metadata">
+                        <span className="message__label">
+                          {message.role === 'user'
+                            ? 'You'
+                            : message.role === 'notice'
+                              ? 'Command'
+                              : 'Agent'}
+                        </span>
+                        <time
+                          className="message__timestamp"
+                          dateTime={message.createdAt}
+                          title={messageDateTimeFormatter.format(
+                            new Date(message.createdAt),
+                          )}
+                        >
+                          {messageTimeFormatter.format(
+                            new Date(message.createdAt),
+                          )}
+                        </time>
                       </div>
                       <div className="message__content">
                         {message.content ? (
@@ -6573,7 +6690,9 @@ function App() {
                 <textarea
                   aria-label="Message"
                   disabled={sending}
-                  onChange={(event) => setComposer(event.target.value)}
+                  onChange={(event) => {
+                    setComposer(event.target.value)
+                  }}
                   onKeyDown={composerKeyDown}
                   placeholder={`Message agent on ${selected.computerName}…`}
                   ref={composerRef}

@@ -137,6 +137,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - User messages, assistant messages, notices, and tool activity MUST remain in
   chronological order.
+- User and assistant messages MUST show their persisted creation time in the
+  viewer's local time alongside the sender label.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
 - Parallel tools MUST retain independent running/completed/failed states.

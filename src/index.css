@@ -80,14 +80,18 @@ button {
 
 .sidebar {
   display: flex;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: rgba(23, 24, 21, 0.94);
 }
 
 .brand {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 11px;
   height: 74px;
@@ -190,6 +194,7 @@ button {
 
 .sidebar-switch {
   display: flex;
+  flex: 0 0 auto;
   margin: 0 14px 12px;
   padding: 3px;
   gap: 3px;
@@ -303,6 +308,7 @@ button {
 
 .sidebar-actions {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) 42px;
   gap: 8px;
   margin: 4px 14px 12px;
@@ -337,14 +343,28 @@ button {
 }
 
 .session-list {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   padding: 0 10px 24px;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.sidebar__body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .sidebar-settings {
   display: grid;
+  flex: 0 0 auto;
+  min-height: 0;
   gap: 6px;
   padding: 10px 14px max(10px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
@@ -839,7 +859,7 @@ button {
   min-width: 0;
   max-width: 100%;
   flex-direction: column;
-  gap: 32px;
+  gap: 28px;
 }
 
 .message {
@@ -847,7 +867,14 @@ button {
 }
 
 .message--activity {
-  margin: -14px 0;
+  margin: -18px 0;
+}
+
+/* Flex items do not collapse margins, so two adjacent activity rows would
+   otherwise net 28px - 18px - 18px = -8px and overlap. Pull only the second
+   one, keeping the tighter spacing against ordinary messages. */
+.message--activity + .message--activity {
+  margin-top: -10px;
 }
 
 .tool-activity-slot {
@@ -871,13 +898,13 @@ button {
   width: fit-content;
   max-width: 100%;
   align-items: flex-start;
-  gap: 7px;
-  padding: 5px 9px;
+  gap: 6px;
+  padding: 3px 7px;
   color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.018);
-  font-size: 10.5px;
+  font-size: 10px;
 }
 
 .activity-message > svg {
@@ -888,25 +915,29 @@ button {
 .activity-message > span {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 1px;
 }
 
 .activity-message strong {
   color: inherit;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 590;
+  line-height: 1.35;
 }
 
 .activity-message code {
+  display: block;
   max-width: min(680px, 100%);
   padding: 0;
+  overflow: hidden;
   overflow-wrap: anywhere;
   color: var(--muted);
   background: transparent;
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 9.5px;
-  line-height: 1.45;
-  white-space: pre-wrap;
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .activity-message--completed {
@@ -915,6 +946,12 @@ button {
 
 .activity-message--failed {
   color: var(--danger);
+}
+
+.activity-message--mcp {
+  color: #a9c9f6;
+  border-color: rgba(110, 168, 254, 0.28);
+  background: rgba(110, 168, 254, 0.06);
 }
 
 .activity-message__spinner {
@@ -948,13 +985,30 @@ button {
   background: var(--panel-raised);
 }
 
-.message__label {
+.message__metadata {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 7px;
+}
+
+.message__label {
   color: #73776d;
   font-size: 9px;
   font-weight: 750;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.message__timestamp {
+  flex: 0 0 auto;
+  color: #73776d;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .message__content {

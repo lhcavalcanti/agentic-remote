@@ -536,6 +536,33 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('labels MCP tool activity with its server and operation', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"mcp-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"mcp-call",
+          "toolName":"github-mcp-server-search_repositories",
+          "toolTitle":"Search repositories",
+          "mcpServerName":"github-mcp-server",
+          "mcpToolName":"search_repositories",
+          "arguments":{"query":"agentic-remote"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:mcp-call',
+        content: 'MCP · GitHub · Search Repositories\nagentic-remote',
+        activityStatus: 'running',
+      }),
+    ])
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',
@@ -1207,6 +1234,52 @@ describe('AgentService deletion', () => {
     expect(updated.pendingUserInput).toBeUndefined()
     expect(updated.status).toBe('running')
     await service.stop()
+  })
+
+  it('reconstructs ask-user forms from assistant tool requests', () => {
+    const event = {
+      type: 'assistant.message',
+      id: 'assistant-message',
+      parentId: null,
+      timestamp: '2026-08-31T05:51:08.872Z',
+      data: {
+        messageId: 'assistant-message',
+        content: '',
+        toolRequests: [
+          {
+            toolCallId: 'assistant-ask-call',
+            name: 'ask_user',
+            arguments: {
+              message: 'Authorize the prepared replacement',
+              requestedSchema: {
+                properties: {
+                  confirm: {
+                    type: 'boolean',
+                    title: 'Confirm replacement',
+                    default: false,
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    } as SessionEvent
+
+    expect(pendingUserInputFromEvents([event])).toMatchObject({
+      requestId: 'persisted-user-input:assistant-ask-call',
+      question: 'Authorize the prepared replacement',
+      form: {
+        fields: [
+          {
+            name: 'confirm',
+            title: 'Confirm replacement',
+            type: 'boolean',
+            default: false,
+          },
+        ],
+      },
+    })
   })
 
   it('handles SDK elicitation forms through the session UI state', async () => {
@@ -3623,6 +3696,102 @@ describe('AgentService deletion', () => {
     expect(service.store.get(client.session.sessionId)).toMatchObject({
       status: 'idle',
       activity: undefined,
+    })
+    await service.stop()
+  })
+
+  it('detects structured terminal ask-user requests from the event log', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'Create T4 Engine Configuration',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+    }
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-08-31T05:51:08.895Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "toolTitle":"Asking user",
+          "arguments":{
+            "message":"The T4 engine is published and the replacement payload is prepared, but I have not submitted the Control Plane batch.",
+            "requestedSchema":{
+              "properties":{
+                "deleteNimbusBootstrap":{
+                  "type":"boolean",
+                  "title":"Delete temporary Nimbus bootstrap",
+                  "default":true
+                },
+                "confirmReplacement":{
+                  "type":"boolean",
+                  "title":"Authorize the T4 Control Plane replacement",
+                  "default":false
+                }
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Create T4 Engine Configuration',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'structured-ask-events-v1',
+      terminal,
+    )
+
+    await service.start()
+
+    expect(service.store.get(client.session.sessionId)).toMatchObject({
+      status: 'waiting',
+      pendingUserInput: {
+        requestId: 'persisted-user-input:ask-call',
+        question:
+          'The T4 engine is published and the replacement payload is prepared, but I have not submitted the Control Plane batch.',
+        form: {
+          fields: [
+            {
+              name: 'deleteNimbusBootstrap',
+              type: 'boolean',
+              default: true,
+            },
+            {
+              name: 'confirmReplacement',
+              type: 'boolean',
+              default: false,
+            },
+          ],
+        },
+      },
     })
     await service.stop()
   })

@@ -84,6 +84,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - The user MUST select the owning computer, available provider, and working
   folder.
+- App settings MAY store one validated default session folder per computer in
+  browser-local storage keyed by computer ID. A blank default uses that
+  computer's home directory, and changing a default MUST affect only sessions
+  created afterward.
 - The New session and Open previous sheet MUST scroll independently when its
   content exceeds the visual viewport, including while the phone keyboard is
   open, so the final create/open action remains reachable.

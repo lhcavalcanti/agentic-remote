@@ -225,6 +225,10 @@ export class ProviderSessionService
     return this.copilot.listDirectories(path, scope)
   }
 
+  validateSessionDirectory(inputPath: string): Promise<string> {
+    return this.copilot.validateSessionDirectory(inputPath)
+  }
+
   listKnowledge(root: string, path?: string): Promise<WorkspaceListing> {
     return this.copilot.listKnowledge(root, path)
   }

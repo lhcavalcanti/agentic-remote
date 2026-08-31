@@ -39,6 +39,7 @@ import {
   addKnowledgeRoot,
   listSessions,
   listWorkspace,
+  validateSessionDirectory,
   moveSessionToTmux,
   removeQueuedPrompt,
   renameSession,
@@ -67,6 +68,7 @@ vi.mock('./api', () => ({
   listKnowledgeEntries: vi.fn(),
   readKnowledgeFile: vi.fn(),
   listDirectories: vi.fn(),
+  validateSessionDirectory: vi.fn(),
   listWorkspace: vi.fn(),
   moveSessionToTmux: vi.fn(),
   readWorkspaceFile: vi.fn(),
@@ -364,6 +366,9 @@ describe('App', () => {
               directories: [{ name: 'project', path: '~/src/project' }],
             },
     )
+    vi.mocked(validateSessionDirectory).mockImplementation(
+      async (_computerId, path) => path,
+    )
     vi.mocked(getSession).mockResolvedValue(session)
     vi.mocked(createSession).mockResolvedValue(session)
     vi.mocked(getRuntimeOptions).mockResolvedValue({
@@ -590,6 +595,30 @@ describe('App', () => {
     )
   })
 
+  it('persists the sidebar width from the final pointer position', async () => {
+    localStorage.removeItem('agentic-remote:sidebar-width')
+    render(<App />)
+    const resizer = await screen.findByRole('separator', {
+      name: 'Resize sidebar',
+    })
+    const pointer = (type: string, clientX: number) =>
+      new PointerEvent(type, { bubbles: true, clientX, pointerId: 1 })
+
+    await act(async () => {
+      resizer.dispatchEvent(pointer('pointerdown', 300))
+    })
+
+    // A quick drag: the final move and the release both land before React
+    // commits a render, so a handler that reads rendered state sees the width
+    // from before the drag and saves that instead.
+    await act(async () => {
+      resizer.dispatchEvent(pointer('pointermove', 380))
+      resizer.dispatchEvent(pointer('pointerup', 380))
+    })
+
+    expect(localStorage.getItem('agentic-remote:sidebar-width')).toBe('366')
+  })
+
   it('recalls previous sent messages with ArrowUp per session', async () => {
     const historySession: ManagedSession = {
       ...session,
@@ -632,6 +661,101 @@ describe('App', () => {
     fireEvent.change(textarea, { target: { value: 'Draft text\nline two' } })
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
     expect(textarea).toHaveValue('Draft text\nline two')
+  })
+
+  it('focuses the composer and recalls history from elsewhere in the app', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'First prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+        {
+          id: 'history-user-2',
+          role: 'user',
+          content: 'Second prompt',
+          createdAt: '2026-07-22T00:00:02.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const draft = 'Keep this draft'
+    fireEvent.change(textarea, { target: { value: draft } })
+    const sidebarButton = screen.getAllByRole('button', {
+      name: 'New session',
+    })[0]
+    sidebarButton?.focus()
+
+    fireEvent.keyDown(sidebarButton!, { key: 'ArrowUp' })
+
+    expect(textarea).toHaveValue('Second prompt')
+    await waitFor(() => expect(textarea).toHaveFocus())
+    fireEvent.keyDown(textarea, { key: 'ArrowDown' })
+    expect(textarea).toHaveValue(draft)
+  })
+
+  it('does not steal ArrowUp while a dialog is open', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'Previous prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const newSessionButton = screen.getAllByRole('button', {
+      name: 'New session',
+    })[0]
+    fireEvent.click(newSessionButton)
+    expect(
+      screen.getByRole('dialog', { name: 'Choose a folder' }),
+    ).toBeInTheDocument()
+
+    fireEvent.keyDown(newSessionButton, { key: 'ArrowUp' })
+
+    expect(textarea).toHaveValue('')
+    expect(textarea).not.toHaveFocus()
+  })
+
+  it('does not steal ArrowUp from sortable drag handles', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'Previous prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const dragHandle = screen.getByLabelText('Reorder Project chat')
+    dragHandle.focus()
+
+    fireEvent.keyDown(dragHandle, { key: 'ArrowUp' })
+
+    expect(textarea).toHaveValue('')
+    expect(textarea).not.toHaveFocus()
   })
 
   it('does not let history navigation overwrite dictated text', async () => {
@@ -1110,6 +1234,213 @@ describe('App', () => {
         contextTier: 'long_context',
       },
     })
+  })
+
+  it('persists a validated default folder per computer and applies it to new sessions', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Browse default session folder for development',
+      }),
+    )
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+    fireEvent.click(await screen.findByRole('option', { name: 'src' }))
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        '~/src',
+        'all',
+      ),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Use this folder' })).not.toBeDisabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }))
+    await waitFor(() =>
+      expect(validateSessionDirectory).toHaveBeenCalledWith(
+        computer.id,
+        '~/src',
+      ),
+    )
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:default-session-folders') || '{}',
+        ),
+      ).toEqual({
+        version: 1,
+        folders: { [computer.id]: '~/src' },
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(computer.id, '~/src'),
+    )
+    expect(screen.getByText(/The session will start in/)).toHaveTextContent(
+      '~/src',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith(computer.id, {
+        cwd: '~/src',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+      }),
+    )
+    expect(session.cwd).toBe('/home/tester/src/project')
+  })
+
+  it('rejects an invalid default folder without saving it', async () => {
+    vi.mocked(validateSessionDirectory).mockRejectedValueOnce(
+      new Error('Sessions are restricted to the user home directory'),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Browse default session folder for development',
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Use this folder' })).not.toBeDisabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }))
+
+    expect(
+      await screen.findByText('Sessions are restricted to the user home directory'),
+    ).toBeInTheDocument()
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:default-session-folders') || '{}',
+      ),
+    ).toEqual({ version: 1, folders: {} })
+  })
+
+  it('reloads computer-specific default folders from versioned local storage', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-session-folders',
+      JSON.stringify({
+        version: 1,
+        folders: { [computer.id]: '~/reloaded' },
+      }),
+    )
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(screen.getByText('~/reloaded')).toBeInTheDocument()
+    expect(screen.getByText('Home directory (blank)')).toBeInTheDocument()
+  })
+
+  it('uses the default belonging to the selected computer', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-session-folders',
+      JSON.stringify({
+        version: 1,
+        folders: { [secondComputer.id]: '~/services' },
+      }),
+    )
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listDirectories).mockImplementation(
+      async (computerId, path = '~') => {
+        if (computerId === secondComputer.id && path === '~/services') {
+          return { path: '~/services', parent: '~', directories: [] }
+        }
+        return path === '~'
+          ? { path: '~', directories: [{ name: 'src', path: '~/src' }] }
+          : {
+              path: '~/src',
+              parent: '~',
+              directories: [{ name: 'project', path: '~/src/project' }],
+            }
+      },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        secondComputer.id,
+        '~/services',
+      ),
+    )
+    expect(screen.getByText(/The session will start in/)).toHaveTextContent(
+      '~/services',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith(secondComputer.id, {
+        cwd: '~/services',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+      }),
+    )
+    expect(session.cwd).toBe('/home/tester/src/project')
+  })
+
+  it('applies a selected computer default before its folder listing resolves', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-session-folders',
+      JSON.stringify({
+        version: 1,
+        folders: { [secondComputer.id]: '~/services' },
+      }),
+    )
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    let resolveListing: ((listing: {
+      path: string
+      parent?: string
+      directories: []
+    }) => void) | undefined
+    vi.mocked(listDirectories).mockImplementation(
+      async (computerId, path = '~') => {
+        if (computerId === secondComputer.id && path === '~/services') {
+          return await new Promise((resolve) => {
+            resolveListing = resolve
+          })
+        }
+        return { path, directories: [] }
+      },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith(secondComputer.id, {
+        cwd: '~/services',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+      }),
+    )
+    resolveListing?.({ path: '~/services', directories: [] })
   })
 
   it('dismisses the update toast without removing it from app settings', async () => {

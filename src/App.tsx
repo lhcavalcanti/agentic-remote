@@ -12,6 +12,8 @@ import type {
   DragEvent as ReactDragEvent,
   FormEvent,
   KeyboardEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
   ReactNode,
   TouchEvent as ReactTouchEvent,
 } from 'react'
@@ -131,6 +133,7 @@ import {
   deleteKnowledgeRoot,
   readKnowledgeFile,
   listDirectories,
+  validateSessionDirectory,
   listSessions,
   listWorkspace,
   moveSessionToTmux,
@@ -216,6 +219,26 @@ function slashShortcut(value: string): string {
     : ''
 }
 
+const SIDEBAR_WIDTH_KEY = 'agentic-remote:sidebar-width'
+const SIDEBAR_WIDTH_DEFAULT = 286
+const SIDEBAR_WIDTH_MIN = 220
+const SIDEBAR_WIDTH_MAX = 560
+
+function clampSidebarWidth(value: number): number {
+  return Math.min(Math.max(Math.round(value), SIDEBAR_WIDTH_MIN), SIDEBAR_WIDTH_MAX)
+}
+
+function readStoredSidebarWidth(): number {
+  try {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+    return Number.isFinite(stored) && stored > 0
+      ? clampSidebarWidth(stored)
+      : SIDEBAR_WIDTH_DEFAULT
+  } catch {
+    return SIDEBAR_WIDTH_DEFAULT
+  }
+}
+
 function readStoredOrder<T>(key: string, fallback: T): T {
   try {
     const value = localStorage.getItem(key)
@@ -254,6 +277,16 @@ const emptyRuntimeSelection: DefaultRuntimeSelection = {
   reasoningEffort: '',
   contextTier: 'default',
 }
+
+type DefaultSessionFolders = Record<string, string>
+
+type StoredDefaultSessionFolders = {
+  version?: number
+  folders?: Record<string, unknown>
+}
+
+const defaultSessionFoldersStorageKey =
+  'agentic-remote:default-session-folders'
 
 type ComposerHistoryState = {
   messages: string[]
@@ -304,6 +337,30 @@ function readDefaultRuntimeSettings(): DefaultRuntimeSettings {
     copilot: selection('copilot'),
     claude: selection('claude'),
   }
+}
+
+function readDefaultSessionFolders(): DefaultSessionFolders {
+  const stored = readStoredOrder<StoredDefaultSessionFolders>(
+    defaultSessionFoldersStorageKey,
+    {},
+  )
+  if (
+    !stored ||
+    typeof stored !== 'object' ||
+    stored.version !== 1 ||
+    !stored.folders ||
+    typeof stored.folders !== 'object' ||
+    Array.isArray(stored.folders)
+  ) {
+    return {}
+  }
+  const folders: DefaultSessionFolders = {}
+  for (const [computerId, value] of Object.entries(stored.folders)) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      folders[computerId] = value
+    }
+  }
+  return folders
 }
 
 const defaultStatusline: StatuslineSettings = {
@@ -505,6 +562,7 @@ function NewSessionDialog({
   computers,
   defaultComputerId,
   defaultRuntimes,
+  defaultSessionFolders,
   onClose,
   onCreated,
 }: {
@@ -512,6 +570,7 @@ function NewSessionDialog({
   computers: ComputerSummary[]
   defaultComputerId?: string
   defaultRuntimes: DefaultRuntimeSettings
+  defaultSessionFolders: DefaultSessionFolders
   onClose: () => void
   onCreated: (session: ManagedSession) => void
 }) {
@@ -541,9 +600,10 @@ function NewSessionDialog({
 
   useEffect(() => {
     if (open) {
-      setComputerId(defaultComputerId || available[0]?.id || '')
+      const initialComputerId = defaultComputerId || available[0]?.id || ''
+      setComputerId(initialComputerId)
       setProvider('copilot')
-      setCwd('~')
+      setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
       setDirectoryListing(undefined)
       setTerminalBacked(true)
       setAllowAllPermissions(true)
@@ -558,7 +618,7 @@ function NewSessionDialog({
         })
         .finally(() => setLoadingHistory(false))
     }
-  }, [open, defaultComputerId, available])
+  }, [open, defaultComputerId, defaultSessionFolders, available])
 
   useEffect(() => {
     if (!open || mode !== 'new' || !computerId) {
@@ -566,9 +626,13 @@ function NewSessionDialog({
     }
     let active = true
     const request = ++directoryRequest.current
+    const initialPath = defaultSessionFolders[computerId]?.trim() || '~'
     setLoadingDirectories(true)
     setError(undefined)
-    void listDirectories(computerId, '~')
+    const listingRequest = initialPath.startsWith('/')
+      ? listDirectories(computerId, initialPath, 'all')
+      : listDirectories(computerId, initialPath)
+    void listingRequest
       .then((listing) => {
         if (active && request === directoryRequest.current) {
           setDirectoryListing(listing)
@@ -588,7 +652,7 @@ function NewSessionDialog({
     return () => {
       active = false
     }
-  }, [computerId, mode, open])
+  }, [computerId, defaultSessionFolders, mode, open])
 
   useEffect(() => {
     if (!open || mode !== 'new' || !computerId) {
@@ -635,7 +699,9 @@ function NewSessionDialog({
     setLoadingDirectories(true)
     setError(undefined)
     try {
-      const listing = await listDirectories(computerId, path)
+      const listing = await (cwd.startsWith('/')
+        ? listDirectories(computerId, path, 'all')
+        : listDirectories(computerId, path))
       if (request === directoryRequest.current) {
         setDirectoryListing(listing)
         setCwd(listing.path)
@@ -757,11 +823,12 @@ function NewSessionDialog({
           <select
             className="dialog-select"
             onChange={(event) => {
+              const nextComputerId = event.target.value
               directoryRequest.current += 1
-              setComputerId(event.target.value)
+              setComputerId(nextComputerId)
               setProvider('copilot')
               setHistoryKey('')
-              setCwd('~')
+              setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
             }}
             value={computerId}
           >
@@ -1492,6 +1559,204 @@ function DefaultRuntimeControls({
   )
 }
 
+function DefaultSessionFolderControl({
+  computer,
+  value,
+  onChange,
+}: {
+  computer: ComputerSummary
+  value?: string
+  onChange: (path?: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [listing, setListing] = useState<DirectoryListing>()
+  const [loading, setLoading] = useState(false)
+  const [validating, setValidating] = useState(false)
+  const [error, setError] = useState<string>()
+  const requestRef = useRef(0)
+
+  useEffect(() => {
+    if (!open || !computer.online) {
+      return
+    }
+    let active = true
+    const request = ++requestRef.current
+    const path = value?.trim() || '~'
+    setLoading(true)
+    setError(undefined)
+    void listDirectories(computer.id, path, 'all')
+      .then((nextListing) => {
+        if (active && request === requestRef.current) {
+          setListing(nextListing)
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active && request === requestRef.current) {
+          setListing(undefined)
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      })
+      .finally(() => {
+        if (active && request === requestRef.current) {
+          setLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [computer.id, computer.online, open, value])
+
+  async function browse(path: string) {
+    const request = ++requestRef.current
+    setLoading(true)
+    setError(undefined)
+    try {
+      const nextListing = await listDirectories(computer.id, path, 'all')
+      if (request === requestRef.current) {
+        setListing(nextListing)
+      }
+    } catch (caught) {
+      if (request === requestRef.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    } finally {
+      if (request === requestRef.current) {
+        setLoading(false)
+      }
+    }
+  }
+
+  async function chooseFolder() {
+    if (!listing) {
+      return
+    }
+    setValidating(true)
+    setError(undefined)
+    try {
+      const normalized = (await validateSessionDirectory(
+        computer.id,
+        listing.path,
+      )).trim()
+      if (!normalized) {
+        throw new Error('The selected folder could not be validated')
+      }
+      onChange(normalized)
+      setOpen(false)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setValidating(false)
+    }
+  }
+
+  return (
+    <div className="default-session-folder">
+      <div className="default-session-folder__header">
+        <span>
+          <strong>{computer.name}</strong>
+          <small>{value ? shortPath(value) : 'Home directory (blank)'}</small>
+        </span>
+        <div className="default-session-folder__actions">
+          <button
+            aria-expanded={open}
+            aria-label={`Browse default session folder for ${computer.name}`}
+            className="secondary-button"
+            disabled={!computer.online}
+            onClick={() => {
+              setOpen((current) => !current)
+              setError(undefined)
+            }}
+            type="button"
+          >
+            {open ? 'Close' : 'Browse'}
+          </button>
+          {value ? (
+            <button
+              aria-label={`Remove default session folder for ${computer.name}`}
+              className="icon-button icon-button--danger"
+              disabled={validating}
+              onClick={() => {
+                setOpen(false)
+                setError(undefined)
+                onChange()
+              }}
+              type="button"
+            >
+              <X size={16} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {!computer.online ? (
+        <small className="default-session-folder__offline">
+          Connect to browse this computer.
+        </small>
+      ) : null}
+      {open ? (
+        <div className="folder-picker default-session-folder__picker">
+          <div className="folder-picker__toolbar">
+            <button
+              aria-label={`Parent folder for ${computer.name}`}
+              className="icon-button"
+              disabled={!listing?.parent || loading || validating}
+              onClick={() => void browse(listing?.parent || '~')}
+              type="button"
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <div className="folder-picker__path">
+              <Folder size={15} />
+              <strong>{listing?.path || value || '~'}</strong>
+            </div>
+          </div>
+          <div
+            aria-label={`Folders on ${computer.name}`}
+            className="folder-picker__list"
+            role="listbox"
+          >
+            {loading ? (
+              <p>Loading folders…</p>
+            ) : listing?.directories.length ? (
+              listing.directories.map((directory) => (
+                <button
+                  disabled={validating}
+                  key={directory.path}
+                  onClick={() => void browse(directory.path)}
+                  role="option"
+                  type="button"
+                >
+                  <FolderOpen size={17} />
+                  <span>{directory.name}</span>
+                  <ChevronLeft
+                    className="folder-picker__chevron"
+                    size={15}
+                  />
+                </button>
+              ))
+            ) : (
+              <p>{listing ? 'No subfolders here.' : 'Folder unavailable.'}</p>
+            )}
+          </div>
+          <p className="folder-picker__hint">
+            Select <strong>{listing?.path || value || '~'}</strong> as the
+            default for new sessions. The folder is checked against this
+            computer’s session roots before it is saved.
+          </p>
+          {error ? <p className="form-error">{error}</p> : null}
+          <button
+            className="primary-button app-settings-section__action"
+            disabled={!listing || loading || validating}
+            onClick={() => void chooseFolder()}
+            type="button"
+          >
+            {validating ? 'Validating…' : 'Use this folder'}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function AppSettingsDialog({
   open,
   computers,
@@ -1500,6 +1765,8 @@ function AppSettingsDialog({
   onUpdateReady,
   defaultRuntimes,
   onDefaultRuntimesChange,
+  defaultSessionFolders,
+  onDefaultSessionFoldersChange,
   statusline,
   onStatuslineChange,
   updateRegistration,
@@ -1512,6 +1779,8 @@ function AppSettingsDialog({
   onUpdateReady: (registration: ServiceWorkerRegistration) => void
   defaultRuntimes: DefaultRuntimeSettings
   onDefaultRuntimesChange: (settings: DefaultRuntimeSettings) => void
+  defaultSessionFolders: DefaultSessionFolders
+  onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
   updateRegistration?: ServiceWorkerRegistration
@@ -1782,6 +2051,33 @@ function AppSettingsDialog({
             selection={defaultRuntimes[provider]}
           />
         ))}
+      </section>
+
+      <section className="app-settings-section">
+        <h3>Default session folders</h3>
+        <p className="dialog-message">
+          Choose one optional folder per computer for new sessions. Existing
+          sessions keep their current working directories. Leave a computer
+          blank to start in its home directory.
+        </p>
+        <div className="default-session-folder-list">
+          {computers.map((computer) => (
+            <DefaultSessionFolderControl
+              computer={computer}
+              key={computer.id}
+              onChange={(path) => {
+                const next = { ...defaultSessionFolders }
+                if (path) {
+                  next[computer.id] = path
+                } else {
+                  delete next[computer.id]
+                }
+                onDefaultSessionFoldersChange(next)
+              }}
+              value={defaultSessionFolders[computer.id]}
+            />
+          ))}
+        </div>
       </section>
 
       <section className="app-settings-section">
@@ -4253,6 +4549,8 @@ function App() {
   const [movingToTmux, setMovingToTmux] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
+  const [resizingSidebar, setResizingSidebar] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -4284,6 +4582,8 @@ function App() {
   const [defaultRuntimes, setDefaultRuntimes] = useState<DefaultRuntimeSettings>(
     readDefaultRuntimeSettings,
   )
+  const [defaultSessionFolders, setDefaultSessionFolders] =
+    useState<DefaultSessionFolders>(readDefaultSessionFolders)
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
     readStoredOrder('agentic-remote:computer-order', []),
@@ -4310,6 +4610,77 @@ function App() {
   const eventSequenceRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
   const computerEventSequenceRef = useRef(new Map<string, number>())
+  const sidebarResizeRef = useRef<
+    | { pointerId: number; startX: number; startWidth: number; width: number }
+    | undefined
+  >(undefined)
+
+  function commitSidebarWidth(width: number) {
+    const next = clampSidebarWidth(width)
+    setSidebarWidth(next)
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next))
+    } catch {
+      // A blocked storage quota should not stop the drag from working.
+    }
+  }
+
+  function sidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+    sidebarResizeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: sidebarWidth,
+      width: sidebarWidth,
+    }
+    // Not every environment implements pointer capture; the drag still works
+    // without it because the move handler is bound to the same element.
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setResizingSidebar(true)
+  }
+
+  function sidebarResizeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const gesture = sidebarResizeRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId) {
+      return
+    }
+    // Recorded on the gesture as well as in state: a release can arrive
+    // before React commits this update, and the release must persist the width
+    // the pointer actually ended on.
+    const next = clampSidebarWidth(
+      gesture.startWidth + (event.clientX - gesture.startX),
+    )
+    gesture.width = next
+    setSidebarWidth(next)
+  }
+
+  function sidebarResizeEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    const gesture = sidebarResizeRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId) {
+      return
+    }
+    sidebarResizeRef.current = undefined
+    setResizingSidebar(false)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    }
+    commitSidebarWidth(gesture.width)
+  }
+
+  function sidebarResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 32 : 8
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      commitSidebarWidth(sidebarWidth - step)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      commitSidebarWidth(sidebarWidth + step)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT)
+    }
+  }
+
   const sidebarGestureRef = useRef<
     | {
         startX: number
@@ -4319,6 +4690,7 @@ function App() {
       }
     | undefined
   >(undefined)
+  const sortableDragActiveRef = useRef(false)
 
   const orderedComputers = useMemo(() => {
     const rank = new Map(computerOrder.map((id, index) => [id, index]))
@@ -4352,6 +4724,17 @@ function App() {
     [selectedKey, sessions],
   )
   const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
+  const hasBlockingUi =
+    newSessionOpen ||
+    computersOpen ||
+    statuslineOpen ||
+    settingsOpen ||
+    runtimeOpen ||
+    (renameOpen && Boolean(selected)) ||
+    (cwdOpen && Boolean(selected)) ||
+    (workspaceOpen && Boolean(selected)) ||
+    addRootOpen ||
+    Boolean(selected?.pendingPermission || selected?.pendingUserInput)
   selectedRef.current = selected
   const currentTool = selected?.messages.findLast(
     (message) =>
@@ -4638,6 +5021,13 @@ function App() {
       JSON.stringify(defaultRuntimes),
     )
   }, [defaultRuntimes])
+
+  useEffect(() => {
+    localStorage.setItem(
+      defaultSessionFoldersStorageKey,
+      JSON.stringify({ version: 1, folders: defaultSessionFolders }),
+    )
+  }, [defaultSessionFolders])
 
   useEffect(() => {
     localStorage.setItem(
@@ -5098,7 +5488,10 @@ function App() {
     delete composerHistoryRef.current[targetKey]
   }
 
-  function navigateMessageHistory(direction: -1 | 1): boolean {
+  function navigateMessageHistory(
+    direction: -1 | 1,
+    force = false,
+  ): boolean {
     if (!selected || !selectedKey) {
       return false
     }
@@ -5110,7 +5503,7 @@ function App() {
     }
 
     const existing = composerHistoryRef.current[selectedKey]
-    if (!existing && (direction > 0 || composer.trim())) {
+    if (!existing && (direction > 0 || (!force && composer.trim()))) {
       return false
     }
     const history =
@@ -5861,6 +6254,36 @@ function App() {
     }
   }
 
+  function appKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (
+      event.key !== 'ArrowUp' ||
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      sidebarMode !== 'sessions' ||
+      hasBlockingUi ||
+      sortableDragActiveRef.current
+    ) {
+      return
+    }
+    const target = event.target
+    if (
+      target instanceof Element &&
+      target.closest(
+        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle',
+      )
+    ) {
+      return
+    }
+    if (navigateMessageHistory(-1, true)) {
+      event.preventDefault()
+      setSidebarOpen(false)
+    }
+  }
+
   async function replyToPermission(optionId: string) {
     if (!selected?.pendingPermission) {
       return
@@ -6036,6 +6459,7 @@ function App() {
       className={`app-shell ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
       }`}
+      onKeyDown={appKeyDown}
       onTouchCancel={() => {
         sidebarGestureRef.current = undefined
       }}
@@ -6045,9 +6469,27 @@ function App() {
         {
           '--visual-viewport-height': `${viewportHeight}px`,
           '--visual-viewport-top': `${viewportOffsetTop}px`,
+          '--sidebar-width': `${sidebarWidth}px`,
         } as CSSProperties
       }
     >
+      <div
+        aria-label="Resize sidebar"
+        aria-orientation="vertical"
+        aria-valuemax={SIDEBAR_WIDTH_MAX}
+        aria-valuemin={SIDEBAR_WIDTH_MIN}
+        aria-valuenow={sidebarWidth}
+        className="sidebar-resizer"
+        data-resizing={resizingSidebar ? 'true' : 'false'}
+        onDoubleClick={() => commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT)}
+        onKeyDown={sidebarResizeKeyDown}
+        onLostPointerCapture={sidebarResizeEnd}
+        onPointerDown={sidebarResizeStart}
+        onPointerMove={sidebarResizeMove}
+        onPointerUp={sidebarResizeEnd}
+        role="separator"
+        tabIndex={0}
+      />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
         <div className="brand">
           <span className="brand__mark">
@@ -6210,7 +6652,16 @@ function App() {
             ) : null}
             <DndContext
               collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
+              onDragCancel={() => {
+                sortableDragActiveRef.current = false
+              }}
+              onDragEnd={(event) => {
+                sortableDragActiveRef.current = false
+                handleDragEnd(event)
+              }}
+              onDragStart={() => {
+                sortableDragActiveRef.current = true
+              }}
               sensors={sensors}
             >
               <SortableContext
@@ -6893,6 +7344,7 @@ function App() {
         computers={computers}
         defaultComputerId={defaultComputerId}
         defaultRuntimes={defaultRuntimes}
+        defaultSessionFolders={defaultSessionFolders}
         onClose={() => setNewSessionOpen(false)}
         onCreated={created}
         open={newSessionOpen}
@@ -6924,7 +7376,9 @@ function App() {
         onClose={() => setSettingsOpen(false)}
         computers={computers}
         defaultRuntimes={defaultRuntimes}
+        defaultSessionFolders={defaultSessionFolders}
         onDefaultRuntimesChange={setDefaultRuntimes}
+        onDefaultSessionFoldersChange={setDefaultSessionFolders}
         onStatuslineChange={setStatusline}
         onUpdateReady={setUpdateRegistration}
         open={settingsOpen}

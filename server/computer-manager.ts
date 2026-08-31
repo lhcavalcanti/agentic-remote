@@ -189,6 +189,16 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : this.requireClient(computerId).listDirectories(path, scope)
   }
 
+  async validateSessionDirectory(
+    computerId: string,
+    inputPath: string,
+  ): Promise<string> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.validateSessionDirectory(inputPath)
+      : this.requireClient(computerId).validateSessionDirectory(inputPath)
+  }
+
   async listKnowledge(
     computerId: string,
     root: string,

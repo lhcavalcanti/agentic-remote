@@ -1319,6 +1319,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return listHomeDirectories(path, scope)
   }
 
+  validateSessionDirectory(inputPath: string): Promise<string> {
+    return this.validateDirectory(inputPath)
+  }
+
   /**
    * Browses a knowledge root. The root is confined exactly like a session
    * working directory, and the requested path is confined within it by

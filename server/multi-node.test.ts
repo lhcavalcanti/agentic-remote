@@ -84,6 +84,10 @@ class FakeSessionService extends EventEmitter implements SessionService {
     }
   }
 
+  async validateSessionDirectory(inputPath: string): Promise<string> {
+    return inputPath
+  }
+
   async listWorkspace(
     _sessionId: string,
     path = '.',
@@ -769,6 +773,14 @@ describe('multi-node hub', () => {
         path: '~',
         directories: [{ name: 'src', path: '~/src' }],
       })
+
+      const validatedDirectory = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/directories/validate`,
+        payload: { path: '/srv/new-session' },
+      })
+      expect(validatedDirectory.statusCode, validatedDirectory.body).toBe(200)
+      expect(validatedDirectory.json()).toEqual({ path: '/srv/new-session' })
 
       const workspace = await hub.app.inject({
         method: 'GET',

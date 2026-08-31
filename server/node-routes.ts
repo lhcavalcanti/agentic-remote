@@ -76,6 +76,9 @@ const directoryQuerySchema = z.object({
   scope: z.enum(['home', 'all']).optional(),
   path: z.string().trim().max(4096).optional(),
 })
+const directoryValidationSchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+})
 const knowledgeQuerySchema = z.object({
   root: z.string().trim().min(1).max(4096),
   path: z.string().trim().max(4096).optional(),
@@ -145,6 +148,11 @@ export async function registerNodeRoutes(
           return service.listDirectories(query.path, query.scope)
         },
       )
+
+      node.post('/directories/validate', async (request) => {
+        const input = directoryValidationSchema.parse(request.body)
+        return { path: await service.validateSessionDirectory(input.path) }
+      })
 
       node.get<{ Querystring: { root?: string; path?: string } }>(
         '/knowledge/entries',

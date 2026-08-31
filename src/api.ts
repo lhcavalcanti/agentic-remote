@@ -163,6 +163,20 @@ export async function listDirectories(
   )
 }
 
+export async function validateSessionDirectory(
+  computerId: string,
+  path: string,
+): Promise<string> {
+  const response = await request<{ path: string }>(
+    `/api/computers/${encodeURIComponent(computerId)}/directories/validate`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    },
+  )
+  return response.path
+}
+
 export async function listWorkspace(
   computerId: string,
   sessionId: string,

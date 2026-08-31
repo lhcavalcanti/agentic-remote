@@ -84,6 +84,7 @@ export interface SessionService {
     path?: string,
     scope?: DirectoryScope,
   ): Promise<DirectoryListing>
+  validateSessionDirectory(inputPath: string): Promise<string>
   listKnowledge(root: string, path?: string): Promise<WorkspaceListing>
   readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile>
   listWorkspace(

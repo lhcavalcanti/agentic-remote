@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import type {
   AgentProvider,
   AgentProviderCapability,
+  BackgroundTaskSnapshot,
   ConfigureRuntimeInput,
   DirectoryListing,
   RemovedQueuedPrompt,
@@ -187,6 +188,17 @@ export class ProviderSessionService
 
   cancel(sessionId: string): Promise<void> {
     return this.serviceFor(sessionId).cancel(sessionId)
+  }
+
+  listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot> {
+    return this.serviceFor(sessionId).listBackgroundTasks(sessionId)
+  }
+
+  cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    return this.serviceFor(sessionId).cancelBackgroundTask(sessionId, taskId)
   }
 
   deleteSession(sessionId: string): Promise<void> {

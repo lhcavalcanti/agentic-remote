@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  cancelBackgroundTask,
+  listBackgroundTasks,
   removeQueuedPrompt,
   sendMessage,
   sendTestPushNotification,
@@ -40,6 +42,44 @@ describe('API request headers', () => {
 
     await sendMessage('computer', 'session', { content: 'hello' })
 
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('lists background tasks for one owning session', async () => {
+    const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
+      expect(path).toBe('/api/computers/computer/sessions/session/tasks')
+      expect(init?.method).toBeUndefined()
+      return Response.json({
+        tasks: [],
+        runningCount: 0,
+        supported: true,
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(listBackgroundTasks('computer', 'session')).resolves.toEqual({
+      tasks: [],
+      runningCount: 0,
+      supported: true,
+    })
+  })
+
+  it('cancels a background task through its owning session', async () => {
+    const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
+      expect(path).toBe(
+        '/api/computers/computer/sessions/session/tasks/task%2Fid/cancel',
+      )
+      expect(init?.method).toBe('POST')
+      expect(init?.body).toBe('{}')
+      return Response.json({
+        tasks: [],
+        runningCount: 0,
+        supported: true,
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await cancelBackgroundTask('computer', 'session', 'task/id')
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 

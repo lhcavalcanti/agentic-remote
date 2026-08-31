@@ -4,6 +4,7 @@ import WebSocket from 'ws'
 import type {
   CreateSessionInput,
   ConfigureRuntimeInput,
+  BackgroundTaskSnapshot,
   DirectoryListing,
   ExecuteCommandInput,
   NodeInfo,
@@ -332,6 +333,27 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   async cancel(sessionId: string): Promise<void> {
     await this.request(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/cancel`,
+      {
+        method: 'POST',
+        body: '{}',
+      },
+    )
+  }
+
+  async listBackgroundTasks(
+    sessionId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    return this.request<BackgroundTaskSnapshot>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/tasks`,
+    )
+  }
+
+  async cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    return this.request<BackgroundTaskSnapshot>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskId)}/cancel`,
       {
         method: 'POST',
         body: '{}',

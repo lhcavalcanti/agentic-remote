@@ -362,6 +362,23 @@ export async function registerNodeRoutes(
         },
       )
 
+      node.get<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/tasks',
+        async (request) =>
+          service.listBackgroundTasks(request.params.sessionId),
+      )
+
+      node.post<{
+        Params: { sessionId: string; taskId: string }
+      }>(
+        '/sessions/:sessionId/tasks/:taskId/cancel',
+        async (request) =>
+          service.cancelBackgroundTask(
+            request.params.sessionId,
+            request.params.taskId,
+          ),
+      )
+
       node.delete<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId',
         async (request) => {

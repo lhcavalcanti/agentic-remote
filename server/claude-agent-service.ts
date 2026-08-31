@@ -18,6 +18,7 @@ import {
 import type {
   AgentProvider,
   AgentProviderCapability,
+  BackgroundTaskSnapshot,
   ConfigureRuntimeInput,
   PendingUserInput,
   RemovedQueuedPrompt,
@@ -153,6 +154,7 @@ export class ClaudeAgentService
         available: this.available,
         terminalBacked: false,
         supportsTmuxMigration: false,
+        supportsBackgroundTasks: false,
         unavailableReason: this.available ? undefined : this.unavailableReason,
       },
     ]
@@ -472,6 +474,25 @@ export class ClaudeAgentService
 
   async cancel(sessionId: string): Promise<void> {
     this.active.get(sessionId)?.abortController.abort()
+  }
+
+  async listBackgroundTasks(
+    sessionId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    this.requireSession(sessionId)
+    return {
+      tasks: [],
+      runningCount: 0,
+      supported: false,
+    }
+  }
+
+  async cancelBackgroundTask(
+    sessionId: string,
+    _taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    this.requireSession(sessionId)
+    throw new Error('Background tasks are not supported for Claude Agent sessions')
   }
 
   async deleteSession(sessionId: string): Promise<void> {

@@ -9,6 +9,7 @@ export interface AgentProviderCapability {
   available: boolean
   terminalBacked: boolean
   supportsTmuxMigration?: boolean
+  supportsBackgroundTasks?: boolean
   unavailableReason?: string
 }
 
@@ -92,6 +93,59 @@ export interface SessionRuntimeInfo {
   updateAvailable?: string
 }
 
+export type BackgroundTaskStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+export type BackgroundTaskKind = 'agent' | 'shell'
+export type BackgroundTaskExecutionMode = 'sync' | 'background'
+export type BackgroundTaskAttachmentMode = 'attached' | 'detached'
+
+export interface BackgroundTaskProgressLine {
+  message: string
+  timestamp: string
+}
+
+export interface BackgroundTaskProgress {
+  type: BackgroundTaskKind
+  recentActivity?: BackgroundTaskProgressLine[]
+  latestIntent?: string
+  recentOutput?: string
+  pid?: number
+}
+
+export interface BackgroundTask {
+  id: string
+  type: BackgroundTaskKind
+  description: string
+  status: BackgroundTaskStatus
+  startedAt: string
+  completedAt?: string
+  activeTimeMs?: number
+  activeStartedAt?: string
+  error?: string
+  agentType?: string
+  prompt?: string
+  result?: string
+  latestResponse?: string
+  model?: string
+  resolvedModel?: string
+  executionMode?: BackgroundTaskExecutionMode
+  command?: string
+  attachmentMode?: BackgroundTaskAttachmentMode
+  pid?: number
+  progress?: BackgroundTaskProgress
+  canCancel: boolean
+}
+
+export interface BackgroundTaskSnapshot {
+  tasks: BackgroundTask[]
+  runningCount: number
+  supported: boolean
+}
+
 export interface RuntimeModelOption {
   id: string
   name: string
@@ -171,11 +225,26 @@ export interface NodeInfo {
 export type ServerEvent =
   | { type: 'session.upserted'; session: SessionDetail }
   | { type: 'session.removed'; sessionId: string }
+  | {
+      type: 'session.tasks.updated'
+      sessionId: string
+      tasks: BackgroundTask[]
+      runningCount: number
+      supported: boolean
+    }
   | { type: 'error'; sessionId?: string; message: string }
 
 export type HubEvent =
   | { type: 'session.upserted'; session: ManagedSession }
   | { type: 'session.removed'; computerId: string; sessionId: string }
+  | {
+      type: 'session.tasks.updated'
+      computerId: string
+      sessionId: string
+      tasks: BackgroundTask[]
+      runningCount: number
+      supported: boolean
+    }
   | { type: 'computer.updated'; computer: ComputerSummary }
   | { type: 'computer.removed'; computerId: string }
   | { type: 'error'; computerId?: string; sessionId?: string; message: string }
@@ -313,4 +382,3 @@ export interface AddKnowledgeRootInput {
   path: string
   name?: string
 }
-

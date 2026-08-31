@@ -2,6 +2,7 @@ import type { DirectoryScope } from './directory-browser.js'
 import type {
   AgentProvider,
   AgentProviderCapability,
+  BackgroundTaskSnapshot,
   DirectoryListing,
   ConfigureRuntimeInput,
   RuntimeOptions,
@@ -67,6 +68,11 @@ export interface SessionService {
     enqueue?: boolean,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
+  listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>
+  cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot>
   deleteSession(sessionId: string): Promise<void>
   replyPermission(
     sessionId: string,

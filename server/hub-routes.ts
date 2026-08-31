@@ -547,6 +547,27 @@ export async function registerHubRoutes(
     },
   )
 
+  app.get<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/tasks',
+    async (request) =>
+      manager.listBackgroundTasks(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+  )
+
+  app.post<{
+    Params: SessionParams & { taskId: string }
+  }>(
+    '/api/computers/:computerId/sessions/:sessionId/tasks/:taskId/cancel',
+    async (request) =>
+      manager.cancelBackgroundTask(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.taskId,
+      ),
+  )
+
   app.delete<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId',
     async (request, reply) => {

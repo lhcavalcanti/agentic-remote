@@ -21,6 +21,7 @@ history is not transferred between providers.
 | Clarifying questions | Copilot user-input request and structured elicitation form | Claude `AskUserQuestion`, including `multiSelect` | Compatible through the shared question/form card; structured answers preserve field values |
 | Editable Agentic Remote queue | Supported | Supported | Compatible |
 | Cancel | SDK abort or terminal interrupt | Agent SDK abort controller | Compatible |
+| Background task monitoring | Experimental SDK task RPC; tmux history is best-effort | Not exposed | Copilot-only |
 | Slash commands | Copilot command catalog plus web commands | Web commands only | Provider-specific |
 | tmux and SSH attachment | Supported for terminal-backed sessions | Not supported | Copilot-only |
 | External session discovery | Copilot SDK and active process discovery | Agentic Remote-created sessions only | Copilot-only |
@@ -62,6 +63,10 @@ history is not transferred between providers.
 4. If durable cross-restart questions become a requirement, implement a
    provider-supported deferral/resume protocol rather than persisting an
    in-memory callback-shaped request.
+5. Background task RPCs are experimental and may not be available on older
+   Copilot runtimes. Agentic Remote uses capability discovery and
+   event-triggered resynchronization rather than assuming task events are
+   durable.
 
 ## Sources
 

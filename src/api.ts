@@ -1,6 +1,7 @@
 import type {
   AddComputerInput,
   AudioTranscription,
+  BackgroundTaskSnapshot,
   ComputerSummary,
   ConfigureRuntimeInput,
   CreateSessionInput,
@@ -411,6 +412,29 @@ export async function cancelSession(
     method: 'POST',
     body: '{}',
   })
+}
+
+export async function listBackgroundTasks(
+  computerId: string,
+  sessionId: string,
+): Promise<BackgroundTaskSnapshot> {
+  return request<BackgroundTaskSnapshot>(
+    `${sessionPath(computerId, sessionId)}/tasks`,
+  )
+}
+
+export async function cancelBackgroundTask(
+  computerId: string,
+  sessionId: string,
+  taskId: string,
+): Promise<BackgroundTaskSnapshot> {
+  return request<BackgroundTaskSnapshot>(
+    `${sessionPath(computerId, sessionId)}/tasks/${encodeURIComponent(taskId)}/cancel`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
 }
 
 export async function deleteSession(

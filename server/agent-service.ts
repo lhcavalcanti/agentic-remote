@@ -19,6 +19,8 @@ import {
 import type {
   AgentProvider,
   AgentProviderCapability,
+  BackgroundTask,
+  BackgroundTaskSnapshot,
   ChatMessage,
   AgentMode,
   ConfigureRuntimeInput,
@@ -43,6 +45,15 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
+import {
+  backgroundTasksFromEvents,
+  MAX_BACKGROUND_TASKS,
+  normalizeBackgroundTask,
+  type CopilotTaskInfo,
+  type CopilotTaskProgress,
+  type CopilotTasksApi,
+} from './background-task-adapter.js'
+import { BackgroundTaskTracker } from './background-task-tracker.js'
 import { SessionStore, type DiscoveredSession } from './session-store.js'
 import {
   findActiveCopilotSessions,
@@ -112,6 +123,7 @@ export interface CopilotSessionLike {
       CopilotSession['rpc']['commands'],
       'list' | 'invoke' | 'enqueue'
     >
+    tasks?: CopilotTasksApi
     name: Pick<CopilotSession['rpc']['name'], 'set'>
     model: Pick<CopilotSession['rpc']['model'], 'getCurrent' | 'switchTo'>
     mode: Pick<CopilotSession['rpc']['mode'], 'set'>
@@ -1076,6 +1088,18 @@ function isMissingSessionError(error: unknown): boolean {
   )
 }
 
+function isUnsupportedBackgroundTaskError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  const message = error.message.toLowerCase()
+  return (
+    message.includes('method not found') ||
+    message.includes('unknown method') ||
+    message.includes('not supported')
+  )
+}
+
 function normalizedTitle(value: string | undefined, fallback: string): string {
   const firstLine = value?.trim().split(/\r?\n/, 1)[0]?.trim() || fallback
   return firstLine.length > 72 ? `${firstLine.slice(0, 72)}…` : firstLine
@@ -1123,6 +1147,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
+  private readonly backgroundTaskTracker = new BackgroundTaskTracker()
+  private readonly backgroundTaskSyncs = new Map<
+    string,
+    Promise<BackgroundTaskSnapshot>
+  >()
+  private readonly backgroundTaskResyncNeeded = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
   private readonly terminalUserInputChecks = new Map<string, number>()
@@ -1198,6 +1228,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         available: true,
         terminalBacked: true,
         supportsTmuxMigration: true,
+        supportsBackgroundTasks: true,
       },
     ]
   }
@@ -1262,6 +1293,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.terminalUpdateChecks.clear()
     this.answeredTerminalPermissions.clear()
     this.answeredTerminalInputs.clear()
+    this.backgroundTaskSyncs.clear()
+    this.backgroundTaskResyncNeeded.clear()
+    for (const session of this.store.list()) {
+      this.backgroundTaskTracker.remove(session.id)
+    }
     const disconnected = await Promise.allSettled(
       [...this.sessions.values()].map((session) => session.disconnect()),
     )
@@ -1716,7 +1752,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return stored
     }
-    const status = statusFromEvents(events)
+    const status =
+      backgroundTasksFromEvents(events).some(
+        (task) => task.status === 'running',
+      )
+        ? 'running'
+        : statusFromEvents(events)
     if (status === stored.status || status === 'waiting') {
       return stored
     }
@@ -1794,6 +1835,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.sessions.delete(id)
     }
     this.hydratedSessions.delete(id)
+    this.backgroundTaskTracker.remove(id)
+    this.backgroundTaskSyncs.delete(id)
     this.launchingTerminalSessionIds.add(id)
     this.discoveryGeneration += 1
     try {
@@ -1951,6 +1994,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.eventLogFingerprints.delete(id)
       this.eventLogVersions.delete(id)
       this.workspaceVersions.delete(id)
+      this.backgroundTaskSyncs.delete(id)
+      this.backgroundTaskTracker.remove(id)
       this.liveTranscriptWatermarks.delete(id)
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
@@ -2433,6 +2478,47 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await session.abort()
   }
 
+  async listBackgroundTasks(
+    sessionId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    const stored = this.store.get(sessionId)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (this.externalSessionIds.has(sessionId)) {
+      return this.replaceBackgroundTasks(
+        sessionId,
+        backgroundTasksFromEvents(await this.sessionEventReader(sessionId)),
+        true,
+      )
+    }
+    return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
+  }
+
+  async cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    const current = await this.listBackgroundTasks(sessionId)
+    const task = current.tasks.find((candidate) => candidate.id === taskId)
+    if (!task) {
+      throw new Error('Background task not found')
+    }
+    if (!task.canCancel) {
+      throw new Error('Background task cannot be cancelled')
+    }
+    const session = await this.ensureLoaded(sessionId)
+    const cancel = session.rpc.tasks?.cancel
+    if (!cancel) {
+      throw new Error('Background task cancellation is not supported')
+    }
+    const result = await cancel({ id: taskId })
+    if (!result.cancelled) {
+      throw new Error('Background task could not be cancelled')
+    }
+    return this.listBackgroundTasks(sessionId)
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     const stored = this.store.get(sessionId)
     if (!stored) {
@@ -2493,6 +2579,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.drainingSessions.delete(sessionId)
       this.queueOperations.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
+      this.backgroundTaskSyncs.delete(sessionId)
+      this.backgroundTaskTracker.remove(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
       this.terminalUpdateChecks.delete(sessionId)
       this.answeredTerminalPermissions.delete(sessionId)
@@ -2986,6 +3074,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return
         }
         const events = await this.sessionEventReader(sessionId)
+        const terminalTasks = this.externalSessionIds.has(sessionId)
+          ? backgroundTasksFromEvents(events)
+          : []
+        if (this.externalSessionIds.has(sessionId)) {
+          this.replaceBackgroundTasks(
+            sessionId,
+            terminalTasks,
+            true,
+          )
+        }
         const fingerprint = `${events.length}:${events.at(-1)?.id || ''}`
         if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
           await this.recoverHiddenUserInput(sessionId, events)
@@ -3018,6 +3116,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         let status = syncedUserInput
           ? 'waiting'
           : statusFromEvents(events)
+        if (
+          !syncedUserInput &&
+          terminalTasks.some(
+            (task) => task.status === 'running',
+          )
+        ) {
+          status = 'running'
+        }
         const queueDispatchAt = this.store.queueDispatchAt(sessionId)
         if (queueDispatchAt) {
           const dispatchTime = Date.parse(queueDispatchAt)
@@ -3333,7 +3439,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!hasLifecycleEvent) {
         return { status: 'running', activity: 'Continuing' }
       }
-      const status = statusFromEvents(relevant)
+      const status =
+        backgroundTasksFromEvents(relevant).some(
+          (task) => task.status === 'running',
+        )
+          ? 'running'
+          : statusFromEvents(relevant)
       if (status === 'waiting' || status === 'running') {
         return { status: 'running', activity: 'Continuing' }
       }
@@ -3371,6 +3482,119 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private syncBackgroundTasks(
+    sessionId: string,
+    sdkSession = this.sessions.get(sessionId),
+  ): Promise<BackgroundTaskSnapshot> {
+    const existing = this.backgroundTaskSyncs.get(sessionId)
+    if (existing) {
+      this.backgroundTaskResyncNeeded.add(sessionId)
+      return existing
+    }
+    let sync: Promise<BackgroundTaskSnapshot>
+    sync = (async () => {
+      let snapshot: BackgroundTaskSnapshot
+      do {
+        this.backgroundTaskResyncNeeded.delete(sessionId)
+        snapshot = await this.readBackgroundTasks(sessionId, sdkSession)
+      } while (this.backgroundTaskResyncNeeded.has(sessionId))
+      return snapshot
+    })().finally(() => {
+      if (this.backgroundTaskSyncs.get(sessionId) === sync) {
+        this.backgroundTaskSyncs.delete(sessionId)
+      }
+      this.backgroundTaskResyncNeeded.delete(sessionId)
+    })
+    this.backgroundTaskSyncs.set(sessionId, sync)
+    return sync
+  }
+
+  private async readBackgroundTasks(
+    sessionId: string,
+    sdkSession = this.sessions.get(sessionId),
+  ): Promise<BackgroundTaskSnapshot> {
+    const tasks = sdkSession?.rpc.tasks
+    if (!tasks?.list) {
+      return this.replaceBackgroundTasks(sessionId, [], false)
+    }
+
+    try {
+      await tasks.refresh?.()
+    } catch (error) {
+      if (!isUnsupportedBackgroundTaskError(error)) {
+        throw error
+      }
+    }
+
+    let listed: { tasks: CopilotTaskInfo[] }
+    try {
+      listed = await tasks.list()
+    } catch (error) {
+      if (isUnsupportedBackgroundTaskError(error)) {
+        return this.replaceBackgroundTasks(sessionId, [], false)
+      }
+      throw error
+    }
+
+    const entries = [...listed.tasks]
+      .sort(
+        (left, right) =>
+          Number(
+            right.status === 'running' ||
+              right.status === 'idle' ||
+              right.status === 'queued',
+          ) -
+            Number(
+              left.status === 'running' ||
+                left.status === 'idle' ||
+                left.status === 'queued',
+            ) ||
+          right.startedAt.localeCompare(left.startedAt),
+      )
+      .slice(0, MAX_BACKGROUND_TASKS)
+    const normalized = await Promise.all(
+      entries.map(async (task) => {
+        let progress: CopilotTaskProgress | null | undefined
+        if (tasks.getProgress) {
+          try {
+            progress = (await tasks.getProgress({ id: task.id })).progress
+          } catch (error) {
+            if (!isUnsupportedBackgroundTaskError(error)) {
+              throw error
+            }
+          }
+        }
+        return normalizeBackgroundTask(
+          task,
+          progress,
+          typeof tasks.cancel === 'function',
+        )
+      }),
+    )
+    return this.replaceBackgroundTasks(sessionId, normalized, true)
+  }
+
+  private replaceBackgroundTasks(
+    sessionId: string,
+    tasks: BackgroundTask[],
+    supported: boolean,
+  ): BackgroundTaskSnapshot {
+    const update = this.backgroundTaskTracker.replace(
+      sessionId,
+      tasks,
+      supported,
+    )
+    if (update.changed) {
+      const snapshot = update.snapshot
+      this.emit('event', {
+        type: 'session.tasks.updated',
+        sessionId,
+        ...snapshot,
+      })
+    }
+    return update.snapshot
+  }
+
   private attachSession(session: CopilotSessionLike): void {
     session.on((event) => {
       this.handleSessionEvent(session.sessionId, event)
@@ -3380,6 +3604,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
+
+    if (
+      (event.type === 'session.background_tasks_changed' ||
+        event.type === 'subagent.started' ||
+        event.type === 'subagent.completed' ||
+        event.type === 'subagent.failed') &&
+      stored &&
+      !this.deletingSessions.has(sessionId)
+    ) {
+      void this.syncBackgroundTasks(sessionId).catch((error: unknown) =>
+        this.publishError(sessionId, error),
+      )
+    }
 
     if (
       event.type === 'session.context_changed' &&

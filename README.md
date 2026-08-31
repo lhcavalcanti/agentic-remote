@@ -171,6 +171,7 @@ flowchart TB
 | Capability | GitHub Copilot | Claude Agent |
 | --- | --- | --- |
 | Streaming, queue, cancel, permissions, questions | Yes | Yes |
+| Background task monitoring | Yes, when the Copilot runtime advertises it | No |
 | Models and effort | Yes | Yes |
 | tmux and SSH attachment | Yes | No |
 | Native slash commands | Yes | Web commands only |
@@ -193,6 +194,8 @@ matrix.
 - **Queue**: add, edit, or remove prompts while an agent runs.
 - **Stop**: cancel the active response.
 - **Runtime**: configure supported model, effort, context, and mode options.
+- **Background tasks**: inspect live task progress, output, errors, timestamps,
+  and cancel supported tasks from the session header.
 - **App settings**: configure separate default model IDs for Copilot and Claude.
 - **Session files**: browse, search, preview, and save Knowledge paths.
 - **Knowledge**: expand folders in place as a tree, with remembered expansion,
@@ -332,6 +335,8 @@ binaries means the digest did not match the table in
 - [Multi-computer architecture](docs/architecture.md) — routing and ownership
 - [Provider compatibility](docs/provider-compatibility.md) — Copilot/Claude
   differences
+- [Background tasks](docs/background-tasks.md) — SDK review, UI gaps, and
+  visual states
 - [Security policy](SECURITY.md) — reporting and deployment boundaries
 
 Agentic Remote is available under the [MIT License](LICENSE).

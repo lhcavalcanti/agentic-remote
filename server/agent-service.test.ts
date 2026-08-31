@@ -20,10 +20,16 @@ import {
   pendingUserInputFromEvents,
   runtimeInfoFromEvents,
 } from './agent-service.js'
+import type {
+  CopilotTaskInfo,
+  CopilotTaskProgress,
+} from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId = 'active-session'
+  readonly backgroundTasks: CopilotTaskInfo[] = []
+  readonly taskProgress = new Map<string, CopilotTaskProgress>()
   readonly sentPrompts: string[] = []
   disconnectCount = 0
   readonly invokedCommands: string[] = []
@@ -126,6 +132,21 @@ class DeferredSession implements CopilotSessionLike {
         }
       },
       enqueue: async () => ({ queued: true }),
+    },
+    tasks: {
+      list: async () => ({ tasks: this.backgroundTasks }),
+      getProgress: async ({ id }: { id: string }) => ({
+        progress: this.taskProgress.get(id),
+      }),
+      cancel: async ({ id }: { id: string }) => {
+        const task = this.backgroundTasks.find((entry) => entry.id === id)
+        if (!task) {
+          return { cancelled: false }
+        }
+        task.status = 'cancelled'
+        task.completedAt = new Date().toISOString()
+        return { cancelled: true }
+      },
     },
   }
 
@@ -589,6 +610,66 @@ describe('AgentService deletion', () => {
         activityStatus: 'running',
       }),
     ])
+  })
+
+  it('lists, updates, and cancels SDK background tasks independently of session status', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    let taskEventCount = 0
+    service.on('event', (event) => {
+      if (event.type === 'session.tasks.updated') {
+        taskEventCount += 1
+      }
+    })
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'task-1',
+      description: 'Inspect the repository',
+      status: 'running',
+      startedAt: '2026-08-31T18:00:00.000Z',
+      agentType: 'explore',
+    })
+    client.session.taskProgress.set('task-1', {
+      type: 'agent',
+      latestIntent: 'Reading source files',
+      recentActivity: [
+        {
+          message: '▸ view',
+          timestamp: '2026-08-31T18:00:01.000Z',
+        },
+      ],
+    })
+
+    await expect(service.listBackgroundTasks(created.id)).resolves.toMatchObject({
+      runningCount: 1,
+      supported: true,
+      tasks: [
+        {
+          id: 'task-1',
+          status: 'running',
+          progress: { latestIntent: 'Reading source files' },
+        },
+      ],
+    })
+    expect(taskEventCount).toBeGreaterThan(0)
+
+    await expect(
+      service.cancelBackgroundTask(created.id, 'task-1'),
+    ).resolves.toMatchObject({
+      runningCount: 0,
+      tasks: [{ id: 'task-1', status: 'cancelled', canCancel: false }],
+    })
+    await service.stop()
   })
 
   it('reconstructs only unresolved root ask-user requests', () => {

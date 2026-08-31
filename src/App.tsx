@@ -4657,7 +4657,10 @@ function App() {
     delete composerHistoryRef.current[targetKey]
   }
 
-  function navigateMessageHistory(direction: -1 | 1): boolean {
+  function navigateMessageHistory(
+    direction: -1 | 1,
+    force = false,
+  ): boolean {
     if (!selected || !selectedKey) {
       return false
     }
@@ -4669,7 +4672,7 @@ function App() {
     }
 
     const existing = composerHistoryRef.current[selectedKey]
-    if (!existing && (direction > 0 || composer.trim())) {
+    if (!existing && (direction > 0 || (!force && composer.trim()))) {
       return false
     }
     const history =
@@ -5420,6 +5423,34 @@ function App() {
     }
   }
 
+  function appKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (
+      event.key !== 'ArrowUp' ||
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      sidebarMode !== 'sessions'
+    ) {
+      return
+    }
+    const target = event.target
+    if (
+      target instanceof Element &&
+      target.closest(
+        '[role="dialog"], .composer, .user-input-card, .permission-card',
+      )
+    ) {
+      return
+    }
+    if (navigateMessageHistory(-1, true)) {
+      event.preventDefault()
+      setSidebarOpen(false)
+    }
+  }
+
   async function replyToPermission(optionId: string) {
     if (!selected?.pendingPermission) {
       return
@@ -5595,6 +5626,7 @@ function App() {
       className={`app-shell ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
       }`}
+      onKeyDown={appKeyDown}
       onTouchCancel={() => {
         sidebarGestureRef.current = undefined
       }}

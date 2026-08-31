@@ -2087,6 +2087,7 @@ function ActivityMessage({
 }) {
   const [title, ...detailLines] = content.split('\n')
   const detail = detailLines.join('\n').trim()
+  const isMcp = title.startsWith('MCP ·')
   const icon =
     status === 'failed' ? (
       <XCircle size={14} />
@@ -2096,7 +2097,11 @@ function ActivityMessage({
       <LoaderCircle className="activity-message__spinner" size={14} />
     )
   return (
-    <div className={`activity-message activity-message--${status || 'running'}`}>
+    <div
+      className={`activity-message activity-message--${status || 'running'}${
+        isMcp ? ' activity-message--mcp' : ''
+      }`}
+    >
       {icon}
       <span>
         <strong>{title}</strong>
@@ -5566,130 +5571,132 @@ function App() {
           </div>
         ) : null}
 
-        {sidebarMode === 'knowledge' ? (
-          <nav aria-label="Knowledge" className="session-list knowledge-tree">
-            {roots.length === 0 ? (
-              <p className="sidebar-message">
-                Add a knowledge root to browse a folder on any computer.
-              </p>
-            ) : null}
-            {roots.length > 0 ? (
-              <>
-                <p className="sidebar-label">Roots</p>
-                {roots.map((root) => (
-                  <div className="knowledge-root" key={root.id}>
+        <div className="sidebar__body">
+          {sidebarMode === 'knowledge' ? (
+            <nav aria-label="Knowledge" className="session-list knowledge-tree">
+              {roots.length === 0 ? (
+                <p className="sidebar-message">
+                  Add a knowledge root to browse a folder on any computer.
+                </p>
+              ) : null}
+              {roots.length > 0 ? (
+                <>
+                  <p className="sidebar-label">Roots</p>
+                  {roots.map((root) => (
+                    <div className="knowledge-root" key={root.id}>
+                      <button
+                        aria-current={root.id === activeRootId ? 'true' : undefined}
+                        className={root.id === activeRootId ? 'is-active' : ''}
+                        onClick={() => void selectRoot(root.id)}
+                        type="button"
+                      >
+                        <FolderOpen size={15} />
+                        <span>
+                          <strong>{root.name}</strong>
+                          <small>
+                            {root.computerName} · {root.path}
+                          </small>
+                        </span>
+                      </button>
+                      <button
+                        aria-label={`Remove ${root.name} root`}
+                        className="icon-button icon-button--danger"
+                        onClick={() => void removeRoot(root.id)}
+                        type="button"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </>
+              ) : null}
+              {activeRoot && knowledgeListing ? (
+                <>
+                  <p className="sidebar-label">
+                    {knowledgeListing.path === '.'
+                      ? activeRoot.name
+                      : knowledgeListing.path}
+                  </p>
+                  {knowledgeListing.parent !== undefined ? (
                     <button
-                      aria-current={root.id === activeRootId ? 'true' : undefined}
-                      className={root.id === activeRootId ? 'is-active' : ''}
-                      onClick={() => void selectRoot(root.id)}
+                      className="workspace-entry"
+                      onClick={() =>
+                        void openKnowledgeFolder(knowledgeListing.parent)
+                      }
                       type="button"
                     >
-                      <FolderOpen size={15} />
+                      <ArrowUp size={15} />
                       <span>
-                        <strong>{root.name}</strong>
-                        <small>
-                          {root.computerName} · {root.path}
-                        </small>
+                        <strong>Parent folder</strong>
                       </span>
                     </button>
+                  ) : null}
+                  {knowledgeListing.entries.length === 0 ? (
+                    <p className="sidebar-message">This folder is empty.</p>
+                  ) : null}
+                  {knowledgeListing.entries.map((entry) => (
                     <button
-                      aria-label={`Remove ${root.name} root`}
-                      className="icon-button icon-button--danger"
-                      onClick={() => void removeRoot(root.id)}
+                      className="workspace-entry"
+                      key={entry.path}
+                      onClick={() =>
+                        entry.kind === 'directory'
+                          ? void openKnowledgeFolder(entry.path)
+                          : void openKnowledgeFile(entry.path)
+                      }
                       type="button"
                     >
-                      <Trash2 size={14} />
+                      {entry.kind === 'directory' ? (
+                        <FolderOpen size={15} />
+                      ) : (
+                        <FileText size={15} />
+                      )}
+                      <span>
+                        <strong>{entry.name}</strong>
+                      </span>
                     </button>
-                  </div>
-                ))}
-              </>
-            ) : null}
-            {activeRoot && knowledgeListing ? (
-              <>
-                <p className="sidebar-label">
-                  {knowledgeListing.path === '.'
-                    ? activeRoot.name
-                    : knowledgeListing.path}
-                </p>
-                {knowledgeListing.parent !== undefined ? (
-                  <button
-                    className="workspace-entry"
-                    onClick={() =>
-                      void openKnowledgeFolder(knowledgeListing.parent)
-                    }
-                    type="button"
-                  >
-                    <ArrowUp size={15} />
-                    <span>
-                      <strong>Parent folder</strong>
-                    </span>
-                  </button>
-                ) : null}
-                {knowledgeListing.entries.length === 0 ? (
-                  <p className="sidebar-message">This folder is empty.</p>
-                ) : null}
-                {knowledgeListing.entries.map((entry) => (
-                  <button
-                    className="workspace-entry"
-                    key={entry.path}
-                    onClick={() =>
-                      entry.kind === 'directory'
-                        ? void openKnowledgeFolder(entry.path)
-                        : void openKnowledgeFile(entry.path)
-                    }
-                    type="button"
-                  >
-                    {entry.kind === 'directory' ? (
-                      <FolderOpen size={15} />
-                    ) : (
-                      <FileText size={15} />
-                    )}
-                    <span>
-                      <strong>{entry.name}</strong>
-                    </span>
-                  </button>
-                ))}
-              </>
-            ) : null}
-          </nav>
-        ) : null}
-
-        <nav
-          aria-label="Sessions"
-          className="session-list"
-          hidden={sidebarMode !== 'sessions'}
-        >
-          <p className="sidebar-label">Recent</p>
-          {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
-          {!loading && sessions.length === 0 ? (
-            <p className="sidebar-message">No sessions here.</p>
+                  ))}
+                </>
+              ) : null}
+            </nav>
           ) : null}
-          <DndContext
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-            sensors={sensors}
+
+          <nav
+            aria-label="Sessions"
+            className="session-list"
+            hidden={sidebarMode !== 'sessions'}
           >
-            <SortableContext
-              items={orderedComputers.map(
-                (computer) => `computer:${computer.id}`,
-              )}
-              strategy={verticalListSortingStrategy}
+            <p className="sidebar-label">Recent</p>
+            {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
+            {!loading && sessions.length === 0 ? (
+              <p className="sidebar-message">No sessions here.</p>
+            ) : null}
+            <DndContext
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+              sensors={sensors}
             >
-              <div className="computer-session-groups">
-                {orderedComputers.map((computer) => (
-                  <SortableComputerGroup
-                    computer={computer}
-                    key={computer.id}
-                    onSelectSession={selectSession}
-                    selectedKey={selectedKey}
-                    sessions={sessionsByComputer.get(computer.id) || []}
-                    showComputerHandle
-                  />
-                ))}
-              </div>
-            </SortableContext>
-          </DndContext>
-        </nav>
+              <SortableContext
+                items={orderedComputers.map(
+                  (computer) => `computer:${computer.id}`,
+                )}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="computer-session-groups">
+                  {orderedComputers.map((computer) => (
+                    <SortableComputerGroup
+                      computer={computer}
+                      key={computer.id}
+                      onSelectSession={selectSession}
+                      selectedKey={selectedKey}
+                      sessions={sessionsByComputer.get(computer.id) || []}
+                      showComputerHandle
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </nav>
+        </div>
         <div className="sidebar-settings">
           <button
             aria-label="Add knowledge root"

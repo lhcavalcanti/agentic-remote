@@ -189,6 +189,42 @@ function recordValue(value: unknown): Record<string, unknown> {
     : {}
 }
 
+function textFromValue(value: unknown, depth = 0): string | undefined {
+  if (depth > 4 || value === null || value === undefined) {
+    return undefined
+  }
+  if (typeof value === 'string') {
+    return boundedText(value)
+  }
+  if (Array.isArray(value)) {
+    const text = value
+      .map((entry) => textFromValue(entry, depth + 1))
+      .filter((entry): entry is string => Boolean(entry))
+      .join('\n')
+    return boundedText(text)
+  }
+  if (typeof value !== 'object') {
+    return undefined
+  }
+  const object = recordValue(value)
+  for (const key of [
+    'detailedContent',
+    'content',
+    'output',
+    'stdout',
+    'stderr',
+    'outputPreview',
+    'text',
+    'message',
+  ]) {
+    const text = textFromValue(object[key], depth + 1)
+    if (text) {
+      return text
+    }
+  }
+  return undefined
+}
+
 function eventString(
   data: Record<string, unknown>,
   key: string,
@@ -197,7 +233,7 @@ function eventString(
 }
 
 function booleanValue(value: unknown): boolean {
-  return value === true
+  return value === true || value === 'true'
 }
 
 function normalizedToolName(data: Record<string, unknown>): string {
@@ -232,16 +268,78 @@ function shellIdFromValue(value: unknown, depth = 0): string | undefined {
     return undefined
   }
   const object = recordValue(value)
-  for (const key of ['shellId', 'shell_id']) {
+  for (const key of ['shellId', 'shell_id', 'shell-id']) {
     const id = stringValue(object[key])
     if (id) {
       return id
     }
   }
-  for (const key of ['result', 'structuredContent', 'content', 'contents']) {
+  for (const key of [
+    'result',
+    'structuredContent',
+    'content',
+    'contents',
+    'output',
+    'stdout',
+    'stderr',
+    'text',
+    'message',
+  ]) {
     const id = shellIdFromValue(object[key], depth + 1)
     if (id) {
       return id
+    }
+  }
+  for (const entry of Object.values(object)) {
+    const id = shellIdFromValue(entry, depth + 1)
+    if (id) {
+      return id
+    }
+  }
+  return undefined
+}
+
+function shellExitFromValue(
+  value: unknown,
+  depth = 0,
+):
+  | {
+      shellId: string
+      exitCode: number
+      outputPreview?: string
+    }
+  | undefined {
+  if (depth > 5 || value === null || value === undefined) {
+    return undefined
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const exit = shellExitFromValue(entry, depth + 1)
+      if (exit) {
+        return exit
+      }
+    }
+    return undefined
+  }
+  if (typeof value !== 'object') {
+    return undefined
+  }
+  const object = recordValue(value)
+  if (object.type === 'shell_exit') {
+    const shellId = stringValue(object.shellId) || stringValue(object.shell_id)
+    const exitCode = numberValue(object.exitCode)
+    if (shellId && exitCode !== undefined) {
+      return {
+        shellId,
+        exitCode,
+        outputPreview: boundedText(object.outputPreview),
+      }
+    }
+  }
+  for (const entry of Object.values(object)) {
+    const exit = shellExitFromValue(entry, depth + 1)
+    if (exit) {
+      return exit
     }
   }
   return undefined
@@ -252,7 +350,10 @@ function errorValue(data: Record<string, unknown>): string | undefined {
   if (typeof error === 'string') {
     return boundedText(error)
   }
-  return boundedText(recordValue(error).message)
+  return (
+    boundedText(recordValue(error).message) ||
+    textFromValue(recordValue(data).error)
+  )
 }
 
 function shellTaskMode(
@@ -262,10 +363,11 @@ function shellTaskMode(
   executionMode: BackgroundTask['executionMode']
   attachmentMode: BackgroundTask['attachmentMode']
 } | undefined {
+  const requestedMode = stringValue(args.mode)?.toLowerCase()
   const executionMode = executionModeValue(
     eventString(data, 'executionMode') ||
       eventString(args, 'executionMode') ||
-      eventString(args, 'mode'),
+      requestedMode,
   )
   const attachmentMode = attachmentModeValue(
     eventString(data, 'attachmentMode') ||
@@ -274,20 +376,22 @@ function shellTaskMode(
   )
   const detached =
     attachmentMode === 'detached' ||
-    executionMode === 'background' ||
     booleanValue(args.detach) ||
     booleanValue(args.detached) ||
+    requestedMode === 'detached'
+  const background =
+    executionMode === 'background' ||
     booleanValue(args.async) ||
     booleanValue(args.background) ||
-    args.mode === 'background' ||
-    args.mode === 'detached' ||
-    args.mode === 'async'
-  if (!detached) {
+    requestedMode === 'background' ||
+    requestedMode === 'async' ||
+    detached
+  if (!background) {
     return undefined
   }
   return {
     executionMode: 'background',
-    attachmentMode: attachmentMode || 'detached',
+    attachmentMode: attachmentMode || (detached ? 'detached' : 'attached'),
   }
 }
 
@@ -436,6 +540,91 @@ function shellTask(
   }
 }
 
+function shellTaskOutput(
+  task: BackgroundTask,
+  value: unknown,
+): void {
+  const record = recordValue(value)
+  const output =
+    textFromValue(record.recentOutput) ||
+    textFromValue(record.output) ||
+    textFromValue(record.stdout) ||
+    textFromValue(record.stderr) ||
+    textFromValue(record.detailedContent) ||
+    textFromValue(record.outputPreview)
+  if (!output) {
+    return
+  }
+  task.progress = {
+    type: 'shell',
+    recentOutput: output,
+    pid: task.pid,
+  }
+}
+
+function notificationKind(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const kind = recordValue(data.kind)
+  return Object.keys(kind).length > 0 ? kind : data
+}
+
+function backgroundHandoff(
+  data: Record<string, unknown>,
+):
+  | {
+      executionMode: BackgroundTask['executionMode']
+      attachmentMode: BackgroundTask['attachmentMode']
+    }
+  | undefined {
+  const result = recordValue(data.result)
+  const executionMode =
+    eventString(data, 'executionMode') ||
+    eventString(result, 'executionMode') ||
+    eventString(data, 'mode') ||
+    eventString(result, 'mode')
+  const attachmentMode =
+    eventString(data, 'attachmentMode') ||
+    eventString(result, 'attachmentMode')
+  if (
+    executionMode === 'background' ||
+    executionMode === 'async' ||
+    attachmentMode === 'detached'
+  ) {
+    return {
+      executionMode: 'background',
+      attachmentMode:
+        attachmentMode === 'detached' ? 'detached' : 'attached',
+    }
+  }
+  if (
+    booleanValue(data.background) ||
+    booleanValue(data.detached) ||
+    booleanValue(result.background) ||
+    booleanValue(result.detached)
+  ) {
+    return {
+      executionMode: 'background',
+      attachmentMode:
+        booleanValue(data.detached) || booleanValue(result.detached)
+          ? 'detached'
+          : 'attached',
+    }
+  }
+  const message = textFromValue(result) || textFromValue(data)
+  if (
+    message &&
+    /(?:background|detached|still running|moved)/i.test(message) &&
+    /(?:shell|task|command)/i.test(message)
+  ) {
+    return {
+      executionMode: 'background',
+      attachmentMode: /detached/i.test(message) ? 'detached' : 'attached',
+    }
+  }
+  return undefined
+}
+
 function addActivity(
   task: BackgroundTask,
   message: string,
@@ -457,49 +646,202 @@ export function backgroundTasksFromEvents(
 ): BackgroundTask[] {
   const tasks = new Map<string, BackgroundTask>()
   const aliases = new Map<string, string>()
+  const shellStarts = new Map<
+    string,
+    {
+      id: string
+      timestamp: string
+      data: Record<string, unknown>
+      mode?: ReturnType<typeof shellTaskMode>
+    }
+  >()
+
+  const shellStartFor = (
+    id: string | undefined,
+  ):
+    | {
+        id: string
+        timestamp: string
+        data: Record<string, unknown>
+        mode?: ReturnType<typeof shellTaskMode>
+      }
+    | undefined => {
+    if (!id) {
+      return undefined
+    }
+    const direct = shellStarts.get(id)
+    if (direct) {
+      return direct
+    }
+    const resolved = taskIdAlias(aliases, id)
+    return [...shellStarts.values()].find(
+      (start) => taskIdAlias(aliases, start.id) === resolved,
+    )
+  }
+
+  const finishShellTask = (
+    shellId: string,
+    timestamp: string,
+    data: Record<string, unknown>,
+  ): void => {
+    const resolvedId = taskIdAlias(aliases, shellId)
+    const start = shellStartFor(shellId)
+    let current = tasks.get(resolvedId)
+    if (current?.type !== 'shell') {
+      current = undefined
+    }
+    if (!current && start) {
+      current = shellTask(
+        start.id,
+        start.timestamp,
+        start.data,
+        start.mode || {
+          executionMode: 'background',
+          attachmentMode:
+            data.type === 'shell_detached_completed' ? 'detached' : 'attached',
+        },
+      )
+      tasks.set(start.id, current)
+      aliases.set(start.id, start.id)
+    }
+    if (!current) {
+      current = {
+        type: 'shell',
+        id: shellId,
+        description: 'Background shell',
+        status: 'running',
+        startedAt:
+          eventString(data, 'startedAt') ||
+          eventString(data, 'started_at') ||
+          timestamp,
+        executionMode: 'background',
+        attachmentMode: 'detached',
+        canCancel: false,
+      }
+      tasks.set(shellId, current)
+      aliases.set(shellId, shellId)
+    }
+    if (current.id !== shellId) {
+      current = rekeyTask(tasks, aliases, current.id, shellId) || current
+    }
+    const exitCode = numberValue(data.exitCode)
+    current.status =
+      data.cancelled === true
+        ? 'cancelled'
+        : exitCode !== undefined && exitCode !== 0
+          ? 'failed'
+          : current.status === 'failed' || current.status === 'cancelled'
+            ? current.status
+            : 'completed'
+    current.completedAt = timestamp
+    current.description =
+      boundedText(eventString(data, 'description')) || current.description
+    if (current.status === 'failed') {
+      current.error =
+        errorValue(data) ||
+        current.error ||
+        (exitCode === undefined
+          ? 'Shell task failed'
+          : `Shell exited with status ${exitCode}`)
+    } else {
+      current.error = undefined
+    }
+    shellTaskOutput(current, data)
+    current.canCancel = false
+    for (const [toolCallId, pending] of shellStarts) {
+      if (
+        pending.id === shellId ||
+        taskIdAlias(aliases, pending.id) === taskIdAlias(aliases, shellId)
+      ) {
+        shellStarts.delete(toolCallId)
+      }
+    }
+  }
+
   for (const event of events) {
     const data = recordValue(event.data)
-    if (event.type === 'system.notification') {
-      const kind = recordValue(data.kind)
-      const kindType = eventString(kind, 'type')
+    const eventType = String(event.type)
+    if (
+      eventType === 'system.notification' ||
+      eventType === 'shell_started' ||
+      eventType === 'shell_detached_started' ||
+      eventType === 'shell_completed' ||
+      eventType === 'shell_detached_completed'
+    ) {
+      const kind = notificationKind(data)
+      const kindType = eventString(kind, 'type') || eventType
+      if (
+        kindType === 'shell_started' ||
+        kindType === 'shell_detached_started'
+      ) {
+        const shellId =
+          eventString(kind, 'shellId') ||
+          eventString(kind, 'shell_id') ||
+          shellIdFromValue(kind)
+        if (shellId) {
+          const mode = {
+            executionMode: 'background' as const,
+            attachmentMode:
+              kindType === 'shell_detached_started'
+                ? ('detached' as const)
+                : ('attached' as const),
+          }
+          const current = shellTask(
+            shellId,
+            eventString(kind, 'startedAt') || event.timestamp,
+            kind,
+            mode,
+          )
+          current.status =
+            eventString(kind, 'status') === 'queued' ? 'queued' : 'running'
+          tasks.set(shellId, current)
+          aliases.set(shellId, shellId)
+        }
+      }
       if (
         kindType === 'shell_detached_completed' ||
         kindType === 'shell_completed'
       ) {
-        const shellId = eventString(kind, 'shellId')
+        const shellId =
+          eventString(kind, 'shellId') ||
+          eventString(kind, 'shell_id') ||
+          shellIdFromValue(kind)
         if (shellId) {
-          const id = taskIdAlias(aliases, shellId)
-          const current = tasks.get(id)
-          if (current?.type === 'shell') {
+          finishShellTask(shellId, event.timestamp, kind)
+        }
+      }
+      if (kindType === 'agent_idle' || kindType === 'agent_completed') {
+        const agentId = eventString(kind, 'agentId') || event.agentId
+        if (agentId) {
+          const id = taskIdAlias(aliases, agentId)
+          const current = tasks.get(id) || eventTask(agentId, event.timestamp, kind)
+          current.executionMode = 'background'
+          current.description =
+            boundedText(eventString(kind, 'description')) ||
+            current.description
+          current.agentType =
+            eventString(kind, 'agentType') || current.agentType
+          current.prompt = boundedText(kind.prompt) || current.prompt
+          if (kindType === 'agent_idle') {
+            current.status = 'queued'
+            current.canCancel = true
+          } else {
+            const status = eventString(kind, 'status')
             current.status =
-              kindType === 'shell_completed' &&
-              numberValue(kind.exitCode) !== undefined &&
-              numberValue(kind.exitCode) !== 0
-                ? 'failed'
-                : 'completed'
+              status === 'cancelled'
+                ? 'cancelled'
+                : status === 'failed'
+                  ? 'failed'
+                  : 'completed'
             current.completedAt = event.timestamp
-            if (current.status === 'failed') {
-              current.error = `Shell exited with status ${numberValue(
-                kind.exitCode,
-              )}`
-            }
+            current.error = errorValue(kind)
+            current.result = textFromValue(kind.result) || current.result
+            current.latestResponse =
+              textFromValue(kind.latestResponse) || current.latestResponse
             current.canCancel = false
-          } else if (kindType === 'shell_detached_completed') {
-            tasks.set(shellId, {
-              type: 'shell',
-              id: shellId,
-              description:
-                boundedText(eventString(kind, 'description')) ||
-                'Background shell',
-              status: 'completed',
-              startedAt: event.timestamp,
-              completedAt: event.timestamp,
-              executionMode: 'background',
-              attachmentMode: 'detached',
-              canCancel: false,
-            })
-            aliases.set(shellId, shellId)
           }
+          tasks.set(id, current)
+          aliases.set(agentId, id)
         }
       }
       continue
@@ -522,22 +864,38 @@ export function backgroundTasksFromEvents(
         continue
       }
       const args = taskArguments(data)
-      const mode = isShellTool(toolName)
-        ? shellTaskMode(data, args)
-        : undefined
-      if (mode) {
+      if (isShellTool(toolName)) {
+        const mode = shellTaskMode(data, args)
         const toolCallId = eventString(data, 'toolCallId')
-        const id =
-          shellIdFromValue(data) ||
-          shellIdFromValue(args) ||
-          toolCallId
-        if (id) {
-          const current = shellTask(id, event.timestamp, data, mode)
-          tasks.set(id, current)
+        const shellId =
+          shellIdFromValue(data) || shellIdFromValue(args) || toolCallId
+        if (toolCallId && shellId) {
+          shellStarts.set(toolCallId, {
+            id: shellId,
+            timestamp: event.timestamp,
+            data,
+            mode,
+          })
+        }
+        if (mode && shellId) {
+          const current = shellTask(shellId, event.timestamp, data, mode)
+          tasks.set(shellId, current)
           if (toolCallId) {
-            aliases.set(toolCallId, id)
+            aliases.set(toolCallId, shellId)
           }
-          aliases.set(id, id)
+          aliases.set(shellId, shellId)
+        }
+        if (event.agentId && !mode) {
+          const agentId = taskIdAlias(aliases, event.agentId)
+          const current =
+            tasks.get(agentId) ||
+            eventTask(agentId, event.timestamp, data)
+          addActivity(
+            current,
+            eventString(data, 'toolName') || 'shell',
+            event.timestamp,
+          )
+          tasks.set(agentId, current)
         }
         continue
       }
@@ -594,7 +952,7 @@ export function backgroundTasksFromEvents(
           event.type === 'subagent.failed'
             ? errorValue(data)
             : current.error
-        current.result = boundedText(data.result) || current.result
+        current.result = textFromValue(data.result) || current.result
         current.canCancel = false
       }
       tasks.set(id, current)
@@ -607,12 +965,38 @@ export function backgroundTasksFromEvents(
       }
       const shellId = shellIdFromValue(data)
       const id = taskIdAlias(aliases, toolCallId)
-      const current = tasks.get(id)
+      let current = tasks.get(id)
+      const start = shellStartFor(toolCallId) || shellStartFor(shellId)
+      const handoffMode = backgroundHandoff(data)
+      if (!current && start && handoffMode) {
+        const backgroundId = shellId || start.id
+        current = shellTask(
+          backgroundId,
+          start.timestamp,
+          start.data,
+          handoffMode,
+        )
+        tasks.set(backgroundId, current)
+        aliases.set(toolCallId, backgroundId)
+        aliases.set(backgroundId, backgroundId)
+      }
       if (current?.type === 'shell') {
-        if (shellId && current.id !== shellId) {
-          rekeyTask(tasks, aliases, current.id, shellId)
+        const shellExit = shellExitFromValue(data)
+        const resolvedShellId = shellExit?.shellId || shellId
+        if (resolvedShellId && current.id !== resolvedShellId) {
+          current =
+            rekeyTask(tasks, aliases, current.id, resolvedShellId) || current
         }
-        if (!data.success) {
+        if (shellExit) {
+          current.status = shellExit.exitCode === 0 ? 'completed' : 'failed'
+          current.completedAt = event.timestamp
+          current.error =
+            current.status === 'failed'
+              ? `Shell exited with status ${shellExit.exitCode}`
+              : undefined
+          shellTaskOutput(current, shellExit)
+          current.canCancel = false
+        } else if (!data.success) {
           current.status = data.cancelled === true ? 'cancelled' : 'failed'
           current.completedAt = event.timestamp
           current.error =
@@ -620,6 +1004,9 @@ export function backgroundTasksFromEvents(
               ? errorValue(data) || 'Shell task failed to start'
               : undefined
           current.canCancel = false
+        }
+        if (!shellExit) {
+          shellTaskOutput(current, data.result)
         }
         continue
       }

@@ -841,10 +841,48 @@ function stripAnsi(value: string): string {
   return value.replace(ansiSequence, '')
 }
 
+const foregroundLifecycleEvents = new Set<SessionEvent['type']>([
+  'assistant.turn_start',
+  'permission.requested',
+  'permission.completed',
+  'session.error',
+  'assistant.turn_end',
+  'session.idle',
+  'abort',
+  'session.shutdown',
+])
+
+function isForegroundLifecycleEvent(event: SessionEvent): boolean {
+  return !event.agentId && foregroundLifecycleEvents.has(event.type)
+}
+
+function isBackgroundTaskEvent(event: SessionEvent): boolean {
+  if (
+    event.agentId ||
+    event.type === 'session.background_tasks_changed' ||
+    event.type === 'subagent.started' ||
+    event.type === 'subagent.completed' ||
+    event.type === 'subagent.failed'
+  ) {
+    return true
+  }
+  if (event.type !== 'system.notification') {
+    return false
+  }
+  const data = recordValue(event.data)
+  const kind = recordValue(data.kind)
+  return [
+    'agent_idle',
+    'agent_completed',
+    'shell_completed',
+    'shell_detached_completed',
+  ].includes(stringValue(kind.type) || '')
+}
+
 function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
   for (const event of events) {
-    if (event.agentId) {
+    if (!isForegroundLifecycleEvent(event)) {
       continue
     }
     switch (event.type) {
@@ -3133,7 +3171,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           const dispatchTime = Date.parse(queueDispatchAt)
           const completion = events.some(
             (event) =>
-              Date.parse(event.timestamp) > dispatchTime &&
+              Date.parse(event.timestamp) >= dispatchTime &&
               (event.type === 'assistant.turn_end' ||
                 event.type === 'session.idle' ||
                 event.type === 'session.error' ||
@@ -3424,23 +3462,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const relevant = since
         ? events.filter(
             (event) =>
-              !event.agentId &&
               Date.parse(event.timestamp) >= Date.parse(since),
           )
         : events
-      const hasLifecycleEvent = relevant.some((event) =>
-        [
-          'assistant.turn_start',
-          'permission.requested',
-          'permission.completed',
-          'session.error',
-          'assistant.turn_end',
-          'session.idle',
-          'abort',
-          'session.shutdown',
-        ].includes(event.type),
-      )
+      const hasLifecycleEvent = relevant.some(isForegroundLifecycleEvent)
       if (!hasLifecycleEvent) {
+        const hasBackgroundTaskActivity =
+          relevant.some(isBackgroundTaskEvent) ||
+          backgroundTasksFromEvents(relevant).some(
+            (task) => task.executionMode === 'background',
+          )
+        if (
+          hasBackgroundTaskActivity &&
+          events.some(isForegroundLifecycleEvent)
+        ) {
+          const status = statusFromEvents(events)
+          return status === 'running'
+            ? { status, activity: 'Continuing' }
+            : { status }
+        }
         return { status: 'running', activity: 'Continuing' }
       }
       const status = statusFromEvents(relevant)

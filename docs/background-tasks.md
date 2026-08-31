@@ -38,10 +38,10 @@ snapshot.
 tmux-backed sessions are owned by the interactive Copilot CLI process and
 cannot safely be resumed through the SDK task RPC. Their monitor mirrors the
 CLI `/tasks` event-log projection: root `task` invocations and subagent
-lifecycle events provide agent tasks, while detached shell starts, handoff
-results, and `shell_detached_completed` notifications provide shell tasks.
-This keeps detached shell work visible without attaching a second owner to the
-session.
+lifecycle events provide agent tasks, while attached or detached shell starts,
+background handoffs, shell-exit metadata, and completion notifications provide
+shell tasks. This keeps shell work visible without attaching a second owner to
+the session.
 
 The current Copilot CLI release review found these relevant UI features:
 

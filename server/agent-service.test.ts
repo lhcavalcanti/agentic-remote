@@ -781,6 +781,81 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('does not resume a finished terminal turn for background task activity', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-terminal-continuation-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const request = {
+      requestId: 'terminal:question',
+      question: 'Choose a color',
+      choices: ['Red', 'Blue'],
+      allowFreeform: false,
+    }
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingUserInput: vi.fn(
+        async (): Promise<typeof request | undefined> => request,
+      ),
+      replyUserInput: vi.fn(async () => true),
+    }
+    const events = [
+      {
+        type: 'assistant.turn_end',
+        id: 'completed-turn',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {},
+      },
+      {
+        type: 'subagent.started',
+        id: 'background-start',
+        parentId: 'completed-turn',
+        timestamp: new Date(Date.now() + 60_000).toISOString(),
+        agentId: 'agent-1',
+        data: {
+          agentType: 'explore',
+          agentName: 'explore',
+          agentDescription: 'Inspect the repository',
+          toolCallId: 'task-call',
+        },
+      },
+    ] as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-continuation-events',
+      terminal,
+    )
+
+    await service.start()
+    const updated = await service.replyUserInput(
+      client.session.sessionId,
+      request.requestId,
+      { answer: 'Blue', wasFreeform: false },
+    )
+
+    expect(updated).toMatchObject({
+      status: 'idle',
+      activity: undefined,
+      pendingUserInput: undefined,
+    })
+    await service.stop()
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',

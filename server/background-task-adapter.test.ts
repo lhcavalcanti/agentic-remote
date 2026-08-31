@@ -282,4 +282,128 @@ describe('background task adapter', () => {
       ]),
     )
   })
+
+  it('tracks attached async shells and promoted sync shells', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "async-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:02:00.000Z",
+          "data": {
+            "toolCallId": "async-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm dev",
+              "description": "Start the dev server",
+              "mode": "async"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_start",
+          "id": "sync-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:03:00.000Z",
+          "data": {
+            "toolCallId": "sync-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm check",
+              "description": "Run checks",
+              "mode": "sync"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "sync-handoff",
+          "parentId": "sync-start",
+          "timestamp": "2026-08-31T18:03:01.000Z",
+          "data": {
+            "toolCallId": "sync-call",
+            "success": true,
+            "result": {
+              "content": "Command moved to background (shellId: shell-promoted)"
+            }
+          }
+        }
+      ]`) as SessionEvent[],
+    )
+
+    expect(tasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'async-call',
+          type: 'shell',
+          status: 'running',
+          executionMode: 'background',
+          attachmentMode: 'attached',
+        }),
+        expect.objectContaining({
+          id: 'shell-promoted',
+          type: 'shell',
+          status: 'running',
+          executionMode: 'background',
+          attachmentMode: 'attached',
+        }),
+      ]),
+    )
+    expect(tasks).toHaveLength(2)
+  })
+
+  it('uses shell-exit metadata for completed and failed task records', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "shell-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:04:00.000Z",
+          "data": {
+            "toolCallId": "shell-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm check",
+              "mode": "async"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "shell-finish",
+          "parentId": "shell-start",
+          "timestamp": "2026-08-31T18:04:01.000Z",
+          "data": {
+            "toolCallId": "shell-call",
+            "success": true,
+            "result": {
+              "contents": [
+                {
+                  "type": "shell_exit",
+                  "shellId": "shell-call",
+                  "exitCode": 1,
+                  "outputPreview": "FAIL tests"
+                }
+              ]
+            }
+          }
+        }
+      ]`) as SessionEvent[],
+    )
+
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        id: 'shell-call',
+        status: 'failed',
+        completedAt: '2026-08-31T18:04:01.000Z',
+        error: 'Shell exited with status 1',
+        progress: {
+          type: 'shell',
+          recentOutput: 'FAIL tests',
+        },
+      }),
+    ])
+  })
 })

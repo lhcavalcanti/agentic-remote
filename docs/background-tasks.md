@@ -1,6 +1,6 @@
 # Background tasks
 
-Status: implemented for Copilot SDK sessions, 2026-08-31
+Status: implemented for Copilot SDK and tmux sessions, 2026-08-31
 
 Agentic Remote treats background work as state owned by the session's
 computer. The browser receives task snapshots from the hub, and the hub routes
@@ -39,9 +39,10 @@ tmux-backed sessions are owned by the interactive Copilot CLI process and
 cannot safely be resumed through the SDK task RPC. Their monitor mirrors the
 CLI `/tasks` event-log projection: root `task` invocations and subagent
 lifecycle events provide agent tasks, while attached or detached shell starts,
-background handoffs, shell-exit metadata, and completion notifications provide
-shell tasks. This keeps shell work visible without attaching a second owner to
-the session.
+background handoffs, shell-exit metadata, completion notifications, and tool
+telemetry provide shell tasks. Shell records use the CLI `/tasks` default of
+background execution when the runtime omits an explicit mode. This keeps shell
+work visible without attaching a second owner to the session.
 
 The current Copilot CLI release review found these relevant UI features:
 

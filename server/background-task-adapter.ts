@@ -50,6 +50,10 @@ export interface CopilotTasksApi {
   cancel?: (params: { id: string }) => Promise<{ cancelled: boolean }>
 }
 
+export interface BackgroundTaskEventOptions {
+  assumeBackground?: boolean
+}
+
 export const MAX_BACKGROUND_TASKS = 100
 export const MAX_TASK_TEXT_LENGTH = 20_000
 export const MAX_TASK_ACTIVITY_LINES = 40
@@ -132,6 +136,9 @@ export function normalizeBackgroundTask(
   canCancel: boolean,
 ): BackgroundTask {
   const status = statusValue(task.status)
+  const executionMode =
+    executionModeValue(task.executionMode) ||
+    (task.type === 'shell' ? 'background' : undefined)
   const normalized: BackgroundTask = {
     id: task.id,
     type: task.type,
@@ -142,6 +149,7 @@ export function normalizeBackgroundTask(
     status,
     startedAt: task.startedAt,
     canCancel: canCancel && (status === 'running' || status === 'queued'),
+    ...(executionMode ? { executionMode } : {}),
   }
   const optionalStrings: Array<
     [keyof Pick<
@@ -177,7 +185,6 @@ export function normalizeBackgroundTask(
   }
   normalized.activeTimeMs = numberValue(task.activeTimeMs)
   normalized.pid = numberValue(task.pid)
-  normalized.executionMode = executionModeValue(task.executionMode)
   normalized.attachmentMode = attachmentModeValue(task.attachmentMode)
   normalized.progress = progressValue(progress)
   return normalized
@@ -244,6 +251,12 @@ function normalizedToolName(data: Record<string, unknown>): string {
 
 function taskArguments(data: Record<string, unknown>): Record<string, unknown> {
   return recordValue(data.arguments)
+}
+
+function toolTelemetryProperties(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  return recordValue(recordValue(data.toolTelemetry).properties)
 }
 
 function shellIdFromValue(value: unknown, depth = 0): string | undefined {
@@ -363,26 +376,35 @@ function shellTaskMode(
   executionMode: BackgroundTask['executionMode']
   attachmentMode: BackgroundTask['attachmentMode']
 } | undefined {
-  const requestedMode = stringValue(args.mode)?.toLowerCase()
+  const telemetry = toolTelemetryProperties(data)
+  const requestedMode = (
+    stringValue(args.mode) ||
+    stringValue(args.executionMode) ||
+    stringValue(telemetry.executionMode)
+  )?.toLowerCase()
   const executionMode = executionModeValue(
     eventString(data, 'executionMode') ||
       eventString(args, 'executionMode') ||
+      eventString(telemetry, 'executionMode') ||
       requestedMode,
   )
   const attachmentMode = attachmentModeValue(
     eventString(data, 'attachmentMode') ||
       eventString(args, 'attachmentMode') ||
+      eventString(telemetry, 'attachmentMode') ||
       eventString(args, 'attachment'),
   )
   const detached =
     attachmentMode === 'detached' ||
     booleanValue(args.detach) ||
     booleanValue(args.detached) ||
+    booleanValue(telemetry.detached) ||
     requestedMode === 'detached'
   const background =
     executionMode === 'background' ||
     booleanValue(args.async) ||
     booleanValue(args.background) ||
+    booleanValue(telemetry.background) ||
     requestedMode === 'background' ||
     requestedMode === 'async' ||
     detached
@@ -461,6 +483,7 @@ function eventTask(
   id: string,
   timestamp: string,
   data: Record<string, unknown>,
+  assumeBackground = false,
 ): BackgroundTask {
   const executionMode = executionModeValue(
     eventString(data, 'executionMode'),
@@ -478,7 +501,9 @@ function eventTask(
     agentType: eventString(data, 'agentType') || eventString(data, 'agentName'),
     prompt: boundedText(data.prompt),
     model: eventString(data, 'model'),
-    ...(executionMode ? { executionMode } : {}),
+    ...(executionMode || assumeBackground
+      ? { executionMode: executionMode || 'background' }
+      : {}),
     canCancel: false,
   }
 }
@@ -578,35 +603,43 @@ function backgroundHandoff(
     }
   | undefined {
   const result = recordValue(data.result)
+  const telemetry = toolTelemetryProperties(data)
   const executionMode =
     eventString(data, 'executionMode') ||
     eventString(result, 'executionMode') ||
+    eventString(telemetry, 'executionMode') ||
     eventString(data, 'mode') ||
     eventString(result, 'mode')
   const attachmentMode =
     eventString(data, 'attachmentMode') ||
-    eventString(result, 'attachmentMode')
+    eventString(result, 'attachmentMode') ||
+    eventString(telemetry, 'attachmentMode')
+  const detached =
+    attachmentMode === 'detached' || booleanValue(telemetry.detached)
   if (
     executionMode === 'background' ||
     executionMode === 'async' ||
-    attachmentMode === 'detached'
+    detached
   ) {
     return {
       executionMode: 'background',
       attachmentMode:
-        attachmentMode === 'detached' ? 'detached' : 'attached',
+        detached ? 'detached' : 'attached',
     }
   }
   if (
     booleanValue(data.background) ||
     booleanValue(data.detached) ||
     booleanValue(result.background) ||
-    booleanValue(result.detached)
+    booleanValue(result.detached) ||
+    booleanValue(telemetry.background)
   ) {
     return {
       executionMode: 'background',
       attachmentMode:
-        booleanValue(data.detached) || booleanValue(result.detached)
+        booleanValue(data.detached) ||
+        booleanValue(result.detached) ||
+        booleanValue(telemetry.detached)
           ? 'detached'
           : 'attached',
     }
@@ -643,7 +676,9 @@ function addActivity(
 
 export function backgroundTasksFromEvents(
   events: SessionEvent[],
+  options: BackgroundTaskEventOptions = {},
 ): BackgroundTask[] {
+  const assumeBackground = options.assumeBackground === true
   const tasks = new Map<string, BackgroundTask>()
   const aliases = new Map<string, string>()
   const shellStarts = new Map<
@@ -814,7 +849,9 @@ export function backgroundTasksFromEvents(
         const agentId = eventString(kind, 'agentId') || event.agentId
         if (agentId) {
           const id = taskIdAlias(aliases, agentId)
-          const current = tasks.get(id) || eventTask(agentId, event.timestamp, kind)
+          const current =
+            tasks.get(id) ||
+            eventTask(agentId, event.timestamp, kind, assumeBackground)
           current.executionMode = 'background'
           current.description =
             boundedText(eventString(kind, 'description')) ||
@@ -889,7 +926,7 @@ export function backgroundTasksFromEvents(
           const agentId = taskIdAlias(aliases, event.agentId)
           const current =
             tasks.get(agentId) ||
-            eventTask(agentId, event.timestamp, data)
+            eventTask(agentId, event.timestamp, data, assumeBackground)
           addActivity(
             current,
             eventString(data, 'toolName') || 'shell',
@@ -916,7 +953,8 @@ export function backgroundTasksFromEvents(
       if (!id) {
         continue
       }
-      const current = tasks.get(id) || eventTask(id, event.timestamp, data)
+      const current =
+        tasks.get(id) || eventTask(id, event.timestamp, data, assumeBackground)
       if (eventAgentId) {
         aliases.set(eventAgentId, id)
       }
@@ -928,6 +966,8 @@ export function backgroundTasksFromEvents(
       )
       if (executionMode) {
         current.executionMode = executionMode
+      } else if (assumeBackground && !current.executionMode) {
+        current.executionMode = 'background'
       }
       if (event.type === 'subagent.started') {
         current.status = 'running'
@@ -1015,7 +1055,7 @@ export function backgroundTasksFromEvents(
       const id = taskIdAlias(aliases, event.agentId)
       const current =
         tasks.get(id) ||
-        eventTask(id, event.timestamp, data)
+        eventTask(id, event.timestamp, data, assumeBackground)
       const toolName = eventString(data, 'toolName') || 'tool'
       addActivity(current, toolName, event.timestamp)
       tasks.set(id, current)

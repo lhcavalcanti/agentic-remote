@@ -47,6 +47,28 @@ describe('background task adapter', () => {
     )
   })
 
+  it('treats shell records without an execution mode as background tasks', () => {
+    expect(
+      normalizeBackgroundTask(
+        {
+          type: 'shell',
+          id: 'shell-1',
+          description: 'Run the dev server',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          command: 'pnpm dev',
+          attachmentMode: 'detached',
+        },
+        undefined,
+        false,
+      ),
+    ).toMatchObject({
+      id: 'shell-1',
+      executionMode: 'background',
+      attachmentMode: 'detached',
+    })
+  })
+
   it('reconstructs agent lifecycle, progress, failures, and cancellation', () => {
     const events = [
       {
@@ -135,6 +157,16 @@ describe('background task adapter', () => {
     )
     expect(tasks.find((task) => task.id === 'agent-1')).not.toHaveProperty(
       'executionMode',
+    )
+    expect(
+      backgroundTasksFromEvents(events, { assumeBackground: true }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'agent-1',
+          executionMode: 'background',
+        }),
+      ]),
     )
   })
 
@@ -403,6 +435,54 @@ describe('background task adapter', () => {
           type: 'shell',
           recentOutput: 'FAIL tests',
         },
+      }),
+    ])
+  })
+
+  it('recognizes detached shell mode from Copilot tool telemetry', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "shell-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:05:00.000Z",
+          "data": {
+            "toolCallId": "shell-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm dev"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "shell-launch",
+          "parentId": "shell-start",
+          "timestamp": "2026-08-31T18:05:01.000Z",
+          "data": {
+            "toolCallId": "shell-call",
+            "success": true,
+            "toolTelemetry": {
+              "properties": {
+                "executionMode": "async",
+                "detached": "true"
+              }
+            },
+            "result": {
+              "content": "<command started in detached background with shellId: shell-2>"
+            }
+          }
+        }
+      ]`) as SessionEvent[],
+    )
+
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        id: 'shell-2',
+        status: 'running',
+        executionMode: 'background',
+        attachmentMode: 'detached',
       }),
     ])
   })

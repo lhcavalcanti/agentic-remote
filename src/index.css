@@ -826,19 +826,9 @@ button {
   --computer-tint: rgba(110, 168, 254, 0.1);
 }
 
-.session-item--background-running .status-dot {
+.session-item--background-running .status-dot.status-dot--running {
   background: #6ea8fe;
   box-shadow: 0 0 0 4px rgba(110, 168, 254, 0.12);
-}
-
-.session-item--background-running .status-dot--waiting {
-  background: #f2c96d;
-  box-shadow: none;
-}
-
-.session-item--background-running .status-dot--error {
-  background: var(--danger);
-  box-shadow: none;
 }
 
 .status-dot--waiting {

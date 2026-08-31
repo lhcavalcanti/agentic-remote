@@ -2538,7 +2538,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.externalSessionIds.has(sessionId)) {
       return this.replaceBackgroundTasks(
         sessionId,
-        backgroundTasksFromEvents(await this.sessionEventReader(sessionId)),
+        backgroundTasksFromEvents(
+          await this.sessionEventReader(sessionId),
+          { assumeBackground: true },
+        ),
         true,
       )
     }
@@ -3125,7 +3128,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         const events = await this.sessionEventReader(sessionId)
         const terminalTasks = this.externalSessionIds.has(sessionId)
-          ? backgroundTasksFromEvents(events)
+          ? backgroundTasksFromEvents(events, { assumeBackground: true })
           : []
         if (this.externalSessionIds.has(sessionId)) {
           this.replaceBackgroundTasks(
@@ -3469,7 +3472,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!hasLifecycleEvent) {
         const hasBackgroundTaskActivity =
           relevant.some(isBackgroundTaskEvent) ||
-          backgroundTasksFromEvents(relevant).some(
+          backgroundTasksFromEvents(relevant, { assumeBackground: true }).some(
             (task) => task.executionMode === 'background',
           )
         if (

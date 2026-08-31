@@ -4615,7 +4615,14 @@ function App() {
     setComposerForKey(selectedKey, value)
   }
 
-  function setComposerForKey(targetKey: string, value: string) {
+  function setComposerForKey(targetKey: string, value: string, fromHistory = false) {
+    // Any write other than history navigation replaces the draft that
+    // navigation is tracking, so continuing to navigate afterwards would
+    // overwrite text the user never typed here. Editing a queued prompt,
+    // dictation, an upload, and path insertion all reach the composer this way.
+    if (!fromHistory) {
+      resetComposerHistory(targetKey)
+    }
     setComposerDrafts((current) => {
       if (!value) {
         const { [targetKey]: _removed, ...remaining } = current
@@ -4660,7 +4667,7 @@ function App() {
     composerHistoryRef.current[selectedKey] = history
     const value =
       nextIndex === messages.length ? history.draft : messages[nextIndex] || ''
-    setComposerForKey(selectedKey, value)
+    setComposerForKey(selectedKey, value, true)
     window.requestAnimationFrame(() => {
       if (
         selectedRef.current &&
@@ -4893,7 +4900,6 @@ function App() {
       return
     }
     const targetKey = sessionKey(selected)
-    resetComposerHistory(targetKey)
 
     const isCommand = content.startsWith('/')
     const commandName = isCommand
@@ -5316,9 +5322,6 @@ function App() {
     const textarea = composerRef.current
     const start = textarea?.selectionStart ?? composer.length
     const end = textarea?.selectionEnd ?? start
-    if (selectedKey) {
-      resetComposerHistory(selectedKey)
-    }
     setComposer(
       `${composer.slice(0, start)}\n${composer.slice(end)}`,
     )
@@ -6231,9 +6234,6 @@ function App() {
                   aria-label="Message"
                   disabled={sending}
                   onChange={(event) => {
-                    if (selectedKey) {
-                      resetComposerHistory(selectedKey)
-                    }
                     setComposer(event.target.value)
                   }}
                   onKeyDown={composerKeyDown}

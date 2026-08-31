@@ -1725,6 +1725,13 @@ describe('App', () => {
       'session-1',
       'queue-1',
     )
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Queued prompts')).queryByText(
+          'First queued prompt',
+        ),
+      ).not.toBeInTheDocument(),
+    )
 
     fireEvent.click(
       screen.getByRole('button', { name: 'Remove queued prompt 1' }),

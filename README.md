@@ -193,7 +193,8 @@ matrix.
 - **Queue**: add, edit, or remove prompts while an agent runs.
 - **Stop**: cancel the active response.
 - **Runtime**: configure supported model, effort, context, and mode options.
-- **App settings**: configure separate default model IDs for Copilot and Claude.
+- **App settings**: configure separate default model IDs for Copilot and Claude,
+  plus an optional default session folder for each computer.
 - **Session files**: browse, search, preview, and save Knowledge paths.
 - **Paperclip / microphone**: upload supported files or transcribe audio.
 

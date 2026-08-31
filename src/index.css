@@ -1785,6 +1785,137 @@ button {
   font-size: 11px;
 }
 
+.default-session-folders {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.default-session-folder {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--panel-raised);
+}
+
+.default-session-folder__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.default-session-folder__header > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.default-session-folder__header strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default-session-folder__header small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.default-session-folder__header code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default-session-folder__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.default-session-folder__controls .dialog-input {
+  height: 40px;
+}
+
+.default-session-folder__controls .secondary-button,
+.default-session-folder__browser-toolbar .secondary-button {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.default-session-folder__browser {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.default-session-folder__browser-toolbar {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding-top: 8px;
+}
+
+.default-session-folder__browser-toolbar .icon-button {
+  width: 32px;
+  height: 32px;
+}
+
+.default-session-folder__browser-toolbar code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default-session-folder__browser-list {
+  display: grid;
+  max-height: 180px;
+  gap: 2px;
+  margin-top: 6px;
+  overflow-y: auto;
+}
+
+.default-session-folder__browser-list button {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 7px;
+  color: var(--muted-strong);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.default-session-folder__browser-list button:hover {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--panel-soft);
+}
+
+.default-session-folder__browser-list button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .command-menu {
   position: absolute;
   right: max(18px, calc((100% - 800px) / 2));
@@ -2845,6 +2976,14 @@ button {
 
   .app-settings-section:last-child {
     padding-bottom: 0;
+  }
+
+  .default-session-folder__browser-toolbar {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .default-session-folder__browser-toolbar .secondary-button {
+    grid-column: 1 / -1;
   }
 
   .sidebar {

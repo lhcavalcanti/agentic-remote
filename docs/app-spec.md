@@ -292,6 +292,11 @@ switches, failed sends, and clear replacement IDs.
   and Claude. Blank defaults MUST preserve each provider's own default.
 - Provider defaults MUST apply only when creating a new session; existing
   sessions MUST keep their selected runtime model.
+- App settings MUST expose an optional default session folder for each computer.
+  Blank defaults MUST use that computer's home directory, and the setting MUST
+  apply only to new sessions; existing sessions MUST keep their working folder.
+- Default session folders MUST be stored in the browser keyed by computer ID and
+  MUST NOT be copied into provider or hub session state.
 - Context choices MUST show token capacity rather than labels such as Default or
   Long.
 - Supported modes are Interactive, Plan, and Autopilot.

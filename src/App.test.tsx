@@ -770,6 +770,74 @@ describe('App', () => {
     )
   })
 
+  it('persists default session folders independently for each computer', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => ({
+        path,
+        parent: path === '~' ? undefined : '~',
+        directories: [],
+      }),
+    )
+    vi.mocked(createSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.change(
+      screen.getByLabelText('Default session folder for development'),
+      { target: { value: '/mnt/c/src/lcavalcanti' } },
+    )
+    fireEvent.change(
+      screen.getByLabelText('Default session folder for worker-node'),
+      { target: { value: '~/worker' } },
+    )
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:default-session-folders') || '{}',
+        ),
+      ).toEqual({
+        'computer-1': '/mnt/c/src/lcavalcanti',
+        'computer-2': '~/worker',
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        'computer-1',
+        '/mnt/c/src/lcavalcanti',
+        'all',
+      ),
+    )
+    expect(screen.getByText(/The session will start in/)).toHaveTextContent(
+      '/mnt/c/src/lcavalcanti',
+    )
+
+    fireEvent.change(screen.getByLabelText('Computer'), {
+      target: { value: 'computer-2' },
+    })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith('computer-2', '~/worker'),
+    )
+    expect(screen.getByText(/The session will start in/)).toHaveTextContent(
+      '~/worker',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-2', {
+        cwd: '~/worker',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+      }),
+    )
+  })
+
   it('dismisses the update toast without removing it from app settings', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

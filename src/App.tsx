@@ -701,11 +701,12 @@ function NewSessionDialog({
           <select
             className="dialog-select"
             onChange={(event) => {
+              const nextComputerId = event.target.value
               directoryRequest.current += 1
-              setComputerId(event.target.value)
+              setComputerId(nextComputerId)
               setProvider('copilot')
               setHistoryKey('')
-              setCwd('~')
+              setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
             }}
             value={computerId}
           >

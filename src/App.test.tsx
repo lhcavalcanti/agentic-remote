@@ -963,6 +963,50 @@ describe('App', () => {
     expect(session.cwd).toBe('/home/tester/src/project')
   })
 
+  it('applies a selected computer default before its folder listing resolves', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-session-folders',
+      JSON.stringify({
+        version: 1,
+        folders: { [secondComputer.id]: '~/services' },
+      }),
+    )
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    let resolveListing: ((listing: {
+      path: string
+      parent?: string
+      directories: []
+    }) => void) | undefined
+    vi.mocked(listDirectories).mockImplementation(
+      async (computerId, path = '~') => {
+        if (computerId === secondComputer.id && path === '~/services') {
+          return await new Promise((resolve) => {
+            resolveListing = resolve
+          })
+        }
+        return { path, directories: [] }
+      },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.change(screen.getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith(secondComputer.id, {
+        cwd: '~/services',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+      }),
+    )
+    resolveListing?.({ path: '~/services', directories: [] })
+  })
+
   it('dismisses the update toast without removing it from app settings', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

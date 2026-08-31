@@ -65,9 +65,14 @@ button {
 .app-shell {
   --app-safe-area-top: env(safe-area-inset-top, 0px);
   --app-content-safe-area-top: var(--app-safe-area-top);
+  /* Both are tuned here rather than in the six places that used to hard-code
+     a column width. The sidebar value is overridden inline when resized. */
+  --sidebar-width: 286px;
+  --content-max-width: 1280px;
+  --composer-max-width: calc(var(--content-max-width) + 20px);
   display: grid;
   position: relative;
-  grid-template-columns: 286px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   height: 100dvh;
   min-height: 0;
   width: 100%;
@@ -87,6 +92,43 @@ button {
   overflow: hidden;
   border-right: 1px solid var(--border);
   background: rgba(23, 24, 21, 0.94);
+}
+
+/* Sits on the boundary between the two grid columns. Only meaningful above
+   the breakpoint where the sidebar stops being an overlay. */
+.sidebar-resizer {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sidebar-width) - 3px);
+  width: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background 120ms ease-out;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after,
+.sidebar-resizer[data-resizing='true']::after {
+  background: var(--accent, var(--border-strong));
+}
+
+.sidebar-resizer:focus-visible {
+  outline: none;
 }
 
 .brand {
@@ -762,8 +804,9 @@ button {
   width: 100%;
   max-width: 100%;
   padding: 34px
-    max(24px, env(safe-area-inset-right), calc((100% - 780px) / 2)) 22px
-    max(24px, env(safe-area-inset-left), calc((100% - 780px) / 2));
+    max(24px, env(safe-area-inset-right), calc((100% - var(--content-max-width)) / 2))
+    22px
+    max(24px, env(safe-area-inset-left), calc((100% - var(--content-max-width)) / 2));
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -1548,14 +1591,14 @@ button {
   position: relative;
   z-index: 2;
   padding: 8px
-    max(18px, env(safe-area-inset-right), calc((100% - 800px) / 2))
+    max(18px, env(safe-area-inset-right), calc((100% - var(--composer-max-width)) / 2))
     max(10px, env(safe-area-inset-bottom))
-    max(18px, env(safe-area-inset-left), calc((100% - 800px) / 2));
+    max(18px, env(safe-area-inset-left), calc((100% - var(--composer-max-width)) / 2));
   background: var(--bg);
 }
 
 .queued-prompts {
-  max-width: 800px;
+  max-width: var(--composer-max-width);
   max-height: 160px;
   margin: 0 auto 8px;
   overflow: hidden;
@@ -1617,8 +1660,8 @@ button {
   align-items: center;
   gap: 12px;
   padding: 5px
-    max(18px, env(safe-area-inset-right), calc((100% - 800px) / 2)) 5px
-    max(18px, env(safe-area-inset-left), calc((100% - 800px) / 2));
+    max(18px, env(safe-area-inset-right), calc((100% - var(--composer-max-width)) / 2)) 5px
+    max(18px, env(safe-area-inset-left), calc((100% - var(--composer-max-width)) / 2));
   color: #73776d;
   border-top: 1px solid var(--border);
   background: #0f100e;
@@ -1631,7 +1674,7 @@ button {
 .composer-runtime {
   display: flex;
   width: fit-content;
-  max-width: 800px;
+  max-width: var(--composer-max-width);
   min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -1865,9 +1908,9 @@ button {
 
 .command-menu {
   position: absolute;
-  right: max(18px, calc((100% - 800px) / 2));
+  right: max(18px, calc((100% - var(--composer-max-width)) / 2));
   bottom: calc(100% - 8px);
-  left: max(18px, calc((100% - 800px) / 2));
+  left: max(18px, calc((100% - var(--composer-max-width)) / 2));
   z-index: 5;
   max-height: min(340px, 48dvh);
   padding: 6px;
@@ -2794,6 +2837,10 @@ button {
   .user-input-card__form input,
   .composer textarea {
     font-size: 16px;
+  }
+
+  .sidebar-resizer {
+    display: none;
   }
 
   .app-shell {

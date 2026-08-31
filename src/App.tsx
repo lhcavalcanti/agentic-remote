@@ -12,6 +12,8 @@ import type {
   DragEvent as ReactDragEvent,
   FormEvent,
   KeyboardEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
   ReactNode,
   TouchEvent as ReactTouchEvent,
 } from 'react'
@@ -212,6 +214,26 @@ function slashShortcut(value: string): string {
     .join('')
     .toLowerCase()
     : ''
+}
+
+const SIDEBAR_WIDTH_KEY = 'agentic-remote:sidebar-width'
+const SIDEBAR_WIDTH_DEFAULT = 286
+const SIDEBAR_WIDTH_MIN = 220
+const SIDEBAR_WIDTH_MAX = 560
+
+function clampSidebarWidth(value: number): number {
+  return Math.min(Math.max(Math.round(value), SIDEBAR_WIDTH_MIN), SIDEBAR_WIDTH_MAX)
+}
+
+function readStoredSidebarWidth(): number {
+  try {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+    return Number.isFinite(stored) && stored > 0
+      ? clampSidebarWidth(stored)
+      : SIDEBAR_WIDTH_DEFAULT
+  } catch {
+    return SIDEBAR_WIDTH_DEFAULT
+  }
 }
 
 function readStoredOrder<T>(key: string, fallback: T): T {
@@ -4088,6 +4110,8 @@ function App() {
   const [movingToTmux, setMovingToTmux] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
+  const [resizingSidebar, setResizingSidebar] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -4147,6 +4171,68 @@ function App() {
   const eventSequenceRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
   const computerEventSequenceRef = useRef(new Map<string, number>())
+  const sidebarResizeRef = useRef<
+    { pointerId: number; startX: number; startWidth: number } | undefined
+  >(undefined)
+
+  function commitSidebarWidth(width: number) {
+    const next = clampSidebarWidth(width)
+    setSidebarWidth(next)
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next))
+    } catch {
+      // A blocked storage quota should not stop the drag from working.
+    }
+  }
+
+  function sidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+    sidebarResizeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: sidebarWidth,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setResizingSidebar(true)
+  }
+
+  function sidebarResizeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const gesture = sidebarResizeRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId) {
+      return
+    }
+    setSidebarWidth(
+      clampSidebarWidth(gesture.startWidth + (event.clientX - gesture.startX)),
+    )
+  }
+
+  function sidebarResizeEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    const gesture = sidebarResizeRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId) {
+      return
+    }
+    sidebarResizeRef.current = undefined
+    setResizingSidebar(false)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    commitSidebarWidth(sidebarWidth)
+  }
+
+  function sidebarResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 32 : 8
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      commitSidebarWidth(sidebarWidth - step)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      commitSidebarWidth(sidebarWidth + step)
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT)
+    }
+  }
+
   const sidebarGestureRef = useRef<
     | {
         startX: number
@@ -5935,9 +6021,27 @@ function App() {
         {
           '--visual-viewport-height': `${viewportHeight}px`,
           '--visual-viewport-top': `${viewportOffsetTop}px`,
+          '--sidebar-width': `${sidebarWidth}px`,
         } as CSSProperties
       }
     >
+      <div
+        aria-label="Resize sidebar"
+        aria-orientation="vertical"
+        aria-valuemax={SIDEBAR_WIDTH_MAX}
+        aria-valuemin={SIDEBAR_WIDTH_MIN}
+        aria-valuenow={sidebarWidth}
+        className="sidebar-resizer"
+        data-resizing={resizingSidebar ? 'true' : 'false'}
+        onDoubleClick={() => commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT)}
+        onKeyDown={sidebarResizeKeyDown}
+        onLostPointerCapture={sidebarResizeEnd}
+        onPointerDown={sidebarResizeStart}
+        onPointerMove={sidebarResizeMove}
+        onPointerUp={sidebarResizeEnd}
+        role="separator"
+        tabIndex={0}
+      />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
         <div className="brand">
           <span className="brand__mark">

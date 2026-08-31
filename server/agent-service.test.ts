@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -951,6 +952,87 @@ describe('AgentService deletion', () => {
 
     expect(store.get(client.session.sessionId)).toBeUndefined()
     await service.stop()
+  })
+
+  it('settles outstanding writes before stop resolves', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const stateDirectory = path.join(directory, 'state')
+    const store = new SessionStore(stateDirectory)
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    await service.createSession(directory)
+    await service.sendMessage(client.session.sessionId, 'keep working')
+
+    // Resolve the prompt without awaiting it, so a write is still settling.
+    client.session.resolvePrompt()
+    await service.stop()
+
+    // Once stop() has resolved, removing the directory must not race a write.
+    await rm(stateDirectory, { recursive: true, force: true })
+    const failures: unknown[] = []
+    const onUnhandled = (reason: unknown) => failures.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      expect(failures).toEqual([])
+      expect(existsSync(stateDirectory)).toBe(false)
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  it('reports a failed prompt write instead of raising an unhandled rejection', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store,
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    const errors: string[] = []
+    service.on('event', (event) => {
+      if (event.type === 'error') {
+        errors.push(event.message)
+      }
+    })
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+
+    try {
+      await service.createSession(directory)
+      await service.sendMessage(client.session.sessionId, 'keep working')
+
+      // The state directory disappearing mid-prompt is what happens when a
+      // write outlives its data directory; runPrompt persists from its own
+      // completion and failure paths, and it is dispatched fire-and-forget.
+      vi.spyOn(store, 'update').mockRejectedValue(
+        new Error('state directory is gone'),
+      )
+      client.session.resolvePrompt()
+      for (let attempt = 0; attempt < 100 && errors.length === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+
+      expect(errors).toContain('state directory is gone')
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+      vi.restoreAllMocks()
+      await service.stop()
+    }
   })
 
   it('keeps UI-created sessions open across service restarts', async () => {

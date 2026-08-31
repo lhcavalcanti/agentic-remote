@@ -15,8 +15,6 @@ dist-ssr
 .env.*
 !.env.example
 .agentic-remote/
-# Preview worktrees created by the local running-app service.
-.running-app/
 *.pem
 *.key
 

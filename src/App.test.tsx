@@ -19,13 +19,11 @@ import type {
 import App from './App'
 import {
   activateSession,
-  addKnowledgeBookmark,
   cancelSession,
   clearConversation,
   createSession,
   configureRuntime,
   deleteSession,
-  deleteKnowledgeBookmark,
   executeCommand,
   getPushSettings,
   getProviderRuntimeOptions,
@@ -35,7 +33,6 @@ import {
   listComputers,
   listDirectories,
   listHistory,
-  listKnowledgeBookmarks,
   listKnowledgeRoots,
   listKnowledgeEntries,
   readKnowledgeFile,
@@ -64,14 +61,11 @@ vi.mock('./api', () => ({
   removeQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
-  listKnowledgeBookmarks: vi.fn(),
   listKnowledgeRoots: vi.fn(),
   addKnowledgeRoot: vi.fn(),
   deleteKnowledgeRoot: vi.fn(),
   listKnowledgeEntries: vi.fn(),
   readKnowledgeFile: vi.fn(),
-  addKnowledgeBookmark: vi.fn(),
-  deleteKnowledgeBookmark: vi.fn(),
   listDirectories: vi.fn(),
   listWorkspace: vi.fn(),
   moveSessionToTmux: vi.fn(),
@@ -299,7 +293,6 @@ describe('App', () => {
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
-    vi.mocked(listKnowledgeBookmarks).mockResolvedValue([])
     vi.mocked(listKnowledgeRoots).mockResolvedValue([])
     vi.mocked(listWorkspace).mockImplementation(
       async (_computerId, _sessionId, path = '.') =>
@@ -358,14 +351,6 @@ describe('App', () => {
       ],
       truncated: false,
     })
-    vi.mocked(addKnowledgeBookmark).mockImplementation(async (input) => ({
-      id: `bookmark-${input.kind}-${input.path}`,
-      computerName: computer.name,
-      sessionTitle: session.title,
-      ...input,
-      createdAt: '2026-08-04T00:00:00.000Z',
-    }))
-    vi.mocked(deleteKnowledgeBookmark).mockResolvedValue()
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') =>
         path === '~'
@@ -1930,17 +1915,30 @@ describe('App', () => {
     expect(screen.queryByText('What should I inspect?')).not.toBeInTheDocument()
   })
 
-  it('scrolls a newly received question into view', async () => {
+  it('opens at the latest messages and scrolls a new question into view while scrolled up', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     await waitFor(() =>
       expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1'),
     )
-    await act(async () => {
-      await Promise.resolve()
-    })
     const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
+    )
+
+    const timeline = document.querySelector<HTMLElement>('.timeline')
+    expect(timeline).not.toBeNull()
+    Object.defineProperties(timeline!, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+    })
+    fireEvent.scroll(timeline!)
     scrollIntoView.mockClear()
+    scrollIntoView.mockImplementation(() => {
+      timeline!.scrollTop = 500
+      fireEvent.scroll(timeline!)
+    })
 
     act(() => {
       MockWebSocket.instances[0]?.onmessage?.({
@@ -1963,6 +1961,174 @@ describe('App', () => {
     expect(
       await screen.findByText('Choose the deployment target'),
     ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
+    )
+    scrollIntoView.mockClear()
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            status: 'waiting',
+            pendingUserInput: {
+              requestId: 'new-question',
+              question: 'Choose the deployment target',
+              choices: ['Development', 'Production'],
+              allowFreeform: false,
+            },
+            messages: [
+              ...session.messages,
+              {
+                id: 'later-message',
+                role: 'assistant',
+                content: 'A later transcript update',
+                createdAt: '2026-07-22T00:00:04.000Z',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+
+    expect(await screen.findByText('A later transcript update')).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('scrolls a new permission into view while scrolled up', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+
+    const timeline = document.querySelector<HTMLElement>('.timeline')
+    expect(timeline).not.toBeNull()
+    Object.defineProperties(timeline!, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+    })
+    fireEvent.scroll(timeline!)
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            status: 'waiting',
+            pendingPermission: {
+              requestId: 'new-permission',
+              title: 'Run the deployment command?',
+              options: [
+                { optionId: 'allow', name: 'Allow', kind: 'allow' },
+                { optionId: 'deny', name: 'Deny', kind: 'deny' },
+              ],
+            },
+          },
+        }),
+      } as MessageEvent)
+    })
+
+    expect(
+      await screen.findByText('Run the deployment command?'),
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
+    )
+  })
+
+  it('preserves a scrolled-up timeline through complete and streaming messages', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+
+    const timeline = document.querySelector<HTMLElement>('.timeline')
+    expect(timeline).not.toBeNull()
+    Object.defineProperties(timeline!, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+    })
+    fireEvent.scroll(timeline!)
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+
+    const streamedMessage = {
+      id: 'streamed-message',
+      role: 'assistant' as const,
+      content: 'A complete response',
+      createdAt: '2026-07-22T00:00:03.000Z',
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            messages: [...session.messages, streamedMessage],
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(await screen.findByText('A complete response')).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(timeline!.scrollTop).toBe(100)
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            messages: [
+              ...session.messages,
+              {
+                ...streamedMessage,
+                content: 'A complete response with a streamed update',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(
+      await screen.findByText('A complete response with a streamed update'),
+    ).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(timeline!.scrollTop).toBe(100)
+
+    timeline!.scrollTop = 470
+    fireEvent.scroll(timeline!)
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            messages: [
+              ...session.messages,
+              {
+                ...streamedMessage,
+                content: 'A later streamed update',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+
+    expect(await screen.findByText('A later streamed update')).toBeInTheDocument()
     await waitFor(() =>
       expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' }),
     )

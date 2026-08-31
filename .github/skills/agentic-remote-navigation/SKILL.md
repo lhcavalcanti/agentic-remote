@@ -22,7 +22,7 @@ product specification and wins over this skill whenever the two disagree.
 | How is it installed and secured? | `README.md` |
 | How are builds promoted and cleaned up? | `docs/deployment-promotion.md` |
 | Rollout approval policy | `.github/copilot-instructions.md` |
-| Host topology and deployment | `homelab-development-navigation` skill |
+| Host topology and deployment | The machine-local promotion profile and `docs/deployment-promotion.md` |
 
 ## Where behavior lives
 
@@ -105,11 +105,16 @@ root, service name, health/external checks, validation policy, promotion policy,
 and rollback policy. Do not store credentials or pairing tokens in that
 profile.
 
-The production service must run from the immutable `current` release. A
-local-only monitor may pull and validate the development checkout, then
-graduate the exact validated commit to the production runtime. It must not run
-tests against or replace the externally reachable service before validation
-completes. See `docs/deployment-promotion.md` for the full contract.
+The production service must run from the immutable `current` release. The
+repository provides generic `bin/agentic-remote-promotion-monitor`,
+`bin/agentic-remote-promotion-setup`, and
+`config/agentic-remote-promotion.env.example` assets. Installing them copies
+the monitor and profile into machine-local paths; the systemd timer must not
+execute from the mutable development checkout. The local-only monitor may pull
+and validate the development checkout, then graduate the exact validated
+commit to the production runtime. It must not run tests against or replace the
+externally reachable service before validation completes. See
+`docs/deployment-promotion.md` for the full contract.
 
 ## Security invariants
 
@@ -212,19 +217,22 @@ unowned worktrees without explicit approval.
 2. `./bin/agentic-remote update` pulls the branch, installs, builds, publishes
    an immutable release, and restarts the service. `KillMode=process` keeps
    tmux sessions alive across the restart.
-3. Verify development: service active, `/api/health` 200, computers still
+3. Verify development: service active, `/health` 200, computers still
    `online`, sessions preserved, and **the behavior the change was made for
    actually exercised**. That last part is what makes development "stable"; a
    green deploy alone does not.
 4. **Once development is stable, continue to production without asking.** Run
-   the same `update` over the approved operator SSH path
-   (`homelab-prod-agent`).
+   the same `update` on the production host over the operator SSH path
+   configured for this machine. The host, account, and SSH options belong to the
+   local promotion profile, never to this repository.
 5. Ask first only when development could not prove the change — node-only
    behavior that was never exercised through the hub, anything that migrates or
    deletes stored state, inconclusive verification, or a rollout that
    `rollback` cannot undo (`.github/copilot-instructions.md`).
-6. Verify production: node health, hub connectivity, and the affected behavior.
-   A node answers `404` on `/`, so check it through the hub's computer list.
+6. Verify production: runtime health, hub connectivity, and the affected
+   behavior. Both roles answer `/health`; only a hub answers `/api/health`, and
+   only `/api/` URLs are Host-allowlisted. A node answers `404` on `/`, so check
+   it through the hub's computer list.
 7. `./bin/agentic-remote rollback` activates the previous release. If
    production verification fails, roll it back rather than leaving the hosts
    diverged.

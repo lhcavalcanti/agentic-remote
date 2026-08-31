@@ -1202,6 +1202,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ),
       ...(await this.client.stop()),
     ]
+    // Sessions and the SDK are down, so settle any write they triggered. Once
+    // stop() resolves no further write can land, which is what lets a caller
+    // safely tear down the data directory.
+    await this.store.flush()
     const runtimeTimeouts = errors.filter((error) =>
       error.message.startsWith(
         'Failed to gracefully shut down runtime: runtime.shutdown timed out',
@@ -2209,7 +2213,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.activePrompts.set(sessionId, { assistantMessageId })
     this.publish(updated)
 
-    void this.runPrompt(sdkSession, content, assistantMessageId)
+    // runPrompt writes to the store from its own catch and finally paths, so a
+    // failure there would escape this fire-and-forget call as an unhandled
+    // rejection and abort the process.
+    void this.runPrompt(sdkSession, content, assistantMessageId).catch(
+      (error: unknown) => {
+        this.publishError(sessionId, error)
+      },
+    )
     return updated
   }
 

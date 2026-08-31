@@ -151,13 +151,13 @@ import {
 import { composerMaximumHeight } from './composer-sizing'
 import {
   activatePwaUpdate,
+  activePushSubscription,
   checkForPwaUpdate,
   clearSessionPushNotifications,
   disablePushNotifications,
   enablePushNotifications,
   installedAsApp,
   pushNotificationsSupported,
-  pushSubscription,
   PWA_UPDATE_EVENT,
 } from './pwa'
 
@@ -302,6 +302,8 @@ const defaultStatusline: StatuslineSettings = {
   mode: true,
   permissions: true,
 }
+
+const timelineBottomThreshold = 48
 
 const statuslineOptions: Array<{
   key: keyof Omit<StatuslineSettings, 'enabled'>
@@ -1531,7 +1533,7 @@ function AppSettingsDialog({
     let active = true
     setLoading(true)
     setError(undefined)
-    void pushSubscription()
+    void activePushSubscription()
       .then((subscription) => {
         if (active) {
           setEnabled(Boolean(subscription))
@@ -4259,6 +4261,10 @@ function App() {
   )
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const autoScrollRef = useRef(true)
+  const autoScrollSessionRef = useRef<string | undefined>(undefined)
+  const previousPendingActionRef = useRef<string | undefined>(undefined)
+  const requiredActionScrollRef = useRef(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined)
@@ -4956,16 +4962,56 @@ function App() {
 
   const latestContent = selected?.messages.at(-1)?.content
   useEffect(() => {
+    if (autoScrollSessionRef.current !== selectedKey) {
+      autoScrollSessionRef.current = selectedKey
+      autoScrollRef.current = true
+    }
+    const pendingActionArrived =
+      pendingActionId !== undefined &&
+      pendingActionId !== previousPendingActionRef.current
+    previousPendingActionRef.current = pendingActionId
+    if (!autoScrollRef.current && !pendingActionArrived) {
+      return
+    }
+    const preserveDisabledAutoScroll =
+      !autoScrollRef.current && pendingActionArrived
+    let releaseFrame: number | undefined
     const frame = window.requestAnimationFrame(() => {
+      requiredActionScrollRef.current = preserveDisabledAutoScroll
       bottomRef.current?.scrollIntoView({ block: 'end' })
+      if (preserveDisabledAutoScroll) {
+        releaseFrame = window.requestAnimationFrame(() => {
+          requiredActionScrollRef.current = false
+        })
+      }
     })
-    return () => window.cancelAnimationFrame(frame)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (releaseFrame !== undefined) {
+        window.cancelAnimationFrame(releaseFrame)
+      }
+      requiredActionScrollRef.current = false
+    }
   }, [
     selectedKey,
     selected?.messages.length,
     latestContent,
     pendingActionId,
   ])
+
+  function timelineScrolled() {
+    const timeline = timelineRef.current
+    if (!timeline) {
+      return
+    }
+    if (requiredActionScrollRef.current) {
+      autoScrollRef.current = false
+      return
+    }
+    const distanceFromBottom =
+      timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight
+    autoScrollRef.current = distanceFromBottom <= timelineBottomThreshold
+  }
 
   useLayoutEffect(() => {
     const textarea = composerRef.current
@@ -6308,7 +6354,7 @@ function App() {
           </div>
         ) : null}
 
-        <div className="timeline" ref={timelineRef}>
+        <div className="timeline" onScroll={timelineScrolled} ref={timelineRef}>
           {!selected ? (
             <EmptyConversation onCreate={() => setNewSessionOpen(true)} />
           ) : loadingTranscript && selected.messages.length === 0 ? (

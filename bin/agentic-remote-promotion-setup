@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
+readonly REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
+# AGENTIC_REMOTE_PROMOTION_HOME relocates the profile, monitor, and unit files
+# only. systemctl --user still acts on the caller's own systemd session, so
+# `enable` from an overridden home arms the real timer. It is not a sandbox.
+readonly USER_HOME="${AGENTIC_REMOTE_PROMOTION_HOME:-${HOME:-}}"
+readonly CONFIG_DIR="$USER_HOME/.config/agentic-remote"
+readonly SYSTEMD_DIR="$USER_HOME/.config/systemd/user"
+readonly PROFILE_DEST="$CONFIG_DIR/promotion.env"
+readonly INSTALL_DIR="$USER_HOME/.local/lib/agentic-remote"
+readonly MONITOR_DEST="$INSTALL_DIR/promotion-monitor"
+readonly SERVICE_NAME="agentic-remote-promotion-monitor.service"
+readonly TIMER_NAME="agentic-remote-promotion-monitor.timer"
+readonly SERVICE_FILE="$SYSTEMD_DIR/$SERVICE_NAME"
+readonly TIMER_FILE="$SYSTEMD_DIR/$TIMER_NAME"
+readonly EXAMPLE_PROFILE="$REPO_ROOT/config/agentic-remote-promotion.env.example"
+
+usage() {
+  cat <<'EOF'
+Usage: agentic-remote-promotion-setup <command> [options]
+
+Commands:
+  init [--force]
+      Copy the repository profile example to the local profile path.
+  install [--profile FILE] [--create-runtime] [--enable]
+      Install the local monitor and user systemd units. Disabled by default.
+      --create-runtime creates the detached production worktree when absent.
+  enable
+      Enable and start the local two-hour promotion timer.
+  disable
+      Disable the local promotion timer.
+  status
+      Show the local promotion timer status.
+  uninstall
+      Remove the local monitor and systemd units, preserving profile and state.
+EOF
+}
+
+die() {
+  printf 'agentic-remote-promotion-setup: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+systemd_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+profile_value() {
+  local profile="$1" key="$2"
+  sed -n "s/^${key}=//p" "$profile" | tail -n 1
+}
+
+validate_profile() {
+  local profile="$1" key
+  [[ -f "$profile" ]] || die "profile not found: $profile"
+  if grep -Eq '/absolute/path|/home/USER|owner/repository|github-user' "$profile"; then
+    die "replace the placeholders in the profile before installing it: $profile"
+  fi
+  for key in \
+    AGENTIC_REMOTE_MONITOR_HOME \
+    AGENTIC_REMOTE_MONITOR_DEV_ROOT \
+    AGENTIC_REMOTE_MONITOR_PROD_ROOT \
+    AGENTIC_REMOTE_MONITOR_RELEASE_ROOT \
+    AGENTIC_REMOTE_MONITOR_SERVICE \
+    AGENTIC_REMOTE_MONITOR_HEALTH_URL \
+    AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR \
+    AGENTIC_REMOTE_MONITOR_GITHUB_USER \
+    AGENTIC_REMOTE_MONITOR_REPOSITORY; do
+    [[ -n "$(profile_value "$profile" "$key")" ]] ||
+      die "profile is missing $key: $profile"
+  done
+}
+
+write_units() {
+  local dev_root node_bin corepack_bin gh_bin runtime_path temporary
+  node_bin="$(command -v node)"
+  corepack_bin="$(command -v corepack)"
+  gh_bin="$(command -v gh)"
+  runtime_path="$(dirname "$node_bin"):$(dirname "$corepack_bin"):$(dirname "$gh_bin"):/usr/local/bin:/usr/bin:/bin"
+  dev_root="$(profile_value "$PROFILE_DEST" AGENTIC_REMOTE_MONITOR_DEV_ROOT)"
+  [[ -n "$dev_root" ]] || die "profile is missing AGENTIC_REMOTE_MONITOR_DEV_ROOT"
+
+  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.service.XXXXXX")"
+  cat >"$temporary" <<EOF
+[Unit]
+Description=Validate and graduate Agentic Remote development builds
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$dev_root
+Environment=$(systemd_quote "HOME=$USER_HOME")
+Environment=$(systemd_quote "AGENTIC_REMOTE_MONITOR_PROFILE=$PROFILE_DEST")
+Environment=$(systemd_quote "PATH=$runtime_path")
+TimeoutStartSec=30min
+ExecStart=$(systemd_quote "$MONITOR_DEST") run
+EOF
+  install -m 0600 "$temporary" "$SERVICE_FILE"
+  rm -f -- "$temporary"
+
+  temporary="$(mktemp "$SYSTEMD_DIR/.agentic-remote-promotion-monitor.timer.XXXXXX")"
+  cat >"$temporary" <<EOF
+[Unit]
+Description=Check and graduate Agentic Remote builds every two hours
+
+[Timer]
+# A calendar schedule so the next run is always defined. Monotonic triggers do
+# not survive a long-lived session: a boot-relative trigger elapses once and
+# never returns, and a unit-active-relative one can leave the timer with no
+# next elapse at all, so an enabled timer would silently never run. Catching up
+# a missed run also requires a calendar schedule.
+OnCalendar=*-*-* 0/2:00:00
+Persistent=true
+RandomizedDelaySec=5min
+Unit=$SERVICE_NAME
+
+[Install]
+WantedBy=timers.target
+EOF
+  install -m 0600 "$temporary" "$TIMER_FILE"
+  rm -f -- "$temporary"
+}
+
+create_runtime_worktree() {
+  local dev_root prod_root prod_branch
+  dev_root="$(profile_value "$PROFILE_DEST" AGENTIC_REMOTE_MONITOR_DEV_ROOT)"
+  prod_root="$(profile_value "$PROFILE_DEST" AGENTIC_REMOTE_MONITOR_PROD_ROOT)"
+  [[ -n "$dev_root" && -n "$prod_root" ]] ||
+    die "profile must define development and production runtime roots"
+  [[ "$dev_root" != "$prod_root" ]] ||
+    die "development and production runtime roots must be different"
+  git -C "$dev_root" rev-parse --show-toplevel >/dev/null 2>&1 ||
+    die "development root is not a Git repository: $dev_root"
+  [[ "$(git -C "$dev_root" branch --show-current)" == "main" ]] ||
+    die "development root must be on main: $dev_root"
+  [[ -z "$(git -C "$dev_root" status --porcelain)" ]] ||
+    die "development root must be clean before creating the runtime worktree"
+
+  if [[ -e "$prod_root" || -L "$prod_root" ]]; then
+    git -C "$prod_root" rev-parse --show-toplevel >/dev/null 2>&1 ||
+      die "production runtime path exists but is not a Git worktree: $prod_root"
+    prod_branch="$(git -C "$prod_root" branch --show-current)"
+    [[ -z "$prod_branch" ]] ||
+      die "existing production runtime worktree must be detached: $prod_root"
+    return
+  fi
+
+  mkdir -p "$(dirname "$prod_root")"
+  git -C "$dev_root" worktree add --detach "$prod_root" HEAD
+}
+
+init_profile() {
+  local force=0
+  while (($# > 0)); do
+    case "$1" in
+      --force)
+        force=1
+        shift
+        ;;
+      *)
+        die "unknown init option: $1"
+        ;;
+    esac
+  done
+  [[ -f "$EXAMPLE_PROFILE" ]] || die "profile example not found: $EXAMPLE_PROFILE"
+  if [[ -e "$PROFILE_DEST" && "$force" != 1 ]]; then
+    die "profile already exists; use init --force to replace it"
+  fi
+  mkdir -p "$CONFIG_DIR"
+  local temporary
+  temporary="$(mktemp "$CONFIG_DIR/.promotion.env.XXXXXX")"
+  install -m 0600 "$EXAMPLE_PROFILE" "$temporary"
+  mv -f -- "$temporary" "$PROFILE_DEST"
+  printf 'Created %s; edit it before installing the monitor.\n' "$PROFILE_DEST"
+}
+
+install_monitor() {
+  local profile="$PROFILE_DEST" enable=0 create_runtime=0
+  while (($# > 0)); do
+    case "$1" in
+      --profile)
+        (($# >= 2)) || die "--profile requires a value"
+        profile="$2"
+        shift 2
+        ;;
+      --enable)
+        enable=1
+        shift
+        ;;
+      --create-runtime)
+        create_runtime=1
+        shift
+        ;;
+      *)
+        die "unknown install option: $1"
+        ;;
+    esac
+  done
+
+  require_command corepack
+  require_command gh
+  require_command node
+  require_command systemctl
+  validate_profile "$profile"
+  mkdir -p "$CONFIG_DIR" "$INSTALL_DIR" "$SYSTEMD_DIR"
+
+  local temporary
+  temporary="$(mktemp "$CONFIG_DIR/.promotion.env.XXXXXX")"
+  install -m 0600 "$profile" "$temporary"
+  mv -f -- "$temporary" "$PROFILE_DEST"
+  if [[ "$create_runtime" == 1 ]]; then
+    create_runtime_worktree
+  fi
+  install -m 0755 "$REPO_ROOT/bin/agentic-remote-promotion-monitor" "$MONITOR_DEST"
+  write_units
+  systemctl --user daemon-reload
+  if [[ "$enable" == 1 ]]; then
+    # Route through enable_monitor so --enable gets the same health preflight as
+    # the standalone command instead of arming an unverified timer.
+    enable_monitor
+  else
+    printf 'Local promotion monitor installed and disabled by default.\n'
+  fi
+}
+
+enable_monitor() {
+  require_command systemctl
+  require_command curl
+  [[ -f "$SERVICE_FILE" && -f "$TIMER_FILE" ]] ||
+    die "monitor is not installed; run install first"
+
+  # The health check runs after the service has already been replaced, so an
+  # unreachable URL turns every promotion into a restart that then reports
+  # failure. Refuse to arm the timer until the URL actually answers.
+  local health_url
+  health_url="$(profile_value "$PROFILE_DEST" AGENTIC_REMOTE_MONITOR_HEALTH_URL)"
+  [[ -n "$health_url" ]] ||
+    die "set AGENTIC_REMOTE_MONITOR_HEALTH_URL in $PROFILE_DEST before enabling"
+  curl -fsS --max-time 10 "$health_url" >/dev/null ||
+    die "health URL did not answer: $health_url"
+
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$TIMER_NAME"
+  # An already-running timer keeps the schedule it started with, so a changed
+  # unit would not take effect until the next session. Restart it so the
+  # installed schedule is the one that is armed.
+  systemctl --user restart "$TIMER_NAME"
+  printf 'Local promotion monitor enabled. Next run: %s\n' \
+    "$(systemctl --user show "$TIMER_NAME" -p NextElapseUSecRealtime --value)"
+}
+
+disable_monitor() {
+  require_command systemctl
+  systemctl --user disable --now "$TIMER_NAME" 2>/dev/null || true
+  printf 'Local promotion monitor disabled.\n'
+}
+
+status_monitor() {
+  require_command systemctl
+  systemctl --user --no-pager --full status "$TIMER_NAME"
+}
+
+uninstall_monitor() {
+  require_command systemctl
+  systemctl --user disable --now "$TIMER_NAME" 2>/dev/null || true
+  rm -f -- "$SERVICE_FILE" "$TIMER_FILE" "$MONITOR_DEST"
+  systemctl --user daemon-reload
+  printf 'Local promotion monitor removed; profile and state were preserved.\n'
+}
+
+command="${1:-}"
+if (($# > 0)); then
+  shift
+fi
+
+case "$command" in
+  init)
+    init_profile "$@"
+    ;;
+  install)
+    install_monitor "$@"
+    ;;
+  enable)
+    (($# == 0)) || die "enable does not accept options"
+    enable_monitor
+    ;;
+  disable)
+    (($# == 0)) || die "disable does not accept options"
+    disable_monitor
+    ;;
+  status)
+    (($# == 0)) || die "status does not accept options"
+    status_monitor
+    ;;
+  uninstall)
+    (($# == 0)) || die "uninstall does not accept options"
+    uninstall_monitor
+    ;;
+  *)
+    usage
+    [[ -z "$command" ]] || exit 1
+    ;;
+esac

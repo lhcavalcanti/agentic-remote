@@ -97,14 +97,6 @@ const workspaceSearchQuerySchema = z.object({
   query: z.string().trim().min(2).max(200),
   path: z.string().trim().max(4096).optional(),
 })
-const bookmarkSchema = z.object({
-  computerId: z.string().trim().min(1).max(200),
-  sessionId: z.string().trim().min(1).max(200),
-  path: z.string().trim().min(1).max(4096),
-  name: z.string().trim().min(1).max(500),
-  kind: z.enum(['file', 'folder']),
-})
-
 interface SessionParams {
   computerId: string
   sessionId: string
@@ -254,10 +246,6 @@ export async function registerHubRoutes(
     sessions: await manager.listHistory(),
   }))
 
-  app.get('/api/knowledge', async () => ({
-    bookmarks: knowledge.list(),
-  }))
-
   app.get('/api/knowledge/roots', async () => ({
     roots: knowledge.listRoots(),
   }))
@@ -328,27 +316,6 @@ export async function registerHubRoutes(
       }
       const query = knowledgeFileSchema.parse(request.query)
       return manager.readKnowledgeFile(root.computerId, root.path, query.path)
-    },
-  )
-
-  app.post('/api/knowledge', async (request, reply) => {
-    const input = bookmarkSchema.parse(request.body)
-    const session = await manager.getSession(input.computerId, input.sessionId)
-    const bookmark = await knowledge.add({
-      ...input,
-      computerName: session.computerName,
-      sessionTitle: session.title,
-    })
-    return reply.code(201).send({ bookmark })
-  })
-
-  app.delete<{ Params: { bookmarkId: string } }>(
-    '/api/knowledge/:bookmarkId',
-    async (request, reply) => {
-      if (!(await knowledge.remove(request.params.bookmarkId))) {
-        return reply.code(404).send({ error: 'Bookmark not found' })
-      }
-      return reply.code(204).send()
     },
   )
 

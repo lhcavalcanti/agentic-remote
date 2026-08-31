@@ -47,18 +47,101 @@ not infer a production path from the current working directory or from an
 arbitrary Git worktree.
 
 A simple implementation can use a machine-local key-value file such as
-`~/.config/agentic-remote/promotion.env`; environment variables supplied by the
-service may override the file for one-off operator runs. For example:
+`~/.config/agentic-remote/promotion.env`. For example:
 
 ```text
 AGENTIC_REMOTE_MONITOR_DEV_ROOT=/path/to/development/checkout
 AGENTIC_REMOTE_MONITOR_PROD_ROOT=/path/to/production/runtime
 AGENTIC_REMOTE_MONITOR_RELEASE_ROOT=/path/to/releases
 AGENTIC_REMOTE_MONITOR_SERVICE=agentic-remote.service
-AGENTIC_REMOTE_MONITOR_HEALTH_URL=http://127.0.0.1:4317/api/health
+AGENTIC_REMOTE_MONITOR_HEALTH_URL=http://127.0.0.1:4317/health
 AGENTIC_REMOTE_MONITOR_REPOSITORY=owner/repository
 AGENTIC_REMOTE_MONITOR_WORKFLOW=ci.yml
 ```
+
+### Inherit the runtime identity by default
+
+A monitor promotes a build; it does not decide what the host is. Leave
+`AGENTIC_REMOTE_MONITOR_HOST`, `PORT`, `ROLE`, and `NAME` empty so each
+graduation reuses the role, name, and bind address already installed on the
+host. Set one only to change the runtime deliberately.
+
+This matters most on a node. A profile that asserts `ROLE=hub` converts a
+paired node into a hub on its first graduation, rebinds it, and renames the
+computer the hub has registered.
+
+Use `/health` for `health_url`. It reports `{ok, role, node}` for both roles,
+whereas `/api/health` is registered only for a hub and returns `404` on a node
+— so a node configured with `/api/health` fails its check after the service has
+already restarted, and never records the promotion.
+
+Point `health_url` at the address the service actually binds. A host
+configured with a LAN `HOST` does not answer on `127.0.0.1`. The hub Host
+allowlist applies only to `/api/` URLs, so `/health` needs no allowlist entry
+while `/api/health` does. `agentic-remote-promotion-setup enable` probes the
+configured URL and refuses to arm the timer until it answers.
+
+### Graduation is transactional
+
+The release pointer and the managed service are replaced before the health and
+external checks run, and the release directory keeps only the current release
+plus two rollbacks. A failure that simply exits would therefore leave the failed
+candidate serving traffic, and repeated retries would evict the last known-good
+release. On any failure after the switch, restore the previous commit and
+release pointer, restart the service, and leave the success marker unchanged so
+the next run retries from a known state.
+
+Graduate only what `origin/main` already contains. A clean local `main` can sit
+ahead of its upstream, and a CI run matched only by commit SHA can come from a
+feature branch, so comparing `HEAD` against `refs/remotes/origin/main` after the
+fetch is what prevents promoting an unmerged commit.
+
+### Where values live, and what each location exposes
+
+Every setting resolves in this order: an environment variable of the same name,
+then the profile file, then a built-in default. Any value can therefore be
+supplied per run without touching the file:
+
+```bash
+AGENTIC_REMOTE_MONITOR_DEV_ROOT=/other/checkout agentic-remote-promotion-monitor run
+```
+
+Moving values into the systemd unit looks like it hides them but does the
+opposite. The profile is written `0600`, while `systemctl show -p Environment`
+prints every `Environment=` entry in the unit. Keep values in the profile, or in
+a separate `EnvironmentFile=` whose permissions you control.
+
+The profile is not a secret store in the first place. It holds paths, URLs, a
+service name, and the repository to watch. The GitHub token is read at run time
+from the GitHub CLI configuration and exported only into the monitor's own
+process, so this tooling never writes it to disk. Keep credentials, pairing
+tokens, and SSH keys out of the profile: name an SSH destination and let the SSH
+client resolve the key.
+
+## Reproducible setup from the repository
+
+The repository includes the reproducible setup assets, while the installed
+monitor, profile, systemd units, state, releases, and credentials remain
+machine-local:
+
+- `bin/agentic-remote-promotion-monitor` performs pull, validation, promotion,
+  and health checks.
+- `bin/agentic-remote-promotion-setup` installs the monitor and user systemd
+  units.
+- `config/agentic-remote-promotion.env.example` is a portable profile template.
+
+On a new machine:
+
+```bash
+./bin/agentic-remote-promotion-setup init
+$EDITOR ~/.config/agentic-remote/promotion.env
+./bin/agentic-remote-promotion-setup install --create-runtime --enable
+```
+
+`--create-runtime` creates the second detached worktree from the clean
+development `main` checkout. `install` copies the monitor to a stable
+machine-local path, so the systemd timer does not execute from the mutable
+development checkout. Omit `--enable` when the machine should remain opt-out.
 
 ## Pull, validate, and graduate
 
@@ -112,6 +195,82 @@ Cleanup is part of completing the change:
 
 Only remove branches and worktrees owned by the current task. Stop and ask
 before touching a dirty, unmerged, or otherwise unowned worktree.
+
+## Promoting to other machines
+
+A single profile can describe a two-phase promotion: validate on the machine
+that builds, then install the same commit elsewhere.
+
+```text
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HOSTS=prod-a prod-b
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT=/home/USER/src/agentic-remote
+AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL=http://127.0.0.1:4317/health
+```
+
+Phase one graduates the commit into the local runtime and checks it. Phase two
+then runs, for each host in order:
+
+1. Refuse to continue if the remote checkout is dirty or unreachable.
+2. Run `./bin/agentic-remote update` there.
+3. Require the remote `HEAD` to equal the validated commit. A host that landed
+   on a different tip did not install what was validated, so it is rolled back.
+4. Probe the health URL on that host.
+5. Roll that host back with `./bin/agentic-remote rollback` if any step fails.
+
+The success marker only advances after every host succeeds, so a failure leaves
+the commit ungraduated and the next run retries it.
+
+Downstream promotion is opt-in. Leave `DOWNSTREAM_HOSTS` empty and the monitor
+stays single-machine.
+
+### Requirements
+
+- Key-based SSH from the monitor host to each downstream host, with the host key
+  already accepted. The monitor runs unattended and must never be prompted; it
+  uses `BatchMode=yes` by default.
+- A clean checkout at `DOWNSTREAM_ROOT` that can fetch from the same remote.
+  Downstream checkouts are managed detached at the promoted commit, so do not
+  use a checkout someone also develops on. A detached checkout also means
+  `agentic-remote update` no longer works on that host, because it runs
+  `git pull --ff-only`; the monitor becomes the way that host is updated.
+- A build toolchain reachable from a non-interactive login shell on that host,
+  plus `curl` and `git`.
+- The downstream account must be able to manage its own service, which for the
+  default installation means a user systemd service with lingering enabled.
+- At least one previous release, so a failed promotion has something to fall
+  back to.
+- Each host keeps its own identity. The monitor never copies configuration,
+  pairing tokens, credentials, or state between machines.
+
+Every destination shares one `DOWNSTREAM_ROOT` and one
+`DOWNSTREAM_HEALTH_URL`, so hosts must agree on their repository path and on a
+health address that is valid from each host. Machines that differ need separate
+profiles on separate monitor hosts.
+
+### Failure behavior
+
+A failure on any host restores that host to the commit it was on, then restores
+any host already promoted earlier in the same run, so the fleet is not left
+split across two commits. The success marker is not advanced, so the next run
+retries the same commit.
+
+The local runtime stays graduated, because it validated the commit and is
+healthy. A retry therefore rebuilds and restarts the local runtime again before
+reaching the downstream phase.
+
+### Choosing which machine serves the UI
+
+Role and release channel are independent. A common arrangement is to build on a
+development machine while a separate machine serves users, so a rebuild never
+restarts the UI someone is using. That machine is the downstream target, and it
+keeps `role = hub` so it serves the UI; the development machine can remain a
+hub too, unrouted, so a build can be validated with its UI before promotion.
+
+Changing which machine serves users is a topology change, not a promotion.
+Hub-owned state does not move: `computers.json`, `knowledge.json`, and push
+subscriptions belong to whichever host is the hub, so re-pair the other host,
+recreate knowledge roots, and re-subscribe to notifications. VAPID keys are
+per-hub, so subscriptions minted against the old hub stop working.
 
 ## Setup variants
 

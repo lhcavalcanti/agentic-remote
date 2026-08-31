@@ -682,6 +682,13 @@ export class SessionStore {
     return session
   }
 
+  // Settle outstanding writes so a caller can know that stopping is complete.
+  // Without this a write can land after shutdown, against a directory the
+  // caller believes it is free to remove.
+  async flush(): Promise<void> {
+    await this.writeQueue
+  }
+
   private persist(): Promise<void> {
     // Collapse writes queued behind an in-flight one: they would each
     // re-serialise every session, and the snapshot is taken when the write

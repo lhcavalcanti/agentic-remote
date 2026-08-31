@@ -799,37 +799,6 @@ describe('multi-node hub', () => {
         results: [{ path: 'README.md', snippet: 'Project' }],
       })
 
-      const savedKnowledge = await hub.app.inject({
-        method: 'POST',
-        url: '/api/knowledge',
-        payload: {
-          computerId: remoteComputerId,
-          sessionId: 'remote-session',
-          path: 'README.md',
-          name: 'README.md',
-          kind: 'file',
-        },
-      })
-      expect(savedKnowledge.statusCode, savedKnowledge.body).toBe(201)
-      expect(savedKnowledge.json().bookmark).toMatchObject({
-        computerId: remoteComputerId,
-        computerName: 'worker-node',
-        sessionId: 'remote-session',
-        path: 'README.md',
-        kind: 'file',
-      })
-      const bookmarkId = savedKnowledge.json().bookmark.id
-      const knowledge = await hub.app.inject({
-        method: 'GET',
-        url: '/api/knowledge',
-      })
-      expect(knowledge.json().bookmarks).toHaveLength(1)
-      const removedKnowledge = await hub.app.inject({
-        method: 'DELETE',
-        url: `/api/knowledge/${bookmarkId}`,
-      })
-      expect(removedKnowledge.statusCode).toBe(204)
-
       const sessions = await hub.app.inject({
         method: 'GET',
         url: '/api/sessions',
@@ -1231,6 +1200,54 @@ describe('multi-node hub', () => {
             .body,
         ).roots,
       ).toHaveLength(0)
+    } finally {
+      await hub.app.close()
+    }
+  })
+})
+
+describe('readiness endpoints by role', () => {
+  it('serves /health on a node while /api/health stays hub-only', async () => {
+    const node = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-node-health'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+    })
+
+    try {
+      const health = await node.app.inject({ method: 'GET', url: '/health' })
+      expect(health.statusCode).toBe(200)
+      expect(health.json()).toMatchObject({ ok: true, role: 'node' })
+
+      const hubOnly = await node.app.inject({
+        method: 'GET',
+        url: '/api/health',
+      })
+      expect(hubOnly.statusCode).toBe(404)
+    } finally {
+      await node.app.close()
+    }
+  })
+
+  it('serves both readiness endpoints on a hub', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://agentic.example.test')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-hub-health'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(),
+    })
+
+    try {
+      for (const url of ['/health', '/api/health']) {
+        const response = await hub.app.inject({
+          method: 'GET',
+          url,
+          headers: { host: 'agentic.example.test' },
+        })
+        expect(response.statusCode).toBe(200)
+      }
     } finally {
       await hub.app.close()
     }

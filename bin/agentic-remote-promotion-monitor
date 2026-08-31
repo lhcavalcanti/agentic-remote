@@ -1,0 +1,467 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+readonly USER_HOME_DEFAULT="${AGENTIC_REMOTE_MONITOR_HOME:-${HOME:-}}"
+readonly PROFILE_FILE="${AGENTIC_REMOTE_MONITOR_PROFILE:-$USER_HOME_DEFAULT/.config/agentic-remote/promotion.env}"
+
+profile_value() {
+  local key="$1" default="$2" value
+  value="${!key-}"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return
+  fi
+  if [[ -f "$PROFILE_FILE" ]]; then
+    value="$(sed -n "s/^${key}=//p" "$PROFILE_FILE" | tail -n 1)"
+    if [[ -n "$value" ]]; then
+      printf '%s' "$value"
+      return
+    fi
+  fi
+  printf '%s' "$default"
+}
+
+readonly DEV_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_DEV_ROOT '')"
+readonly PROD_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_PROD_ROOT '')"
+readonly USER_HOME="$(profile_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME_DEFAULT")"
+readonly GH_CLI_CONFIG_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR '')"
+readonly GITHUB_USER="$(profile_value AGENTIC_REMOTE_MONITOR_GITHUB_USER '')"
+readonly GITHUB_REPOSITORY="$(profile_value AGENTIC_REMOTE_MONITOR_REPOSITORY '')"
+readonly CI_WORKFLOW="$(profile_value AGENTIC_REMOTE_MONITOR_WORKFLOW ci.yml)"
+readonly STATE_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_STATE_DIR "$USER_HOME/.local/state/agentic-remote-monitor")"
+readonly STATE_FILE="$STATE_DIR/last-graduated-commit"
+readonly STATE_RECORD="$STATE_DIR/promotion-state"
+readonly LOCK_FILE="$STATE_DIR/lock"
+readonly SERVICE_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_SERVICE agentic-remote.service)"
+readonly DATA_DIR="$(profile_value AGENTIC_REMOTE_DATA_DIR '')"
+readonly ALLOWED_ROOTS="$(profile_value AGENTIC_REMOTE_ALLOWED_ROOTS '')"
+readonly ALLOWED_ORIGINS="$(profile_value AGENTIC_REMOTE_ALLOWED_ORIGINS '')"
+readonly RUNTIME_TOOLS="$(profile_value AGENTIC_REMOTE_RUNTIME_TOOLS "$USER_HOME/.local/share/agentic-remote-runtime-tools")"
+readonly RELEASE_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_RELEASE_ROOT "$USER_HOME/.config/agentic-remote/releases")"
+readonly HEALTH_URL="$(profile_value AGENTIC_REMOTE_MONITOR_HEALTH_URL '')"
+readonly EXTERNAL_URL="$(profile_value AGENTIC_REMOTE_MONITOR_EXTERNAL_URL '')"
+readonly EXTERNAL_STATUS="$(profile_value AGENTIC_REMOTE_MONITOR_EXTERNAL_STATUS '')"
+readonly DOWNSTREAM_HOSTS="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HOSTS '')"
+readonly DOWNSTREAM_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT '')"
+readonly DOWNSTREAM_HEALTH_URL="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL '')"
+readonly DOWNSTREAM_SSH="$(profile_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_SSH 'ssh -o BatchMode=yes')"
+# How long to wait for a restarted service to answer. A slow machine may need
+# more; a constrained test or a fast one may want less.
+readonly READY_ATTEMPTS="$(profile_value AGENTIC_REMOTE_MONITOR_READY_ATTEMPTS 30)"
+readonly READY_INTERVAL="$(profile_value AGENTIC_REMOTE_MONITOR_READY_INTERVAL 2)"
+readonly PRODUCTION_HOST="$(profile_value AGENTIC_REMOTE_MONITOR_HOST '')"
+readonly PRODUCTION_PORT="$(profile_value AGENTIC_REMOTE_MONITOR_PORT '')"
+readonly PRODUCTION_ROLE="$(profile_value AGENTIC_REMOTE_MONITOR_ROLE '')"
+readonly PRODUCTION_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_NAME '')"
+
+export GH_CONFIG_DIR="$GH_CLI_CONFIG_DIR"
+
+log() {
+  printf '[agentic-remote-promotion] %s\n' "$*"
+}
+
+die() {
+  log "ERROR: $*"
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+require_value() {
+  local name="$1" value="$2"
+  [[ -n "$value" ]] || die "$name is required in $PROFILE_FILE"
+}
+
+assert_repository() {
+  local root="$1"
+  git -C "$root" rev-parse --show-toplevel >/dev/null 2>&1 ||
+    die "not a Git repository: $root"
+}
+
+assert_clean() {
+  local root="$1"
+  [[ -z "$(git -C "$root" status --porcelain)" ]] ||
+    die "worktree is not clean: $root"
+}
+
+rollback_runtime() {
+  local restore_commit="$1" restore_release="$2" link
+  log "rolling back the production runtime to $restore_commit"
+  git -C "$PROD_ROOT" switch --detach "$restore_commit" ||
+    log "WARNING: could not restore $PROD_ROOT to $restore_commit"
+  if [[ -n "$restore_release" && -d "$restore_release" ]]; then
+    link="$RELEASE_ROOT/.current-rollback-$$"
+    rm -f -- "$link"
+    if ln -s "$restore_release" "$link" && mv -Tf "$link" "$RELEASE_ROOT/current"; then
+      log "restored release $(basename "$restore_release")"
+    else
+      rm -f -- "$link"
+      log "WARNING: could not restore the previous release pointer"
+    fi
+  else
+    log "WARNING: no previous release to restore"
+  fi
+  systemctl --user restart "$SERVICE_NAME" ||
+    log "WARNING: could not restart $SERVICE_NAME"
+}
+
+# Second promotion phase. Values reach a remote bash through printf %q so a
+# path or URL containing spaces, quotes, or substitutions is data rather than
+# code.
+run_remote() {
+  local host="$1" script="$2"
+  $DOWNSTREAM_SSH "$host" "bash -lc $(printf '%q' "$script")"
+}
+
+# Rebuild an exact known-good commit rather than reactivating whatever release
+# happens to be newest, so recovery does not depend on directory timestamps.
+restore_downstream() {
+  local host="$1" commit="$2" root_q commit_q
+  root_q="$(printf '%q' "$DOWNSTREAM_ROOT")"
+  commit_q="$(printf '%q' "$commit")"
+  log "restoring $host to $commit"
+  run_remote "$host" \
+    "cd $root_q && git checkout --detach $commit_q && ./bin/agentic-remote setup" ||
+    log "WARNING: could not restore $host to $commit"
+}
+
+# The local runtime has already proven this commit, so each host installs that
+# exact commit. Using the branch tip instead would build and activate whatever
+# main points at now, which is not what was validated.
+promote_downstream() {
+  local commit="$1" host root_q commit_q url_q status head attempt healthy
+  local -a promoted=()
+  [[ -n "$DOWNSTREAM_HOSTS" ]] || return 0
+
+  root_q="$(printf '%q' "$DOWNSTREAM_ROOT")"
+  commit_q="$(printf '%q' "$commit")"
+
+  for host in $DOWNSTREAM_HOSTS; do
+    log "promoting $commit to $host"
+
+    # Capture the commit to return to before anything is mutated.
+    if ! status="$(run_remote "$host" "cd $root_q && git rev-parse HEAD")" ||
+      [[ -z "$status" ]]; then
+      # An empty answer would later restore the host to an empty revision.
+      log "ERROR: cannot read the checkout on $host: $DOWNSTREAM_ROOT"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
+    fi
+    local previous_head="$status"
+
+    # Assigning first makes a failing git fail the check; testing its output
+    # directly would treat a git error as a clean worktree.
+    if ! run_remote "$host" \
+      "cd $root_q && changes=\$(git status --porcelain) && test -z \"\$changes\""; then
+      log "ERROR: $host checkout is dirty or unreadable: $DOWNSTREAM_ROOT"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
+    fi
+
+    if ! run_remote "$host" \
+      "cd $root_q && git fetch --prune origin && git checkout --detach $commit_q && ./bin/agentic-remote setup"; then
+      log "ERROR: install failed on $host"
+      restore_downstream "$host" "$previous_head"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
+    fi
+
+    head="$(run_remote "$host" "cd $root_q && git rev-parse HEAD")" || head=""
+    if [[ "$head" != "$commit" ]]; then
+      log "ERROR: $host is at ${head:-unknown}, not the validated $commit"
+      restore_downstream "$host" "$previous_head"
+      restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+      return 1
+    fi
+
+    if [[ -n "$DOWNSTREAM_HEALTH_URL" ]]; then
+      url_q="$(printf '%q' "$DOWNSTREAM_HEALTH_URL")"
+      healthy=0
+      # Match the local readiness wait; a single probe races the restart.
+      for attempt in $(seq 1 "$READY_ATTEMPTS"); do
+        if run_remote "$host" "curl -fsS --max-time 5 $url_q >/dev/null"; then
+          healthy=1
+          break
+        fi
+        sleep "$READY_INTERVAL"
+      done
+      if [[ "$healthy" != 1 ]]; then
+        log "ERROR: health check failed on $host"
+        restore_downstream "$host" "$previous_head"
+        restore_promoted "$commit" "${promoted[@]+"${promoted[@]}"}"
+        return 1
+      fi
+    fi
+
+    promoted+=("$host:$previous_head")
+    log "promoted $commit to $host"
+  done
+}
+
+# Return hosts already promoted in this run so a partial failure does not leave
+# the fleet split across two commits.
+restore_promoted() {
+  shift
+  local entry host previous
+  for entry in "$@"; do
+    host="${entry%%:*}"
+    previous="${entry##*:}"
+    restore_downstream "$host" "$previous"
+  done
+}
+
+package_manager_version() {
+  python3 - "$1/package.json" <<'PY'
+import json
+import sys
+
+package_manager = json.load(open(sys.argv[1], encoding="utf-8"))["packageManager"]
+name, version = package_manager.split("@", 1)
+if name != "pnpm" or not version:
+    raise SystemExit(f"Unsupported packageManager: {package_manager}")
+print(version)
+PY
+}
+
+run_pnpm() {
+  local root="$1"
+  shift
+  corepack "pnpm@$(package_manager_version "$root")" --dir "$root" "$@"
+}
+
+run() {
+  require_value AGENTIC_REMOTE_MONITOR_DEV_ROOT "$DEV_ROOT"
+  require_value AGENTIC_REMOTE_MONITOR_PROD_ROOT "$PROD_ROOT"
+  require_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME"
+  require_value AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR "$GH_CLI_CONFIG_DIR"
+  require_value AGENTIC_REMOTE_MONITOR_GITHUB_USER "$GITHUB_USER"
+  require_value AGENTIC_REMOTE_MONITOR_REPOSITORY "$GITHUB_REPOSITORY"
+  require_value AGENTIC_REMOTE_MONITOR_HEALTH_URL "$HEALTH_URL"
+  # Validate cross-field requirements before anything is built or restarted, so
+  # an incomplete downstream profile cannot be discovered after local promotion.
+  if [[ -n "$DOWNSTREAM_HOSTS" ]]; then
+    require_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT "$DOWNSTREAM_ROOT"
+    require_value AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HEALTH_URL \
+      "$DOWNSTREAM_HEALTH_URL"
+  fi
+
+  mkdir -p "$STATE_DIR"
+  require_command flock
+  exec 9>"$LOCK_FILE"
+  if ! flock -n 9; then
+    log "another promotion run is already active; skipping"
+    return
+  fi
+
+  require_command corepack
+  require_command curl
+  require_command gh
+  require_command git
+  require_command python3
+  require_command systemctl
+  [[ -z "$DOWNSTREAM_HOSTS" ]] || require_command ssh
+
+  assert_repository "$DEV_ROOT"
+  assert_repository "$PROD_ROOT"
+
+  local dev_branch before_commit candidate_commit
+  dev_branch="$(git -C "$DEV_ROOT" branch --show-current)"
+  [[ "$dev_branch" == "main" ]] ||
+    die "development checkout must be on main: $DEV_ROOT"
+  assert_clean "$DEV_ROOT"
+
+  before_commit="$(git -C "$DEV_ROOT" rev-parse HEAD)"
+  log "pulling development main at $before_commit"
+  git -C "$DEV_ROOT" fetch --prune origin
+  git -C "$DEV_ROOT" pull --ff-only
+  candidate_commit="$(git -C "$DEV_ROOT" rev-parse HEAD)"
+  assert_clean "$DEV_ROOT"
+
+  # A clean local main can still sit ahead of its upstream, and CI for such a
+  # commit may come from a feature branch. Only graduate what origin/main has.
+  local origin_main
+  origin_main="$(git -C "$DEV_ROOT" rev-parse refs/remotes/origin/main)"
+  [[ "$candidate_commit" == "$origin_main" ]] ||
+    die "development main is not at origin/main ($candidate_commit != $origin_main)"
+
+  local prod_branch prod_commit last_commit
+  prod_branch="$(git -C "$PROD_ROOT" branch --show-current)"
+  [[ -z "$prod_branch" ]] ||
+    die "production runtime checkout must remain detached: $PROD_ROOT"
+  assert_clean "$PROD_ROOT"
+  prod_commit="$(git -C "$PROD_ROOT" rev-parse HEAD)"
+  last_commit=""
+  if [[ -f "$STATE_RECORD" ]]; then
+    last_commit="$(sed -n 's/^promoted_commit=//p' "$STATE_RECORD" | tail -n 1)"
+  fi
+  if [[ -z "$last_commit" && -f "$STATE_FILE" ]]; then
+    last_commit="$(cat "$STATE_FILE")"
+  fi
+
+  if [[ "$candidate_commit" == "$prod_commit" && "$candidate_commit" == "$last_commit" ]]; then
+    log "no ungraduated commit; development and production are at $candidate_commit"
+    return
+  fi
+
+  if [[ "$candidate_commit" == "$before_commit" ]]; then
+    log "main did not advance; retrying the unrecorded production state"
+  else
+    log "main advanced to $candidate_commit"
+  fi
+
+  log "installing development dependencies"
+  CI=true run_pnpm "$DEV_ROOT" install --frozen-lockfile
+  log "running development lint"
+  CI=true run_pnpm "$DEV_ROOT" lint
+  log "building development release"
+  CI=true run_pnpm "$DEV_ROOT" build
+  assert_clean "$DEV_ROOT"
+
+  local github_token ci_run ci_run_id ci_status ci_conclusion
+  github_token="$(gh auth token --hostname github.com --user "$GITHUB_USER")" ||
+    die "GitHub CLI has no token for $GITHUB_USER in $GH_CLI_CONFIG_DIR"
+  [[ -n "$github_token" ]] || die "GitHub CLI returned an empty token"
+  export GH_TOKEN="$github_token"
+
+  ci_run="$(
+    gh run list \
+      --repo "$GITHUB_REPOSITORY" \
+      --workflow "$CI_WORKFLOW" \
+      --commit "$candidate_commit" \
+      --limit 1 \
+      --json databaseId,status,conclusion \
+      --jq 'if length == 0 then "" else .[0] | [.databaseId,.status,(.conclusion // "")] | @tsv end'
+  )"
+  [[ -n "$ci_run" ]] || die "no GitHub CI run found for $candidate_commit"
+  IFS=$'\t' read -r ci_run_id ci_status ci_conclusion <<<"$ci_run"
+  if [[ "$ci_status" != "completed" ]]; then
+    log "waiting for GitHub CI run $ci_run_id"
+    gh run watch "$ci_run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+    ci_conclusion="$(
+      gh run view "$ci_run_id" \
+        --repo "$GITHUB_REPOSITORY" \
+        --json conclusion \
+        --jq '.conclusion'
+    )"
+  fi
+  [[ "$ci_conclusion" == "success" ]] ||
+    die "GitHub CI run $ci_run_id did not pass: ${ci_conclusion:-unknown}"
+  log "GitHub CI passed for $candidate_commit"
+
+  assert_clean "$PROD_ROOT"
+  prod_branch="$(git -C "$PROD_ROOT" branch --show-current)"
+  [[ -z "$prod_branch" ]] ||
+    die "production runtime checkout changed to a branch during validation"
+
+  log "graduating $candidate_commit to the production runtime source"
+  local previous_release=""
+  if [[ -L "$RELEASE_ROOT/current" ]]; then
+    previous_release="$(readlink -f -- "$RELEASE_ROOT/current" || true)"
+  fi
+  git -C "$PROD_ROOT" switch --detach "$candidate_commit"
+
+  local setup_environment=()
+  [[ -z "$DATA_DIR" ]] || setup_environment+=("AGENTIC_REMOTE_DATA_DIR=$DATA_DIR")
+  [[ -z "$ALLOWED_ROOTS" ]] || setup_environment+=("AGENTIC_REMOTE_ALLOWED_ROOTS=$ALLOWED_ROOTS")
+  [[ -z "$ALLOWED_ORIGINS" ]] || setup_environment+=("AGENTIC_REMOTE_ALLOWED_ORIGINS=$ALLOWED_ORIGINS")
+
+  # Only pass runtime identity that the profile sets explicitly. Passing a
+  # default would override the host's installed role, name, or bind address and
+  # silently convert a paired node into a hub on the first graduation.
+  local setup_arguments=()
+  [[ -z "$PRODUCTION_HOST" ]] || setup_arguments+=(--host "$PRODUCTION_HOST")
+  [[ -z "$PRODUCTION_PORT" ]] || setup_arguments+=(--port "$PRODUCTION_PORT")
+  [[ -z "$PRODUCTION_ROLE" ]] || setup_arguments+=(--role "$PRODUCTION_ROLE")
+  [[ -z "$PRODUCTION_NAME" ]] || setup_arguments+=(--name "$PRODUCTION_NAME")
+
+  # Everything below has already replaced the running service, so each failure
+  # must restore the previous commit and release instead of leaving the failed
+  # candidate active for the next run to overwrite.
+  local failure=""
+  env \
+    HOME="$USER_HOME" \
+    PATH="$RUNTIME_TOOLS:$PATH" \
+    CI=true \
+    "${setup_environment[@]}" \
+    "$PROD_ROOT/bin/agentic-remote" setup "${setup_arguments[@]}" ||
+    failure="setup failed for $candidate_commit"
+
+  if [[ -z "$failure" ]]; then
+    local attempt healthy=0
+    for attempt in $(seq 1 "$READY_ATTEMPTS"); do
+      if systemctl --user is-active --quiet "$SERVICE_NAME" &&
+        curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
+        healthy=1
+        break
+      fi
+      sleep "$READY_INTERVAL"
+    done
+    [[ "$healthy" == 1 ]] ||
+      failure="production runtime health check failed after graduation"
+  fi
+
+  if [[ -z "$failure" && ! -L "$RELEASE_ROOT/current" ]]; then
+    failure="production release pointer is missing: $RELEASE_ROOT/current"
+  fi
+
+  if [[ -z "$failure" && -n "$EXTERNAL_URL" ]]; then
+    local external_status
+    if external_status="$(
+      curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$EXTERNAL_URL"
+    )"; then
+      if [[ -n "$EXTERNAL_STATUS" ]]; then
+        [[ "$external_status" == "$EXTERNAL_STATUS" ]] ||
+          failure="external access returned HTTP $external_status; expected $EXTERNAL_STATUS"
+      elif [[ ! "$external_status" =~ ^[23][0-9][0-9]$ ]]; then
+        failure="external access returned unexpected HTTP $external_status"
+      fi
+    else
+      failure="external access check failed: $EXTERNAL_URL"
+    fi
+  fi
+
+  if [[ -n "$failure" ]]; then
+    log "ERROR: $failure"
+    rollback_runtime "$prod_commit" "$previous_release"
+    die "graduation failed and the previous runtime was restored"
+  fi
+
+  # Downstream hosts are promoted before the success marker advances, so a
+  # failure there leaves the candidate ungraduated and the next run retries.
+  if ! promote_downstream "$candidate_commit"; then
+    die "downstream promotion failed; the success marker was left unchanged"
+  fi
+
+  local temporary_state temporary_record
+  # Write the canonical record first: reads prefer it, so a crash between the
+  # two writes must not leave a stale record shadowing a fresh marker.
+  temporary_record="$STATE_RECORD.$$"
+  {
+    printf 'candidate_commit=%s\n' "$candidate_commit"
+    printf 'tested_commit=%s\n' "$candidate_commit"
+    printf 'promoted_commit=%s\n' "$candidate_commit"
+    printf 'previous_runtime_commit=%s\n' "$prod_commit"
+    printf 'promoted_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary_record"
+  chmod 0600 "$temporary_record"
+  mv -f -- "$temporary_record" "$STATE_RECORD"
+  temporary_state="$STATE_FILE.$$"
+  printf '%s\n' "$candidate_commit" >"$temporary_state"
+  chmod 0600 "$temporary_state"
+  mv -f -- "$temporary_state" "$STATE_FILE"
+  log "graduated $candidate_commit successfully"
+}
+
+command="${1:-run}"
+case "$command" in
+  run)
+    (($# == 1)) || die "run does not accept options"
+    run
+    ;;
+  *)
+    die "usage: agentic-remote-promotion-monitor [run]"
+    ;;
+esac

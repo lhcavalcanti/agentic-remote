@@ -321,14 +321,3 @@ export interface AddKnowledgeRootInput {
   name?: string
 }
 
-export interface KnowledgeBookmark {
-  id: string
-  kind: 'file' | 'folder'
-  computerId: string
-  computerName: string
-  sessionId: string
-  sessionTitle: string
-  path: string
-  name: string
-  createdAt: string
-}

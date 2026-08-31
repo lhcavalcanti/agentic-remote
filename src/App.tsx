@@ -4172,7 +4172,8 @@ function App() {
   const sessionEventSequenceRef = useRef(new Map<string, number>())
   const computerEventSequenceRef = useRef(new Map<string, number>())
   const sidebarResizeRef = useRef<
-    { pointerId: number; startX: number; startWidth: number } | undefined
+    | { pointerId: number; startX: number; startWidth: number; width: number }
+    | undefined
   >(undefined)
 
   function commitSidebarWidth(width: number) {
@@ -4191,8 +4192,11 @@ function App() {
       pointerId: event.pointerId,
       startX: event.clientX,
       startWidth: sidebarWidth,
+      width: sidebarWidth,
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    // Not every environment implements pointer capture; the drag still works
+    // without it because the move handler is bound to the same element.
+    event.currentTarget.setPointerCapture?.(event.pointerId)
     setResizingSidebar(true)
   }
 
@@ -4201,9 +4205,14 @@ function App() {
     if (!gesture || gesture.pointerId !== event.pointerId) {
       return
     }
-    setSidebarWidth(
-      clampSidebarWidth(gesture.startWidth + (event.clientX - gesture.startX)),
+    // Recorded on the gesture as well as in state: a release can arrive
+    // before React commits this update, and the release must persist the width
+    // the pointer actually ended on.
+    const next = clampSidebarWidth(
+      gesture.startWidth + (event.clientX - gesture.startX),
     )
+    gesture.width = next
+    setSidebarWidth(next)
   }
 
   function sidebarResizeEnd(event: ReactPointerEvent<HTMLDivElement>) {
@@ -4213,10 +4222,10 @@ function App() {
     }
     sidebarResizeRef.current = undefined
     setResizingSidebar(false)
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
     }
-    commitSidebarWidth(sidebarWidth)
+    commitSidebarWidth(gesture.width)
   }
 
   function sidebarResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {

@@ -560,6 +560,30 @@ describe('App', () => {
     )
   })
 
+  it('persists the sidebar width from the final pointer position', async () => {
+    localStorage.removeItem('agentic-remote:sidebar-width')
+    render(<App />)
+    const resizer = await screen.findByRole('separator', {
+      name: 'Resize sidebar',
+    })
+    const pointer = (type: string, clientX: number) =>
+      new PointerEvent(type, { bubbles: true, clientX, pointerId: 1 })
+
+    await act(async () => {
+      resizer.dispatchEvent(pointer('pointerdown', 300))
+    })
+
+    // A quick drag: the final move and the release both land before React
+    // commits a render, so a handler that reads rendered state sees the width
+    // from before the drag and saves that instead.
+    await act(async () => {
+      resizer.dispatchEvent(pointer('pointermove', 380))
+      resizer.dispatchEvent(pointer('pointerup', 380))
+    })
+
+    expect(localStorage.getItem('agentic-remote:sidebar-width')).toBe('366')
+  })
+
   it('recalls previous sent messages with ArrowUp per session', async () => {
     const historySession: ManagedSession = {
       ...session,

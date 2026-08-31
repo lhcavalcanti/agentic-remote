@@ -4519,6 +4519,7 @@ function App() {
   const backgroundTasksOpenRef = useRef(backgroundTasksOpen)
   const selectedKeyStateRef = useRef(selectedKey)
   const backgroundTaskRequestsRef = useRef(new Set<string>())
+  const queuedBackgroundTaskRefreshesRef = useRef(new Set<string>())
   const backgroundTaskEventSequenceRef = useRef(new Map<string, number>())
   const seenBackgroundTaskRefreshRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
@@ -4784,6 +4785,9 @@ function App() {
         return
       }
       if (backgroundTaskRequestsRef.current.has(key)) {
+        if (force) {
+          queuedBackgroundTaskRefreshesRef.current.add(key)
+        }
         return
       }
       if (!force && backgroundTaskSnapshotsRef.current[key]) {
@@ -4814,6 +4818,9 @@ function App() {
           selectedKeyStateRef.current === key
         ) {
           setLoadingBackgroundTasks(false)
+        }
+        if (queuedBackgroundTaskRefreshesRef.current.delete(key)) {
+          void loadBackgroundTasks(session, true)
         }
       }
     },

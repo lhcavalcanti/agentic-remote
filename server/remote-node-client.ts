@@ -84,8 +84,14 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   }
 
   async getInfo(): Promise<NodeInfo> {
-    const info = await this.request<NodeInfo>('/node-api/info')
+    const info = await this.request<NodeInfo>(
+      '/node-api/info',
+      {},
+      15_000,
+      false,
+    )
     this._providers = info.providers
+    this.setOnline(true)
     return info
   }
 
@@ -413,8 +419,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     this.socket = socket
     socket.on('open', () => {
       this.reconnectDelay = 1_000
-      this.setOnline(true)
-      void this.getInfo().catch(() => undefined)
+      void this.getInfo().catch(() => socket.close())
     })
     socket.on('message', (data) => {
       try {
@@ -452,6 +457,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     path: string,
     init: RequestInit = {},
     timeoutMs = 15_000,
+    markOnline = true,
   ): Promise<TResult> {
     const headers = new Headers(init.headers)
     headers.set('authorization', `Bearer ${this.computer.token}`)
@@ -466,7 +472,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         signal: AbortSignal.timeout(timeoutMs),
       })
     } catch (error) {
-      this.setOnline(false)
+      if (markOnline) {
+        this.setOnline(false)
+      }
       throw error
     }
     if (!response.ok) {
@@ -478,7 +486,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         response.status,
       )
     }
-    this.setOnline(true)
+    if (markOnline) {
+      this.setOnline(true)
+    }
     if (response.status === 204) {
       return undefined as TResult
     }

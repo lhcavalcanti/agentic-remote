@@ -2668,6 +2668,58 @@ describe('App', () => {
     })
   })
 
+  it('retries a forced background-task refresh after an in-flight request settles', async () => {
+    let resolveInitial!: (snapshot: BackgroundTaskSnapshot) => void
+    const refreshedSnapshot: BackgroundTaskSnapshot = {
+      tasks: [
+        {
+          id: 'task-1',
+          type: 'agent',
+          description: 'Review the implementation',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          canCancel: true,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    }
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveInitial = resolve
+        }),
+      )
+      .mockResolvedValueOnce(refreshedSnapshot)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(listBackgroundTasks).toHaveBeenCalledTimes(1),
+    )
+
+    MockWebSocket.instances[0]?.onopen?.()
+    await waitFor(() => expect(listSessions).toHaveBeenCalledTimes(2))
+    expect(listBackgroundTasks).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveInitial({
+        tasks: [],
+        runningCount: 0,
+        supported: true,
+      })
+    })
+    await waitFor(() =>
+      expect(listBackgroundTasks).toHaveBeenCalledTimes(2),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+  })
+
   it('does not let a delayed detail response overwrite a newer event', async () => {
     let resolveDetail!: (value: ManagedSession) => void
     vi.mocked(listSessions).mockResolvedValue([{ ...session, revision: 1 }])

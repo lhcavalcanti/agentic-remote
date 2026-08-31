@@ -3878,6 +3878,7 @@ function App() {
       }
     | undefined
   >(undefined)
+  const sortableDragActiveRef = useRef(false)
 
   const orderedComputers = useMemo(() => {
     const rank = new Map(computerOrder.map((id, index) => [id, index]))
@@ -3911,6 +3912,17 @@ function App() {
     [selectedKey, sessions],
   )
   const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
+  const hasBlockingUi =
+    newSessionOpen ||
+    computersOpen ||
+    statuslineOpen ||
+    settingsOpen ||
+    runtimeOpen ||
+    (renameOpen && Boolean(selected)) ||
+    (cwdOpen && Boolean(selected)) ||
+    (workspaceOpen && Boolean(selected)) ||
+    addRootOpen ||
+    Boolean(selected?.pendingPermission || selected?.pendingUserInput)
   selectedRef.current = selected
   const currentTool = selected?.messages.findLast(
     (message) =>
@@ -5432,7 +5444,9 @@ function App() {
       event.ctrlKey ||
       event.metaKey ||
       event.shiftKey ||
-      sidebarMode !== 'sessions'
+      sidebarMode !== 'sessions' ||
+      hasBlockingUi ||
+      sortableDragActiveRef.current
     ) {
       return
     }
@@ -5440,7 +5454,7 @@ function App() {
     if (
       target instanceof Element &&
       target.closest(
-        '[role="dialog"], .composer, .user-input-card, .permission-card',
+        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle',
       )
     ) {
       return
@@ -5801,7 +5815,16 @@ function App() {
             ) : null}
             <DndContext
               collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
+              onDragCancel={() => {
+                sortableDragActiveRef.current = false
+              }}
+              onDragEnd={(event) => {
+                sortableDragActiveRef.current = false
+                handleDragEnd(event)
+              }}
+              onDragStart={() => {
+                sortableDragActiveRef.current = true
+              }}
               sensors={sensors}
             >
               <SortableContext

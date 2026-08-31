@@ -160,6 +160,19 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       .join('\n'),
   )
 
+  // run_remote() deliberately hands the remote command to a login shell
+  // (`bash -lc`) so a real downstream host's nvm/asdf-managed PATH is
+  // available. A login shell also re-sources /etc/profile first, which on a
+  // Debian-family host unconditionally *replaces* PATH for non-root users
+  // (rather than appending to it), discarding the stub `bin` directory this
+  // fixture prepended. Bash then reads `~/.bash_profile` next, so restoring
+  // PATH there survives the reset the same way a real login environment
+  // (e.g. nvm's shell hook) would.
+  await writeFile(
+    path.join(root, '.bash_profile'),
+    `export PATH="${bin}:$PATH"\n`,
+  )
+
   return {
     root,
     dev,

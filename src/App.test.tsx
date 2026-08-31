@@ -480,6 +480,31 @@ describe('App', () => {
     expect(
       screen.getByText('tmux', { selector: '.session-mode-badge' }),
     ).toBeInTheDocument()
+
+    const displayedMessages = document.querySelectorAll(
+      '.message:not(.message--activity)',
+    )
+    const expectedTimestamps = [
+      '2026-07-22T00:00:00.000Z',
+      '2026-07-22T00:00:01.000Z',
+    ]
+    expect(displayedMessages).toHaveLength(expectedTimestamps.length)
+    expectedTimestamps.forEach((createdAt, index) => {
+      const timestamp = displayedMessages[index]?.querySelector('time')
+      expect(timestamp).toHaveAttribute('datetime', createdAt)
+      expect(timestamp).toHaveTextContent(
+        new Date(createdAt).toLocaleTimeString(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+        }),
+      )
+    })
+    expect(displayedMessages[0]?.querySelector('.message__metadata')).toHaveTextContent(
+      'You',
+    )
+    expect(displayedMessages[1]?.querySelector('.message__metadata')).toHaveTextContent(
+      'Agent',
+    )
   })
 
   it('renders MCP activity as a compact, identifiable tool row', async () => {

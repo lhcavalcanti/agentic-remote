@@ -175,6 +175,19 @@ function recordingDuration(seconds: number): string {
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
 }
 
+const messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+})
+
+const messageDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+})
+
 function phoneEnterCreatesNewline(): boolean {
   return (
     window.matchMedia?.('(pointer: coarse)').matches ||
@@ -6057,12 +6070,25 @@ function App() {
                       className={`message message--${message.role}`}
                       key={message.id}
                     >
-                      <div className="message__label">
-                        {message.role === 'user'
-                          ? 'You'
-                          : message.role === 'notice'
-                            ? 'Command'
-                            : 'Agent'}
+                      <div className="message__metadata">
+                        <span className="message__label">
+                          {message.role === 'user'
+                            ? 'You'
+                            : message.role === 'notice'
+                              ? 'Command'
+                              : 'Agent'}
+                        </span>
+                        <time
+                          className="message__timestamp"
+                          dateTime={message.createdAt}
+                          title={messageDateTimeFormatter.format(
+                            new Date(message.createdAt),
+                          )}
+                        >
+                          {messageTimeFormatter.format(
+                            new Date(message.createdAt),
+                          )}
+                        </time>
                       </div>
                       <div className="message__content">
                         {message.content ? (

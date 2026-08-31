@@ -985,13 +985,30 @@ button {
   background: var(--panel-raised);
 }
 
-.message__label {
+.message__metadata {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 7px;
+}
+
+.message__label {
   color: #73776d;
   font-size: 9px;
   font-weight: 750;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.message__timestamp {
+  flex: 0 0 auto;
+  color: #73776d;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .message__content {

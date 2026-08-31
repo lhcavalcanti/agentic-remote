@@ -5,6 +5,7 @@ import {
   sendTestPushNotification,
   transcribeAudio,
   uploadSessionFile,
+  validateSessionDirectory,
 } from './api'
 
 afterEach(() => {
@@ -101,6 +102,22 @@ describe('API request headers', () => {
 
     await expect(sendTestPushNotification()).resolves.toEqual({ sent: 1 })
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('validates a session folder on its owning computer', async () => {
+    const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
+      expect(path).toBe(
+        '/api/computers/computer/directories/validate',
+      )
+      expect(init?.method).toBe('POST')
+      expect(init?.body).toBe(JSON.stringify({ path: '~/src' }))
+      return Response.json({ path: '/home/tester/src' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      validateSessionDirectory('computer', '~/src'),
+    ).resolves.toBe('/home/tester/src')
   })
 })
 

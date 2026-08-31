@@ -111,6 +111,17 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
+  async validateSessionDirectory(inputPath: string): Promise<string> {
+    const response = await this.request<{ path: string }>(
+      '/node-api/directories/validate',
+      {
+        method: 'POST',
+        body: JSON.stringify({ path: inputPath }),
+      },
+    )
+    return response.path
+  }
+
   async listKnowledge(root: string, path = '.'): Promise<WorkspaceListing> {
     return this.request<WorkspaceListing>(
       `/node-api/knowledge/entries?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,

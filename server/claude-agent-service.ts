@@ -521,6 +521,10 @@ export class ClaudeAgentService
     return listHomeDirectories(path, scope)
   }
 
+  validateSessionDirectory(inputPath: string): Promise<string> {
+    return this.validateDirectory(inputPath)
+  }
+
   // Confine the root exactly as a session working directory is confined, so
   // this stays safe even though the provider aggregator routes to Copilot.
   async listKnowledge(root: string, path = '.') {

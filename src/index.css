@@ -1802,6 +1802,67 @@ button {
   font-size: 11px;
 }
 
+.default-session-folder-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.default-session-folder {
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+
+.default-session-folder__header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.default-session-folder__header > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.default-session-folder__header strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.default-session-folder__header small,
+.default-session-folder__offline {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.default-session-folder__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.default-session-folder__actions .secondary-button {
+  min-height: 34px;
+  padding: 6px 11px;
+}
+
+.default-session-folder__picker {
+  margin-top: 11px;
+}
+
+.default-session-folder__offline {
+  display: block;
+  margin-top: 8px;
+}
+
 .command-menu {
   position: absolute;
   right: max(18px, calc((100% - 800px) / 2));

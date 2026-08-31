@@ -189,8 +189,118 @@ function recordValue(value: unknown): Record<string, unknown> {
     : {}
 }
 
-function eventString(data: Record<string, unknown>, key: string): string | undefined {
+function eventString(
+  data: Record<string, unknown>,
+  key: string,
+): string | undefined {
   return stringValue(data[key])
+}
+
+function booleanValue(value: unknown): boolean {
+  return value === true
+}
+
+function normalizedToolName(data: Record<string, unknown>): string {
+  return (eventString(data, 'toolName') || '')
+    .toLowerCase()
+    .replaceAll('-', '_')
+}
+
+function taskArguments(data: Record<string, unknown>): Record<string, unknown> {
+  return recordValue(data.arguments)
+}
+
+function shellIdFromValue(value: unknown, depth = 0): string | undefined {
+  if (depth > 4 || value === null || value === undefined) {
+    return undefined
+  }
+  if (typeof value === 'string') {
+    return value.match(
+      /\bshell[_ ]?id\b["'\s:=]+([A-Za-z0-9][A-Za-z0-9._:-]*)/i,
+    )?.[1]
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const id = shellIdFromValue(entry, depth + 1)
+      if (id) {
+        return id
+      }
+    }
+    return undefined
+  }
+  if (typeof value !== 'object') {
+    return undefined
+  }
+  const object = recordValue(value)
+  for (const key of ['shellId', 'shell_id']) {
+    const id = stringValue(object[key])
+    if (id) {
+      return id
+    }
+  }
+  for (const key of ['result', 'structuredContent', 'content', 'contents']) {
+    const id = shellIdFromValue(object[key], depth + 1)
+    if (id) {
+      return id
+    }
+  }
+  return undefined
+}
+
+function errorValue(data: Record<string, unknown>): string | undefined {
+  const error = data.error
+  if (typeof error === 'string') {
+    return boundedText(error)
+  }
+  return boundedText(recordValue(error).message)
+}
+
+function shellTaskMode(
+  data: Record<string, unknown>,
+  args: Record<string, unknown>,
+): {
+  executionMode: BackgroundTask['executionMode']
+  attachmentMode: BackgroundTask['attachmentMode']
+} | undefined {
+  const executionMode = executionModeValue(
+    eventString(data, 'executionMode') ||
+      eventString(args, 'executionMode') ||
+      eventString(args, 'mode'),
+  )
+  const attachmentMode = attachmentModeValue(
+    eventString(data, 'attachmentMode') ||
+      eventString(args, 'attachmentMode') ||
+      eventString(args, 'attachment'),
+  )
+  const detached =
+    attachmentMode === 'detached' ||
+    executionMode === 'background' ||
+    booleanValue(args.detach) ||
+    booleanValue(args.detached) ||
+    booleanValue(args.async) ||
+    booleanValue(args.background) ||
+    args.mode === 'background' ||
+    args.mode === 'detached' ||
+    args.mode === 'async'
+  if (!detached) {
+    return undefined
+  }
+  return {
+    executionMode: 'background',
+    attachmentMode: attachmentMode || 'detached',
+  }
+}
+
+function isShellTool(name: string): boolean {
+  return (
+    name === 'bash' ||
+    name === 'local_shell' ||
+    name === 'shell' ||
+    name === 'sh' ||
+    name === 'zsh' ||
+    name === 'powershell' ||
+    name === 'pwsh'
+  )
 }
 
 function taskIdForEvent(
@@ -202,6 +312,45 @@ function taskIdForEvent(
     eventString(data, 'agentId') ||
     eventString(data, 'toolCallId')
   )
+}
+
+function taskIdAlias(
+  aliases: Map<string, string>,
+  id: string,
+): string {
+  let current = id
+  const seen = new Set<string>()
+  while (!seen.has(current)) {
+    seen.add(current)
+    const next = aliases.get(current)
+    if (!next || next === current) {
+      break
+    }
+    current = next
+  }
+  return current
+}
+
+function rekeyTask(
+  tasks: Map<string, BackgroundTask>,
+  aliases: Map<string, string>,
+  from: string,
+  to: string,
+): BackgroundTask | undefined {
+  const resolvedFrom = taskIdAlias(aliases, from)
+  const current = tasks.get(resolvedFrom)
+  if (!current) {
+    aliases.set(from, to)
+    return tasks.get(taskIdAlias(aliases, to))
+  }
+  if (resolvedFrom !== to) {
+    tasks.delete(resolvedFrom)
+    current.id = to
+    tasks.set(to, current)
+  }
+  aliases.set(from, to)
+  aliases.set(to, to)
+  return current
 }
 
 function eventTask(
@@ -230,6 +379,63 @@ function eventTask(
   }
 }
 
+function taskInvocation(
+  id: string,
+  timestamp: string,
+  data: Record<string, unknown>,
+): BackgroundTask {
+  const args = taskArguments(data)
+  return {
+    ...eventTask(id, timestamp, {
+      agentDescription:
+        stringValue(args.description) || stringValue(args.name),
+      agentType:
+        stringValue(args.agent_type) ||
+        stringValue(args.agentType) ||
+        'subagent',
+      prompt: args.prompt,
+      model: args.model,
+    }),
+    description:
+      boundedText(args.description) ||
+      boundedText(args.name) ||
+      'Background agent',
+    executionMode: 'background',
+  }
+}
+
+function shellTask(
+  id: string,
+  timestamp: string,
+  data: Record<string, unknown>,
+  mode: {
+    executionMode: BackgroundTask['executionMode']
+    attachmentMode: BackgroundTask['attachmentMode']
+  },
+): BackgroundTask {
+  const args = taskArguments(data)
+  const command =
+    boundedText(args.command) ||
+    boundedText(data.command) ||
+    ''
+  return {
+    id,
+    type: 'shell',
+    description:
+      boundedText(args.description) ||
+      boundedText(data.description) ||
+      command ||
+      'Background shell',
+    status: 'running',
+    startedAt: timestamp,
+    command,
+    executionMode: mode.executionMode,
+    attachmentMode: mode.attachmentMode,
+    pid: numberValue(args.pid) || numberValue(data.pid),
+    canCancel: false,
+  }
+}
+
 function addActivity(
   task: BackgroundTask,
   message: string,
@@ -250,18 +456,115 @@ export function backgroundTasksFromEvents(
   events: SessionEvent[],
 ): BackgroundTask[] {
   const tasks = new Map<string, BackgroundTask>()
+  const aliases = new Map<string, string>()
   for (const event of events) {
     const data = recordValue(event.data)
+    if (event.type === 'system.notification') {
+      const kind = recordValue(data.kind)
+      const kindType = eventString(kind, 'type')
+      if (
+        kindType === 'shell_detached_completed' ||
+        kindType === 'shell_completed'
+      ) {
+        const shellId = eventString(kind, 'shellId')
+        if (shellId) {
+          const id = taskIdAlias(aliases, shellId)
+          const current = tasks.get(id)
+          if (current?.type === 'shell') {
+            current.status =
+              kindType === 'shell_completed' &&
+              numberValue(kind.exitCode) !== undefined &&
+              numberValue(kind.exitCode) !== 0
+                ? 'failed'
+                : 'completed'
+            current.completedAt = event.timestamp
+            if (current.status === 'failed') {
+              current.error = `Shell exited with status ${numberValue(
+                kind.exitCode,
+              )}`
+            }
+            current.canCancel = false
+          } else if (kindType === 'shell_detached_completed') {
+            tasks.set(shellId, {
+              type: 'shell',
+              id: shellId,
+              description:
+                boundedText(eventString(kind, 'description')) ||
+                'Background shell',
+              status: 'completed',
+              startedAt: event.timestamp,
+              completedAt: event.timestamp,
+              executionMode: 'background',
+              attachmentMode: 'detached',
+              canCancel: false,
+            })
+            aliases.set(shellId, shellId)
+          }
+        }
+      }
+      continue
+    }
+    if (event.type === 'tool.execution_start') {
+      const toolName = normalizedToolName(data)
+      if (toolName === 'task') {
+        const id = eventString(data, 'toolCallId')
+        if (id) {
+          const resolvedId = taskIdAlias(aliases, id)
+          const current = tasks.get(resolvedId)
+          tasks.set(
+            id,
+            current?.type === 'agent'
+              ? current
+              : taskInvocation(id, event.timestamp, data),
+          )
+          aliases.set(id, id)
+        }
+        continue
+      }
+      const args = taskArguments(data)
+      const mode = isShellTool(toolName)
+        ? shellTaskMode(data, args)
+        : undefined
+      if (mode) {
+        const toolCallId = eventString(data, 'toolCallId')
+        const id =
+          shellIdFromValue(data) ||
+          shellIdFromValue(args) ||
+          toolCallId
+        if (id) {
+          const current = shellTask(id, event.timestamp, data, mode)
+          tasks.set(id, current)
+          if (toolCallId) {
+            aliases.set(toolCallId, id)
+          }
+          aliases.set(id, id)
+        }
+        continue
+      }
+    }
     if (
       event.type === 'subagent.started' ||
       event.type === 'subagent.completed' ||
       event.type === 'subagent.failed'
     ) {
-      const id = taskIdForEvent(event, data)
+      const toolCallId = eventString(data, 'toolCallId')
+      const eventAgentId =
+        event.agentId || eventString(data, 'agentId')
+      const id = toolCallId
+        ? taskIdAlias(aliases, toolCallId)
+        : eventAgentId
+          ? taskIdAlias(aliases, eventAgentId)
+          : taskIdForEvent(event, data)
       if (!id) {
         continue
       }
       const current = tasks.get(id) || eventTask(id, event.timestamp, data)
+      if (eventAgentId) {
+        aliases.set(eventAgentId, id)
+      }
+      if (toolCallId) {
+        aliases.set(toolCallId, id)
+      }
       const executionMode = executionModeValue(
         eventString(data, 'executionMode'),
       )
@@ -289,20 +592,46 @@ export function backgroundTasksFromEvents(
             : 'failed'
         current.error =
           event.type === 'subagent.failed'
-            ? boundedText(data.error)
+            ? errorValue(data)
             : current.error
+        current.result = boundedText(data.result) || current.result
         current.canCancel = false
       }
       tasks.set(id, current)
       continue
     }
+    if (event.type === 'tool.execution_complete') {
+      const toolCallId = eventString(data, 'toolCallId')
+      if (!toolCallId) {
+        continue
+      }
+      const shellId = shellIdFromValue(data)
+      const id = taskIdAlias(aliases, toolCallId)
+      const current = tasks.get(id)
+      if (current?.type === 'shell') {
+        if (shellId && current.id !== shellId) {
+          rekeyTask(tasks, aliases, current.id, shellId)
+        }
+        if (!data.success) {
+          current.status = data.cancelled === true ? 'cancelled' : 'failed'
+          current.completedAt = event.timestamp
+          current.error =
+            current.status === 'failed'
+              ? errorValue(data) || 'Shell task failed to start'
+              : undefined
+          current.canCancel = false
+        }
+        continue
+      }
+    }
     if (event.type === 'tool.execution_start' && event.agentId) {
+      const id = taskIdAlias(aliases, event.agentId)
       const current =
-        tasks.get(event.agentId) ||
-        eventTask(event.agentId, event.timestamp, data)
+        tasks.get(id) ||
+        eventTask(id, event.timestamp, data)
       const toolName = eventString(data, 'toolName') || 'tool'
       addActivity(current, toolName, event.timestamp)
-      tasks.set(event.agentId, current)
+      tasks.set(id, current)
     }
   }
   return [...tasks.values()]

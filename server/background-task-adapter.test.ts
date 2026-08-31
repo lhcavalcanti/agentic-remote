@@ -161,4 +161,125 @@ describe('background task adapter', () => {
       executionMode: 'background',
     })
   })
+
+  it('reconstructs CLI task records and detached shell lifecycle', () => {
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "task-start",
+        "parentId": null,
+        "timestamp": "2026-08-31T18:00:00.000Z",
+        "data": {
+          "toolCallId": "task-call",
+          "toolName": "task",
+          "arguments": {
+            "agent_type": "explore",
+            "description": "Inspect the repository",
+            "prompt": "Find the relevant files"
+          }
+        }
+      },
+      {
+        "type": "subagent.started",
+        "id": "agent-start",
+        "parentId": "task-start",
+        "timestamp": "2026-08-31T18:00:01.000Z",
+        "agentId": "agent-1",
+        "data": {
+          "toolCallId": "task-call",
+          "agentType": "explore"
+        }
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "shell-start",
+        "parentId": "agent-start",
+        "timestamp": "2026-08-31T18:00:02.000Z",
+        "data": {
+          "toolCallId": "shell-call",
+          "toolName": "bash",
+          "arguments": {
+            "command": "pnpm test",
+            "description": "Run the test suite",
+            "detach": true
+          }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "shell-launch",
+        "parentId": "shell-start",
+        "timestamp": "2026-08-31T18:00:03.000Z",
+        "data": {
+          "toolCallId": "shell-call",
+          "success": true,
+          "result": {
+            "content": "Started background shell (shellId: shell-1)"
+          }
+        }
+      },
+      {
+        "type": "subagent.completed",
+        "id": "agent-complete",
+        "parentId": "shell-launch",
+        "timestamp": "2026-08-31T18:00:04.000Z",
+        "agentId": "agent-1",
+        "data": {
+          "toolCallId": "task-call"
+        }
+      }
+    ]`) as SessionEvent[]
+
+    const running = backgroundTasksFromEvents(events.slice(0, 4))
+    expect(running).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'task-call',
+          type: 'agent',
+          executionMode: 'background',
+          status: 'running',
+        }),
+        expect.objectContaining({
+          id: 'shell-1',
+          type: 'shell',
+          command: 'pnpm test',
+          attachmentMode: 'detached',
+          executionMode: 'background',
+          status: 'running',
+        }),
+      ]),
+    )
+
+    const completed = backgroundTasksFromEvents([
+      ...events,
+      {
+        type: 'system.notification',
+        id: 'shell-complete',
+        parentId: 'agent-complete',
+        timestamp: '2026-08-31T18:00:05.000Z',
+        data: {
+          content: 'Detached shell completed',
+          kind: {
+            type: 'shell_detached_completed',
+            shellId: 'shell-1',
+            description: 'Run the test suite',
+          },
+        },
+      },
+    ] as SessionEvent[])
+
+    expect(completed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'shell-1',
+          status: 'completed',
+          completedAt: '2026-08-31T18:00:05.000Z',
+        }),
+        expect.objectContaining({
+          id: 'task-call',
+          status: 'completed',
+        }),
+      ]),
+    )
+  })
 })

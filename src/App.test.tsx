@@ -3505,6 +3505,57 @@ describe('App', () => {
     )
   })
 
+  it('keeps waiting and error status dots above blue task styling', async () => {
+    const waitingSession = {
+      ...session,
+      status: 'waiting' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([waitingSession])
+    vi.mocked(getSession).mockResolvedValue(waitingSession)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'task-waiting',
+          type: 'shell',
+          description: 'Run checks',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          command: 'pnpm check',
+          canCancel: false,
+          executionMode: 'background',
+          attachmentMode: 'detached',
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+
+    render(<App />)
+    await waitFor(() => {
+      const item = document.querySelector('.session-item')
+      expect(item).not.toHaveClass('session-item--background-running')
+      expect(item?.querySelector('.status-dot')).toHaveClass(
+        'status-dot--waiting',
+      )
+    })
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...waitingSession, status: 'error' },
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() => {
+      const item = document.querySelector('.session-item')
+      expect(item).not.toHaveClass('session-item--background-running')
+      expect(item?.querySelector('.status-dot')).toHaveClass('status-dot--error')
+    })
+  })
+
   it('uses reconciled runtime status when the session summary is stale', async () => {
     const staleSession = {
       ...session,

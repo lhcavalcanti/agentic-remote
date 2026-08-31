@@ -1769,12 +1769,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return stored
     }
-    const status =
-      backgroundTasksFromEvents(events).some(
-        (task) => task.status === 'running',
-      )
-        ? 'running'
-        : statusFromEvents(events)
+    const status = statusFromEvents(events)
     if (status === stored.status || status === 'waiting') {
       return stored
     }
@@ -3133,14 +3128,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         let status = syncedUserInput
           ? 'waiting'
           : statusFromEvents(events)
-        if (
-          !syncedUserInput &&
-          terminalTasks.some(
-            (task) => task.status === 'running',
-          )
-        ) {
-          status = 'running'
-        }
         const queueDispatchAt = this.store.queueDispatchAt(sessionId)
         if (queueDispatchAt) {
           const dispatchTime = Date.parse(queueDispatchAt)
@@ -3456,12 +3443,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!hasLifecycleEvent) {
         return { status: 'running', activity: 'Continuing' }
       }
-      const status =
-        backgroundTasksFromEvents(relevant).some(
-          (task) => task.status === 'running',
-        )
-          ? 'running'
-          : statusFromEvents(relevant)
+      const status = statusFromEvents(relevant)
       if (status === 'waiting' || status === 'running') {
         return { status: 'running', activity: 'Continuing' }
       }

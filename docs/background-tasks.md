@@ -35,6 +35,14 @@ after a hub/node reconnect. Task output is bounded to 20,000 characters,
 activity is bounded to 40 lines, and at most 100 tasks are retained in one
 snapshot.
 
+tmux-backed sessions are owned by the interactive Copilot CLI process and
+cannot safely be resumed through the SDK task RPC. Their monitor mirrors the
+CLI `/tasks` event-log projection: root `task` invocations and subagent
+lifecycle events provide agent tasks, while detached shell starts, handoff
+results, and `shell_detached_completed` notifications provide shell tasks.
+This keeps detached shell work visible without attaching a second owner to the
+session.
+
 The current Copilot CLI release review found these relevant UI features:
 
 | CLI release | Feature relevant to the `/tasks` parity target |
@@ -62,9 +70,10 @@ Sources:
   details show the available prompt, result, timestamps, progress, output, and
   error, with cancellation where the SDK supports it.
 - A tmux-backed session cannot be attached to the SDK task RPC without
-  transferring provider ownership. Terminal sessions use persisted
-  `subagent.*` events for best-effort task history and explicitly disable
-  per-task cancellation.
+  transferring provider ownership. Terminal sessions use the persisted
+  `/tasks` event projection for agent and detached-shell history and
+  explicitly disable per-task cancellation because the terminal controller
+  does not own the detached process.
 - Claude Agent sessions remain SDK-only and do not advertise Copilot background
   tasks.
 

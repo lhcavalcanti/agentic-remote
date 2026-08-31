@@ -2566,12 +2566,16 @@ function SortableSessionItem({
   } = useSortable({ id: sortableId })
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
   const taskCount = backgroundTasks?.tasks.length || 0
+  const backgroundTaskActive =
+    runningBackgroundTasks > 0 &&
+    session.status !== 'waiting' &&
+    session.status !== 'error'
   return (
     <button
       aria-current={selected ? 'page' : undefined}
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
-      )} ${runningBackgroundTasks > 0 ? 'session-item--background-running' : ''} ${
+      )} ${backgroundTaskActive ? 'session-item--background-running' : ''} ${
         selected ? 'session-item--active' : ''
       } ${
         isDragging ? 'sortable-dragging' : ''

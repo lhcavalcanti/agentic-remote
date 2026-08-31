@@ -707,6 +707,80 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('keeps terminal foreground status idle while a background task runs', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-terminal-task-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const completedAt = new Date(Date.now() + 1_000).toISOString()
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'task-start',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {
+          toolCallId: 'task-call',
+          toolName: 'task',
+          arguments: {
+            agent_type: 'explore',
+            description: 'Inspect the repository',
+            prompt: 'Find the relevant files',
+          },
+        },
+      },
+      {
+        type: 'assistant.turn_end',
+        id: 'turn-end',
+        parentId: 'task-start',
+        timestamp: completedAt,
+        data: {},
+      },
+    ] as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-task-events',
+      terminal,
+    )
+
+    await service.start()
+    await service.store.updateStatus(client.session.sessionId, 'running')
+
+    const options = await service.runtimeOptions(client.session.sessionId)
+
+    expect(options.status).toBe('idle')
+    await expect(
+      service.listBackgroundTasks(client.session.sessionId),
+    ).resolves.toMatchObject({
+      runningCount: 1,
+      tasks: [
+        expect.objectContaining({
+          id: 'task-call',
+          executionMode: 'background',
+          status: 'running',
+        }),
+      ],
+    })
+    expect(service.store.get(client.session.sessionId)?.status).toBe('idle')
+    await service.stop()
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',

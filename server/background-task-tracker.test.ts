@@ -9,6 +9,7 @@ function task(
   id: string,
   status: BackgroundTask['status'],
   startedAt = `2026-08-31T18:0${id.length}:00.000Z`,
+  executionMode: BackgroundTask['executionMode'] = 'background',
 ): BackgroundTask {
   return {
     id,
@@ -16,6 +17,7 @@ function task(
     description: id,
     status,
     startedAt,
+    executionMode,
     canCancel: status === 'running' || status === 'queued',
   }
 }
@@ -38,6 +40,28 @@ describe('BackgroundTaskTracker', () => {
         expect.objectContaining({ id: 'one', status: 'running' }),
       ],
       supported: true,
+    })
+  })
+
+  it('does not count synchronous or unclassified running tasks', () => {
+    const unclassified = task('unknown', 'running')
+    unclassified.executionMode = undefined
+    expect(
+      backgroundTaskSnapshot(
+        [
+          task('background', 'running'),
+          task('sync', 'running', undefined, 'sync'),
+          unclassified,
+        ],
+        true,
+      ),
+    ).toMatchObject({
+      runningCount: 1,
+      tasks: expect.arrayContaining([
+        expect.objectContaining({ id: 'background' }),
+        expect.objectContaining({ id: 'sync' }),
+        expect.objectContaining({ id: 'unknown' }),
+      ]),
     })
   })
 

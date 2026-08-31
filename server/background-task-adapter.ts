@@ -209,6 +209,9 @@ function eventTask(
   timestamp: string,
   data: Record<string, unknown>,
 ): BackgroundTask {
+  const executionMode = executionModeValue(
+    eventString(data, 'executionMode'),
+  )
   return {
     id,
     type: 'agent',
@@ -222,7 +225,7 @@ function eventTask(
     agentType: eventString(data, 'agentType') || eventString(data, 'agentName'),
     prompt: boundedText(data.prompt),
     model: eventString(data, 'model'),
-    executionMode: 'background',
+    ...(executionMode ? { executionMode } : {}),
     canCancel: false,
   }
 }
@@ -259,6 +262,12 @@ export function backgroundTasksFromEvents(
         continue
       }
       const current = tasks.get(id) || eventTask(id, event.timestamp, data)
+      const executionMode = executionModeValue(
+        eventString(data, 'executionMode'),
+      )
+      if (executionMode) {
+        current.executionMode = executionMode
+      }
       if (event.type === 'subagent.started') {
         current.status = 'running'
         current.description =

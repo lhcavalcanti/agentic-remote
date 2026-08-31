@@ -29,7 +29,10 @@ export function backgroundTaskSnapshot(
   )
   return {
     tasks: ordered,
-    runningCount: ordered.filter((task) => task.status === 'running').length,
+    runningCount: ordered.filter(
+      (task) =>
+        task.status === 'running' && task.executionMode === 'background',
+    ).length,
     supported,
   }
 }

@@ -109,7 +109,8 @@ describe('background task adapter', () => {
     ] as SessionEvent[]
 
     expect(backgroundTasksFromEvents(events)).toHaveLength(2)
-    expect(backgroundTasksFromEvents(events)).toEqual(
+    const tasks = backgroundTasksFromEvents(events)
+    expect(tasks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'agent-1',
@@ -132,5 +133,32 @@ describe('background task adapter', () => {
         }),
       ]),
     )
+    expect(tasks.find((task) => task.id === 'agent-1')).not.toHaveProperty(
+      'executionMode',
+    )
+  })
+
+  it('preserves an explicit background execution mode without inferring it', () => {
+    const [task] = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "subagent.started",
+          "id": "started",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:00:00.000Z",
+          "agentId": "agent-1",
+          "data": {
+            "agentType": "task",
+            "executionMode": "background"
+          }
+        }
+      ]`) as SessionEvent[],
+    )
+
+    expect(task).toMatchObject({
+      id: 'agent-1',
+      status: 'running',
+      executionMode: 'background',
+    })
   })
 })

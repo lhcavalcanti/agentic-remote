@@ -1089,14 +1089,31 @@ function isMissingSessionError(error: unknown): boolean {
 }
 
 function isUnsupportedBackgroundTaskError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
+  const details = recordValue(error)
+  const nestedDetails = recordValue(details.error)
+  const code = details.code ?? nestedDetails.code
+  if (
+    code === -32601 ||
+    code === '-32601' ||
+    (typeof code === 'string' &&
+      code.toLowerCase().replaceAll(/[\s_-]+/g, '') === 'methodnotfound')
+  ) {
+    return true
+  }
+  const message =
+    error instanceof Error
+      ? error.message
+      : stringValue(details.message) || stringValue(nestedDetails.message)
+  if (!message) {
     return false
   }
-  const message = error.message.toLowerCase()
+  const normalizedMessage = message.toLowerCase()
   return (
-    message.includes('method not found') ||
-    message.includes('unknown method') ||
-    message.includes('not supported')
+    normalizedMessage.includes('method not found') ||
+    normalizedMessage.includes('methodnotfound') ||
+    normalizedMessage.includes('unknown method') ||
+    normalizedMessage.includes('unhandled method') ||
+    normalizedMessage.includes('not supported')
   )
 }
 

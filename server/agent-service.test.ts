@@ -638,6 +638,7 @@ describe('AgentService deletion', () => {
       status: 'running',
       startedAt: '2026-08-31T18:00:00.000Z',
       agentType: 'explore',
+      executionMode: 'background',
     })
     client.session.taskProgress.set('task-1', {
       type: 'agent',
@@ -668,6 +669,40 @@ describe('AgentService deletion', () => {
     ).resolves.toMatchObject({
       runningCount: 0,
       tasks: [{ id: 'task-1', status: 'cancelled', canCancel: false }],
+    })
+    await service.stop()
+  })
+
+  it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    let taskListError: unknown = new Error(
+      'Unhandled method session.tasks.list',
+    )
+    client.session.rpc.tasks!.list = async () => {
+      throw taskListError
+    }
+
+    await expect(service.listBackgroundTasks(created.id)).resolves.toEqual({
+      tasks: [],
+      runningCount: 0,
+      supported: false,
+    })
+
+    taskListError = Object.assign(new Error('Request failed'), { code: -32601 })
+    await expect(service.listBackgroundTasks(created.id)).resolves.toEqual({
+      tasks: [],
+      runningCount: 0,
+      supported: false,
     })
     await service.stop()
   })

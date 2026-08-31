@@ -230,6 +230,12 @@ type DefaultModelSettings = {
   claude: string
 }
 
+type ComposerHistoryState = {
+  messages: string[]
+  index: number
+  draft: string
+}
+
 const defaultModelSettings: DefaultModelSettings = {
   copilot: '',
   claude: '',
@@ -3740,6 +3746,7 @@ function App() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
   )
+  const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   const [cwdOpen, setCwdOpen] = useState(false)
@@ -4608,8 +4615,23 @@ function App() {
     setComposerForKey(selectedKey, value)
   }
 
-  function setComposerForKey(targetKey: string, value: string) {
-    setComposerDrafts((current) => {
+  // Every composer write goes through here so none can skip invalidation. Any
+  // write other than history navigation replaces the draft that navigation is
+  // tracking, so navigating afterwards would overwrite text the user never
+  // typed here and could not recover. Editing a queued prompt, dictation,
+  // uploads, and path insertion all reach the composer by different routes.
+  function updateComposerDrafts(
+    invalidateKeys: string[],
+    update: (current: Record<string, string>) => Record<string, string>,
+  ) {
+    for (const key of invalidateKeys) {
+      resetComposerHistory(key)
+    }
+    setComposerDrafts(update)
+  }
+
+  function setComposerForKey(targetKey: string, value: string, fromHistory = false) {
+    updateComposerDrafts(fromHistory ? [] : [targetKey], (current) => {
       if (!value) {
         const { [targetKey]: _removed, ...remaining } = current
         return remaining
@@ -4618,8 +4640,57 @@ function App() {
     })
   }
 
+  function resetComposerHistory(targetKey: string) {
+    delete composerHistoryRef.current[targetKey]
+  }
+
+  function navigateMessageHistory(direction: -1 | 1): boolean {
+    if (!selected || !selectedKey) {
+      return false
+    }
+    const messages = selected.messages
+      .filter((message) => message.role === 'user' && message.content.trim())
+      .map((message) => message.content)
+    if (messages.length === 0) {
+      return false
+    }
+
+    const existing = composerHistoryRef.current[selectedKey]
+    if (!existing && (direction > 0 || composer.trim())) {
+      return false
+    }
+    const history =
+      existing && existing.messages.join('\0') === messages.join('\0')
+        ? existing
+        : {
+            messages,
+            index: messages.length,
+            draft: composer,
+          }
+    const nextIndex = Math.min(
+      Math.max(history.index + direction, 0),
+      messages.length,
+    )
+    history.index = nextIndex
+    composerHistoryRef.current[selectedKey] = history
+    const value =
+      nextIndex === messages.length ? history.draft : messages[nextIndex] || ''
+    setComposerForKey(selectedKey, value, true)
+    window.requestAnimationFrame(() => {
+      if (
+        selectedRef.current &&
+        sessionKey(selectedRef.current) === selectedKey
+      ) {
+        const textarea = composerRef.current
+        textarea?.focus()
+        textarea?.setSelectionRange(value.length, value.length)
+      }
+    })
+    return true
+  }
+
   function prependComposerForKey(targetKey: string, value: string) {
-    setComposerDrafts((current) => {
+    updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
         ? value.endsWith('\n')
@@ -4634,7 +4705,7 @@ function App() {
   }
 
   function appendComposerForKey(targetKey: string, value: string) {
-    setComposerDrafts((current) => {
+    updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
         ? existing.endsWith('\n')
@@ -4652,7 +4723,7 @@ function App() {
     if (fromKey === toKey) {
       return
     }
-    setComposerDrafts((current) => {
+    updateComposerDrafts([fromKey, toKey], (current) => {
       const value = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
       return value ? { ...remaining, [toKey]: value } : remaining
@@ -4923,18 +4994,7 @@ function App() {
     setError(undefined)
     try {
       const result = await transcribeAudio(file)
-      setComposerDrafts((current) => {
-        const existing = current[targetKey] || ''
-        const separator = existing
-          ? existing.endsWith('\n')
-            ? '\n'
-            : '\n\n'
-          : ''
-        return {
-          ...current,
-          [targetKey]: `${existing}${separator}${result.transcript}`,
-        }
-      })
+      appendComposerForKey(targetKey, result.transcript)
       if (
         selectedRef.current &&
         sessionKey(selectedRef.current) === targetKey
@@ -5286,6 +5346,30 @@ function App() {
           (current - 1 + commandSuggestions.length) %
           commandSuggestions.length,
       )
+      return
+    }
+    if (
+      event.key === 'ArrowUp' &&
+      !showCommandMenu &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      navigateMessageHistory(-1)
+    ) {
+      event.preventDefault()
+      return
+    }
+    if (
+      event.key === 'ArrowDown' &&
+      !showCommandMenu &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      navigateMessageHistory(1)
+    ) {
+      event.preventDefault()
       return
     }
     const selectedSuggestion =
@@ -6146,7 +6230,9 @@ function App() {
                 <textarea
                   aria-label="Message"
                   disabled={sending}
-                  onChange={(event) => setComposer(event.target.value)}
+                  onChange={(event) => {
+                    setComposer(event.target.value)
+                  }}
                   onKeyDown={composerKeyDown}
                   placeholder={`Message agent on ${selected.computerName}…`}
                   ref={composerRef}

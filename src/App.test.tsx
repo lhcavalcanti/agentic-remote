@@ -600,7 +600,7 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Claude Agent default model'), {
       target: { value: 'sonnet' },
     })
-    expect(screen.getByText('Efficient')).toBeInTheDocument()
+    expect(screen.getByText('Efficient').tagName).toBe('STRONG')
     fireEvent.change(
       screen.getByLabelText('GitHub Copilot default reasoning effort'),
       {

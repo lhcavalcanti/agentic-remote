@@ -870,6 +870,13 @@ button {
   margin: -18px 0;
 }
 
+/* Flex items do not collapse margins, so two adjacent activity rows would
+   otherwise net 28px - 18px - 18px = -8px and overlap. Pull only the second
+   one, keeping the tighter spacing against ordinary messages. */
+.message--activity + .message--activity {
+  margin-top: -10px;
+}
+
 .tool-activity-slot {
   animation: tool-activity-change 180ms ease-out;
 }

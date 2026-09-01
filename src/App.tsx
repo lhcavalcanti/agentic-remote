@@ -317,6 +317,23 @@ type ComposerHistoryState = {
  */
 type KnowledgePanelMode = 'hidden' | 'docked' | 'expanded'
 
+/** Panel state when no session is selected, so roots stay browsable. */
+const sessionlessKnowledgeKey = 'knowledge:no-session'
+
+/**
+ * Text editing owns its keystrokes. Alt+Arrow moves the caret by word in a
+ * composer, so a shortcut must not take it away.
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+  return (
+    target.isContentEditable ||
+    ['input', 'textarea', 'select'].includes(target.tagName.toLowerCase())
+  )
+}
+
 /** Where a session's Knowledge panel was last reading. */
 type KnowledgePosition = {
   rootId?: string
@@ -4162,8 +4179,11 @@ function App() {
   const [knowledgePositions, setKnowledgePositions] = useState<
     Record<string, KnowledgePosition>
   >(() => readStoredOrder('agentic-remote:knowledge-session-positions', {}))
+  // Roots are browsable without a session, so a session-less panel keeps its
+  // own state under a reserved key instead of being unreachable.
+  const knowledgePanelKey = selectedKey || sessionlessKnowledgeKey
   const knowledgeMode: KnowledgePanelMode =
-    (selectedKey && knowledgePanels[selectedKey]) || 'hidden'
+    knowledgePanels[knowledgePanelKey] || 'hidden'
   const [roots, setRoots] = useState<KnowledgeRoot[]>([])
   const [activeRootId, setActiveRootId] = useState<string | undefined>(() =>
     readStoredOrder<string | undefined>(
@@ -4201,6 +4221,9 @@ function App() {
   // offset is kept across hides and session switches.
   const knowledgeTreeRef = useRef<HTMLDivElement>(null)
   const knowledgeScrollTops = useRef<Record<string, number>>({})
+  // Set while a session's tree is still being rebuilt, so the saved offset is
+  // applied to the new content instead of the tree that is going away.
+  const knowledgePendingScrollKey = useRef<string>(undefined)
   // Bumped only when the active root changes, so a folder that is still
   // loading cannot write its entries into a different root's tree.
   const knowledgeRootGeneration = useRef(0)
@@ -4224,6 +4247,10 @@ function App() {
   // The folder the breadcrumb and the remembered position follow. It is only
   // meaningful once that folder actually loaded.
   const knowledgeListing = knowledgeFolders[knowledgePath]?.listing
+  const knowledgeRows = useMemo(
+    () => knowledgeTreeRows(knowledgeFolders, expandedKnowledge),
+    [expandedKnowledge, knowledgeFolders],
+  )
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -4688,7 +4715,15 @@ function App() {
   // The panel belongs to the session, so what it was reading is recorded
   // against that session rather than globally.
   useEffect(() => {
-    if (!knowledgeHydrated.current || !selectedKey || !activeRootId) {
+    // Only the session whose position has already been restored may record
+    // one, or selecting a session would immediately overwrite its saved
+    // location with whatever the previous session was reading.
+    if (
+      !knowledgeHydrated.current ||
+      !selectedKey ||
+      !activeRootId ||
+      knowledgeRestoredKey.current !== selectedKey
+    ) {
       return
     }
     setKnowledgePositions((current) => {
@@ -4746,8 +4781,8 @@ function App() {
     ) {
       return
     }
-    knowledgeRestoredKey.current = selectedKey
     const remembered = knowledgePositionsRef.current[selectedKey]
+    knowledgeRestoredKey.current = selectedKey
     if (
       !remembered?.rootId ||
       !roots.some((root) => root.id === remembered.rootId)
@@ -4762,6 +4797,9 @@ function App() {
     ) {
       return
     }
+    // The tree is rebuilt asynchronously, so the scroll offset is re-applied
+    // once that content lands rather than against the outgoing tree.
+    knowledgePendingScrollKey.current = selectedKey
     restoreKnowledgeRef.current(remembered)
   }, [knowledgeMode, selectedKey, roots])
 
@@ -4769,10 +4807,11 @@ function App() {
   // between a session and its files does not lose the reader's place.
   useLayoutEffect(() => {
     const node = knowledgeTreeRef.current
-    if (!node || knowledgeMode === 'hidden' || !selectedKey) {
+    const key = knowledgePanelKey
+    if (!node || knowledgeMode === 'hidden') {
       return
     }
-    const remembered = knowledgeScrollTops.current[selectedKey]
+    const remembered = knowledgeScrollTops.current[key]
     if (remembered !== undefined) {
       node.scrollTop = remembered
       // The tree grows as folders finish loading, so the offset is applied
@@ -4785,9 +4824,10 @@ function App() {
     }
     const record = () => {
       // A hidden panel reports 0, which would erase the position it is
-      // supposed to keep.
-      if (!node.closest('[hidden]')) {
-        knowledgeScrollTops.current[selectedKey] = node.scrollTop
+      // supposed to keep. A tree still waiting for its session's content
+      // would record the outgoing session's offset.
+      if (!node.closest('[hidden]') && !knowledgePendingScrollKey.current) {
+        knowledgeScrollTops.current[key] = node.scrollTop
       }
     }
     node.addEventListener('scroll', record, { passive: true })
@@ -4795,7 +4835,28 @@ function App() {
       record()
       node.removeEventListener('scroll', record)
     }
-  }, [knowledgeMode, selectedKey])
+  }, [knowledgeMode, knowledgePanelKey])
+
+  // Restoring after the rebuilt tree lands keeps the offset meaningful when
+  // two sessions read different roots.
+  useLayoutEffect(() => {
+    const node = knowledgeTreeRef.current
+    const key = knowledgePendingScrollKey.current
+    if (
+      !node ||
+      !key ||
+      key !== knowledgePanelKey ||
+      knowledgeMode === 'hidden' ||
+      knowledgeRows.length === 0
+    ) {
+      return
+    }
+    knowledgePendingScrollKey.current = undefined
+    const remembered = knowledgeScrollTops.current[key]
+    if (remembered !== undefined) {
+      node.scrollTop = remembered
+    }
+  }, [knowledgeMode, knowledgePanelKey, knowledgeRows])
 
   useEffect(() => {
     void listKnowledgeRoots()
@@ -5539,10 +5600,10 @@ function App() {
   const activeRoot = roots.find((root) => root.id === activeRootId)
 
   function setKnowledgeMode(mode: KnowledgePanelMode) {
-    if (!selectedKey) {
-      return
-    }
-    setKnowledgePanels((current) => ({ ...current, [selectedKey]: mode }))
+    setKnowledgePanels((current) => ({
+      ...current,
+      [knowledgePanelKey]: mode,
+    }))
   }
 
   function toggleKnowledgePanel() {
@@ -5685,7 +5746,9 @@ function App() {
       event.ctrlKey ||
       event.metaKey ||
       event.defaultPrevented ||
-      hasBlockingUi
+      event.isComposing ||
+      hasBlockingUi ||
+      isEditableTarget(event.target)
     ) {
       return
     }
@@ -6805,18 +6868,20 @@ function App() {
                 : 'Ready when you are'}
             </span>
           </div>
-          {selected ? (
-            <button
-              aria-label="Session knowledge"
-              aria-pressed={knowledgeMode !== 'hidden'}
-              className="icon-button"
-              onClick={toggleKnowledgePanel}
-              title="Knowledge for this session (Alt+K)"
-              type="button"
-            >
-              <BookOpen size={18} />
-            </button>
-          ) : null}
+          <button
+            aria-label="Session knowledge"
+            aria-pressed={knowledgeMode !== 'hidden'}
+            className="icon-button"
+            onClick={toggleKnowledgePanel}
+            title={
+              selected
+                ? 'Knowledge for this session (Alt+K)'
+                : 'Knowledge (Alt+K)'
+            }
+            type="button"
+          >
+            <BookOpen size={18} />
+          </button>
           {selected ? (
             <button
               aria-label="Browse current session folder"
@@ -7403,6 +7468,14 @@ function App() {
             <X size={16} />
           </button>
         </header>
+        {error ? (
+          <div className="error-banner knowledge-panel__error">
+            <span>{error}</span>
+            <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
+              <X size={16} />
+            </button>
+          </div>
+        ) : null}
         <div className="knowledge-panel__body">
           <nav aria-label="Knowledge" className="knowledge-tree" ref={knowledgeTreeRef}>
             {roots.length === 0 ? (
@@ -7509,7 +7582,7 @@ function App() {
                   onKeyDown={knowledgeTreeKeyDown}
                   role="tree"
                 >
-                  {knowledgeTreeRows(knowledgeFolders, expandedKnowledge).map(
+                  {knowledgeRows.map(
                     (row) =>
                       row.type === 'status' ? (
                         <p

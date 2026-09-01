@@ -4196,6 +4196,147 @@ describe('App', () => {
     )
   })
 
+  it('keeps knowledge reachable with no session selected', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+    })
+
+    render(<App />)
+    // Configured roots stay browsable when no session exists at all.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Session knowledge' }),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    expect(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('does not overwrite a session knowledge position before restoring it', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-panels',
+      JSON.stringify({ 'computer-1:session-1': 'docked' }),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-2': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    // Selecting a session whose panel is closed must not stamp the previous
+    // session's reader state over its own remembered one.
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+    )
+    await waitFor(() =>
+      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
+        'hidden',
+      ),
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )['computer-1:session-2'],
+    ).toEqual({ rootId: 'root-1', path: 'guides' })
+  })
+
+  it('leaves composer text editing to the composer', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    textarea.focus()
+
+    fireEvent.keyDown(textarea, {
+      key: 'ArrowDown',
+      code: 'ArrowDown',
+      altKey: true,
+    })
+    fireEvent.keyDown(textarea, { key: 'k', code: 'KeyK', altKey: true })
+
+    // Alt+Arrow moves the caret by word, so the shortcut must stand down.
+    expect(
+      screen
+        .getAllByRole('button', { name: /Project chat/ })
+        .find((item) => item.classList.contains('session-item')),
+    ).toHaveAttribute('aria-current', 'page')
+    expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
+  })
+
+  it('shows errors in the knowledge panel that covers the conversation', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [
+        { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 10 },
+      ],
+    })
+    vi.mocked(readKnowledgeFile).mockRejectedValue(new Error('offline'))
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Expand knowledge panel' }),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    )
+
+    // The conversation is covered, so its banner cannot be the only one.
+    const panel = document.querySelector('.knowledge-panel')!
+    await waitFor(() =>
+      expect(panel.querySelector('.knowledge-panel__error')).toHaveTextContent(
+        'offline',
+      ),
+    )
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

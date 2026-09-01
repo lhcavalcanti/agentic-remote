@@ -303,6 +303,18 @@ button {
   white-space: nowrap;
 }
 
+/* The conversation carries the only banner while it is visible, so the panel
+   shows its own copy exactly when the conversation is covered. */
+@media (min-width: 961px) {
+  .workspace--docked .knowledge-panel__error {
+    display: none;
+  }
+}
+
+.knowledge-panel__error {
+  flex: 0 0 auto;
+}
+
 .knowledge-panel__body {
   display: grid;
   min-height: 0;

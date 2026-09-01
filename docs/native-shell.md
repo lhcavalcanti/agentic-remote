@@ -218,21 +218,27 @@ native calls cross the IPC boundary.
 
 ### 3.2 Progressive enhancement in the web app
 
-The web app stays a browser app. A new `src/desktop.ts` detects the shell and
-enables extra behavior only when present:
+The web app stays a browser app. `src/shell.ts` detects the shell and enables
+extra behavior only when present:
 
 ```ts
-export function desktopShell(): boolean {
-  return '__TAURI_INTERNALS__' in window
+export function nativeShell(): boolean {
+  return bridge() !== undefined
 }
 ```
+
+Detection keys off the injected `window.__AGENTIC_SHELL__` object rather than
+Tauri's own globals, so the web app stays independent of the shell's
+implementation and a partially initialized runtime is never mistaken for a
+working bridge.
 
 - In Safari and on iPhone, nothing changes.
 - In the shell, the app additionally reports the count of sessions awaiting
   input for the badge, routes notifications through the shell instead of Web
   Push, and handles deep-link navigation events.
-- Every desktop feature MUST degrade silently. A hub opened in a browser MUST
-  NOT show controls that only the shell can satisfy.
+- Every shell feature MUST degrade silently. A hub opened in a browser, or in a
+  shell too old or on a platform too limited to provide it, MUST NOT show a
+  control that nothing can satisfy.
 
 ### 3.3 Authentication
 

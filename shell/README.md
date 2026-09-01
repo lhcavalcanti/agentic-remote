@@ -21,33 +21,35 @@ shaped this way. Read it before changing the security or window model.
 | Tray / menu-bar item | Yes | Not applicable |
 | Global shortcut (`CmdOrCtrl+Shift+A`) | Yes | Not applicable |
 
-## Install a build without a toolchain
+## Install a build
 
-You do not need Rust or Node to install the app.
+The shell is built locally. Automated cross-platform builds were removed because
+macOS runners bill at ten times the Linux rate in a private repository, and
+building every platform on every change exhausted the account's monthly
+allowance.
 
-**Any commit.** Open the repository's Actions tab, pick a run of the `CI`
-workflow, and download the artifact for your platform from the run summary:
-`agentic-remote-macos` (`.dmg`), `agentic-remote-windows` (`.exe` installer), or
-`agentic-remote-linux` (`.deb` and `.AppImage`). Artifacts are kept for 14 days
-and are attached to pull request runs too, so a change can be tried before it
-merges.
-
-From the command line, always download into a fresh directory:
+Build for the machine you are on:
 
 ```bash
-gh run download <run-id> -n agentic-remote-macos -D ./build
+cd shell
+pnpm install
+pnpm icons            # generates src-tauri/icons from public/icons/icon-512.png
+pnpm build:desktop
 ```
 
-**A published version.** Releases carry the same bundles and do not expire. The
-macOS build in a release is a universal binary, so one download runs on both
-Apple Silicon and Intel. Publish one by pushing a tag:
+Bundles land in `src-tauri/target/release/bundle/`: `dmg/` on macOS, `nsis/` on
+Windows, `deb/` and `appimage/` on Linux.
+
+On macOS, build a binary that runs on both Apple Silicon and Intel with:
 
 ```bash
-git tag shell-v0.1.0 && git push origin shell-v0.1.0
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+pnpm tauri build --target universal-apple-darwin
 ```
 
-The `Shell release` workflow also accepts a manual run if you would rather not
-push a tag.
+Bundles cannot be cross-compiled, so each platform must be built on itself.
+
+Published builds, when they exist, are attached to a GitHub release by hand.
 
 ### macOS: the first open
 
@@ -107,23 +109,32 @@ The first launch opens the settings window. Enter the hub URL you normally open
 in a browser. The address is stored in the platform config directory, never in
 this repository, because host topology belongs to the machine.
 
-## Build
+## Verify a change
+
+Nothing verifies the shell automatically, so run this before trusting a change,
+and the iOS check on a Mac whenever platform-specific code moves:
 
 ```bash
-pnpm icons
-pnpm build:desktop
+pnpm exec tsc --noEmit
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml --target aarch64-apple-ios
+```
+
+The iOS check matters more than it looks: several `WebviewWindow` methods are
+`#[cfg(desktop)]` despite documentation that mentions iOS, so code can compile
+on every desktop target and still fail there.
+
+## Package for iOS
+
+```bash
 pnpm build:ios      # macOS only, needs signing credentials
 ```
 
-Bundles land in `src-tauri/target/release/bundle/`. Bundles cannot be
-cross-compiled; each platform builds its own.
-
-Sign and notarize macOS builds with a Developer ID Application certificate.
-Without notarization, Gatekeeper requires a manual first open (right-click,
-Open). See `docs/native-shell.md` §5.1.
-
-iOS is distributed through TestFlight internal testing or ad-hoc provisioning,
-not the App Store — see `docs/native-shell.md` §5.2.
+Sign and notarize macOS builds with a Developer ID Application certificate; see
+`docs/native-shell.md` §5.1. iOS is distributed through TestFlight internal
+testing or ad-hoc provisioning, not the App Store — see §5.2.
 
 ## How the shell and the web app talk
 
@@ -175,7 +186,8 @@ no-op on mobile. It arrives with the APNs work, which can carry a badge in the
 payload.
 
 When adding a native call, check the enclosing `impl` block's `cfg` rather than
-the doc comment, and let the `shell-ios` CI job confirm it.
+the doc comment, and confirm it with
+`cargo check --target aarch64-apple-ios` on a Mac.
 
 The bridge already carries `actions` and an `onNotificationReply` channel, so
 both can be finished in the shell without changing the web app.

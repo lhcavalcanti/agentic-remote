@@ -3219,6 +3219,50 @@ describe('App', () => {
       )
   })
 
+  it('shows the agent update the CLI is offering and can hide it', async () => {
+    const updateSession = {
+      ...session,
+      runtime: { mode: 'plan', updateAvailable: '1.0.83' },
+    }
+    vi.mocked(listSessions).mockResolvedValue([updateSession])
+    vi.mocked(getSession).mockResolvedValue(updateSession)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    expect(screen.getByTestId('web-statusline-update')).toHaveTextContent(
+      'v1.0.83 available',
+    )
+    expect(screen.getByTestId('web-statusline-update')).toHaveTextContent(
+      'run /update',
+    )
+
+    fireEvent.change(textarea, { target: { value: '/statusline' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(
+      await screen.findByRole('dialog', { name: 'Status line' }),
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Agent update available'))
+
+    expect(
+      screen.queryByTestId('web-statusline-update'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('hides the update segment when the CLI is not offering one', async () => {
+    const currentSession = {
+      ...session,
+      runtime: { mode: 'plan' },
+    }
+    vi.mocked(listSessions).mockResolvedValue([currentSession])
+    vi.mocked(getSession).mockResolvedValue(currentSession)
+    render(<App />)
+    await screen.findByLabelText('Message')
+
+    expect(
+      screen.queryByTestId('web-statusline-update'),
+    ).not.toBeInTheDocument()
+  })
+
   it('prevents runtime changes while the session is active', async () => {
     const runningSession = {
       ...session,

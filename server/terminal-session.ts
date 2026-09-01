@@ -48,6 +48,7 @@ export interface TerminalSessionController {
     answer: string,
     wasFreeform: boolean,
   ): Promise<boolean>
+  updateNotice?(sessionId: string): Promise<string | undefined>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
@@ -285,12 +286,24 @@ export class TmuxTerminalSessionController
     return parseTerminalPermission(pane)
   }
 
+  async updateNotice(sessionId: string): Promise<string | undefined> {
+    const target = await this.target(sessionId)
+    if (!target) {
+      return undefined
+    }
+    // Only the visible pane matters; the status bar is repainted at its
+    // bottom, so the scrollback would just carry stale notices.
+    const pane = (
+      await execFileAsync('tmux', ['capture-pane', '-p', '-t', target])
+    ).stdout
+    return parseTerminalUpdateNotice(pane)
+  }
+
   async replyPermission(
     sessionId: string,
     request: PendingPermission,
     optionId: string,
-  ): Promise<boolean> {
-    return this.serialize(sessionId, async () => {
+  ): Promise<boolean> {    return this.serialize(sessionId, async () => {
       const owner = await this.owner(sessionId)
       if (!owner) {
         return false
@@ -665,10 +678,41 @@ function cleanDialogLine(line: string): string {
     .trim()
 }
 
+/**
+ * The version the CLI is advertising as an update, or undefined when it is not
+ * offering one. The notice lives in the status bar the CLI repaints below its
+ * composer, so only that region is examined; the transcript above it can quote
+ * a notice without one being offered.
+ */
+const COMPOSER_EDGE = /^\s*[╻╹╭╰][\u2580-\u259f\u2500-\u257f]*\s*$/u
+
+export function parseTerminalUpdateNotice(pane: string): string | undefined {
+  const lines = pane.split('\n')
+  // A pane can be padded with blank lines below the status bar, which would
+  // otherwise push the notice out of the region examined below.
+  while (lines.length > 0 && !lines[lines.length - 1].trim()) {
+    lines.pop()
+  }
+  // Anchor below the composer's lower edge rather than its top, so text typed
+  // into the composer is not read as an offer either.
+  const composer = lines.findLastIndex((line) => COMPOSER_EDGE.test(line))
+  // Without a composer the pane is showing a full-screen view, which covers
+  // the status bar. The next poll sees it again once the view closes.
+  if (composer < 0) {
+    return undefined
+  }
+  for (const line of lines.slice(composer + 1)) {
+    const match = /\bv?(\d+\.\d+\.\d+[\w.-]*)\s+available\b/i.exec(line)
+    if (match && /\/update\b/.test(line)) {
+      return match[1]
+    }
+  }
+  return undefined
+}
+
 export function parseTerminalUserInput(
   pane: string,
-): PendingUserInput | undefined {
-  const lines = pane.split('\n').map(cleanDialogLine)
+): PendingUserInput | undefined {  const lines = pane.split('\n').map(cleanDialogLine)
   const questionHeader = lines.findLastIndex((line) => line === 'Question')
   if (questionHeader < 0) {
     return undefined

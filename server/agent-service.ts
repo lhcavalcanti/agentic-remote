@@ -1126,6 +1126,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
   private readonly terminalUserInputChecks = new Map<string, number>()
+  private readonly terminalUpdateChecks = new Map<string, number>()
   private readonly answeredTerminalPermissions = new Map<
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
@@ -1258,6 +1259,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.elicitations.clear()
     this.terminalUserInputChecks.clear()
+    this.terminalUpdateChecks.clear()
     this.answeredTerminalPermissions.clear()
     this.answeredTerminalInputs.clear()
     const disconnected = await Promise.allSettled(
@@ -1953,6 +1955,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
       this.terminalUserInputChecks.delete(id)
+      this.terminalUpdateChecks.delete(id)
       this.answeredTerminalPermissions.delete(id)
       this.answeredTerminalInputs.delete(id)
       const cleared = await this.store.replaceWithClearedSession(
@@ -2491,6 +2494,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.queueOperations.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
+      this.terminalUpdateChecks.delete(sessionId)
       this.answeredTerminalPermissions.delete(sessionId)
       this.answeredTerminalInputs.delete(sessionId)
       completed = true
@@ -2857,6 +2861,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const storedBeforeDiscovery = this.store.list()
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
+    const previouslyExternal = this.externalSessionIds
     this.externalSessionIds = new Set(
       [
         ...activeSessions
@@ -2865,6 +2870,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ...this.launchingTerminalSessionIds,
       ],
     )
+    await this.clearUpdateNoticeForExited(previouslyExternal)
     const indexedSessions = sessions.flatMap((session) => {
       if (this.deletedSessionIds.has(session.sessionId)) {
         return []
@@ -2972,6 +2978,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.externalSessionIds.has(sessionId)) {
           await this.syncExternalWorkspace(sessionId)
           await this.syncTerminalUserInput(sessionId)
+          await this.syncTerminalUpdateNotice(sessionId)
         }
         const version = await this.sessionEventVersion(sessionId)
         if (!version || this.eventLogVersions.get(sessionId) === version) {
@@ -3091,6 +3098,60 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   /**
+   * The notice is only true while the terminal that painted it is running.
+   * Once discovery drops the session nothing polls it again, so a stale offer
+   * would otherwise stay on screen until the terminal came back.
+   */
+  private async clearUpdateNoticeForExited(
+    previouslyExternal: Set<string>,
+  ): Promise<void> {
+    for (const sessionId of previouslyExternal) {
+      if (this.externalSessionIds.has(sessionId)) {
+        continue
+      }
+      this.terminalUpdateChecks.delete(sessionId)
+      if (this.store.get(sessionId)?.runtime?.updateAvailable === undefined) {
+        continue
+      }
+      const updated = await this.store.update(sessionId, (session) => {
+        session.runtime = { ...session.runtime, updateAvailable: undefined }
+      })
+      this.publish(updated)
+    }
+  }
+
+  /**
+   * Mirrors the update the CLI is advertising in its own status bar, so a
+   * session supervised from the web is not the only place the recommendation
+   * is invisible. The CLI checks rarely, so this does too.
+   */
+  private async syncTerminalUpdateNotice(sessionId: string): Promise<void> {
+    if (!this.terminalController.updateNotice) {
+      return
+    }
+    const stored = this.store.get(sessionId)
+    if (!stored || this.deletedSessionIds.has(sessionId)) {
+      return
+    }
+    const now = Date.now()
+    const lastCheck = this.terminalUpdateChecks.get(sessionId) || 0
+    if (now - lastCheck < 60_000) {
+      return
+    }
+    this.terminalUpdateChecks.set(sessionId, now)
+    const updateAvailable = await this.terminalController
+      .updateNotice(sessionId)
+      .catch(() => undefined)
+    if ((stored.runtime?.updateAvailable ?? undefined) === updateAvailable) {
+      return
+    }
+    const updated = await this.store.update(sessionId, (session) => {
+      session.runtime = { ...session.runtime, updateAvailable }
+    })
+    this.publish(updated)
+  }
+
+  /**
    * An ask-user request only reaches the UI through a transcript sync, but the
    * agent stops writing events while it waits for the answer. Every sync
    * short-circuit therefore ends here, so a request recovered from the event
@@ -3155,7 +3216,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return false
   }
 
-  private async syncTerminalUserInput(sessionId: string): Promise<void> {    if (
+  private async syncTerminalUserInput(sessionId: string): Promise<void> {
+    if (
       !this.terminalController.pendingUserInput &&
       !this.terminalController.pendingPermission
     ) {

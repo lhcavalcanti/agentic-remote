@@ -285,6 +285,7 @@ type StatuslineSettings = {
   contextUsage: boolean
   mode: boolean
   permissions: boolean
+  update: boolean
 }
 
 type DefaultModelSettings = {
@@ -363,6 +364,7 @@ const defaultStatusline: StatuslineSettings = {
   contextUsage: true,
   mode: true,
   permissions: true,
+  update: true,
 }
 
 const timelineBottomThreshold = 48
@@ -383,6 +385,7 @@ const statuslineOptions: Array<{
   { key: 'contextUsage', label: 'Context usage' },
   { key: 'mode', label: 'Agent mode' },
   { key: 'permissions', label: 'Permission mode' },
+  { key: 'update', label: 'Agent update available' },
 ]
 
 const webCommands: SlashCommand[] = [
@@ -7027,6 +7030,14 @@ function App() {
             selected.runtime?.allowAllPermissions !== undefined ? (
               <span>
                 {selected.runtime.allowAllPermissions ? 'allow all' : 'ask'}
+              </span>
+            ) : null}
+            {statusline.update && selected.runtime?.updateAvailable ? (
+              <span
+                className="web-statusline__update"
+                data-testid="web-statusline-update"
+              >
+                v{selected.runtime.updateAvailable} available · run /update
               </span>
             ) : null}
           </div>

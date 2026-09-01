@@ -159,7 +159,14 @@ import {
   installedAsApp,
   pushNotificationsSupported,
   PWA_UPDATE_EVENT,
+  sessionNotificationTags,
 } from './pwa'
+import {
+  attentionCount,
+  onDesktopDeepLink,
+  setDesktopBadge,
+  withdrawDesktopNotifications,
+} from './desktop'
 
 function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string {
   return `${session.computerId}:${session.id}`
@@ -4284,6 +4291,23 @@ function App() {
     () => sessions.find((session) => sessionKey(session) === selectedKey),
     [selectedKey, sessions],
   )
+  // The desktop shell shows how many sessions are blocked on the user. This is
+  // a no-op in a browser, so the badge never needs a capability check here.
+  useEffect(() => {
+    setDesktopBadge(attentionCount(sessions))
+  }, [sessions])
+  // An `agentic://` link may arrive before the session list has loaded, so the
+  // key is set optimistically and resolves once that session appears.
+  useEffect(
+    () =>
+      onDesktopDeepLink((target) => {
+        setSelectedKey(
+          sessionKey({ computerId: target.computerId, id: target.sessionId }),
+        )
+        setSidebarOpen(false)
+      }),
+    [],
+  )
   const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
   const hasBlockingUi =
     newSessionOpen ||
@@ -4701,13 +4725,17 @@ function App() {
     if (!selectedComputerId || !selectedSessionId) {
       return
     }
-    const clearNotifications = () =>
+    const clearNotifications = () => {
+      withdrawDesktopNotifications(
+        sessionNotificationTags(selectedComputerId, selectedSessionId),
+      )
       void clearSessionPushNotifications(
         selectedComputerId,
         selectedSessionId,
       ).catch((caught: unknown) => {
         console.warn('Unable to clear opened session notifications:', caught)
       })
+    }
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         clearNotifications()

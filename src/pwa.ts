@@ -116,6 +116,17 @@ export async function disablePushNotifications(): Promise<void> {
   await deletePushSubscription(endpoint)
 }
 
+export function sessionNotificationTags(
+  computerId: string,
+  sessionId: string,
+): string[] {
+  return [
+    `agentic-action-${computerId}-${sessionId}`,
+    `agentic-question-${computerId}-${sessionId}`,
+    `agentic-finished-${computerId}-${sessionId}`,
+  ]
+}
+
 export async function clearSessionPushNotifications(
   computerId: string,
   sessionId: string,
@@ -126,11 +137,7 @@ export async function clearSessionPushNotifications(
   const registration = await navigator.serviceWorker.ready
   registration.active?.postMessage({
     type: 'CLEAR_SESSION_NOTIFICATIONS',
-    tags: [
-      `agentic-action-${computerId}-${sessionId}`,
-      `agentic-question-${computerId}-${sessionId}`,
-      `agentic-finished-${computerId}-${sessionId}`,
-    ],
+    tags: sessionNotificationTags(computerId, sessionId),
   })
 }
 

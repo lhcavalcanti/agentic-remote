@@ -1,9 +1,11 @@
-# macOS desktop app plan
+# Desktop app plan
 
-Status: Proposed design, not yet implemented
+Status: Phases 1 and 2 implemented, not yet run against a hub on a real desktop
 
-This document records the architecture decision for a native macOS application
-that supervises Agentic Remote sessions, and the phased plan to build it.
+This document records the architecture decision for a native desktop
+application that supervises Agentic Remote sessions, and the phased plan to
+build it. macOS is the driving target; Windows and Linux build from the same
+source.
 
 `docs/app-spec.md` remains normative for product behavior. This document adds
 the desktop surface and MUST NOT contradict it.
@@ -35,6 +37,7 @@ The desktop app MUST NOT:
 | --- | --- |
 | New repository? | **No.** A `desktop/` package inside this repository. |
 | Shell technology | **Tauri v2**, loading the hub over HTTPS. |
+| Platforms | **Cross-platform.** macOS is the driving target; Windows and Linux build from the same source and are covered by CI. |
 | UI source | The **remote hub**, not a bundled copy. |
 | Immediate stopgap | Safari **Add to Dock** while the shell is built. |
 
@@ -162,34 +165,43 @@ permissioned IPC channel.
 ### 3.1 Remote capability and its security boundary
 
 Tauri v2 disables IPC for remote content by default. Granting it requires a
-capability file naming the exact origins:
+capability naming the exact origins.
 
-```json
-{
-  "identifier": "hub-remote",
-  "platforms": ["macOS"],
-  "urls": ["https://agentic.lcavalcanti.cc", "http://10.0.0.181:4317"],
-  "permissions": [
-    "notification:default",
-    "global-shortcut:allow-register",
-    "deep-link:default"
-  ]
+A static capability file cannot express this, because the hub address belongs to
+the machine rather than to the binary. The shell therefore builds the capability
+at runtime from the stored configuration, using Tauri's `dynamic-acl` feature:
+
+```rust
+let mut capability = tauri::ipc::CapabilityBuilder::new("hub-remote")
+    .local(false)
+    .window("main");
+for origin in configured_origins {
+    capability = capability.remote(origin);
 }
+app.add_capability(capability)?;
 ```
 
-This is the security-critical file in the design.
+This is the security-critical code in the design.
 
-- The `urls` list MUST be an explicit allowlist. Wildcards MUST NOT be used.
-- Permissions MUST be enumerated individually. Blanket `core:default` MUST NOT
-  be granted to a remote origin.
-- Filesystem, shell, and process permissions MUST NOT appear in a remote
-  capability.
+- The origin list MUST come from validated configuration. Wildcards MUST NOT be
+  used.
+- Only `http` and `https` hub URLs are accepted, and each is reduced to a bare
+  scheme-plus-authority origin before it is granted.
+- Filesystem, shell, and process permissions MUST NOT be granted to a remote
+  origin.
+- `local(false)` keeps this capability off the locally served settings window,
+  which has its own separate capability.
 - The minimum Tauri version MUST be at or above the fix for CVE-2024-35222, in
-  which remote-origin iframes could reach IPC without permission.
+  which remote-origin iframes could reach IPC without permission. The shell
+  pins Tauri 2.11 or later.
 
 Because the hub is a trusted-admin control plane behind Cloudflare Access, the
 threat model is a compromised or spoofed hub response, which is why the origin
 list and permission list stay minimal.
+
+Traffic in the other direction needs no capability at all: the shell delivers
+native events by evaluating a single `__emit` call in the page. Only web-to-
+native calls cross the IPC boundary.
 
 ### 3.2 Progressive enhancement in the web app
 
@@ -203,9 +215,9 @@ export function desktopShell(): boolean {
 ```
 
 - In Safari and on iPhone, nothing changes.
-- In the shell, the app additionally reports unread counts for the Dock badge,
-  routes notifications through the native plugin instead of Web Push, and
-  handles deep-link navigation events.
+- In the shell, the app additionally reports the count of sessions awaiting
+  input for the badge, routes notifications through the shell instead of Web
+  Push, and handles deep-link navigation events.
 - Every desktop feature MUST degrade silently. A hub opened in a browser MUST
   NOT show controls that only the shell can satisfy.
 
@@ -238,38 +250,58 @@ credential and MUST live in the macOS Keychain, never in Git, in
 
 The hub URL MUST be user-configurable and MUST NOT be hard-coded in the
 repository, matching the existing rule that host topology belongs to a
-machine-local profile. The first launch prompts for a URL, stores it, and offers
-an optional LAN address used when the public hostname is unreachable — which
-also keeps the app working when Cloudflare or the tunnel is down.
+machine-local profile. The first launch opens a settings window, stores the URL
+in the platform config directory, and accepts an optional direct address used
+when the public hostname is unreachable — which also keeps the app working when
+Cloudflare or the tunnel is down.
 
-Switching hubs MUST clear the webview cookie store for the previous host so one
-hub's Access session is never presented to another.
+Switching hubs destroys the previous window and re-grants the capability so one
+hub's IPC grant is never presented to another. Clearing the webview cookie store
+for the previous host is not implemented yet; until it is, switching between
+hubs leaves the old Access cookie in the shared store.
 
 ## 4. Native integrations
 
 Ordered by value over the Add-to-Dock baseline.
 
-| # | Integration | Why it beats the browser |
-| --- | --- | --- |
-| 1 | **Notification actions** — approve/deny a permission or answer a question from the notification | The highest-value item. `docs/app-spec.md` §5 makes questions and permissions the top-priority state; acting without focusing the app is the biggest possible win. |
-| 2 | **Menu-bar item** — counts of waiting / running / idle sessions, click to open | Passive supervision without a window. Impossible in any PWA. |
-| 3 | **Dock badge** — number of sessions awaiting input | Available to a PWA, but the shell can drive it from the event stream rather than from notification permission. |
-| 4 | **Global hotkey** — summon or hide the window | Removes app-switching from the supervision loop. |
-| 5 | **Launch at login, start hidden** | The app is a monitor; it should already be running. |
-| 6 | **Deep links** — `agentic://computer/<id>/session/<id>` | Lets notifications, terminals, and scripts open an exact session. |
-| 7 | **Window state** — restore size, position, and sidebar width | Complements the existing resizable-sidebar work. |
-| 8 | **Always-on-top mini monitor** | A compact status window over other work. |
+| # | Integration | Why it beats the browser | Status |
+| --- | --- | --- | --- |
+| 1 | **Native notifications from the live event stream** | An embedded webview has no Web Push, so the shell raises notifications itself from the session WebSocket. Clicking one opens that session. | Implemented |
+| 2 | **Notification actions** — approve/deny a permission from the notification | `docs/app-spec.md` §5 makes questions and permissions the top-priority state, so acting without focusing the app is the biggest possible win. | **Deferred, see below** |
+| 3 | **Tray / menu-bar item** | Passive supervision without a window. Impossible in any PWA. | Implemented |
+| 4 | **Badge** — sessions awaiting input, on dock, taskbar, or launcher | The shell drives it from the event stream rather than from notification permission. | Implemented |
+| 5 | **Global hotkey** — summon or hide the window | Removes app-switching from the supervision loop. | Implemented |
+| 6 | **Deep links** — `agentic://computer/<id>/session/<id>` | Lets notifications, terminals, and scripts open an exact session. | Implemented |
+| 7 | **Launch at login, start hidden** | The app is a monitor; it should already be running. | Planned |
+| 8 | **Window state** — restore size, position, and sidebar width | Complements the existing resizable-sidebar work. | Planned |
+| 9 | **Always-on-top mini monitor** | A compact status window over other work. | Optional |
 
-Items 1–3 are the reason the project exists. Items 4–8 are additive and can slip
-without invalidating the app.
+### 4.1 Why notification actions are deferred
+
+This was expected to be the headline feature and it does not work as assumed.
+On desktop, `tauri-plugin-notification` delegates to `notify-rust`, which cannot
+register the notification categories macOS requires for inline action buttons;
+the plugin's action-type registration is mobile-only. Delivering it needs a
+direct `UNUserNotificationCenter` implementation in the shell.
+
+The bridge was designed for this anyway. `src/desktop.ts` already sends
+`actions` and exposes an `onNotificationReply` channel, and the shell already
+accepts and ignores them, so the capability can be added entirely inside the
+shell without touching the web app.
+
+Until then, a notification opens the session, which still beats the browser
+because the shell can notify at all without Web Push.
 
 ## 5. Release and distribution
 
-- macOS bundles cannot be cross-compiled. Building requires a macOS machine, so
-  release builds run on a GitHub Actions `macos` runner. The Linux hosts never
-  build the desktop app.
-- CI gains a `desktop` job constrained to `desktop/**` changes, so the existing
-  `pnpm check` job on `ubuntu-latest` is unaffected.
+- Bundles cannot be cross-compiled. Each platform builds itself, so CI runs a
+  `desktop` job on `macos-latest`, `ubuntu-latest`, and `windows-latest`. The
+  Linux service hosts never build the desktop app.
+- The desktop shell is a separate package with its own `package.json` and
+  lockfile, so the existing `pnpm check` job and the service install are
+  unaffected by it.
+- Bundle icons are generated from `public/icons/icon-512.png` by `pnpm icons`
+  rather than committed, so there is one icon source in the repository.
 - Updates use the Tauri updater against a self-hosted JSON manifest, signed with
   a repository-independent ed25519 key. The **private updater key is a secret**:
   it lives in GitHub Actions secrets and MUST NOT be committed.
@@ -287,17 +319,18 @@ without invalidating the app.
 
 Each phase is independently shippable and independently abandonable.
 
-| Phase | Scope | Exit criterion |
-| --- | --- | --- |
-| **0** | Adopt Safari Add to Dock. No code. | Sessions supervised from a Dock icon; baseline understood. |
-| **1** | `desktop/` package. Tauri shell, configurable hub URL, remote capability, persistent cookies, window state. | App opens to the hub, Access login survives a restart, sessions stream over WSS. |
-| **2** | `src/desktop.ts` bridge. Native notifications with approve/deny/answer actions, Dock badge. | A permission request is resolved from the notification without focusing the app. |
-| **3** | Menu-bar item, global hotkey, launch at login, start hidden. | Waiting-session count visible with no window open. |
-| **4** | Deep links, self-hosted updater, `macos` CI job. | `agentic://` opens the right session; an update installs itself. |
-| **5** | Optional: mini monitor, Keychain service token for background polling. | — |
+| Phase | Scope | Exit criterion | Status |
+| --- | --- | --- | --- |
+| **0** | Adopt Safari Add to Dock. No code. | Sessions supervised from a Dock icon; baseline understood. | Available now |
+| **1** | `desktop/` package. Tauri shell, configurable hub URL, runtime remote capability, settings window, persistent cookies. | App opens to the hub, Access login survives a restart, sessions stream over WSS. | Implemented, needs a first run on a real desktop |
+| **2** | `src/desktop.ts` bridge, badge, native notifications, tray, global shortcut, deep links. | Waiting-session count visible from the badge; `agentic://` opens the right session. | Implemented |
+| **3** | Notification action buttons via `UNUserNotificationCenter` (§4.1). | A permission is resolved from the notification without focusing the app. | Deferred |
+| **4** | Launch at login, start hidden, window-state restore, self-hosted updater. | The app is already running and restores where it was. | Planned |
+| **5** | Optional: mini monitor, Keychain service token for background polling. | — | Optional |
 
-Phase 1 is the only phase with meaningful unknowns. It should be timeboxed and
-validated against the development hub before any further phase starts.
+Phases 1 and 2 are code-complete and pass CI on all three platforms, but neither
+has been exercised against a hub on a real desktop yet. That first run is the
+remaining risk and should happen before any further phase starts.
 
 ## 7. Open questions
 
@@ -305,16 +338,21 @@ validated against the development hub before any further phase starts.
    the app re-authenticates on every launch (§3.3).
 2. Does the configured identity provider allow an embedded webview, or is email
    one-time PIN the practical path?
-3. Should the shell be macOS-only in practice, even though Tauri is
-   cross-platform? Keeping one target simplifies CI and testing.
+3. ~~macOS-only or cross-platform?~~ **Resolved: cross-platform.** Tauri builds
+   all three targets from the same source and CI covers them, so restricting to
+   macOS would have cost effort rather than saved it.
 4. Is Gatekeeper's manual first-open acceptable indefinitely, or is
    notarization wanted before daily use?
 
 ## 8. Impact on existing contracts
 
 - `docs/app-spec.md` gains a desktop section and desktop rows in the §16
-  acceptance matrix once Phase 1 lands.
+  acceptance matrix once the shell has been exercised against a real hub.
 - `docs/architecture.md` is unchanged: the desktop app is a client of the hub,
   not a new role. It is neither a hub nor a node and owns no sessions.
 - `server/` is unchanged. This is a deliberate property of the design, and any
   proposal that requires a server change should be re-examined against §2.2.
+- `src/desktop.ts` is the contract between the web app and the shell. It and
+  `desktop/src-tauri/src/bridge.rs` MUST change together, and every method MUST
+  stay optional on the web side so a browser and an older shell both degrade
+  cleanly.

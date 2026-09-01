@@ -70,6 +70,35 @@ jobs:
       - name: Build
         run: pnpm build:desktop
 
+      # Uploaded so any commit can be installed without a local toolchain.
+      # These are unsigned; see shell/README.md for the first-open steps.
+      - name: Collect macOS bundle
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-remote-macos
+          path: shell/src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+      - name: Collect Windows bundle
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-remote-windows
+          path: shell/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Collect Linux bundles
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-remote-linux
+          path: |
+            shell/src-tauri/target/release/bundle/deb/*.deb
+            shell/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
   # iOS cannot be bundled without signing credentials, so CI compiles the Rust
   # for the iOS target instead. That is what proves the desktop/mobile cfg split
   # is correct; producing an .ipa is a release concern, not a review gate.

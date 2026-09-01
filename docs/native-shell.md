@@ -378,6 +378,10 @@ shell code MUST assume nothing from a doc comment and MUST be checked by the
   the existing `pnpm check` job and the service install are unaffected by it.
 - Bundle icons are generated from `public/icons/icon-512.png` by `pnpm icons`
   rather than committed, so there is one icon source in the repository.
+- Every CI run uploads an installable bundle per desktop platform, so any commit
+  or pull request can be installed without a local toolchain. A `Shell release`
+  workflow publishes the same bundles against a `shell-v*` tag, building macOS
+  as a universal binary so one download covers Apple Silicon and Intel.
 - Updates use the Tauri updater against a self-hosted JSON manifest, signed with
   a repository-independent ed25519 key. The **private updater key is a secret**:
   it lives in GitHub Actions secrets and MUST NOT be committed. The updater

@@ -83,26 +83,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Bundle names contain a space, so the glob results must never be
+          # re-split into words. Iterating the patterns directly keeps each
+          # match a single argument; nullglob drops the patterns that this
+          # platform does not produce.
+          shopt -s nullglob
           bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
           if [ -z "${{ matrix.target }}" ]; then
             bundle="src-tauri/target/release/bundle"
           fi
           mkdir -p ../release
           found=0
-          for pattern in \
+          for file in \
             "$bundle"/dmg/*.dmg \
             "$bundle"/nsis/*-setup.exe \
             "$bundle"/deb/*.deb \
             "$bundle"/appimage/*.AppImage; do
-            for file in $pattern; do
-              if [ -f "$file" ]; then
-                cp "$file" ../release/
-                found=$((found + 1))
-              fi
-            done
+            cp "$file" ../release/
+            found=$((found + 1))
           done
           if [ "$found" -eq 0 ]; then
             echo "No bundles were produced under $bundle" >&2
+            find src-tauri/target -name 'bundle' -maxdepth 4 -type d >&2 || true
             exit 1
           fi
           ls -la ../release

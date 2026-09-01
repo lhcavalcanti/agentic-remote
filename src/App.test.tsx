@@ -290,6 +290,9 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    // The address now carries the selected session, so it has to be reset or
+    // one test's deep link selects a session in the next.
+    window.history.replaceState({}, '', '/')
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
@@ -3963,7 +3966,7 @@ describe('App', () => {
     )
   })
 
-  it('keeps a knowledge panel per session with its own mode', async () => {
+  it('keeps knowledge open across sessions and follows the new one', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
     vi.mocked(listKnowledgeRoots).mockResolvedValue([
@@ -3993,30 +3996,33 @@ describe('App', () => {
     expect(document.querySelector('.workspace')).toHaveClass(
       'workspace--docked',
     )
+    // Files are navigated from the sidebar, in every mode.
+    const sidebar = document.querySelector('.sidebar')!
+    expect(
+      within(sidebar as HTMLElement).getByRole('navigation', {
+        name: 'Knowledge',
+      }),
+    ).toBeInTheDocument()
 
-    // The panel belongs to the session, so the other one stays closed.
+    // Reading survives a session switch instead of being dismissed.
     fireEvent.click(
       screen.getAllByRole('button', { name: /Second chat/ })[0]!,
     )
     await waitFor(() =>
-      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
-        'hidden',
-      ),
+      expect(
+        screen
+          .getAllByRole('button', { name: /Second chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
     )
-
-    fireEvent.click(
-      screen.getAllByRole('button', { name: /Project chat/ })[0]!,
-    )
-    await waitFor(() =>
-      expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
-        'hidden',
-      ),
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
     )
     expect(
       JSON.parse(
-        localStorage.getItem('agentic-remote:knowledge-panels') || '{}',
+        localStorage.getItem('agentic-remote:knowledge-mode') || '""',
       ),
-    ).toMatchObject({ 'computer-1:session-1': 'docked' })
+    ).toBe('docked')
   })
 
   it('expands the knowledge panel over the conversation', async () => {
@@ -4228,8 +4234,8 @@ describe('App', () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
     localStorage.setItem(
-      'agentic-remote:knowledge-panels',
-      JSON.stringify({ 'computer-1:session-1': 'docked' }),
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
     )
     localStorage.setItem(
       'agentic-remote:knowledge-session-positions',
@@ -4256,15 +4262,17 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
     await screen.findByRole('navigation', { name: 'Knowledge' })
 
-    // Selecting a session whose panel is closed must not stamp the previous
-    // session's reader state over its own remembered one.
+    // Selecting another session must not stamp the previous session's reader
+    // state over its own remembered one.
     fireEvent.click(
       screen.getAllByRole('button', { name: /Second chat/ })[0]!,
     )
     await waitFor(() =>
-      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
-        'hidden',
-      ),
+      expect(
+        screen
+          .getAllByRole('button', { name: /Second chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
     )
     expect(
       JSON.parse(
@@ -4335,6 +4343,62 @@ describe('App', () => {
         'offline',
       ),
     )
+  })
+
+  it('opens the session a direct link names', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(secondSession)
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2',
+    )
+
+    render(<App />)
+    await screen.findAllByText('Second chat')
+
+    // Synchronising the address must not erase the link before the session
+    // loader has read it.
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /Second chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
+    )
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-2',
+    )
+  })
+
+  it('forgets the knowledge state of a closed session', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(deleteSession).mockResolvedValue()
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+        'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
+      }),
+    )
+    const confirmSpy = vi
+      .spyOn(window, 'confirm')
+      .mockReturnValue(true)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({ 'computer-1:session-2': { rootId: 'root-1', path: 'notes' } }),
+    )
+    confirmSpy.mockRestore()
   })
 
   it('no longer offers a separate saved paths panel', async () => {

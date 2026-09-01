@@ -319,27 +319,27 @@ button {
   display: grid;
   min-height: 0;
   flex: 1;
-  grid-template-rows: minmax(0, 40%) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 
-/* Expanded gets the width back, so the tree and the document sit side by
-   side instead of stacking into two short scrollers. */
-.workspace--expanded .knowledge-panel__body {
-  grid-template-rows: minmax(0, 1fr);
-  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+/* Files are navigated from the sidebar in every mode, so the panel itself
+   only ever has to hold the document. */
+.sidebar-knowledge {
+  display: flex;
+  min-height: 120px;
+  /* Sessions and files share the sidebar: files take up to half, and each
+     scrolls on its own rather than growing over the other. */
+  flex: 1 1 45%;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
 }
 
-.knowledge-panel .knowledge-tree {
+.sidebar-knowledge .knowledge-tree {
   min-height: 0;
-  padding: 10px 12px;
+  padding: 10px 14px;
   overflow-y: auto;
-  border-bottom: 1px solid var(--border);
-}
-
-.workspace--expanded .knowledge-panel .knowledge-tree {
-  border-right: 1px solid var(--border);
-  border-bottom: 0;
 }
 
 .knowledge-panel__reader {
@@ -669,7 +669,7 @@ button {
   display: flex;
   min-width: 0;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 1 1 55%;
   flex-direction: column;
   overflow: hidden;
 }
@@ -3198,17 +3198,6 @@ button {
 
   .workspace--docked .conversation {
     display: none;
-  }
-
-  .workspace--docked .knowledge-panel__body,
-  .workspace--expanded .knowledge-panel__body {
-    grid-template-rows: minmax(0, 40%) minmax(0, 1fr);
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .workspace--expanded .knowledge-panel .knowledge-tree {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
   }
 
   .app-shell {

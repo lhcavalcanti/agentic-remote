@@ -4645,6 +4645,110 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('lists a knowledge root created as the first one', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockResolvedValue({
+      path: '/srv',
+      parent: '/',
+      directories: [{ name: 'docs', path: '/srv/docs' }],
+    })
+    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+      id: 'root-new',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/srv',
+      name: 'srv',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    })
+    let releaseListing: (() => void) | undefined
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      () =>
+        new Promise<WorkspaceListing>((resolve) => {
+          releaseListing = () =>
+            resolve({
+              path: '.',
+              entries: [
+                { name: 'guides', path: 'guides', kind: 'directory' },
+              ],
+            })
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add knowledge root' }),
+    )
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    const addFolder = within(rootDialog).getByRole('button', {
+      name: 'Add this folder',
+    })
+    await waitFor(() => expect(addFolder).toBeEnabled())
+    fireEvent.click(addFolder)
+
+    // The listing is answered only once the new root has been rendered, which
+    // is exactly when a stray invalidation would discard it and leave the
+    // tree empty until the root is picked again by hand.
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    await waitFor(() => expect(releaseListing).toBeDefined())
+    releaseListing?.()
+    expect(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('falls back when history names a session that is gone', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=deleted-session',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    // Reconciled in the same commit as the history event, rather than left
+    // with nothing selected until some later refresh repairs it.
+    expect(
+      screen
+        .getAllByRole('button', { name: /Project chat/ })
+        .find((item) => item.classList.contains('session-item')),
+    ).toHaveAttribute('aria-current', 'page')
+
+    // Going back to a session that has since been closed must land on one
+    // that still exists rather than on nothing at all.
+    // Checked well inside the transcript poll interval, so the fallback is
+    // the fix rather than the next refresh happening to repair it.
+    await waitFor(
+      () =>
+        expect(
+          screen
+            .getAllByRole('button', { name: /Project chat/ })
+            .find((item) => item.classList.contains('session-item')),
+        ).toHaveAttribute('aria-current', 'page'),
+      { timeout: 250 },
+    )
+    await waitFor(
+      () =>
+        expect(window.location.search).toBe(
+          '?computer=computer-1&session=session-1',
+        ),
+      { timeout: 250 },
+    )
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

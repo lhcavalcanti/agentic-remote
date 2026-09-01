@@ -4883,6 +4883,9 @@ function App() {
           knowledgeRestoredKey.current = key
           applyKnowledgeScrollRef.current(key)
         } finally {
+          if (current()) {
+            knowledgeRestoreStartedKey.current = undefined
+          }
           if (current() && knowledgePendingScrollKey.current === key) {
             // Released on success, failure, and an empty branch alike, or
             // recording would stay suppressed for good.
@@ -4894,42 +4897,60 @@ function App() {
   })
 
   useEffect(() => {
+    if (!selectedKey || knowledgeMode === 'hidden' || roots.length === 0) {
+      return
+    }
+    // A restore belonging to a session that is no longer selected is abandoned
+    // first, before any shortcut below can return: otherwise it keeps running
+    // and writes its reader state and position into this session. The state it
+    // owned is settled here, because its own cancelled finally cannot.
     if (
-      !selectedKey ||
-      knowledgeMode === 'hidden' ||
-      roots.length === 0 ||
-      knowledgeRestoredKey.current === selectedKey
+      knowledgeRestoreStartedKey.current &&
+      knowledgeRestoreStartedKey.current !== selectedKey
+    ) {
+      knowledgeRestoreToken.current += 1
+      knowledgeRequest.current += 1
+      knowledgeRootGeneration.current += 1
+      knowledgePendingScrollKey.current = undefined
+      knowledgeRestoreStartedKey.current = undefined
+      setKnowledgeLoading(false)
+    }
+    const remembered = knowledgePositionsRef.current[selectedKey]
+    const current = knowledgeViewRef.current
+    const showingRememberedView =
+      knowledgeViewLoadedRef.current &&
+      remembered?.rootId === current.rootId &&
+      remembered?.path === current.path &&
+      remembered?.file === current.file
+    // Already restored only counts while the view still belongs to this
+    // session; a cancelled restore may have moved it in the meantime.
+    if (
+      knowledgeRestoredKey.current === selectedKey &&
+      (!remembered?.rootId || showingRememberedView)
     ) {
       return
     }
-    // A session change abandons whatever restore was still running, including
-    // the folder and file requests it had already issued. The state the old
-    // restore owned is settled here rather than in its own cancelled finally,
-    // which can no longer run.
+    if (
+      !remembered?.rootId ||
+      !roots.some((root) => root.id === remembered.rootId)
+    ) {
+      // Nothing to restore, so nothing is cancelled either: creating the first
+      // root starts its own listing, and invalidating here would discard it.
+      knowledgeRestoredKey.current = selectedKey
+      return
+    }
+    if (showingRememberedView) {
+      knowledgeRestoredKey.current = selectedKey
+      return
+    }
+    // Only a restore that is actually about to run supersedes the work in
+    // flight.
     knowledgeRestoreToken.current += 1
     knowledgeRequest.current += 1
     knowledgeRootGeneration.current += 1
     knowledgePendingScrollKey.current = undefined
     setKnowledgeLoading(false)
     knowledgeRestoreStartedKey.current = selectedKey
-    const remembered = knowledgePositionsRef.current[selectedKey]
-    if (
-      !remembered?.rootId ||
-      !roots.some((root) => root.id === remembered.rootId)
-    ) {
-      knowledgeRestoredKey.current = selectedKey
-      return
-    }
-    const current = knowledgeViewRef.current
-    if (
-      knowledgeViewLoadedRef.current &&
-      remembered.rootId === current.rootId &&
-      remembered.path === current.path &&
-      remembered.file === current.file
-    ) {
-      knowledgeRestoredKey.current = selectedKey
-      return
-    }
     // The tree is rebuilt asynchronously, so the scroll offset is re-applied
     // once that content lands rather than against the outgoing tree.
     knowledgePendingScrollKey.current = selectedKey
@@ -5218,7 +5239,9 @@ function App() {
           ? sessionKey(sessions[0])
           : undefined,
     )
-  }, [loading, sessions])
+    // `selectedKey` is a dependency because history can name a session that
+    // has since been deleted, and that has to fall back to a real one.
+  }, [loading, selectedKey, sessions])
 
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {

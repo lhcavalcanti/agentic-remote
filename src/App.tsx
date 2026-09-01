@@ -2422,6 +2422,9 @@ function ActivityMessage({
   const [title, ...detailLines] = content.split('\n')
   const detail = detailLines.join('\n').trim()
   const isMcp = title.startsWith('MCP ·')
+  // A background agent is the one tool that routinely outlives the parent's
+  // last message, so a running one says so instead of looking finished.
+  const isAgent = title.startsWith('Agent (')
   const icon =
     status === 'failed' ? (
       <XCircle size={14} />
@@ -2434,11 +2437,14 @@ function ActivityMessage({
     <div
       className={`activity-message activity-message--${status || 'running'}${
         isMcp ? ' activity-message--mcp' : ''
-      }`}
+      }${isAgent ? ' activity-message--agent' : ''}`}
     >
       {icon}
       <span>
         <strong>{title}</strong>
+        {isAgent && status !== 'completed' && status !== 'failed' ? (
+          <em className="activity-message__note">still working</em>
+        ) : null}
         {detail ? <code>{detail}</code> : null}
       </span>
     </div>

@@ -746,6 +746,14 @@ function toolActivityContent(data: unknown): string {
     normalizedToolName === 'skill'
       ? previewText(argumentsValue.skill) || previewText(argumentsValue.name)
       : undefined
+  // A background agent keeps the turn open long after the parent's last
+  // message, so its row has to name the agent instead of reading like an
+  // ordinary finished tool call.
+  const agentType =
+    normalizedToolName === 'task'
+      ? previewText(argumentsValue.agent_type) ||
+        previewText(argumentsValue.name)
+      : undefined
   const description =
     previewText(tool.toolTitle) ||
     previewText(toolDescription.description) ||
@@ -753,7 +761,7 @@ function toolActivityContent(data: unknown): string {
     previewText(argumentsValue.message)
   const command = previewText(argumentsValue.command, true)
   const detail =
-    normalizedToolName === 'skill'
+    normalizedToolName === 'skill' || normalizedToolName === 'task'
       ? undefined
       : command ||
         previewText(argumentsValue.path) ||
@@ -775,7 +783,9 @@ function toolActivityContent(data: unknown): string {
       ]
         .filter(Boolean)
         .join(' · ')
-    : readableToolName(toolName)
+    : agentType
+      ? 'Agent'
+      : readableToolName(toolName)
   const titleDescription =
     description &&
     (isMcp
@@ -789,7 +799,9 @@ function toolActivityContent(data: unknown): string {
   const title = `${baseTitle}${
     skillName
       ? ` (${skillName})${titleDescription}`
-      : titleDescription
+      : agentType
+        ? ` (${agentType})${titleDescription}`
+        : titleDescription
   }`
   if (!detail) {
     return title

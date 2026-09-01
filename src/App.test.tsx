@@ -856,6 +856,61 @@ describe('App', () => {
     ).toBeLessThan([...(stack?.children || [])].indexOf(response as Element))
   })
 
+  it('marks a running background agent as still working', async () => {
+    const runningSession: ManagedSession = {
+      ...session,
+      status: 'running',
+      messages: [
+        session.messages[0]!,
+        {
+          id: 'message-agent',
+          role: 'activity',
+          content: 'Agent (rubber-duck) · Final cache RCA review',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'running',
+        },
+        session.messages[2]!,
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([runningSession])
+    vi.mocked(getSession).mockResolvedValue(runningSession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The parent's last message reads as final, so the row has to say why the
+    // session is still running.
+    const row = document.querySelector('.activity-message--agent')
+    expect(row).toHaveTextContent('Agent (rubber-duck) · Final cache RCA review')
+    expect(row).toHaveTextContent('still working')
+  })
+
+  it('does not mark a finished background agent as still working', async () => {
+    const doneSession: ManagedSession = {
+      ...session,
+      messages: [
+        session.messages[0]!,
+        {
+          id: 'message-agent',
+          role: 'activity',
+          content: 'Agent (rubber-duck) · Final cache RCA review',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'completed',
+        },
+        session.messages[2]!,
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([doneSession])
+    vi.mocked(getSession).mockResolvedValue(doneSession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      document.querySelector('.activity-message--agent'),
+    ).not.toHaveTextContent('still working')
+  })
+
   it('opens app settings from the sessions panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

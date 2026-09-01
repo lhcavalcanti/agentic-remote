@@ -1782,6 +1782,9 @@ button {
   grid-area: composer;
   position: relative;
   z-index: 2;
+  /* Named so the composer can lay itself out from the width it actually has
+     rather than the width of the window. */
+  container: composer / inline-size;
   padding: 8px
     max(18px, env(safe-area-inset-right), calc((100% - var(--composer-max-width)) / 2))
     max(10px, env(safe-area-inset-bottom))
@@ -2244,11 +2247,16 @@ button {
 }
 
 /*
- * A pointer can hit a small target, so on desktop the actions sit inside the
- * text panel instead of occupying a second full-width bar of their own. Touch
- * and narrow layouts keep the roomier stacked bar.
+ * A pointer can hit a small target, so the actions sit inside the text panel
+ * rather than occupying a second full-width bar of their own. Touch keeps the
+ * stacked bar.
+ *
+ * Keyed on the width of the composer itself, not the viewport: the sidebar is
+ * resizable, so a wide window can still leave a narrow conversation column,
+ * and sharing that row would squeeze the text field down to nothing.
  */
-@media (min-width: 961px) and (hover: hover) {
+@media (hover: hover) {
+ @container composer (min-width: 620px) {
   .composer {
     flex-direction: row;
     flex-wrap: wrap;
@@ -2309,6 +2317,7 @@ button {
   .composer > .recording-panel {
     flex: 1 0 100%;
   }
+ }
 }
 
 .composer-attachment-button {

@@ -25,6 +25,13 @@ function atRule(css: string, prelude: RegExp): string {
   throw new Error(`unterminated at-rule ${prelude}`)
 }
 
+// The inline layout lives in a container query nested inside a pointer media
+// query, so both levels are unwrapped before a rule is read.
+function pointerLayout(css: string): string {
+  const pointer = atRule(css, /@media \(hover: hover\)/)
+  return atRule(pointer, /@container composer \(min-width: 620px\)/)
+}
+
 function declaration(css: string, selector: string, property: string): string {
   const block = new RegExp(
     `${selector.replace(/[.+*>()[\]:-]/g, (character) => `\\${character}`)}\\s*\\{([^}]*)\\}`,
@@ -47,18 +54,33 @@ describe('desktop composer layout', () => {
     expect(declaration(css, '.composer', 'flex-direction')).toBe('column')
   })
 
-  it('only merges the actions in for a wide pointer-driven viewport', async () => {
+  it('only merges the actions in for a wide pointer-driven composer', async () => {
     const css = await stylesheet()
-    const desktop = atRule(css, /@media \(min-width: 961px\) and \(hover: hover\)/)
+    const desktop = pointerLayout(css)
 
     expect(declaration(desktop, '.composer', 'flex-direction')).toBe('row')
     // Bottom-aligned, so the buttons stay with the last line as the box grows.
     expect(declaration(desktop, '.composer', 'align-items')).toBe('flex-end')
   })
 
+  // The sidebar is resizable, so a wide window can still leave a narrow
+  // conversation column. Keying on the viewport squeezed the text field to
+  // about 120px at a 980px window with the sidebar dragged out.
+  it('measures the composer, not the window', async () => {
+    const css = await stylesheet()
+
+    expect(declaration(css, '.composer-area', 'container')).toBe(
+      'composer / inline-size',
+    )
+    const pointer = atRule(css, /@media \(hover: hover\)/)
+    expect(pointer).toContain('@container composer (min-width: 620px)')
+    // A viewport gate on the prelude would ignore the sidebar entirely.
+    expect(css).toContain('@media (hover: hover) {')
+  })
+
   it('draws one panel rather than two stacked cards', async () => {
     const css = await stylesheet()
-    const desktop = atRule(css, /@media \(min-width: 961px\) and \(hover: hover\)/)
+    const desktop = pointerLayout(css)
 
     expect(declaration(desktop, '.composer', 'border')).toContain(
       'var(--border-strong)',
@@ -74,7 +96,7 @@ describe('desktop composer layout', () => {
 
   it('does not push the buttons away from the text', async () => {
     const css = await stylesheet()
-    const desktop = atRule(css, /@media \(min-width: 961px\) and \(hover: hover\)/)
+    const desktop = pointerLayout(css)
 
     expect(declaration(desktop, '.composer-actions__spacer', 'display')).toBe(
       'none',
@@ -83,7 +105,7 @@ describe('desktop composer layout', () => {
 
   it('gives the recording panel its own card', async () => {
     const css = await stylesheet()
-    const desktop = atRule(css, /@media \(min-width: 961px\) and \(hover: hover\)/)
+    const desktop = pointerLayout(css)
 
     // Full width on its own line rather than beside the text.
     expect(declaration(desktop, '.composer > .recording-panel', 'flex')).toBe(

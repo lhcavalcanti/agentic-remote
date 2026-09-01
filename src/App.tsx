@@ -7221,7 +7221,9 @@ function App() {
           <button
             aria-label="Session knowledge"
             aria-pressed={knowledgeMode !== 'hidden'}
-            className="icon-button"
+            className={`icon-button ${
+              knowledgeMode !== 'hidden' ? 'icon-button--active' : ''
+            }`}
             onClick={toggleKnowledgePanel}
             title={
               selected
@@ -7805,7 +7807,10 @@ function App() {
                 ? 'Minimize knowledge panel'
                 : 'Expand knowledge panel'
             }
-            className="icon-button"
+            aria-pressed={knowledgeMode === 'expanded'}
+            className={`icon-button ${
+              knowledgeMode === 'expanded' ? 'icon-button--active' : ''
+            }`}
             onClick={toggleKnowledgeExpanded}
             title="Alt+Shift+K"
             type="button"

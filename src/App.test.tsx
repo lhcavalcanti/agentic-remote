@@ -4749,6 +4749,49 @@ describe('App', () => {
     )
   })
 
+  it('colours the knowledge toggles while they are on', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // A toggle that is on is accented, the way the mute control already is,
+    // so its state is visible and not only announced.
+    const toggle = screen.getByRole('button', { name: 'Session knowledge' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).not.toHaveClass('icon-button--active')
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle).toHaveClass('icon-button--active')
+
+    const expand = screen.getByRole('button', { name: 'Expand knowledge panel' })
+    expect(expand).toHaveAttribute('aria-pressed', 'false')
+    expect(expand).not.toHaveClass('icon-button--active')
+
+    fireEvent.click(expand)
+    const minimize = screen.getByRole('button', {
+      name: 'Minimize knowledge panel',
+    })
+    expect(minimize).toHaveAttribute('aria-pressed', 'true')
+    expect(minimize).toHaveClass('icon-button--active')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    expect(
+      screen.getByRole('button', { name: 'Session knowledge' }),
+    ).not.toHaveClass('icon-button--active')
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

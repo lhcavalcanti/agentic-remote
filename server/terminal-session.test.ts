@@ -429,7 +429,7 @@ Permission request (1 remaining)
 // update, reproduced from github/copilot-cli#2307.
 describe('terminal update notice', () => {
   const composer = [
-    '\u256b\u2584\u2584\u2584\u2584',
+    '\u257b\u2584\u2584\u2584\u2584',
     '\u2503  Type @ to mention files, # for issues/PRs, / for commands',
     '\u2579\u2580\u2580\u2580\u2580',
   ].join('\n')
@@ -467,15 +467,13 @@ describe('terminal update notice', () => {
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
   })
 
-  // The agent's own transcript can quote the notice, so only the status bar
-  // the CLI repaints at the bottom of the pane counts as an offer.
+  // The agent's own transcript can quote the notice. It sits directly above
+  // the composer with nothing separating it, so only the status bar the CLI
+  // paints below the composer counts as an offer.
   it('does not treat a quoted notice in the transcript as an offer', () => {
     const pane = [
       ' \u25cf The CLI told me: v9.9.9 available \u00b7 run /update',
-      ' \u25cf I have not applied it yet.',
-      '',
-      '',
-      '',
+      ' ~/src/project',
       composer,
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
       ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
@@ -502,6 +500,21 @@ describe('terminal update notice', () => {
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBe('1.0.83')
+  })
+
+  // Text typed into the composer is not the CLI offering an update.
+  it('does not treat composer input as an offer', () => {
+    const pane = [
+      ' \u25cf Ready',
+      ' ~/src/project',
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503 v9.9.9 available \u00b7 run /update',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
   })
 
   it('reads the notice through a panel border', () => {

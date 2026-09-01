@@ -680,17 +680,28 @@ function cleanDialogLine(line: string): string {
 
 /**
  * The version the CLI is advertising as an update, or undefined when it is not
- * offering one. The notice lives in the status bar the CLI repaints at the
- * bottom of the pane, alongside the keybinding hints.
+ * offering one. The notice lives in the status bar the CLI repaints below its
+ * composer, so only that region is examined; the transcript above it can quote
+ * a notice without one being offered.
  */
+const COMPOSER_EDGE = /^\s*[╻╹╭╰][\u2580-\u259f\u2500-\u257f]*\s*$/u
+
 export function parseTerminalUpdateNotice(pane: string): string | undefined {
   const lines = pane.split('\n')
   // A pane can be padded with blank lines below the status bar, which would
-  // otherwise push the notice out of the window examined below.
+  // otherwise push the notice out of the region examined below.
   while (lines.length > 0 && !lines[lines.length - 1].trim()) {
     lines.pop()
   }
-  for (const line of lines.slice(-8)) {
+  // Anchor below the composer's lower edge rather than its top, so text typed
+  // into the composer is not read as an offer either.
+  const composer = lines.findLastIndex((line) => COMPOSER_EDGE.test(line))
+  // Without a composer the pane is showing a full-screen view, which covers
+  // the status bar. The next poll sees it again once the view closes.
+  if (composer < 0) {
+    return undefined
+  }
+  for (const line of lines.slice(composer + 1)) {
     const match = /\bv?(\d+\.\d+\.\d+[\w.-]*)\s+available\b/i.exec(line)
     if (match && /\/update\b/.test(line)) {
       return match[1]

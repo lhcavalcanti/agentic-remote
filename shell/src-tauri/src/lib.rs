@@ -21,7 +21,7 @@ use config::HubConfig;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 #[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem};
@@ -70,13 +70,37 @@ impl ShellState {
         *self.ready.lock().expect("ready lock") = true;
         std::mem::take(&mut *self.pending.lock().expect("pending lock"))
     }
+
+    /// A new document has no bridge listeners yet, so anything delivered before
+    /// it subscribes must be queued again rather than assumed received.
+    fn reset_bridge(&self) {
+        *self.ready.lock().expect("ready lock") = false;
+    }
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NotificationRequest {
+    tag: String,
     title: String,
     body: String,
+    #[serde(default)]
+    urgent: bool,
+}
+
+/// A stable notification id derived from the tag.
+///
+/// The platform APIs address notifications by integer id, while the web app
+/// addresses them by tag, so the mapping has to be deterministic for a later
+/// withdrawal to find the same notification. FNV-1a keeps it dependency-free.
+fn notification_id(tag: &str) -> i32 {
+    let mut hash: u32 = 2_166_136_261;
+    for byte in tag.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    // Keep it positive so it survives platforms that reject negative ids.
+    (hash >> 1) as i32
 }
 
 fn platform() -> &'static str {
@@ -144,16 +168,25 @@ fn grant_hub_capability(app: &AppHandle, origins: &[String]) {
 /// here and re-runs on every navigation, so it survives the move from the
 /// settings page to the hub.
 fn create_main_window(app: &AppHandle, config: &HubConfig) -> Result<(), String> {
-    let url = match config.resolve() {
-        Some(hub) => {
+    // A configured hub that answers nowhere would open a window that never
+    // loads, leaving an iOS user with no way back to settings. Fall through to
+    // the settings page and say why instead.
+    let url = match (config.primary().is_some(), config.reachable_url()) {
+        (_, Some(hub)) => {
             let parsed = hub.parse().map_err(|_| format!("Invalid hub URL: {hub}"))?;
             WebviewUrl::External(parsed)
         }
-        None => WebviewUrl::App(SETTINGS_PAGE.into()),
+        (true, None) => WebviewUrl::App(format!("{SETTINGS_PAGE}?unreachable=1").into()),
+        (false, None) => WebviewUrl::App(SETTINGS_PAGE.into()),
     };
+    let navigation_handle = app.clone();
     let builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, url)
         .title("Agentic Remote")
-        .initialization_script(bridge::script(env!("CARGO_PKG_VERSION"), platform()));
+        .initialization_script(bridge::script(env!("CARGO_PKG_VERSION"), platform()))
+        .on_navigation(move |_url| {
+            navigation_handle.state::<ShellState>().reset_bridge();
+            true
+        });
 
     #[cfg(desktop)]
     let builder = builder
@@ -171,6 +204,7 @@ fn show_hub(app: &AppHandle, url: &str) -> Result<(), String> {
     let parsed = url.parse().map_err(|_| format!("Invalid hub URL: {url}"))?;
     match app.get_webview_window(MAIN_WINDOW) {
         Some(window) => {
+            app.state::<ShellState>().reset_bridge();
             window.navigate(parsed).map_err(|error| error.to_string())?;
             // Showing and focusing a window is a desktop-only API; iOS has a
             // single always-visible webview.
@@ -276,26 +310,82 @@ fn set_badge(app: AppHandle, count: i64) {
     }
 }
 
+/// Whether notifications may be shown, asking once if the user has not decided.
+///
+/// A fresh iOS install starts in `notDetermined` and silently drops everything
+/// until permission is requested, so this must run before the first notify.
+fn notifications_allowed(app: &AppHandle) -> bool {
+    let notification = app.notification();
+    let state = match notification.permission_state() {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("Unable to read notification permission: {error}");
+            return false;
+        }
+    };
+    let state = if state == PermissionState::Prompt || state == PermissionState::PromptWithRationale
+    {
+        match notification.request_permission() {
+            Ok(requested) => requested,
+            Err(error) => {
+                eprintln!("Unable to request notification permission: {error}");
+                return false;
+            }
+        }
+    } else {
+        state
+    };
+    state == PermissionState::Granted
+}
+
 /// Raise a native notification.
 ///
 /// Action buttons are not wired up yet. On iOS the plugin uses
 /// `UNUserNotificationCenter` and can register action categories; on desktop it
 /// uses `notify-rust`, which cannot. The web app already sends `actions`, so
 /// both can be added here without changing the web app.
+///
+/// Urgency is carried through as far as the platform allows: the plugin's
+/// desktop builder exposes no urgency setting, so today it only distinguishes
+/// the grouping of urgent and routine notifications.
 #[tauri::command]
 fn notify(app: AppHandle, notification: NotificationRequest) {
+    if !notifications_allowed(&app) {
+        return;
+    }
+    let group = if notification.urgent {
+        "agentic-attention"
+    } else {
+        "agentic-status"
+    };
     let _ = app
         .notification()
         .builder()
+        .id(notification_id(&notification.tag))
+        .group(group)
         .title(notification.title)
         .body(notification.body)
         .show();
 }
 
+/// Withdraw notifications the user has now dealt with.
+///
+/// `remove_active` is mobile-only in the notification plugin; desktop exposes
+/// no withdrawal, so there the request is accepted and ignored rather than
+/// reported as an error the web app cannot act on.
 #[tauri::command]
-fn withdraw_notifications(_app: AppHandle, _tags: Vec<String>) {
-    // No cross-platform withdrawal exists yet, so this is accepted and ignored
-    // rather than reported as an error the web app cannot act on.
+fn withdraw_notifications(app: AppHandle, tags: Vec<String>) {
+    #[cfg(mobile)]
+    {
+        let ids = tags.iter().map(|tag| notification_id(tag)).collect();
+        if let Err(error) = app.notification().remove_active(ids) {
+            eprintln!("Unable to withdraw notifications: {error}");
+        }
+    }
+    #[cfg(not(mobile))]
+    {
+        let _ = (app, tags);
+    }
 }
 
 #[tauri::command]
@@ -315,8 +405,11 @@ fn save_hub_config(
     state: tauri::State<'_, ShellState>,
     config: HubConfig,
 ) -> Result<(), String> {
+    // Resolve rather than taking the primary, so saving a hub whose public
+    // address is down still opens the direct address instead of waiting for a
+    // restart.
     let url = config
-        .primary()
+        .resolve()
         .ok_or_else(|| "Enter a hub URL beginning with http:// or https://".to_string())?;
     let directory = config_dir(&app)?;
     config.save(&directory)?;

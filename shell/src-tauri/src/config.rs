@@ -87,6 +87,22 @@ impl HubConfig {
     pub fn resolve(&self) -> Option<String> {
         self.resolve_with(|url| reachable(url, CONNECT_TIMEOUT))
     }
+
+    /// The URL to open only when it can actually be reached.
+    ///
+    /// Returns `None` when a hub is configured but neither address answers, so
+    /// the caller can offer settings instead of a window that will never load.
+    /// That is the only recovery route on iOS, which has no tray.
+    pub fn reachable_url_with(&self, reachable: impl Fn(&str) -> bool) -> Option<String> {
+        [self.primary(), self.fallback()]
+            .into_iter()
+            .flatten()
+            .find(|url| reachable(url))
+    }
+
+    pub fn reachable_url(&self) -> Option<String> {
+        self.reachable_url_with(|url| reachable(url, CONNECT_TIMEOUT))
+    }
 }
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1_500);
@@ -281,6 +297,29 @@ mod tests {
         assert_eq!(
             config.resolve_with(|_| panic!("must not probe")),
             Some("https://agentic.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn reachable_url_reports_nothing_when_no_address_answers() {
+        let config = HubConfig {
+            url: Some("https://agentic.example.com".into()),
+            lan_url: Some("http://192.0.2.10:4317".into()),
+            shortcut: None,
+        };
+        assert_eq!(config.reachable_url_with(|_| false), None);
+    }
+
+    #[test]
+    fn reachable_url_prefers_the_first_address_that_answers() {
+        let config = HubConfig {
+            url: Some("https://agentic.example.com".into()),
+            lan_url: Some("http://192.0.2.10:4317".into()),
+            shortcut: None,
+        };
+        assert_eq!(
+            config.reachable_url_with(|url| url.starts_with("http://")),
+            Some("http://192.0.2.10:4317".to_string())
         );
     }
 

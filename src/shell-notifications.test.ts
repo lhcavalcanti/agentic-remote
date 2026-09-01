@@ -218,3 +218,69 @@ describe('shellNotifications', () => {
     ])
   })
 })
+
+describe('completion guard', () => {
+  it('stays silent when prompts are still queued', () => {
+    const previous = notificationState([session({ id: 's1', status: 'running' })])
+    expect(
+      shellNotifications(
+        [session({ id: 's1', status: 'idle', queuedCount: 2 })],
+        { previous },
+      ),
+    ).toEqual([])
+  })
+
+  it('announces completion when the queue is empty', () => {
+    const previous = notificationState([session({ id: 's1', status: 'running' })])
+    expect(
+      shellNotifications(
+        [session({ id: 's1', status: 'idle', queuedCount: 0 })],
+        { previous },
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('stays silent when a question is still pending', () => {
+    const previous = notificationState([
+      session({
+        id: 's1',
+        status: 'running',
+        pendingUserInput: { requestId: 'q1' },
+      }),
+    ])
+    expect(
+      shellNotifications(
+        [
+          session({
+            id: 's1',
+            status: 'idle',
+            pendingUserInput: { requestId: 'q1' },
+          }),
+        ],
+        { previous },
+      ),
+    ).toEqual([])
+  })
+
+  it('stays silent when a permission is still pending', () => {
+    const previous = notificationState([
+      session({
+        id: 's1',
+        status: 'running',
+        pendingPermission: { requestId: 'p1' },
+      }),
+    ])
+    expect(
+      shellNotifications(
+        [
+          session({
+            id: 's1',
+            status: 'idle',
+            pendingPermission: { requestId: 'p1' },
+          }),
+        ],
+        { previous },
+      ),
+    ).toEqual([])
+  })
+})

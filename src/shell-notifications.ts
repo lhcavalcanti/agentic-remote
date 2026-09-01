@@ -17,6 +17,7 @@ export interface NotifiableSession {
   id: string
   title?: string
   status?: string
+  queuedCount?: number
   pendingPermission?: { requestId?: string } | undefined
   pendingUserInput?: { requestId?: string } | undefined
 }
@@ -127,7 +128,16 @@ export function shellNotifications(
       })
       continue
     }
-    if (before.status === 'running' && session.status === 'idle') {
+    // Going idle is only "finished" when nothing is left to do. A queued
+    // prompt means the next one is about to start, and a request that is still
+    // pending was already announced as the higher-priority event.
+    if (
+      before.status === 'running' &&
+      session.status === 'idle' &&
+      !(session.queuedCount && session.queuedCount > 0) &&
+      !question &&
+      !permission
+    ) {
       notifications.push({
         tag: `agentic-finished-${session.computerId}-${session.id}`,
         title: name,

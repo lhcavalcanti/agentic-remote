@@ -29,6 +29,15 @@ function trimmed(field: HTMLInputElement): string | null {
   return value ? value : null
 }
 
+function showUnreachableNotice(): void {
+  if (!new URLSearchParams(window.location.search).has('unreachable')) {
+    return
+  }
+  showError(
+    'That hub could not be reached. Check the address, or start the app again once it is back online.',
+  )
+}
+
 async function load(): Promise<void> {
   try {
     const config = await invoke<HubConfig>('hub_config')
@@ -43,6 +52,9 @@ async function load(): Promise<void> {
     )
   }
 }
+
+// Reported before the saved values load, so a failed hub is explained even if
+// reading the configuration also fails.
 
 form.addEventListener('submit', (event) => {
   event.preventDefault()
@@ -69,4 +81,5 @@ form.addEventListener('submit', (event) => {
     })
 })
 
+showUnreachableNotice()
 void load()

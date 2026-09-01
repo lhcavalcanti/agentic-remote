@@ -270,7 +270,10 @@ Cloudflare or the tunnel is down.
 
 When both a primary and a direct address are configured, the shell probes the
 primary with a short TCP connect before opening it and falls back to the direct
-address when that fails. It is deliberately a connectivity probe rather than a
+address when that fails. When a hub is configured but **neither** address
+answers, the shell opens its settings page and says so rather than showing a
+window that will never load; on iOS, where there is no tray, that is the only
+recovery route back to a corrected address. It is deliberately a connectivity probe rather than a
 health check, because the case it exists for is the public hostname being
 unroutable when the tunnel or network is down.
 
@@ -292,6 +295,14 @@ leaves the old Access cookie in the shared store.
 | 7 | **Launch at login, start hidden** | The app is a monitor; it should already be running. | Planned | Not applicable |
 | 8 | **Window state** — size, position, sidebar width | Complements the resizable-sidebar work. | Planned | Not applicable |
 | 9 | **Live Activity / Dynamic Island** for a running session | Would be the single best mobile supervision feature. | Not applicable | Requires a native Swift widget extension |
+
+Notification permission is requested before the first notification is shown. A
+fresh iOS install starts in `notDetermined` and silently drops everything until
+asked, so this cannot be left until the user visits a settings screen.
+
+Notifications carry a stable id derived from their tag, which is what lets
+`withdraw_notifications` retract them on iOS when the user opens the session.
+Desktop exposes no withdrawal, so there the request is accepted and ignored.
 
 ### 4.1 Why notification actions are deferred on desktop
 

@@ -1782,6 +1782,9 @@ button {
   grid-area: composer;
   position: relative;
   z-index: 2;
+  /* Named so the composer can lay itself out from the width it actually has
+     rather than the width of the window. */
+  container: composer / inline-size;
   padding: 8px
     max(18px, env(safe-area-inset-right), calc((100% - var(--composer-max-width)) / 2))
     max(10px, env(safe-area-inset-bottom))
@@ -2245,6 +2248,80 @@ button {
 
 .composer-audio-input {
   display: none;
+}
+
+/*
+ * A pointer can hit a small target, so the actions sit inside the text panel
+ * rather than occupying a second full-width bar of their own. Touch keeps the
+ * stacked bar.
+ *
+ * Keyed on the width of the composer itself, not the viewport: the sidebar is
+ * resizable, so a wide window can still leave a narrow conversation column,
+ * and sharing that row would squeeze the text field down to nothing.
+ */
+@media (hover: hover) {
+ @container composer (min-width: 620px) {
+  .composer {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    background: var(--panel-raised);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  }
+
+  .composer:focus-within {
+    border-color: #59634c;
+    box-shadow: 0 0 0 3px rgba(184, 243, 107, 0.055);
+  }
+
+  .composer > .composer-text-panel,
+  .composer > .composer-actions {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .composer > .composer-text-panel {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 0 7px 14px;
+  }
+
+  .composer > .composer-actions {
+    padding: 7px 8px;
+  }
+
+  /* The row is sized by the text panel, so the spacer would only stretch the
+     buttons away from it. */
+  .composer-actions__spacer {
+    display: none;
+  }
+
+  /* Recording replaces the buttons with a status panel that needs the full
+     width, and reads better as its own card than nested inside the box. */
+  .composer:has(.recording-panel) {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    gap: 7px;
+  }
+
+  .composer:has(.recording-panel) > .composer-text-panel {
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    background: var(--panel-raised);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    padding: 7px 14px;
+  }
+
+  .composer > .recording-panel {
+    flex: 1 0 100%;
+  }
+ }
 }
 
 .composer-attachment-button {

@@ -3505,6 +3505,42 @@ describe('App', () => {
     )
   })
 
+  it('keeps idle controls available while a background task runs', async () => {
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'task-idle',
+          type: 'agent',
+          description: 'Inspect the repository',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          executionMode: 'background',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Stop response' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Queue message' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Send message' }),
+    ).toBeInTheDocument()
+  })
+
   it('keeps waiting and error status dots above blue task styling', async () => {
     const waitingSession = {
       ...session,

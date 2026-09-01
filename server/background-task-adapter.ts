@@ -72,7 +72,14 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
 }
 
 function statusValue(value: string): BackgroundTaskStatus {
@@ -85,6 +92,7 @@ function statusValue(value: string): BackgroundTaskStatus {
       return value
     case 'idle':
     case 'pending':
+    case 'waiting':
       return 'queued'
     default:
       throw new Error(`Unsupported background task status: ${value}`)
@@ -190,9 +198,24 @@ export function normalizeBackgroundTask(
   return normalized
 }
 
+function parsedValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  }
+  return value
+}
+
 function recordValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object'
-    ? (value as Record<string, unknown>)
+  const parsed = parsedValue(value)
+  return value &&
+    parsed &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
     : {}
 }
 
@@ -253,6 +276,84 @@ function taskArguments(data: Record<string, unknown>): Record<string, unknown> {
   return recordValue(data.arguments)
 }
 
+function taskInfoFromValue(value: unknown): CopilotTaskInfo | undefined {
+  const object = recordValue(value)
+  const type = object.type
+  const id = stringValue(object.id)
+  const status = stringValue(object.status)
+  const startedAt = stringValue(object.startedAt)
+  if (
+    (type !== 'agent' && type !== 'shell') ||
+    !id ||
+    !status ||
+    !startedAt
+  ) {
+    return undefined
+  }
+  const task: CopilotTaskInfo = {
+    type,
+    id,
+    status,
+    startedAt,
+  }
+  const stringFields: Array<keyof Omit<
+    CopilotTaskInfo,
+    'type' | 'id' | 'status' | 'startedAt' | 'activeTimeMs' | 'pid'
+  >> = [
+    'description',
+    'completedAt',
+    'activeStartedAt',
+    'error',
+    'agentType',
+    'prompt',
+    'result',
+    'latestResponse',
+    'model',
+    'resolvedModel',
+    'executionMode',
+    'command',
+    'attachmentMode',
+  ]
+  for (const field of stringFields) {
+    const value = stringValue(object[field])
+    if (value) {
+      task[field] = value
+    }
+  }
+  const activeTimeMs = numberValue(object.activeTimeMs)
+  const pid = numberValue(object.pid)
+  if (activeTimeMs !== undefined) {
+    task.activeTimeMs = activeTimeMs
+  }
+  if (pid !== undefined) {
+    task.pid = pid
+  }
+  return task
+}
+
+function taskInfoListFromValue(value: unknown): CopilotTaskInfo[] {
+  const object = recordValue(value)
+  const candidates: unknown[] = [
+    ...(['tasks', 'backgroundTasks', 'taskList'] as const).flatMap((key) => {
+      const candidate = parsedValue(object[key])
+      return Array.isArray(candidate) ? candidate : [candidate]
+    }),
+    parsedValue(object.task),
+  ]
+  const direct = taskInfoFromValue(value)
+  if (direct) {
+    candidates.push(direct)
+  }
+  const unique = new Map<string, CopilotTaskInfo>()
+  for (const candidate of candidates) {
+    const task = taskInfoFromValue(candidate)
+    if (task) {
+      unique.set(task.id, task)
+    }
+  }
+  return [...unique.values()]
+}
+
 function toolTelemetryProperties(
   data: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -281,7 +382,14 @@ function shellIdFromValue(value: unknown, depth = 0): string | undefined {
     return undefined
   }
   const object = recordValue(value)
-  for (const key of ['shellId', 'shell_id', 'shell-id']) {
+  for (const key of [
+    'shellId',
+    'shell_id',
+    'shell-id',
+    'processId',
+    'process_id',
+    'process-id',
+  ]) {
     const id = stringValue(object[key])
     if (id) {
       return id
@@ -339,7 +447,12 @@ function shellExitFromValue(
   }
   const object = recordValue(value)
   if (object.type === 'shell_exit') {
-    const shellId = stringValue(object.shellId) || stringValue(object.shell_id)
+    const shellId =
+      stringValue(object.shellId) ||
+      stringValue(object.shell_id) ||
+      stringValue(object.processId) ||
+      stringValue(object.process_id) ||
+      stringValue(object['process-id'])
     const exitCode = numberValue(object.exitCode)
     if (shellId && exitCode !== undefined) {
       return {
@@ -372,6 +485,7 @@ function errorValue(data: Record<string, unknown>): string | undefined {
 function shellTaskMode(
   data: Record<string, unknown>,
   args: Record<string, unknown>,
+  assumeBackground = false,
 ): {
   executionMode: BackgroundTask['executionMode']
   attachmentMode: BackgroundTask['attachmentMode']
@@ -408,7 +522,7 @@ function shellTaskMode(
     requestedMode === 'background' ||
     requestedMode === 'async' ||
     detached
-  if (!background) {
+  if (!background && !assumeBackground) {
     return undefined
   }
   return {
@@ -604,16 +718,18 @@ function backgroundHandoff(
   | undefined {
   const result = recordValue(data.result)
   const telemetry = toolTelemetryProperties(data)
-  const executionMode =
+  const executionMode = (
     eventString(data, 'executionMode') ||
     eventString(result, 'executionMode') ||
     eventString(telemetry, 'executionMode') ||
     eventString(data, 'mode') ||
     eventString(result, 'mode')
-  const attachmentMode =
+  )?.toLowerCase()
+  const attachmentMode = (
     eventString(data, 'attachmentMode') ||
     eventString(result, 'attachmentMode') ||
     eventString(telemetry, 'attachmentMode')
+  )?.toLowerCase()
   const detached =
     attachmentMode === 'detached' || booleanValue(telemetry.detached)
   if (
@@ -644,11 +760,14 @@ function backgroundHandoff(
           : 'attached',
     }
   }
-  const message = textFromValue(result) || textFromValue(data)
+  const message =
+    textFromValue(result) ||
+    textFromValue(recordValue(result.structuredContent)) ||
+    textFromValue(data)
   if (
     message &&
-    /(?:background|detached|still running|moved)/i.test(message) &&
-    /(?:shell|task|command)/i.test(message)
+    /(?:background|detached|async|still running|moved)/i.test(message) &&
+    /(?:shell|task|command|process)/i.test(message)
   ) {
     return {
       executionMode: 'background',
@@ -795,6 +914,17 @@ export function backgroundTasksFromEvents(
 
   for (const event of events) {
     const data = recordValue(event.data)
+    const listedTasks = [
+      ...taskInfoListFromValue(data),
+      ...taskInfoListFromValue(data.result),
+    ]
+    for (const listedTask of listedTasks) {
+      tasks.set(
+        listedTask.id,
+        normalizeBackgroundTask(listedTask, undefined, false),
+      )
+      aliases.set(listedTask.id, listedTask.id)
+    }
     const eventType = String(event.type)
     if (
       eventType === 'system.notification' ||
@@ -902,7 +1032,7 @@ export function backgroundTasksFromEvents(
       }
       const args = taskArguments(data)
       if (isShellTool(toolName)) {
-        const mode = shellTaskMode(data, args)
+        const mode = shellTaskMode(data, args, assumeBackground)
         const toolCallId = eventString(data, 'toolCallId')
         const shellId =
           shellIdFromValue(data) || shellIdFromValue(args) || toolCallId
@@ -1043,6 +1173,13 @@ export function backgroundTasksFromEvents(
             current.status === 'failed'
               ? errorValue(data) || 'Shell task failed to start'
               : undefined
+          current.canCancel = false
+        } else if (
+          !handoffMode &&
+          current.attachmentMode === 'attached'
+        ) {
+          current.status = 'completed'
+          current.completedAt = event.timestamp
           current.canCancel = false
         }
         if (!shellExit) {

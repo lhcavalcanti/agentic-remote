@@ -736,6 +736,15 @@ describe('AgentService deletion', () => {
         timestamp: completedAt,
         data: {},
       },
+      {
+        type: 'assistant.turn_start',
+        id: 'background-turn',
+        parentId: 'turn-end',
+        timestamp: new Date(Date.parse(completedAt) + 1_000).toISOString(),
+        data: {
+          agentId: 'agent-1',
+        },
+      },
     ] as SessionEvent[]
     const terminal = {
       has: vi.fn(async () => true),

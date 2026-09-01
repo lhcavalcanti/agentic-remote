@@ -2566,10 +2566,11 @@ function SortableSessionItem({
   } = useSortable({ id: sortableId })
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
   const taskCount = backgroundTasks?.tasks.length || 0
+  const foregroundStatusAllowsTaskTreatment =
+    session.status === 'idle' || session.status === 'running'
   const backgroundTaskActive =
     runningBackgroundTasks > 0 &&
-    session.status !== 'waiting' &&
-    session.status !== 'error'
+    foregroundStatusAllowsTaskTreatment
   return (
     <button
       aria-current={selected ? 'page' : undefined}

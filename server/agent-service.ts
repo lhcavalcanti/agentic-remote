@@ -224,7 +224,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       continue
     }
-    if (event.type === 'assistant.message' && !event.agentId) {
+    if (event.type === 'assistant.message' && !eventAgentId(event)) {
       const content = event.data.content.trim()
       if (content) {
         finishRunningActivities()
@@ -237,7 +237,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       continue
     }
-    if (event.type === 'tool.execution_start' && !event.agentId) {
+    if (event.type === 'tool.execution_start' && !eventAgentId(event)) {
       const toolCallId = event.data.toolCallId
       const toolName = event.data.toolName
         .toLowerCase()
@@ -259,7 +259,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       })
       continue
     }
-    if (event.type === 'tool.execution_complete' && !event.agentId) {
+    if (event.type === 'tool.execution_complete' && !eventAgentId(event)) {
       const toolCallId = event.data.toolCallId
       const message = messages.find(
         (entry) => entry.id === `tool:${toolCallId}`,
@@ -638,7 +638,7 @@ export function pendingUserInputFromEvents(
       }
     | undefined
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     if (event.type === 'user.message') {
@@ -852,13 +852,31 @@ const foregroundLifecycleEvents = new Set<SessionEvent['type']>([
   'session.shutdown',
 ])
 
+function eventAgentId(event: SessionEvent): string | undefined {
+  return (
+    stringValue(event.agentId) ||
+    stringValue(recordValue(event.data).agentId)
+  )
+}
+
 function isForegroundLifecycleEvent(event: SessionEvent): boolean {
-  return !event.agentId && foregroundLifecycleEvents.has(event.type)
+  return !eventAgentId(event) && foregroundLifecycleEvents.has(event.type)
+}
+
+function isForegroundCompletionEvent(event: SessionEvent): boolean {
+  return (
+    isForegroundLifecycleEvent(event) &&
+    (event.type === 'assistant.turn_end' ||
+      event.type === 'session.idle' ||
+      event.type === 'session.error' ||
+      event.type === 'abort' ||
+      event.type === 'session.shutdown')
+  )
 }
 
 function isBackgroundTaskEvent(event: SessionEvent): boolean {
   if (
-    event.agentId ||
+    eventAgentId(event) ||
     event.type === 'session.background_tasks_changed' ||
     event.type === 'subagent.started' ||
     event.type === 'subagent.completed' ||
@@ -953,10 +971,10 @@ function eventContextLength(event: SessionEvent): number {
   }
 
   if (event.type === 'assistant.message') {
-    return event.agentId ? 0 : contextTextLength(data.content)
+    return eventAgentId(event) ? 0 : contextTextLength(data.content)
   }
   if (event.type === 'tool.execution_complete') {
-    return event.agentId ? 0 : contextTextLength(data.result)
+    return eventAgentId(event) ? 0 : contextTextLength(data.result)
   }
   return 0
 }
@@ -967,7 +985,7 @@ function workingDirectoryFromEvents(
 ): string | undefined {
   let cwd = fallback
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     const data = recordValue(event.data)
@@ -1028,7 +1046,7 @@ export function runtimeInfoFromEvents(
   const runtime: SessionRuntimeInfo = { ...previous }
   let exactContext = false
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     const data = recordValue(event.data)
@@ -1793,7 +1811,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const events = await this.sessionEventReader(stored.id)
     const latestLifecycle = events.findLast(
       (event) =>
-        !event.agentId &&
+        isForegroundLifecycleEvent(event) &&
         (event.type === 'assistant.turn_start' ||
           event.type === 'assistant.turn_end' ||
           event.type === 'session.idle' ||
@@ -3175,11 +3193,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           const completion = events.some(
             (event) =>
               Date.parse(event.timestamp) >= dispatchTime &&
-              (event.type === 'assistant.turn_end' ||
-                event.type === 'session.idle' ||
-                event.type === 'session.error' ||
-                event.type === 'abort' ||
-                event.type === 'session.shutdown'),
+              isForegroundCompletionEvent(event),
           )
           if (completion) {
             await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
@@ -3202,7 +3216,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const cwd = workingDirectoryFromEvents(events, stored?.cwd)
         const contextCwd = events.some(
           (event) =>
-            event.type === 'session.context_changed' && !event.agentId,
+            event.type === 'session.context_changed' &&
+            !eventAgentId(event),
         )
         if (
           this.activePrompts.has(sessionId) ||
@@ -3227,12 +3242,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.liveTranscriptWatermarks.delete(sessionId)
         this.publish(updated)
         const latestCompletionAt = events.findLast(
-          (event) =>
-            event.type === 'assistant.turn_end' ||
-            event.type === 'session.idle' ||
-            event.type === 'session.error' ||
-            event.type === 'abort' ||
-            event.type === 'session.shutdown',
+          isForegroundCompletionEvent,
         )?.timestamp
         const firstQueuedAt = updated.queuedPrompts?.[0]?.createdAt
         if (
@@ -3662,7 +3672,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (
       event.type === 'session.context_changed' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       stored &&
       !this.deletingSessions.has(sessionId)
     ) {
@@ -3678,7 +3688,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (
       event.type === 'session.title_changed' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       stored &&
       !this.deletingSessions.has(sessionId)
     ) {
@@ -3715,7 +3725,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (
       event.type === 'assistant.message_delta' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       activePrompt
     ) {
       this.publish(
@@ -3728,7 +3738,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'assistant.message' && !event.agentId && activePrompt) {
+    if (
+      event.type === 'assistant.message' &&
+      !eventAgentId(event) &&
+      activePrompt
+    ) {
       this.liveTranscriptWatermarks.set(sessionId, event.timestamp)
       this.publish(
         this.store.setMessageContent(
@@ -3740,7 +3754,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'tool.execution_start' && !event.agentId) {
+    if (event.type === 'tool.execution_start' && !eventAgentId(event)) {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
@@ -3765,7 +3779,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'tool.execution_complete' && !event.agentId) {
+    if (event.type === 'tool.execution_complete' && !eventAgentId(event)) {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }

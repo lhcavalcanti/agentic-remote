@@ -486,4 +486,71 @@ describe('background task adapter', () => {
       }),
     ])
   })
+
+  it('projects tmux shell tasks when the CLI omits the execution mode', () => {
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'shell-start',
+        parentId: null,
+        timestamp: '2026-08-31T18:06:00.000Z',
+        data: {
+          toolCallId: 'shell-call',
+          toolName: 'bash',
+          arguments:
+            '{"command":"pnpm dev","description":"Start the dev server"}',
+        },
+      },
+    ] as SessionEvent[]
+
+    expect(
+      backgroundTasksFromEvents(events, { assumeBackground: true }),
+    ).toEqual([
+      expect.objectContaining({
+        id: 'shell-call',
+        type: 'shell',
+        description: 'Start the dev server',
+        executionMode: 'background',
+        attachmentMode: 'attached',
+        status: 'running',
+      }),
+    ])
+  })
+
+  it('hydrates shell task snapshots reported in CLI task metadata', () => {
+    const events = JSON.parse(`[
+      {
+        "type": "session.background_tasks_changed",
+        "id": "tasks-changed",
+        "parentId": null,
+        "timestamp": "2026-08-31T18:07:00.000Z",
+        "data": {
+          "tasks": [
+            {
+              "type": "shell",
+              "id": "shell-3",
+              "description": "Watch the app",
+              "status": "running",
+              "startedAt": "2026-08-31T18:06:30.000Z",
+              "command": "pnpm dev",
+              "attachmentMode": "detached",
+              "pid": 1234,
+              "logPath": "/tmp/shell-3.log"
+            }
+          ]
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(backgroundTasksFromEvents(events)).toEqual([
+      expect.objectContaining({
+        id: 'shell-3',
+        type: 'shell',
+        status: 'running',
+        executionMode: 'background',
+        attachmentMode: 'detached',
+        pid: 1234,
+      }),
+    ])
+  })
 })

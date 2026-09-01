@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Agentic Remote · activity view mockups</title>
+    <style>
+      :root {
+        --bg: #111210;
+        --panel: #171815;
+        --panel-raised: #1e201c;
+        --panel-soft: #242620;
+        --border: #2d3029;
+        --border-strong: #3c4037;
+        --text: #e8e7e4;
+        --muted: #999c91;
+        --muted-strong: #b8baaf;
+        --accent: #b8f36b;
+        --danger: #ef816f;
+        --done: #89b66c;
+        --think: #7fa8dd;
+        --mcp: #a9c9f6;
+        --agent: #e0c78a;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #0c0d0b;
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      h1 {
+        margin: 0 0 4px;
+        font-size: 16px;
+      }
+
+      p.lede {
+        margin: 0 0 20px;
+        max-width: 900px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .caption {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin: 0 0 8px;
+      }
+
+      .caption h2 {
+        margin: 0;
+        font-size: 13px;
+      }
+
+      .caption span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      /* ---------- a frame that stands in for the app ---------- */
+
+      .frame {
+        display: grid;
+        height: 620px;
+        margin-bottom: 26px;
+        overflow: hidden;
+        border: 1px solid var(--border-strong);
+        border-radius: 14px;
+        background: var(--bg);
+        grid-template-columns: 190px minmax(0, 1fr);
+      }
+
+      .frame__side {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px 12px;
+        border-right: 1px solid var(--border);
+        background: rgba(23, 24, 21, 0.94);
+      }
+
+      .side__brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11.5px;
+        font-weight: 650;
+      }
+
+      .side__mark {
+        display: grid;
+        width: 22px;
+        height: 22px;
+        border-radius: 7px;
+        background: var(--accent);
+        color: #111210;
+        font-size: 11px;
+        place-items: center;
+      }
+
+      .side__new {
+        padding: 7px 0;
+        border-radius: 9px;
+        background: var(--accent);
+        color: #111210;
+        font-size: 11px;
+        font-weight: 650;
+        text-align: center;
+      }
+
+      .side__label {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+      }
+
+      .side__item {
+        padding: 6px 8px;
+        border-radius: 8px;
+        color: var(--muted-strong);
+        font-size: 11px;
+      }
+
+      .side__item--active {
+        background: var(--panel-raised);
+        color: var(--text);
+      }
+
+      .frame__main {
+        display: grid;
+        min-width: 0;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+      }
+
+      .main__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .main__header strong {
+        font-size: 12.5px;
+      }
+
+      .main__header small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .main__icons {
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 6px;
+      }
+
+      .timeline {
+        min-height: 0;
+        padding: 16px;
+        overflow: hidden;
+      }
+
+      .who {
+        margin: 0 0 6px;
+        color: var(--muted);
+        font-size: 9px;
+        letter-spacing: 0.08em;
+      }
+
+      .said {
+        max-width: 780px;
+        margin: 0 0 14px;
+        font-size: 12.5px;
+        line-height: 1.5;
+      }
+
+      .main__composer {
+        padding: 12px 16px;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 11.5px;
+      }
+
+      .composer__box {
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+      }
+
+      /* ---------- today: a pill per call ---------- */
+
+      .today {
+        display: grid;
+        justify-items: start;
+        gap: 4px;
+      }
+
+      .pill {
+        display: flex;
+        max-width: 100%;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 3px 7px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.018);
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .pill strong {
+        display: block;
+        font-size: 10px;
+        font-weight: 590;
+      }
+
+      .pill code {
+        display: block;
+        overflow: hidden;
+        max-width: 620px;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 9px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pill--done {
+        color: var(--done);
+      }
+
+      .pill--mcp {
+        border-color: rgba(110, 168, 254, 0.28);
+        background: rgba(110, 168, 254, 0.06);
+        color: var(--mcp);
+      }
+
+      .pill--agent {
+        border-color: rgba(224, 199, 138, 0.28);
+        background: rgba(224, 199, 138, 0.06);
+        color: var(--agent);
+      }
+
+      /* ---------- proposed: a log ---------- */
+
+      .log {
+        font-family: var(--mono);
+        font-size: 11.5px;
+        line-height: 1.6;
+      }
+
+      .row {
+        display: grid;
+        align-items: baseline;
+        gap: 8px;
+        padding: 0 6px;
+        border-radius: 5px;
+        grid-template-columns: 9px minmax(0, 1fr) auto;
+      }
+
+      .row:hover {
+        background: var(--panel-raised);
+      }
+
+      .dot {
+        color: var(--done);
+        font-size: 8px;
+      }
+
+      .row--running .dot,
+      .row--running .name {
+        color: var(--muted-strong);
+      }
+
+      .row--running .dot {
+        color: var(--muted);
+      }
+
+      .row--failed .dot,
+      .row--failed .name {
+        color: var(--danger);
+      }
+
+      .body {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* The tool name is the only thing that carries weight; everything after
+         it stays grey so a long argument list never shouts. */
+      .name {
+        color: var(--text);
+        font-weight: 650;
+      }
+
+      .kind {
+        display: inline-block;
+        min-width: 18px;
+        color: var(--muted);
+        font-size: 9.5px;
+        text-transform: uppercase;
+      }
+
+      .origin,
+      .args,
+      .result,
+      .sep {
+        color: var(--muted);
+      }
+
+      .time {
+        color: var(--muted);
+        font-size: 10.5px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Narration keeps the log's font but takes the blue bullet, so thinking
+         is legible as a different kind of line without changing typeface. */
+      .think {
+        display: grid;
+        gap: 8px;
+        padding: 2px 6px;
+        color: var(--muted-strong);
+        grid-template-columns: 9px minmax(0, 1fr);
+      }
+
+      .think .dot {
+        color: var(--think);
+      }
+
+      .think p {
+        max-width: 760px;
+        margin: 0;
+        white-space: normal;
+      }
+
+      .skill {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 8px 0 2px;
+        padding: 0 6px;
+        color: var(--agent);
+        font-weight: 650;
+      }
+
+      .skill::after {
+        height: 1px;
+        flex: 1;
+        background: var(--border);
+        content: "";
+        opacity: 0.7;
+      }
+
+      .skill:first-child {
+        margin-top: 0;
+      }
+
+      .grouped {
+        margin-left: 10px;
+        padding-left: 8px;
+        border-left: 1px solid var(--border);
+      }
+
+      .anatomy {
+        margin: 0 0 26px;
+        padding: 14px 16px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel);
+        font-family: var(--mono);
+        font-size: 11.5px;
+      }
+
+      .anatomy__legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 10px;
+        color: var(--muted);
+        font-family: Inter, sans-serif;
+        font-size: 10.5px;
+      }
+
+      .swatch {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 5px;
+        border-radius: 50%;
+        vertical-align: baseline;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Activity view — the same session, rendered two ways</h1>
+    <p class="lede">
+      Both frames show the identical eleven steps in the conversation column, at
+      the same size, so the comparison is about the view rather than the words.
+    </p>
+
+    <div class="caption">
+      <h2>Today</h2>
+      <span>a bordered pill per call; six steps fill the column</span>
+    </div>
+    <div class="frame">
+      <div class="frame__side">
+        <div class="side__brand">
+          <span class="side__mark">◆</span> Agentic Remote
+        </div>
+        <div class="side__new">+ New session</div>
+        <div class="side__label">RECENT</div>
+        <div class="side__item side__item--active">Deploy Justin's Engine</div>
+        <div class="side__item">Determine System Capacity</div>
+        <div class="side__item">Investigate Cache Hit</div>
+      </div>
+      <div class="frame__main">
+        <div class="main__header">
+          <div>
+            <strong>Deploy Justin's Engine</strong>
+            <small>GitHub Copilot · tmux · agent-hub</small>
+          </div>
+          <div class="main__icons">···</div>
+        </div>
+        <div class="timeline">
+          <p class="who">AGENT</p>
+          <p class="said">
+            Tracing the route from the model alias to its catalog model,
+            endpoint, and AOAI deployment before proposing any write.
+          </p>
+          <div class="today">
+            <div class="pill pill--agent"><span>●</span><span><strong>Skill (tool-model-catalog)</strong></span></div>
+            <div class="pill pill--done"><span>●</span><span><strong>Read</strong><code>model-catalog.md</code></span></div>
+            <div class="pill pill--done"><span>●</span><span><strong>Read</strong><code>reference.md</code></span></div>
+            <div class="pill pill--done"><span>●</span><span><strong>Search</strong><code>"cache-engine-treatment" in *.{md,json,yaml}</code></span></div>
+            <div class="pill pill--mcp"><span>●</span><span><strong>MCP · Ecs Mcp Server · Search Ecs Config Keys</strong><code>client: "QAS", team: "QAS", query: "dev-swec-gpt55-chat-cach…</code></span></div>
+            <div class="pill pill--mcp"><span>●</span><span><strong>MCP · Polymer Llm Deployment Operations · Search Deployment Store</strong><code>search: "swec-gpt55-chat-cache-engine-treatment", limit: 50</code></span></div>
+            <div class="pill"><span>○</span><span><strong>MCP · Mpcm · Find Mpcm Scale Set Endpoints</strong><code>regions: [1 item], serviceNamespace: "AzureOpenAI"</code></span></div>
+          </div>
+        </div>
+        <div class="main__composer">
+          <div class="composer__box">Message agent on agent-hub…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="caption">
+      <h2>Proposed</h2>
+      <span>a log; the same steps, plus results and durations, in half the height</span>
+    </div>
+    <div class="frame">
+      <div class="frame__side">
+        <div class="side__brand">
+          <span class="side__mark">◆</span> Agentic Remote
+        </div>
+        <div class="side__new">+ New session</div>
+        <div class="side__label">RECENT</div>
+        <div class="side__item side__item--active">Deploy Justin's Engine</div>
+        <div class="side__item">Determine System Capacity</div>
+        <div class="side__item">Investigate Cache Hit</div>
+      </div>
+      <div class="frame__main">
+        <div class="main__header">
+          <div>
+            <strong>Deploy Justin's Engine</strong>
+            <small>GitHub Copilot · tmux · agent-hub</small>
+          </div>
+          <div class="main__icons">···</div>
+        </div>
+        <div class="timeline">
+          <div class="log">
+            <div class="skill">skill(tool-model-catalog)</div>
+            <div class="think">
+              <span class="dot">●</span>
+              <p>
+                Tracing the route from the model alias to its catalog model,
+                endpoint, and AOAI deployment before proposing any write. No
+                catalog mutation will run until the exact body is established.
+              </p>
+            </div>
+            <div class="grouped">
+              <div class="row">
+                <span class="dot">●</span>
+                <span class="body"><span class="kind">md</span> <span class="name">Read</span> <span class="args">model-catalog.md</span> <span class="sep">·</span> <span class="result">1 line</span></span>
+                <span class="time">0.2s</span>
+              </div>
+              <div class="row">
+                <span class="dot">●</span>
+                <span class="body"><span class="kind">md</span> <span class="name">Read</span> <span class="args">reference.md</span> <span class="sep">·</span> <span class="result">48 lines</span></span>
+                <span class="time">0.3s</span>
+              </div>
+              <div class="row">
+                <span class="dot">●</span>
+                <span class="body"><span class="kind">/</span> <span class="name">Search</span> <span class="args">"cache-engine-treatment" in *.{md,json,yaml}</span> <span class="sep">·</span> <span class="result">no matches</span></span>
+                <span class="time">1s</span>
+              </div>
+              <div class="row">
+                <span class="dot">●</span>
+                <span class="body"><span class="kind">/</span> <span class="name">Search</span> <span class="args">"^## |Unknown model|fallback" in skills/debugger-inference</span> <span class="sep">·</span> <span class="result">95 lines</span></span>
+                <span class="time">2s</span>
+              </div>
+              <div class="row">
+                <span class="dot">●</span>
+                <span class="body"><span class="name">search_ecs_config_keys</span> <span class="origin">(MCP: ecs-mcp-server)</span> <span class="sep">·</span> <span class="args">client: "QAS", team: "QAS", query: "dev-swec-gpt55-chat-cache-engine-treatment"</span></span>
+                <span class="time">12s</span>
+              </div>
+              <div class="row">
+                <span class="dot">●</span>
+                <span class="body"><span class="name">search_deployment_store</span> <span class="origin">(MCP: polymer-llm-deployment-operations)</span> <span class="sep">·</span> <span class="args">search: "swec-gpt55-chat-cache-engine-treatment", limit: 50</span></span>
+                <span class="time">5s</span>
+              </div>
+              <div class="row row--failed">
+                <span class="dot">●</span>
+                <span class="body"><span class="name">get_deployment_operation</span> <span class="origin">(MCP: polymer-llm-deployment-operations)</span> <span class="sep">·</span> <span class="result">404 operation not found</span></span>
+                <span class="time">2s</span>
+              </div>
+            </div>
+
+            <div class="skill">skill(tool-mpcm)</div>
+            <div class="grouped">
+              <div class="row row--running">
+                <span class="dot">○</span>
+                <span class="body"><span class="name">find_mpcm_scale_set_endpoints</span> <span class="origin">(MCP: mpcm)</span> <span class="sep">·</span> <span class="args">regions: [1 item], serviceNamespace: "AzureOpenAI"</span></span>
+                <span class="time">18s</span>
+              </div>
+            </div>
+
+            <div class="skill">agent(rubber-duck)</div>
+            <div class="grouped">
+              <div class="row row--running">
+                <span class="dot">○</span>
+                <span class="body"><span class="name">Final cache RCA review</span> <span class="sep">·</span> <span class="result">still working</span></span>
+                <span class="time">2m 04s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="main__composer">
+          <div class="composer__box">Message agent on agent-hub…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="caption">
+      <h2>Row anatomy</h2>
+      <span>where each part of a call goes</span>
+    </div>
+    <div class="anatomy">
+      <div class="row">
+        <span class="dot">●</span>
+        <span class="body"><span class="kind">md</span> <span class="name">Read</span> <span class="args">model-catalog.md</span> <span class="sep">·</span> <span class="result">113 lines</span></span>
+        <span class="time">0.4s</span>
+      </div>
+      <div class="row">
+        <span class="dot">●</span>
+        <span class="body"><span class="name">search_ecs_config_keys</span> <span class="origin">(MCP: ecs-mcp-server)</span> <span class="sep">·</span> <span class="args">client: "QAS", team: "QAS"</span></span>
+        <span class="time">12s</span>
+      </div>
+      <div class="anatomy__legend">
+        <span><span class="swatch" style="background: var(--done)"></span>done</span>
+        <span><span class="swatch" style="background: var(--muted)"></span>running, hollow in place</span>
+        <span><span class="swatch" style="background: var(--danger)"></span>failed, and the name turns with it</span>
+        <span><span class="swatch" style="background: var(--think)"></span>the agent thinking</span>
+        <span><span class="swatch" style="background: var(--agent)"></span>skill or sub-agent heading</span>
+      </div>
+    </div>
+  </body>
+</html>

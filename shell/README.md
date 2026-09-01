@@ -32,6 +32,12 @@ workflow, and download the artifact for your platform from the run summary:
 and are attached to pull request runs too, so a change can be tried before it
 merges.
 
+From the command line, always download into a fresh directory:
+
+```bash
+gh run download <run-id> -n agentic-remote-macos -D ./build
+```
+
 **A published version.** Releases carry the same bundles and do not expire. The
 macOS build in a release is a universal binary, so one download runs on both
 Apple Silicon and Intel. Publish one by pushing a tag:

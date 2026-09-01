@@ -21,7 +21,7 @@ product specification and wins over this skill whenever the two disagree.
 | What differs between providers? | `docs/provider-compatibility.md` |
 | How is it installed and secured? | `README.md` |
 | How are builds promoted and cleaned up? | `docs/deployment-promotion.md` |
-| Why is there a macOS desktop shell, and how does it connect? | `docs/desktop-app.md` |
+| Why is there a native shell, and how does it connect? | `docs/native-shell.md` |
 | Rollout approval policy | `.github/copilot-instructions.md` |
 | Host topology and deployment | The machine-local promotion profile and `docs/deployment-promotion.md` |
 

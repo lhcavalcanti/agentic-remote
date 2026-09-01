@@ -29,8 +29,8 @@ dist-ssr
 *.sln
 *.sw?
 
-# Desktop shell build output. Icons are generated from public/icons/icon-512.png
+# Native shell build output. Icons are generated from public/icons/icon-512.png
 # by `pnpm icons`, and the shell's own hub settings stay on the machine.
-desktop/src-tauri/target/
-desktop/src-tauri/gen/
-desktop/src-tauri/icons/
+shell/src-tauri/target/
+shell/src-tauri/gen/
+shell/src-tauri/icons/

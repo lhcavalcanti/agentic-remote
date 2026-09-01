@@ -3,21 +3,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   attentionCount,
-  desktopDeepLink,
-  desktopPlatform,
-  desktopShell,
-  desktopShellVersion,
-  onDesktopDeepLink,
-  onDesktopNotificationReply,
-  parseDesktopDeepLink,
-  resetDesktopBadge,
-  sendDesktopNotification,
-  setDesktopBadge,
-  withdrawDesktopNotifications,
-} from './desktop'
+  shellDeepLink,
+  shellPlatform,
+  nativeShell,
+  shellVersion,
+  onShellDeepLink,
+  onShellNotificationReply,
+  parseShellDeepLink,
+  resetShellBadge,
+  sendShellNotification,
+  setShellBadge,
+  withdrawShellNotifications,
+} from './shell'
 
 function installBridge(bridge: unknown): void {
-  Object.defineProperty(window, '__AGENTIC_DESKTOP__', {
+  Object.defineProperty(window, '__AGENTIC_SHELL__', {
     value: bridge,
     configurable: true,
     writable: true,
@@ -25,47 +25,47 @@ function installBridge(bridge: unknown): void {
 }
 
 afterEach(() => {
-  Reflect.deleteProperty(window, '__AGENTIC_DESKTOP__')
-  resetDesktopBadge()
+  Reflect.deleteProperty(window, '__AGENTIC_SHELL__')
+  resetShellBadge()
 })
 
-describe('desktopShell', () => {
+describe('nativeShell', () => {
   it('reports false in a plain browser', () => {
-    expect(desktopShell()).toBe(false)
+    expect(nativeShell()).toBe(false)
   })
 
   it('reports true once the shell injects its bridge', () => {
     installBridge({})
-    expect(desktopShell()).toBe(true)
+    expect(nativeShell()).toBe(true)
   })
 
   it('ignores a non-object bridge', () => {
     installBridge('yes')
-    expect(desktopShell()).toBe(false)
+    expect(nativeShell()).toBe(false)
   })
 
   it('ignores a null bridge', () => {
     installBridge(null)
-    expect(desktopShell()).toBe(false)
+    expect(nativeShell()).toBe(false)
   })
 })
 
 describe('shell identity', () => {
   it('reads the version and platform the shell reports', () => {
     installBridge({ version: '0.1.0', platform: 'macos' })
-    expect(desktopShellVersion()).toBe('0.1.0')
-    expect(desktopPlatform()).toBe('macos')
+    expect(shellVersion()).toBe('0.1.0')
+    expect(shellPlatform()).toBe('macos')
   })
 
   it('treats blank or non-string identity as absent', () => {
     installBridge({ version: '   ', platform: 7 })
-    expect(desktopShellVersion()).toBeUndefined()
-    expect(desktopPlatform()).toBeUndefined()
+    expect(shellVersion()).toBeUndefined()
+    expect(shellPlatform()).toBeUndefined()
   })
 
   it('returns undefined without a shell', () => {
-    expect(desktopShellVersion()).toBeUndefined()
-    expect(desktopPlatform()).toBeUndefined()
+    expect(shellVersion()).toBeUndefined()
+    expect(shellPlatform()).toBeUndefined()
   })
 })
 
@@ -93,34 +93,34 @@ describe('attentionCount', () => {
   })
 })
 
-describe('setDesktopBadge', () => {
+describe('setShellBadge', () => {
   it('does nothing without a shell', () => {
-    expect(() => setDesktopBadge(3)).not.toThrow()
+    expect(() => setShellBadge(3)).not.toThrow()
   })
 
   it('forwards the count', () => {
     const setBadge = vi.fn()
     installBridge({ setBadge })
-    setDesktopBadge(4)
+    setShellBadge(4)
     expect(setBadge).toHaveBeenCalledWith(4)
   })
 
   it('coalesces repeated identical counts', () => {
     const setBadge = vi.fn()
     installBridge({ setBadge })
-    setDesktopBadge(2)
-    setDesktopBadge(2)
-    setDesktopBadge(3)
+    setShellBadge(2)
+    setShellBadge(2)
+    setShellBadge(3)
     expect(setBadge.mock.calls).toEqual([[2], [3]])
   })
 
   it('normalizes negative, fractional, and non-finite counts', () => {
     const setBadge = vi.fn()
     installBridge({ setBadge })
-    setDesktopBadge(-5)
-    setDesktopBadge(2.7)
-    resetDesktopBadge()
-    setDesktopBadge(Number.NaN)
+    setShellBadge(-5)
+    setShellBadge(2.7)
+    resetShellBadge()
+    setShellBadge(Number.NaN)
     expect(setBadge.mock.calls).toEqual([[0], [2], [0]])
   })
 
@@ -130,11 +130,11 @@ describe('setDesktopBadge', () => {
         throw new Error('no dock')
       },
     })
-    expect(() => setDesktopBadge(1)).not.toThrow()
+    expect(() => setShellBadge(1)).not.toThrow()
   })
 })
 
-describe('sendDesktopNotification', () => {
+describe('sendShellNotification', () => {
   const notification = {
     tag: 'agentic-question-c1-s1',
     title: 'development · Fix login',
@@ -144,18 +144,18 @@ describe('sendDesktopNotification', () => {
   }
 
   it('reports false without a shell so the caller falls back to Web Push', () => {
-    expect(sendDesktopNotification(notification)).toBe(false)
+    expect(sendShellNotification(notification)).toBe(false)
   })
 
   it('reports false when the shell predates notification support', () => {
     installBridge({ setBadge: vi.fn() })
-    expect(sendDesktopNotification(notification)).toBe(false)
+    expect(sendShellNotification(notification)).toBe(false)
   })
 
   it('forwards the notification and reports success', () => {
     const notify = vi.fn()
     installBridge({ notify })
-    expect(sendDesktopNotification(notification)).toBe(true)
+    expect(sendShellNotification(notification)).toBe(true)
     expect(notify).toHaveBeenCalledWith(notification)
   })
 
@@ -165,16 +165,16 @@ describe('sendDesktopNotification', () => {
         throw new Error('denied')
       },
     })
-    expect(sendDesktopNotification(notification)).toBe(false)
+    expect(sendShellNotification(notification)).toBe(false)
   })
 })
 
-describe('withdrawDesktopNotifications', () => {
+describe('withdrawShellNotifications', () => {
   it('forwards a copy of the tags', () => {
     const withdrawNotifications = vi.fn()
     installBridge({ withdrawNotifications })
     const tags = ['a', 'b']
-    withdrawDesktopNotifications(tags)
+    withdrawShellNotifications(tags)
     expect(withdrawNotifications).toHaveBeenCalledWith(['a', 'b'])
     expect(withdrawNotifications.mock.calls[0]?.[0]).not.toBe(tags)
   })
@@ -182,7 +182,7 @@ describe('withdrawDesktopNotifications', () => {
   it('skips an empty list and a missing shell', () => {
     const withdrawNotifications = vi.fn()
     installBridge({ withdrawNotifications })
-    withdrawDesktopNotifications([])
+    withdrawShellNotifications([])
     expect(withdrawNotifications).not.toHaveBeenCalled()
   })
 
@@ -192,13 +192,13 @@ describe('withdrawDesktopNotifications', () => {
         throw new Error('gone')
       },
     })
-    expect(() => withdrawDesktopNotifications(['a'])).not.toThrow()
+    expect(() => withdrawShellNotifications(['a'])).not.toThrow()
   })
 })
 
-describe('onDesktopNotificationReply', () => {
+describe('onShellNotificationReply', () => {
   it('returns an inert unsubscribe without a shell', () => {
-    const stop = onDesktopNotificationReply(() => undefined)
+    const stop = onShellNotificationReply(() => undefined)
     expect(() => stop()).not.toThrow()
   })
 
@@ -211,7 +211,7 @@ describe('onDesktopNotificationReply', () => {
       },
     })
     const handler = vi.fn()
-    onDesktopNotificationReply(handler)
+    onShellNotificationReply(handler)
     emit?.({ tag: 'agentic-permission-c1-s1', actionId: 'allow' })
     emit?.({ tag: 'agentic-permission-c1-s1' })
     emit?.(undefined)
@@ -225,13 +225,13 @@ describe('onDesktopNotificationReply', () => {
   it('invokes the release function returned by the shell', () => {
     const release = vi.fn()
     installBridge({ onNotificationReply: () => release })
-    onDesktopNotificationReply(() => undefined)()
+    onShellNotificationReply(() => undefined)()
     expect(release).toHaveBeenCalledTimes(1)
   })
 
   it('tolerates a shell that returns nothing to unsubscribe with', () => {
     installBridge({ onNotificationReply: () => undefined })
-    expect(() => onDesktopNotificationReply(() => undefined)()).not.toThrow()
+    expect(() => onShellNotificationReply(() => undefined)()).not.toThrow()
   })
 
   it('tolerates a shell that throws while subscribing', () => {
@@ -240,11 +240,11 @@ describe('onDesktopNotificationReply', () => {
         throw new Error('nope')
       },
     })
-    expect(() => onDesktopNotificationReply(() => undefined)()).not.toThrow()
+    expect(() => onShellNotificationReply(() => undefined)()).not.toThrow()
   })
 })
 
-describe('onDesktopDeepLink', () => {
+describe('onShellDeepLink', () => {
   it('delivers parsed targets and drops unparseable links', () => {
     let emit: ((url: string) => void) | undefined
     installBridge({
@@ -254,7 +254,7 @@ describe('onDesktopDeepLink', () => {
       },
     })
     const handler = vi.fn()
-    onDesktopDeepLink(handler)
+    onShellDeepLink(handler)
     emit?.('agentic://computer/dev/session/abc')
     emit?.('https://example.com')
     expect(handler).toHaveBeenCalledTimes(1)
@@ -265,9 +265,9 @@ describe('onDesktopDeepLink', () => {
   })
 })
 
-describe('parseDesktopDeepLink', () => {
+describe('parseShellDeepLink', () => {
   it('parses the canonical form', () => {
-    expect(parseDesktopDeepLink('agentic://computer/dev/session/abc')).toEqual({
+    expect(parseShellDeepLink('agentic://computer/dev/session/abc')).toEqual({
       computerId: 'dev',
       sessionId: 'abc',
     })
@@ -275,13 +275,13 @@ describe('parseDesktopDeepLink', () => {
 
   it('ignores scheme and keyword casing, whitespace, query, and fragment', () => {
     expect(
-      parseDesktopDeepLink('  AGENTIC://Computer/dev/Session/abc?x=1#y  '),
+      parseShellDeepLink('  AGENTIC://Computer/dev/Session/abc?x=1#y  '),
     ).toEqual({ computerId: 'dev', sessionId: 'abc' })
   })
 
   it('decodes percent-encoded identifiers', () => {
     expect(
-      parseDesktopDeepLink('agentic://computer/my%20mac/session/a%2Fb'),
+      parseShellDeepLink('agentic://computer/my%20mac/session/a%2Fb'),
     ).toEqual({ computerId: 'my mac', sessionId: 'a/b' })
   })
 
@@ -295,13 +295,13 @@ describe('parseDesktopDeepLink', () => {
     ['agentic://computer/%E0%A4%A/session/abc'],
     [''],
   ])('rejects %s', (value) => {
-    expect(parseDesktopDeepLink(value)).toBeUndefined()
+    expect(parseShellDeepLink(value)).toBeUndefined()
   })
 })
 
-describe('desktopDeepLink', () => {
+describe('shellDeepLink', () => {
   it('round-trips through the parser', () => {
     const target = { computerId: 'my mac', sessionId: 'a/b' }
-    expect(parseDesktopDeepLink(desktopDeepLink(target))).toEqual(target)
+    expect(parseShellDeepLink(shellDeepLink(target))).toEqual(target)
   })
 })

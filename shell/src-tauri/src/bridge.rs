@@ -35,7 +35,7 @@ pub fn script(version: &str, platform: &str) -> String {
     listeners[channel].add(handler);
     return () => listeners[channel].delete(handler);
   }};
-  window.__AGENTIC_DESKTOP__ = {{
+  window.__AGENTIC_SHELL__ = {{
     version: {version},
     platform: {platform},
     setBadge(count) {{
@@ -79,7 +79,7 @@ pub fn script(version: &str, platform: &str) -> String {
 /// Deliver a native event to the page. The payload is already JSON.
 pub fn emit(channel: &str, payload_json: &str) -> String {
     format!(
-        "window.__AGENTIC_DESKTOP__ && window.__AGENTIC_DESKTOP__.__emit({}, {});",
+        "window.__AGENTIC_SHELL__ && window.__AGENTIC_SHELL__.__emit({}, {});",
         json_string(channel),
         payload_json
     )
@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn script_defines_the_bridge_and_carries_identity() {
         let generated = script("0.1.0", "macos");
-        assert!(generated.contains("window.__AGENTIC_DESKTOP__"));
+        assert!(generated.contains("window.__AGENTIC_SHELL__"));
         assert!(generated.contains("\"0.1.0\""));
         assert!(generated.contains("\"macos\""));
         for method in [
@@ -123,7 +123,7 @@ mod tests {
     fn emit_quotes_the_channel() {
         assert_eq!(
             emit("deepLink", "\"agentic://computer/a/session/b\""),
-            "window.__AGENTIC_DESKTOP__ && window.__AGENTIC_DESKTOP__.__emit(\"deepLink\", \"agentic://computer/a/session/b\");"
+            "window.__AGENTIC_SHELL__ && window.__AGENTIC_SHELL__.__emit(\"deepLink\", \"agentic://computer/a/session/b\");"
         );
     }
 

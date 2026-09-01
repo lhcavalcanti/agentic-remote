@@ -6,10 +6,12 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  isTerminalOverlay,
   isTerminalSessionInUsePrompt,
   parseTerminalPermission,
   parseTerminalUpdateNotice,
   parseTerminalUserInput,
+  terminalCommandOutput,
   TmuxTerminalSessionController,
 } from './terminal-session.js'
 
@@ -524,5 +526,157 @@ describe('terminal update notice', () => {
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBe('1.2.3')
+  })
+})
+
+// Panes below are trimmed captures from a real Copilot CLI session.
+describe('terminal slash command output', () => {
+  const composer = [
+    '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+    '┃',
+    '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+    ' ← open sidebar · / commands · ? help · tab next tab',
+    ' GPT-5.6 Sol · High · 1.1M context (0%)',
+  ].join('\n')
+
+  it('reports the response a command printed', () => {
+    const before = [' ● Tip: /plugin', '   └ Manage plugins', composer].join('\n')
+    const after = [
+      ' ● Tip: /plugin',
+      '   └ Manage plugins',
+      ' ● Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/cwd')).toBe(
+      'Current working directory: /home/user/project',
+    )
+  })
+
+  it('ignores a redraw that added nothing', () => {
+    const pane = [' ● Tip: /plugin', composer].join('\n')
+
+    expect(terminalCommandOutput(pane, pane, '/cwd')).toBeUndefined()
+  })
+
+  it('does not report the echoed command as its own output', () => {
+    const before = [' ● Tip: /plugin', composer].join('\n')
+    const after = [' ● Tip: /plugin', ' /cwd', composer].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/cwd')).toBeUndefined()
+  })
+
+  // The footer carries live counters, so it differs on every frame and a plain
+  // diff mistakes it for a response the command printed.
+  it('ignores a status footer that changed between frames', () => {
+    const before = [
+      ' ● Tip: /plugin',
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' Changes    +0 -0',
+      ' GPT-5.6 Sol · High · 1.1M context (0%)',
+    ].join('\n')
+    const after = [
+      ' ● Tip: /plugin',
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' Changes    +12 -3',
+      ' GPT-5.6 Sol · High · 1.1M context (7%)',
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/config')).toBeUndefined()
+  })
+
+  // The banner and tip paint after the pane is first captured, so the first
+  // command in a session would otherwise report them as its own output.
+  it('ignores the startup banner and tip', () => {
+    const before = [' ● Ready', composer].join('\n')
+    const after = [
+      ' ● Ready',
+      '  ╭─╮╭─╮',
+      '  ╰─╯╰─╯  Copilot v1.0.82 uses AI.',
+      '  █ ▘▝ █  Check for mistakes.',
+      '   ▔▔▔▔',
+      ' ● Tip: /plugin',
+      '   └ Manage plugins and plugin marketplaces',
+      ' ● Allowed directories for file access:',
+      composer,
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/list-dirs')).toBe(
+      'Allowed directories for file access:',
+    )
+  })
+
+  // Earlier output is redrawn with different padding and panel borders, so
+  // comparing the captured text verbatim reports it again as a new response.
+  it('ignores earlier output that was redrawn with different borders', () => {
+    const before = [
+      ' ● Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+    const after = [
+      '   Current working directory: /home/user/project              ┃',
+      ' ● Allowed directories for file access:',
+      composer,
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/list-dirs')).toBe(
+      'Allowed directories for file access:',
+    )
+  })
+
+  // Running a command twice prints the same text again. Treating prior output
+  // as a set would discard the second response and report only the command.
+  it('reports a repeated response the command printed again', () => {
+    const before = [
+      ' \u25cf Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+    const after = [
+      ' \u25cf Current working directory: /home/user/project',
+      ' \u25cf Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/cwd')).toBe(
+      'Current working directory: /home/user/project',
+    )
+  })
+
+  it('recognises a full-screen view', () => {
+    const settings = [
+      ' Settings',
+      '  User   Repo   Repo (local)   Problems',
+      ' ❯ allowedUrls                          (default)',
+      ' 1 of 156',
+      ' / search · ↑/↓ navigate · tab switch scope · enter edit · ctrl+r reset ·',
+      ' ctrl+e editor · esc close',
+    ].join('\n')
+
+    expect(isTerminalOverlay(settings)).toBe(true)
+  })
+
+  it('recognises a picker whose footer spells out the keys', () => {
+    // The model picker phrases every hint with a connecting word.
+    const picker = [
+      ' \u276f Auto                       \u2014          \u2014',
+      ' \u276f  Search models\u2026',
+      ' \u2191/\u2193 to navigate \u00b7 \u2190/\u2192 reasoning effort \u00b7 tab context window \u00b7',
+      ' recommended \u00b7 enter to select \u00b7 esc to cancel',
+    ].join('\n')
+
+    expect(isTerminalOverlay(picker)).toBe(true)
+  })
+
+  it('does not mistake an ordinary transcript for a full-screen view', () => {
+    const pane = [
+      ' ● Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+
+    expect(isTerminalOverlay(pane)).toBe(false)
   })
 })

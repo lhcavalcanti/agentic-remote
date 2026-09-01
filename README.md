@@ -332,6 +332,8 @@ binaries means the digest did not match the table in
 - [Multi-computer architecture](docs/architecture.md) — routing and ownership
 - [Provider compatibility](docs/provider-compatibility.md) — Copilot/Claude
   differences
+- [Slash command feedback](docs/slash-command-feedback.md) — what terminal-backed
+  sessions report for each command
 - [Security policy](SECURITY.md) — reporting and deployment boundaries
 
 Agentic Remote is available under the [MIT License](LICENSE).

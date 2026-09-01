@@ -68,6 +68,8 @@ import {
   searchWorkspace,
 } from './workspace-browser.js'
 import {
+  isTerminalOverlay,
+  terminalCommandOutput,
   TmuxTerminalSessionController,
   type TerminalSessionController,
 } from './terminal-session.js'
@@ -2350,6 +2352,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const nativeEnqueue =
       !catalog.session &&
       this.shouldUseNativeTerminalQueue(sessionId, enqueue)
+    // Taken before the command is sent so the response can be told apart from
+    // content the pane was already showing. While the agent is working its own
+    // streaming output arrives in the same pane and cannot be told apart from
+    // the command's response, so no attempt is made to report one.
+    const before =
+      nativeEnqueue || busy || this.store.get(sessionId)?.status === 'running'
+        ? undefined
+        : await this.terminalController.capture?.(sessionId)
     if (
       await this.terminalController.send(
         sessionId,
@@ -2360,7 +2370,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
         role: 'notice',
-        content: canonicalCommand,
+        content: await this.terminalCommandFeedback(
+          sessionId,
+          canonicalCommand,
+          before,
+        ),
         createdAt: new Date().toISOString(),
       })
       this.publish(notice)
@@ -2420,6 +2434,41 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
     this.publish(notice)
     return notice
+  }
+
+  /**
+   * The CLI writes a slash command's response into the terminal rather than
+   * the event log, so without this the conversation only shows the command
+   * that was sent. Polls briefly for the response and falls back to the
+   * command itself when there is nothing to report.
+   */
+  private async terminalCommandFeedback(
+    sessionId: string,
+    command: string,
+    before: string | undefined,
+  ): Promise<string> {
+    if (before === undefined || !this.terminalController.capture) {
+      return command
+    }
+    let previous: string | undefined
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      const after = await this.terminalController.capture(sessionId)
+      if (!after) {
+        continue
+      }
+      if (isTerminalOverlay(after)) {
+        return `${command}\n\nOpened an interactive view in the terminal. Continue there; it cannot be shown here.`
+      }
+      const output = terminalCommandOutput(before, after, command)
+      // A response can be captured mid-paint, so report it only once it stops
+      // growing; otherwise a multi-line response is cut short.
+      if (output && output === previous) {
+        return `${command}\n\n${output}`
+      }
+      previous = output
+    }
+    return previous ? `${command}\n\n${previous}` : command
   }
 
   async cancel(sessionId: string): Promise<void> {

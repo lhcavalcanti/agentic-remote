@@ -52,6 +52,7 @@ export interface TerminalSessionController {
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
+  capture?(sessionId: string): Promise<string | undefined>
 }
 
 export class TmuxTerminalSessionController
@@ -405,6 +406,27 @@ export class TmuxTerminalSessionController
     })
   }
 
+  async capture(sessionId: string): Promise<string | undefined> {
+    const target = await this.target(sessionId)
+    if (!target) {
+      return undefined
+    }
+    try {
+      return (
+        await execFileAsync('tmux', [
+          'capture-pane',
+          '-p',
+          '-t',
+          target,
+          '-S',
+          '-200',
+        ])
+      ).stdout
+    } catch {
+      return undefined
+    }
+  }
+
   async cancel(sessionId: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const target = await this.target(sessionId)
@@ -710,9 +732,125 @@ export function parseTerminalUpdateNotice(pane: string): string | undefined {
   return undefined
 }
 
+// The CLI redraws a composer box and a status footer on every frame, so a
+// naive pane diff is mostly chrome. Everything below recognises that chrome so
+// only genuine command output is reported.
+const TERMINAL_CHROME = [
+  /^[╻┃╹╭╰│]*[▄▀─━]*[╸╺╹╻┃]*$/u,
+  /^[←↑↓→]/u,
+  /commands\s+·\s+/u,
+  /^\s*$/u,
+  // The startup banner and tip render after the pane is first captured, so
+  // without this the first command in a session reports them as its output.
+  /^[\u2500-\u259f\s]*Copilot v[\d.]+ uses AI\.$/u,
+  /^[\u2500-\u259f\s]*Check for mistakes\.$/u,
+  /^[●•]?\s*Tip:\s/u,
+]
+
+function isTerminalChrome(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) {
+    return true
+  }
+  if (/^[\u2500-\u257f\u2580-\u259f\s]+$/u.test(trimmed)) {
+    return true
+  }
+  return TERMINAL_CHROME.some((pattern) => pattern.test(trimmed))
+}
+
+// The composer box always sits below the transcript, and the status footer
+// below that. Both redraw with changing values -- token counts, diff stats --
+// so matching each variant is futile; drop the whole region instead. The top
+// border of the composer marks where it begins.
+const COMPOSER_TOP = /^\s*[╻╭][\u2580-\u259f\u2500-\u257f]*\s*$/u
+
+function stripTerminalStatus(pane: string): string[] {
+  const lines = pane.split('\n').map((line) => line.trimEnd())
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (COMPOSER_TOP.test(lines[index])) {
+      return lines.slice(0, index)
+    }
+  }
+  return lines
+}
+
+// A full-screen view replaces the transcript and is driven by keystrokes, so
+// there is nothing useful to copy into the conversation. Its footer advertises
+// the keys it accepts, which is the most reliable signal available.
+export function isTerminalOverlay(pane: string): boolean {
+  const tail = pane.split('\n').slice(-6).join(' ')
+  // Footers phrase these as either "esc close" or "esc to cancel", so the
+  // connecting word is optional.
+  const hints = [
+    /esc\s+(?:to\s+)?(?:close|cancel|back|exit|dismiss)/i,
+    /↑\/↓\s*(?:to\s+)?navigate/i,
+    /tab\s+(?:to\s+)?(?:switch|next|context)/i,
+    /enter\s+(?:to\s+)?(?:edit|select|confirm|save|apply)/i,
+    /←\/→\s*(?:to\s+)?\w+/i,
+  ]
+  return hints.filter((hint) => hint.test(tail)).length >= 2
+}
+
+/**
+ * Output a slash command added to the pane, or undefined when it produced
+ * none. Compares against the frame captured before the command was sent so a
+ * redraw of existing content is not mistaken for a response.
+ */
+// Panels draw borders and bullets that shift between frames, so lines are
+// compared in this normalised form rather than as captured.
+function normaliseOutputLine(line: string): string {
+  return cleanDialogLine(line).replace(/^\s*[●•]\s*/u, '').trim()
+}
+
+export function terminalCommandOutput(
+  before: string,
+  after: string,
+  command: string,
+): string | undefined {
+  // Counted rather than a set: running a command twice prints the same text
+  // again, and membership alone would discard the second response entirely.
+  const seen = new Map<string, number>()
+  for (const line of stripTerminalStatus(before)) {
+    const key = normaliseOutputLine(line)
+    if (key) {
+      seen.set(key, (seen.get(key) || 0) + 1)
+    }
+  }
+  const echo = command.trim().toLowerCase()
+  const added: string[] = []
+  let afterTip = false
+  for (const line of stripTerminalStatus(after)) {
+    // The startup tip wraps onto an indented continuation line, which is only
+    // chrome directly beneath the tip itself.
+    if (afterTip && /^\s*└\s/u.test(line)) {
+      continue
+    }
+    if (isTerminalChrome(line)) {
+      afterTip = /^\s*[●•]?\s*Tip:\s/u.test(line)
+      continue
+    }
+    afterTip = false
+    const cleaned = normaliseOutputLine(line)
+    if (!cleaned || cleaned.toLowerCase() === echo) {
+      continue
+    }
+    const remaining = seen.get(cleaned)
+    if (remaining) {
+      seen.set(cleaned, remaining - 1)
+      continue
+    }
+    added.push(cleaned)
+  }
+  if (added.length === 0) {
+    return undefined
+  }
+  return added.join('\n')
+}
+
 export function parseTerminalUserInput(
   pane: string,
-): PendingUserInput | undefined {  const lines = pane.split('\n').map(cleanDialogLine)
+): PendingUserInput | undefined {
+  const lines = pane.split('\n').map(cleanDialogLine)
   const questionHeader = lines.findLastIndex((line) => line === 'Question')
   if (questionHeader < 0) {
     return undefined

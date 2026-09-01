@@ -3649,6 +3649,226 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('reports what a terminal slash command printed', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-slash-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        // The CLI writes its answer into the terminal, not the event log.
+        pane = [
+          ' \u25cf Tip: /plugin',
+          ' \u25cf Current working directory: /home/user/project',
+          composer,
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const result = await service.executeCommand(client.session.sessionId, '/cwd')
+
+    const notice = result.messages.at(-1)
+    expect(notice?.role).toBe('notice')
+    expect(notice?.content).toContain('/cwd')
+    expect(notice?.content).toContain(
+      'Current working directory: /home/user/project',
+    )
+    await service.stop()
+  })
+
+  it('waits for a terminal slash command response to finish painting', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-paint-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const frame = (...lines: string[]) =>
+      [' \u25cf Tip: /plugin', ...lines, composer].join('\n')
+    let pane = frame()
+    let captures = 0
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      // The pane is captured mid-paint, so the first line lands before the
+      // rest of the response does.
+      capture: vi.fn(async () => {
+        captures += 1
+        if (captures === 2) {
+          pane = frame(' \u25cf Allowed directories for file access:')
+        }
+        if (captures >= 3) {
+          pane = frame(
+            ' \u25cf Allowed directories for file access:',
+            '   1. /home/user/project',
+          )
+        }
+        return pane
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const result = await service.executeCommand(
+      client.session.sessionId,
+      '/list-dirs',
+    )
+
+    const notice = result.messages.at(-1)
+    expect(notice?.content).toContain('Allowed directories for file access:')
+    expect(notice?.content).toContain('1. /home/user/project')
+    await service.stop()
+  })
+
+  // While the agent is working, its streaming output lands in the same pane
+  // and cannot be told apart from a command's response.
+  it('does not attribute pane output to a command run while the agent works', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-busy-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => ' \u25cf streaming assistant text'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
+
+    const result = await service.executeCommand(
+      client.session.sessionId,
+      '/usage',
+    )
+
+    expect(terminal.capture).not.toHaveBeenCalled()
+    expect(result.messages.at(-1)?.content).toBe('/usage')
+    await service.stop()
+  })
+
+  it('says so when a terminal slash command opens a full-screen view', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-overlay-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let pane = ' \u25cf Tip: /plugin'
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        pane = [
+          ' Settings',
+          ' \u276f allowedUrls        (default)',
+          ' / search \u00b7 \u2191/\u2193 navigate \u00b7 tab switch scope \u00b7 enter edit',
+          ' esc close',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const result = await service.executeCommand(
+      client.session.sessionId,
+      '/config',
+    )
+
+    // Dumping a redrawing TUI into the transcript would be noise, so the
+    // conversation says where it went instead.
+    expect(result.messages.at(-1)?.content).toContain(
+      'Opened an interactive view in the terminal',
+    )
+    await service.stop()
+  })
+
   it('detects and answers terminal ask-user requests', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

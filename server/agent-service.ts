@@ -2861,6 +2861,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const storedBeforeDiscovery = this.store.list()
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
+    const previouslyExternal = this.externalSessionIds
     this.externalSessionIds = new Set(
       [
         ...activeSessions
@@ -2869,6 +2870,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ...this.launchingTerminalSessionIds,
       ],
     )
+    await this.clearUpdateNoticeForExited(previouslyExternal)
     const indexedSessions = sessions.flatMap((session) => {
       if (this.deletedSessionIds.has(session.sessionId)) {
         return []
@@ -3093,6 +3095,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }),
     )
+  }
+
+  /**
+   * The notice is only true while the terminal that painted it is running.
+   * Once discovery drops the session nothing polls it again, so a stale offer
+   * would otherwise stay on screen until the terminal came back.
+   */
+  private async clearUpdateNoticeForExited(
+    previouslyExternal: Set<string>,
+  ): Promise<void> {
+    for (const sessionId of previouslyExternal) {
+      if (this.externalSessionIds.has(sessionId)) {
+        continue
+      }
+      this.terminalUpdateChecks.delete(sessionId)
+      if (this.store.get(sessionId)?.runtime?.updateAvailable === undefined) {
+        continue
+      }
+      const updated = await this.store.update(sessionId, (session) => {
+        session.runtime = { ...session.runtime, updateAvailable: undefined }
+      })
+      this.publish(updated)
+    }
   }
 
   /**

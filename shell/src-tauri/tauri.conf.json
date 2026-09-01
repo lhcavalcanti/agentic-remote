@@ -16,8 +16,7 @@
       "csp": null,
       "capabilities": [
         "settings-local",
-        "desktop",
-        "mobile"
+        "desktop"
       ]
     }
   },

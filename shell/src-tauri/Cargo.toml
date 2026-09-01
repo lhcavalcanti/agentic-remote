@@ -22,10 +22,13 @@ tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# The global shortcut plugin is desktop-only; the crate refuses to build for
-# mobile targets, so it must not be a dependency there.
+# These plugins are desktop-only; the crates refuse to build for mobile
+# targets, so they must not be dependencies there. `single-instance` carries the
+# `deep-link` feature so a link opened while the app is running is forwarded to
+# the existing process rather than starting a second one.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [profile.release]
 codegen-units = 1

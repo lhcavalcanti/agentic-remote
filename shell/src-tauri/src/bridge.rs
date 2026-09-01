@@ -54,7 +54,11 @@ pub fn script(version: &str, platform: &str) -> String {
       return subscribe('notificationReply', handler);
     }},
     onDeepLink(handler) {{
-      return subscribe('deepLink', handler);
+      const stop = subscribe('deepLink', handler);
+      // Tell the shell a subscriber exists so a link that launched the app,
+      // which arrives before this page loaded, can be flushed now.
+      invoke('bridge_ready', {{}});
+      return stop;
     }},
     __emit(channel, payload) {{
       const handlers = listeners[channel];
@@ -117,6 +121,12 @@ mod tests {
         let generated = script("0.1.0\"; window.pwned = 1; \"", "macos");
         assert!(!generated.contains("window.pwned = 1;\n"));
         assert!(generated.contains("\\\""));
+    }
+
+    #[test]
+    fn deep_link_subscription_reports_readiness() {
+        let generated = script("0.1.0", "macos");
+        assert!(generated.contains("invoke('bridge_ready'"));
     }
 
     #[test]

@@ -40,6 +40,36 @@ const DEFAULT_SHORTCUT: &str = "CmdOrCtrl+Shift+A";
 
 struct ShellState {
     config: Mutex<HubConfig>,
+    /// Events that arrived before the page could receive them, such as the
+    /// deep link that launched the app.
+    pending: Mutex<Vec<(String, String)>>,
+    ready: Mutex<bool>,
+}
+
+impl ShellState {
+    fn new(config: HubConfig) -> Self {
+        Self {
+            config: Mutex::new(config),
+            pending: Mutex::new(Vec::new()),
+            ready: Mutex::new(false),
+        }
+    }
+
+    fn bridge_ready(&self) -> bool {
+        *self.ready.lock().expect("ready lock")
+    }
+
+    fn queue(&self, channel: String, payload: String) {
+        self.pending
+            .lock()
+            .expect("pending lock")
+            .push((channel, payload));
+    }
+
+    fn take_pending(&self) -> Vec<(String, String)> {
+        *self.ready.lock().expect("ready lock") = true;
+        std::mem::take(&mut *self.pending.lock().expect("pending lock"))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +99,22 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| error.to_string())
 }
 
+/// Commands the hub page is allowed to call.
+///
+/// Tauri refuses every custom command from a remote origin unless a capability
+/// names it, so this list is what makes the injected bridge work at all.
+///
+/// `hub_config` and `save_hub_config` are deliberately absent: the hub must not
+/// be able to read or rewrite which hub this app points at. They are granted
+/// only to the locally served settings page.
+const HUB_PERMISSIONS: &[&str] = &[
+    "allow-set-badge",
+    "allow-notify",
+    "allow-withdraw-notifications",
+    "allow-open-settings",
+    "allow-bridge-ready",
+];
+
 /// Grant IPC to the configured hub origins and nothing else.
 ///
 /// The capability is built at runtime because the hub address belongs to the
@@ -85,6 +131,9 @@ fn grant_hub_capability(app: &AppHandle, origins: &[String]) {
     for origin in origins {
         capability = capability.remote(origin.clone());
     }
+    for permission in HUB_PERMISSIONS {
+        capability = capability.permission(*permission);
+    }
     if let Err(error) = app.add_capability(capability) {
         eprintln!("Unable to grant hub capability: {error}");
     }
@@ -95,7 +144,7 @@ fn grant_hub_capability(app: &AppHandle, origins: &[String]) {
 /// here and re-runs on every navigation, so it survives the move from the
 /// settings page to the hub.
 fn create_main_window(app: &AppHandle, config: &HubConfig) -> Result<(), String> {
-    let url = match config.primary() {
+    let url = match config.resolve() {
         Some(hub) => {
             let parsed = hub.parse().map_err(|_| format!("Invalid hub URL: {hub}"))?;
             WebviewUrl::External(parsed)
@@ -171,9 +220,38 @@ fn show_settings(app: &AppHandle) -> Result<(), String> {
     window.navigate(url).map_err(|error| error.to_string())
 }
 
+/// Deliver a native event to the page.
+///
+/// A link that launched the app arrives before the hub has loaded and
+/// subscribed, so an undeliverable payload is queued and flushed once the page
+/// reports that its bridge is ready.
 fn deliver(app: &AppHandle, channel: &str, payload_json: &str) {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = window.eval(bridge::emit(channel, payload_json));
+    let delivered = app
+        .get_webview_window(MAIN_WINDOW)
+        .map(|window| window.eval(bridge::emit(channel, payload_json)).is_ok())
+        .unwrap_or(false);
+    if delivered && app.state::<ShellState>().bridge_ready() {
+        return;
+    }
+    app.state::<ShellState>()
+        .queue(channel.to_string(), payload_json.to_string());
+}
+
+fn handle_deep_links(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
+    for url in urls {
+        deliver(app, "deepLink", &bridge::json_string(&url));
+    }
+}
+
+/// Called by the page once `window.__AGENTIC_SHELL__` is installed and the hub
+/// has had a chance to subscribe. Flushes anything that arrived too early.
+#[tauri::command]
+fn bridge_ready(app: AppHandle) {
+    let pending = app.state::<ShellState>().take_pending();
+    for (channel, payload) in pending {
+        if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+            let _ = window.eval(bridge::emit(&channel, &payload));
+        }
     }
 }
 
@@ -256,7 +334,25 @@ fn save_hub_config(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Must be registered before any other plugin. A second launch, including
+    // one carrying an `agentic://` link, hands its arguments to the running
+    // instance instead of starting a rival process.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        handle_deep_links(
+            app,
+            argv.into_iter()
+                .filter(|argument| argument.starts_with("agentic://")),
+        );
+        if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+
+    let builder = builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init());
 
@@ -280,16 +376,15 @@ pub fn run() {
             withdraw_notifications,
             open_settings,
             hub_config,
-            save_hub_config
+            save_hub_config,
+            bridge_ready
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             let directory = config_dir(&handle).map_err(std::io::Error::other)?;
             let config = HubConfig::load(&directory);
 
-            app.manage(ShellState {
-                config: Mutex::new(config.clone()),
-            });
+            app.manage(ShellState::new(config.clone()));
 
             #[cfg(desktop)]
             {
@@ -300,10 +395,16 @@ pub fn run() {
             {
                 let handle = handle.clone();
                 app.deep_link().on_open_url(move |event| {
-                    for url in event.urls() {
-                        deliver(&handle, "deepLink", &bridge::json_string(url.as_str()));
-                    }
+                    handle_deep_links(&handle, event.urls().into_iter().map(|url| url.to_string()));
                 });
+            }
+
+            // Windows and Linux deliver a launch-time link as a process
+            // argument rather than through `on_open_url`, so it must be read
+            // explicitly or a cold-start link is silently dropped.
+            #[cfg(desktop)]
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                handle_deep_links(&handle, urls.into_iter().map(|url| url.to_string()));
             }
 
             grant_hub_capability(&handle, &config.origins());

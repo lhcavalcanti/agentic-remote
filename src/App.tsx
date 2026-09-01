@@ -4221,6 +4221,8 @@ function App() {
   // must not write into the tree that replaced it.
   const knowledgeRestoreToken = useRef(0)
   const knowledgeRestoreStartedKey = useRef<string>(undefined)
+  const applyKnowledgeScrollRef = useRef<(key: string) => void>(() => {})
+  const knowledgeViewLoadedRef = useRef(false)
   // Whether the next selection change is the user navigating (a new history
   // entry) or the app resolving one for them (the same entry, corrected).
   const historyIntentRef = useRef<'push' | 'replace'>('replace')
@@ -4719,6 +4721,40 @@ function App() {
     return () => window.removeEventListener('popstate', followHistory)
   }, [])
 
+  // Refreshed after every render so the shortcut always sees current state.
+  useEffect(() => {
+    // Bound to the window rather than the shell: closing a panel moves focus
+    // back to the body, and the next shortcut must still work from there.
+    appShortcutRef.current = (event: globalThis.KeyboardEvent) => {
+      if (
+        !event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        hasBlockingUi ||
+        isEditableTarget(event.target)
+      ) {
+        return
+      }
+      // Matched on `code`, so a macOS Option key that rewrites the character
+      // still resolves to the same physical key.
+      if (event.code === 'ArrowDown' || event.code === 'ArrowUp') {
+        event.preventDefault()
+        stepSession(event.code === 'ArrowDown' ? 1 : -1)
+        return
+      }
+      if (event.code === 'KeyK') {
+        event.preventDefault()
+        if (event.shiftKey) {
+          toggleKnowledgeExpanded()
+        } else {
+          toggleKnowledgePanel()
+        }
+      }
+    }
+  })
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       appShortcutRef.current(event)
@@ -4775,6 +4811,30 @@ function App() {
       path: knowledgePath,
       file: knowledgeFile?.path,
     }
+    // The path is set before its listing arrives, so "already there" has to
+    // mean the folder actually loaded, not merely that it was requested.
+    knowledgeViewLoadedRef.current = Boolean(
+      knowledgeFolders[knowledgePath]?.listing,
+    )
+    // The offset is applied when the restore that asked for it finishes, so it
+    // lands on the branch it belongs to rather than on a loading placeholder.
+    applyKnowledgeScrollRef.current = (key: string) => {
+      const remembered = knowledgeScrollTops.current[key]
+      if (remembered === undefined) {
+        return
+      }
+      requestAnimationFrame(() => {
+        const node = knowledgeTreeRef.current
+        if (
+          node &&
+          node.isConnected &&
+          !node.closest('[hidden]') &&
+          key === knowledgePanelKey
+        ) {
+          node.scrollTop = remembered
+        }
+      })
+    }
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
       const rootId = position.rootId
       if (!rootId) {
@@ -4783,27 +4843,43 @@ function App() {
       const token = ++knowledgeRestoreToken.current
       const current = () => token === knowledgeRestoreToken.current
       void (async () => {
-        if (rootId !== activeRootId) {
-          await selectRoot(rootId)
+        try {
+          if (rootId !== activeRootId && !(await selectRoot(rootId))) {
+            return
+          }
           if (!current()) {
             return
           }
-        }
-        if (position.path && position.path !== knowledgeRootPath) {
-          await openKnowledgeFolder(position.path, rootId)
+          if (
+            position.path &&
+            position.path !== knowledgeRootPath &&
+            !(await openKnowledgeFolder(position.path, rootId))
+          ) {
+            return
+          }
           if (!current()) {
             return
           }
-        }
-        if (position.file) {
-          await openKnowledgeFile(position.file, rootId)
+          if (
+            position.file &&
+            !(await openKnowledgeFile(position.file, rootId))
+          ) {
+            return
+          }
           if (!current()) {
             return
           }
+          // Only a restore that finished every step may hand recording over,
+          // so a failure is retried the next time the session is opened.
+          knowledgeRestoredKey.current = key
+          applyKnowledgeScrollRef.current(key)
+        } finally {
+          if (current() && knowledgePendingScrollKey.current === key) {
+            // Released on success, failure, and an empty branch alike, or
+            // recording would stay suppressed for good.
+            knowledgePendingScrollKey.current = undefined
+          }
         }
-        // Only a restore that finished may hand recording over, so a failed
-        // or superseded one cannot persist half-restored state.
-        knowledgeRestoredKey.current = key
       })()
     }
   })
@@ -4817,8 +4893,11 @@ function App() {
     ) {
       return
     }
-    // A session change abandons whatever restore was still running.
+    // A session change abandons whatever restore was still running, including
+    // the folder and file requests it had already issued.
     knowledgeRestoreToken.current += 1
+    knowledgeRequest.current += 1
+    knowledgeRootGeneration.current += 1
     knowledgeRestoreStartedKey.current = selectedKey
     const remembered = knowledgePositionsRef.current[selectedKey]
     if (
@@ -4830,6 +4909,7 @@ function App() {
     }
     const current = knowledgeViewRef.current
     if (
+      knowledgeViewLoadedRef.current &&
       remembered.rootId === current.rootId &&
       remembered.path === current.path &&
       remembered.file === current.file
@@ -4877,28 +4957,6 @@ function App() {
     }
   }, [knowledgeMode, knowledgePanelKey])
 
-  // Restoring after the rebuilt tree lands keeps the offset meaningful when
-  // two sessions read different roots.
-  useLayoutEffect(() => {
-    const node = knowledgeTreeRef.current
-    const key = knowledgePendingScrollKey.current
-    if (
-      !node ||
-      !key ||
-      key !== knowledgePanelKey ||
-      knowledgeMode === 'hidden' ||
-      // A loading placeholder cannot carry the offset: scrolling is clamped
-      // to its height, and the real rows arrive later.
-      !knowledgeRows.some((row) => row.type === 'entry')
-    ) {
-      return
-    }
-    knowledgePendingScrollKey.current = undefined
-    const remembered = knowledgeScrollTops.current[key]
-    if (remembered !== undefined) {
-      node.scrollTop = remembered
-    }
-  }, [knowledgeMode, knowledgePanelKey, knowledgeRows])
 
   useEffect(() => {
     void listKnowledgeRoots()
@@ -5723,16 +5781,20 @@ function App() {
     path: string,
     generation = knowledgeRootGeneration.current,
     loaded: KnowledgeFolders = knowledgeFolders,
-  ) {
+  ): Promise<boolean> {
     for (const folder of [knowledgeRootPath, ...knowledgePathChain(path)]) {
       if (loaded[folder]?.listing) {
         continue
       }
-      await loadKnowledgeFolder(rootId, folder, generation)
+      const listing = await loadKnowledgeFolder(rootId, folder, generation)
       if (generation !== knowledgeRootGeneration.current) {
-        return
+        return false
+      }
+      if (!listing) {
+        return false
       }
     }
+    return true
   }
 
   async function toggleKnowledgeFolder(path: string) {
@@ -5762,47 +5824,17 @@ function App() {
   async function openKnowledgeFolder(
     path = knowledgeRootPath,
     rootId = activeRootId,
-  ) {
+  ): Promise<boolean> {
     knowledgeHydrated.current = true
     if (!rootId) {
-      return
+      return false
     }
     setExpandedKnowledge((current) => expandKnowledgeFolder(current, path))
     setKnowledgePath(path)
     setKnowledgeFile(undefined)
-    await loadKnowledgeChain(rootId, path)
+    return loadKnowledgeChain(rootId, path)
   }
 
-  // Bound to the window rather than the shell: closing a panel moves focus
-  // back to the body, and the next shortcut must still work from there.
-  appShortcutRef.current = (event: globalThis.KeyboardEvent) => {
-    if (
-      !event.altKey ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.defaultPrevented ||
-      event.isComposing ||
-      hasBlockingUi ||
-      isEditableTarget(event.target)
-    ) {
-      return
-    }
-    // Matched on `code`, so a macOS Option key that rewrites the character
-    // still resolves to the same physical key.
-    if (event.code === 'ArrowDown' || event.code === 'ArrowUp') {
-      event.preventDefault()
-      stepSession(event.code === 'ArrowDown' ? 1 : -1)
-      return
-    }
-    if (event.code === 'KeyK') {
-      event.preventDefault()
-      if (event.shiftKey) {
-        toggleKnowledgeExpanded()
-      } else {
-        toggleKnowledgePanel()
-      }
-    }
-  }
 
   function collapseKnowledgeTree() {
     setExpandedKnowledge([])
@@ -5871,28 +5903,35 @@ function App() {
       ?.focus()
   }
 
-  async function openKnowledgeFile(path: string, rootOverride?: string) {
+  async function openKnowledgeFile(
+    path: string,
+    rootOverride?: string,
+  ): Promise<boolean> {
     knowledgeHydrated.current = true
     const rootId = rootOverride || activeRootId
     if (!rootId) {
-      return
+      return false
     }
     const request = ++knowledgeRequest.current
     setKnowledgeLoading(true)
     setError(undefined)
     try {
       const opened = await readKnowledgeFile(rootId, path)
+      // Checked before any state write, so a read left over from the previous
+      // session cannot land in the one that replaced it.
       if (request !== knowledgeRequest.current) {
-        return
+        return false
       }
       setKnowledgeFile(opened)
       // Reading is full-screen on a phone, matching how selecting a session
       // hands the view over to the conversation.
       setSidebarOpen(false)
+      return true
     } catch (caught) {
       if (request === knowledgeRequest.current) {
         setError(caught instanceof Error ? caught.message : String(caught))
       }
+      return false
     } finally {
       if (request === knowledgeRequest.current) {
         setKnowledgeLoading(false)
@@ -5900,7 +5939,7 @@ function App() {
     }
   }
 
-  async function selectRoot(rootId: string) {
+  async function selectRoot(rootId: string): Promise<boolean> {
     knowledgeHydrated.current = true
     const generation = ++knowledgeRootGeneration.current
     setActiveRootId(rootId)
@@ -5913,13 +5952,18 @@ function App() {
       restoredKnowledgeExpansion.current[rootId] || []
     ).slice(0, 24)
     setExpandedKnowledge(remembered)
-    await loadKnowledgeFolder(rootId, knowledgeRootPath, generation)
+    const opened = await loadKnowledgeFolder(
+      rootId,
+      knowledgeRootPath,
+      generation,
+    )
     for (const folder of remembered) {
       if (generation !== knowledgeRootGeneration.current) {
-        return
+        return false
       }
       await loadKnowledgeFolder(rootId, folder, generation)
     }
+    return Boolean(opened) && generation === knowledgeRootGeneration.current
   }
 
   async function removeRoot(rootId: string) {
@@ -6535,7 +6579,7 @@ function App() {
     if (
       target instanceof Element &&
       target.closest(
-        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle, .knowledge-panel',
+        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle, .knowledge-panel, .sidebar-knowledge',
       )
     ) {
       return
@@ -7674,6 +7718,14 @@ function App() {
                 : 'Add a root to read files beside this session'}
             </small>
           </div>
+          <button
+            aria-label="Show files"
+            className="icon-button knowledge-panel__files"
+            onClick={() => setSidebarOpen(true)}
+            type="button"
+          >
+            <FolderOpen size={16} />
+          </button>
           <button
             aria-label="New knowledge root"
             className="icon-button"

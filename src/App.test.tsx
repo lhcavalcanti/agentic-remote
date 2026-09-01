@@ -4401,6 +4401,135 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('retries a knowledge restore that failed', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) => {
+      if (path === 'guides') {
+        throw new Error('offline')
+      }
+      return {
+        path: '.',
+        entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+      }
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', 'guides'),
+    )
+
+    // A restore that failed is not remembered as done, so closing and
+    // reopening tries the branch again instead of giving up on it.
+    const attempts = vi
+      .mocked(listKnowledgeEntries)
+      .mock.calls.filter(([, path]) => path === 'guides').length
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(listKnowledgeEntries)
+          .mock.calls.filter(([, path]) => path === 'guides').length,
+      ).toBeGreaterThan(attempts),
+    )
+  })
+
+  it('reaches the file tree while the panel covers the conversation', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+
+    // The sidebar slides away on a phone, so the panel offers a way back to
+    // the files it is reading.
+    fireEvent.click(screen.getByRole('button', { name: 'Show files' }))
+    expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open')
+  })
+
+  it('leaves file navigation keys to the file tree', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'Earlier prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+    })
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('navigation', { name: 'Knowledge' })
+    // The root selector and breadcrumbs sit outside the tree's own key
+    // handling, so they are where a stray recall would surface.
+    const rootButton = document.querySelector<HTMLButtonElement>(
+      '.knowledge-root > button',
+    )!
+    rootButton.focus()
+
+    fireEvent.keyDown(rootButton, { key: 'ArrowUp' })
+
+    // Working through the file navigation must not recall a message into the
+    // composer or pull focus away from it.
+    expect(textarea).toHaveValue('')
+    expect(rootButton).toHaveFocus()
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

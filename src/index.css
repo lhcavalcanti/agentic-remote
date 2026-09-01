@@ -304,9 +304,12 @@ button {
 }
 
 /* The conversation carries the only banner while it is visible, so the panel
-   shows its own copy exactly when the conversation is covered. */
+   shows its own copy exactly when the conversation is covered. The sidebar is
+   permanent at this width too, so the way back to the files is only needed
+   where it slides away. */
 @media (min-width: 961px) {
-  .workspace--docked .knowledge-panel__error {
+  .workspace--docked .knowledge-panel__error,
+  .knowledge-panel__files {
     display: none;
   }
 }

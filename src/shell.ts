@@ -1,7 +1,7 @@
 /**
- * Bridge between the web app and the optional desktop shell.
+ * Bridge between the web app and the optional native shell.
  *
- * The shell injects `window.__AGENTIC_DESKTOP__` before the page loads. The web
+ * The shell injects `window.__AGENTIC_SHELL__` before the page loads. The web
  * app never imports a shell SDK, so it gains no dependency and keeps working
  * unchanged in a browser or as an installed PWA.
  *
@@ -10,87 +10,87 @@
  * a method entirely, must degrade to browser behavior rather than break the UI.
  */
 
-export interface DesktopNotificationAction {
+export interface ShellNotificationAction {
   id: string
   title: string
 }
 
-export interface DesktopNotification {
+export interface ShellNotification {
   /** Stable per-session tag so the shell can replace or withdraw it. */
   tag: string
   title: string
   body: string
   /** Questions and permissions are urgent; completions are not. */
   urgent?: boolean
-  actions?: DesktopNotificationAction[]
+  actions?: ShellNotificationAction[]
 }
 
-export interface DesktopNotificationReply {
+export interface ShellNotificationReply {
   tag: string
   actionId: string
 }
 
-export interface DesktopSessionTarget {
+export interface ShellSessionTarget {
   computerId: string
   sessionId: string
 }
 
-export interface DesktopAttentionState {
+export interface ShellAttentionState {
   status?: string
   pendingPermission?: unknown
   pendingUserInput?: unknown
 }
 
-interface DesktopBridge {
+interface ShellBridge {
   version?: unknown
   platform?: unknown
   setBadge?: (count: number) => unknown
-  notify?: (notification: DesktopNotification) => unknown
+  notify?: (notification: ShellNotification) => unknown
   withdrawNotifications?: (tags: string[]) => unknown
   onNotificationReply?: (
-    handler: (reply: DesktopNotificationReply) => void,
+    handler: (reply: ShellNotificationReply) => void,
   ) => unknown
   onDeepLink?: (handler: (url: string) => void) => unknown
 }
 
 declare global {
   interface Window {
-    __AGENTIC_DESKTOP__?: DesktopBridge
+    __AGENTIC_SHELL__?: ShellBridge
   }
 }
 
 const DEEP_LINK_SCHEME = 'agentic://'
 
-function bridge(): DesktopBridge | undefined {
+function bridge(): ShellBridge | undefined {
   if (typeof window === 'undefined') {
     return undefined
   }
-  const candidate = window.__AGENTIC_DESKTOP__
+  const candidate = window.__AGENTIC_SHELL__
   return typeof candidate === 'object' && candidate !== null
     ? candidate
     : undefined
 }
 
-function method<TName extends keyof DesktopBridge>(
+function method<TName extends keyof ShellBridge>(
   name: TName,
-): DesktopBridge[TName] | undefined {
+): ShellBridge[TName] | undefined {
   const value = bridge()?.[name]
   return typeof value === 'function' ? value : undefined
 }
 
-/** True when the UI is running inside the desktop shell. */
-export function desktopShell(): boolean {
+/** True when the UI is running inside the native shell (macOS, iOS, Windows, Linux). */
+export function nativeShell(): boolean {
   return bridge() !== undefined
 }
 
 /** Shell version, which is independent of the hub's `__APP_VERSION__`. */
-export function desktopShellVersion(): string | undefined {
+export function shellVersion(): string | undefined {
   const value = bridge()?.version
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
 /** `macos`, `windows`, or `linux` when the shell reports it. */
-export function desktopPlatform(): string | undefined {
+export function shellPlatform(): string | undefined {
   const value = bridge()?.platform
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
@@ -101,7 +101,7 @@ export function desktopPlatform(): string | undefined {
  * parsed from the pane rather than delivered as a structured request.
  */
 export function attentionCount(
-  sessions: readonly DesktopAttentionState[],
+  sessions: readonly ShellAttentionState[],
 ): number {
   return sessions.reduce(
     (total, session) =>
@@ -121,7 +121,7 @@ let lastBadge: number | undefined
  * with an unchanged count are dropped so timeline updates do not produce a
  * stream of redundant IPC.
  */
-export function setDesktopBadge(count: number): void {
+export function setShellBadge(count: number): void {
   const setBadge = method('setBadge')
   if (!setBadge) {
     return
@@ -140,7 +140,7 @@ export function setDesktopBadge(count: number): void {
 }
 
 /** Test seam: forget the coalesced badge value. */
-export function resetDesktopBadge(): void {
+export function resetShellBadge(): void {
   lastBadge = undefined
 }
 
@@ -148,8 +148,8 @@ export function resetDesktopBadge(): void {
  * Ask the shell to raise a native notification. Returns false when the shell is
  * absent or refused it, so the caller can fall back to Web Push.
  */
-export function sendDesktopNotification(
-  notification: DesktopNotification,
+export function sendShellNotification(
+  notification: ShellNotification,
 ): boolean {
   const notify = method('notify')
   if (!notify) {
@@ -167,7 +167,7 @@ export function sendDesktopNotification(
  * Withdraw notifications for a session that the user has now opened, matching
  * the specification's requirement that opening a chat clears its notifications.
  */
-export function withdrawDesktopNotifications(tags: readonly string[]): void {
+export function withdrawShellNotifications(tags: readonly string[]): void {
   const withdraw = method('withdrawNotifications')
   if (!withdraw || tags.length === 0) {
     return
@@ -211,10 +211,10 @@ function subscribe<TPayload>(
  * Observe an action button pressed on a native notification, which lets a
  * permission be answered without focusing the app.
  */
-export function onDesktopNotificationReply(
-  handler: (reply: DesktopNotificationReply) => void,
+export function onShellNotificationReply(
+  handler: (reply: ShellNotificationReply) => void,
 ): () => void {
-  return subscribe<DesktopNotificationReply>('onNotificationReply', (reply) => {
+  return subscribe<ShellNotificationReply>('onNotificationReply', (reply) => {
     if (
       typeof reply?.tag === 'string' &&
       typeof reply?.actionId === 'string'
@@ -225,11 +225,11 @@ export function onDesktopNotificationReply(
 }
 
 /** Observe `agentic://` links opened while the app is running. */
-export function onDesktopDeepLink(
-  handler: (target: DesktopSessionTarget) => void,
+export function onShellDeepLink(
+  handler: (target: ShellSessionTarget) => void,
 ): () => void {
   return subscribe<string>('onDeepLink', (url) => {
-    const target = parseDesktopDeepLink(url)
+    const target = parseShellDeepLink(url)
     if (target) {
       handler(target)
     }
@@ -251,9 +251,9 @@ function decodeSegment(value: string): string | undefined {
  * Anything else returns undefined rather than a partial target, so a malformed
  * link cannot navigate to the wrong session.
  */
-export function parseDesktopDeepLink(
+export function parseShellDeepLink(
   value: string,
-): DesktopSessionTarget | undefined {
+): ShellSessionTarget | undefined {
   if (typeof value !== 'string') {
     return undefined
   }
@@ -283,7 +283,7 @@ export function parseDesktopDeepLink(
 }
 
 /** Build the deep link that addresses a session on a specific computer. */
-export function desktopDeepLink(target: DesktopSessionTarget): string {
+export function shellDeepLink(target: ShellSessionTarget): string {
   return `${DEEP_LINK_SCHEME}computer/${encodeURIComponent(
     target.computerId,
   )}/session/${encodeURIComponent(target.sessionId)}`

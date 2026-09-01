@@ -1,0 +1,27 @@
+{
+  "name": "agentic-remote-shell",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Native shell for supervising Agentic Remote sessions",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "icons": "tauri icon ../public/icons/icon-512.png",
+    "tauri": "tauri",
+    "dev:desktop": "tauri dev",
+    "build:desktop": "tauri build",
+    "ios:init": "tauri ios init",
+    "dev:ios": "tauri ios dev",
+    "build:ios": "tauri ios build",
+    "check": "tsc --noEmit && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.7"
+  }
+}

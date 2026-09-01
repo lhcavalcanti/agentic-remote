@@ -173,10 +173,10 @@ import {
 } from './pwa'
 import {
   attentionCount,
-  onDesktopDeepLink,
-  setDesktopBadge,
-  withdrawDesktopNotifications,
-} from './desktop'
+  onShellDeepLink,
+  setShellBadge,
+  withdrawShellNotifications,
+} from './shell'
 
 function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string {
   return `${session.computerId}:${session.id}`
@@ -4320,16 +4320,16 @@ function App() {
     () => sessions.find((session) => sessionKey(session) === selectedKey),
     [selectedKey, sessions],
   )
-  // The desktop shell shows how many sessions are blocked on the user. This is
+  // The native shell shows how many sessions are blocked on the user. This is
   // a no-op in a browser, so the badge never needs a capability check here.
   useEffect(() => {
-    setDesktopBadge(attentionCount(sessions))
+    setShellBadge(attentionCount(sessions))
   }, [sessions])
   // An `agentic://` link may arrive before the session list has loaded, so the
   // key is set optimistically and resolves once that session appears.
   useEffect(
     () =>
-      onDesktopDeepLink((target) => {
+      onShellDeepLink((target) => {
         setSelectedKey(
           sessionKey({ computerId: target.computerId, id: target.sessionId }),
         )
@@ -4787,7 +4787,7 @@ function App() {
       return
     }
     const clearNotifications = () => {
-      withdrawDesktopNotifications(
+      withdrawShellNotifications(
         sessionNotificationTags(selectedComputerId, selectedSessionId),
       )
       void clearSessionPushNotifications(

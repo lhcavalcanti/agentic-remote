@@ -1,9 +1,15 @@
-//! Agentic Remote desktop shell.
+//! Agentic Remote native shell.
 //!
-//! The shell owns the window, tray, badge, notifications, and deep links. The
-//! UI itself is served by the hub over HTTPS and loaded directly, so the shell
-//! never bundles a copy of the app and the page stays same-origin with the API
-//! it calls. See `docs/desktop-app.md` for why that matters.
+//! One Tauri project targets macOS, iOS, Windows, and Linux. The UI is served
+//! by the hub over HTTPS and loaded directly, so the shell never bundles a copy
+//! of the app and the page stays same-origin with the API it calls. See
+//! `docs/native-shell.md` for why that matters.
+//!
+//! Window model, deliberately the same everywhere:
+//! - `main` is created once and shows either the hub or the local settings page.
+//! - Saving settings navigates `main` to the hub.
+//! - Desktop additionally offers a second `settings` window from the tray,
+//!   because iOS is single-window.
 
 mod bridge;
 mod config;
@@ -13,15 +19,23 @@ use std::sync::Mutex;
 
 use config::HubConfig;
 use serde::Deserialize;
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+#[cfg(desktop)]
+use tauri::menu::{Menu, MenuItem};
+#[cfg(desktop)]
+use tauri::tray::TrayIconBuilder;
+#[cfg(desktop)]
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
 const MAIN_WINDOW: &str = "main";
+const SETTINGS_PAGE: &str = "index.html";
+
+#[cfg(desktop)]
 const SETTINGS_WINDOW: &str = "settings";
+#[cfg(desktop)]
 const DEFAULT_SHORTCUT: &str = "CmdOrCtrl+Shift+A";
 
 struct ShellState {
@@ -36,8 +50,12 @@ struct NotificationRequest {
 }
 
 fn platform() -> &'static str {
-    if cfg!(target_os = "macos") {
+    if cfg!(target_os = "ios") {
+        "ios"
+    } else if cfg!(target_os = "macos") {
         "macos"
+    } else if cfg!(target_os = "android") {
+        "android"
     } else if cfg!(target_os = "windows") {
         "windows"
     } else {
@@ -54,9 +72,9 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Grant IPC to the configured hub origins and nothing else.
 ///
 /// The capability is built at runtime because the hub address belongs to the
-/// machine rather than to the binary. Permissions are enumerated individually;
-/// no filesystem, shell, or process permission is ever granted to a remote
-/// origin.
+/// machine rather than to the binary. `local(false)` keeps it off the locally
+/// served settings page, which has its own capability. No filesystem, shell, or
+/// process permission is ever granted to a remote origin.
 fn grant_hub_capability(app: &AppHandle, origins: &[String]) {
     if origins.is_empty() {
         return;
@@ -72,30 +90,63 @@ fn grant_hub_capability(app: &AppHandle, origins: &[String]) {
     }
 }
 
-fn open_hub_window(app: &AppHandle, url: &str) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = window.show();
-        let _ = window.set_focus();
-        return Ok(());
-    }
-    let parsed = url.parse().map_err(|_| format!("Invalid hub URL: {url}"))?;
-    WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::External(parsed))
+/// Create the single main webview, pointed at the hub when one is configured
+/// and at the local settings page otherwise. The bridge script is installed
+/// here and re-runs on every navigation, so it survives the move from the
+/// settings page to the hub.
+fn create_main_window(app: &AppHandle, config: &HubConfig) -> Result<(), String> {
+    let url = match config.primary() {
+        Some(hub) => {
+            let parsed = hub.parse().map_err(|_| format!("Invalid hub URL: {hub}"))?;
+            WebviewUrl::External(parsed)
+        }
+        None => WebviewUrl::App(SETTINGS_PAGE.into()),
+    };
+    let builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, url)
         .title("Agentic Remote")
+        .initialization_script(bridge::script(env!("CARGO_PKG_VERSION"), platform()));
+
+    #[cfg(desktop)]
+    let builder = builder
         .inner_size(1_180.0, 820.0)
-        .min_inner_size(420.0, 480.0)
-        .initialization_script(bridge::script(env!("CARGO_PKG_VERSION"), platform()))
+        .min_inner_size(420.0, 480.0);
+
+    builder
         .build()
         .map(|_| ())
         .map_err(|error| error.to_string())
 }
 
-fn open_settings_window(app: &AppHandle) -> Result<(), String> {
+/// Point the existing main window at the hub.
+fn show_hub(app: &AppHandle, url: &str) -> Result<(), String> {
+    let parsed = url.parse().map_err(|_| format!("Invalid hub URL: {url}"))?;
+    match app.get_webview_window(MAIN_WINDOW) {
+        Some(window) => {
+            window.navigate(parsed).map_err(|error| error.to_string())?;
+            let _ = window.show();
+            let _ = window.set_focus();
+            Ok(())
+        }
+        None => create_main_window(
+            app,
+            &HubConfig {
+                url: Some(url.to_string()),
+                ..HubConfig::default()
+            },
+        ),
+    }
+}
+
+/// Open settings. Desktop gets a second window; iOS is single-window, so the
+/// main webview navigates back to the local page instead.
+#[cfg(desktop)]
+fn show_settings(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW) {
         let _ = window.show();
         let _ = window.set_focus();
         return Ok(());
     }
-    WebviewWindowBuilder::new(app, SETTINGS_WINDOW, WebviewUrl::App("index.html".into()))
+    WebviewWindowBuilder::new(app, SETTINGS_WINDOW, WebviewUrl::App(SETTINGS_PAGE.into()))
         .title("Agentic Remote settings")
         .inner_size(520.0, 580.0)
         .resizable(false)
@@ -104,16 +155,15 @@ fn open_settings_window(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn toggle_main_window(app: &AppHandle) {
-    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
-        return;
-    };
-    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
-        let _ = window.hide();
-    } else {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+#[cfg(not(desktop))]
+fn show_settings(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or_else(|| "The main window is not available".to_string())?;
+    let url = format!("tauri://localhost/{SETTINGS_PAGE}")
+        .parse()
+        .map_err(|_| "Invalid settings URL".to_string())?;
+    window.navigate(url).map_err(|error| error.to_string())
 }
 
 fn deliver(app: &AppHandle, channel: &str, payload_json: &str) {
@@ -132,10 +182,10 @@ fn set_badge(app: AppHandle, count: i64) {
 
 /// Raise a native notification.
 ///
-/// Action buttons are intentionally not implemented yet: on desktop the plugin
-/// uses `notify-rust`, which cannot register the notification categories macOS
-/// needs for inline actions. The web app already sends `actions`, so answering
-/// from the notification can be added here without changing the web app.
+/// Action buttons are not wired up yet. On iOS the plugin uses
+/// `UNUserNotificationCenter` and can register action categories; on desktop it
+/// uses `notify-rust`, which cannot. The web app already sends `actions`, so
+/// both can be added here without changing the web app.
 #[tauri::command]
 fn notify(app: AppHandle, notification: NotificationRequest) {
     let _ = app
@@ -148,13 +198,13 @@ fn notify(app: AppHandle, notification: NotificationRequest) {
 
 #[tauri::command]
 fn withdraw_notifications(_app: AppHandle, _tags: Vec<String>) {
-    // `notify-rust` exposes no cross-platform withdrawal, so this is accepted
-    // and ignored rather than reported as an error the web app cannot act on.
+    // No cross-platform withdrawal exists yet, so this is accepted and ignored
+    // rather than reported as an error the web app cannot act on.
 }
 
 #[tauri::command]
 fn open_settings(app: AppHandle) -> Result<(), String> {
-    open_settings_window(&app)
+    show_settings(&app)
 }
 
 #[tauri::command]
@@ -163,9 +213,6 @@ fn hub_config(state: tauri::State<'_, ShellState>) -> HubConfig {
 }
 
 /// Persist a new hub address and open it.
-///
-/// Switching hubs destroys the previous window so one hub's Access session is
-/// never presented to another.
 #[tauri::command]
 fn save_hub_config(
     app: AppHandle,
@@ -180,10 +227,9 @@ fn save_hub_config(
     grant_hub_capability(&app, &config.origins());
     *state.config.lock().expect("config lock") = config;
 
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = window.destroy();
-    }
-    open_hub_window(&app, &url)?;
+    show_hub(&app, &url)?;
+
+    #[cfg(desktop)]
     if let Some(window) = app.get_webview_window(SETTINGS_WINDOW) {
         let _ = window.close();
     }
@@ -192,18 +238,24 @@ fn save_hub_config(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        toggle_main_window(app);
-                    }
-                })
-                .build(),
-        )
+        .plugin(tauri_plugin_notification::init());
+
+    // iOS has no system-wide shortcut concept, and the plugin refuses to build
+    // for mobile targets at all.
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    toggle_main_window(app);
+                }
+            })
+            .build(),
+    );
+
+    builder
         .invoke_handler(tauri::generate_handler![
             set_badge,
             notify,
@@ -221,8 +273,11 @@ pub fn run() {
                 config: Mutex::new(config.clone()),
             });
 
-            build_tray(&handle)?;
-            register_shortcut(&handle, config.shortcut.as_deref());
+            #[cfg(desktop)]
+            {
+                build_tray(&handle)?;
+                register_shortcut(&handle, config.shortcut.as_deref());
+            }
 
             {
                 let handle = handle.clone();
@@ -234,18 +289,29 @@ pub fn run() {
             }
 
             grant_hub_capability(&handle, &config.origins());
-            match config.primary() {
-                // A hub that has never been configured opens settings rather
-                // than failing, so the first launch explains itself.
-                Some(url) => open_hub_window(&handle, &url).map_err(std::io::Error::other)?,
-                None => open_settings_window(&handle).map_err(std::io::Error::other)?,
-            }
+            // A hub that has never been configured lands on the settings page
+            // rather than failing, so the first launch explains itself.
+            create_main_window(&handle, &config).map_err(std::io::Error::other)?;
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Agentic Remote desktop");
+        .expect("error while running Agentic Remote");
 }
 
+#[cfg(desktop)]
+fn toggle_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
+        let _ = window.hide();
+    } else {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(desktop)]
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     // Without a bundled icon there is nothing to show; a missing tray is far
     // better than refusing to start.
@@ -269,7 +335,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "settings" => {
-                let _ = open_settings_window(app);
+                let _ = show_settings(app);
             }
             "quit" => app.exit(0),
             _ => {}
@@ -278,6 +344,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(desktop)]
 fn register_shortcut(app: &AppHandle, configured: Option<&str>) {
     let accelerator = configured
         .map(str::trim)

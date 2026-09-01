@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Desktop-only permissions. iOS has no tray, menus, or system-wide shortcuts.",
+  "platforms": ["macOS", "windows", "linux"],
+  "local": true,
+  "windows": ["main", "settings"],
+  "permissions": ["global-shortcut:default"]
+}

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    agentic_remote_desktop_lib::run()
+    agentic_remote_shell_lib::run()
 }

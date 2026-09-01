@@ -4184,6 +4184,9 @@ function App() {
   const [addRootOpen, setAddRootOpen] = useState(false)
   const knowledgeRequest = useRef(0)
   const knowledgeRestoredKey = useRef<string>(undefined)
+  // Whether the next selection change is the user navigating (a new history
+  // entry) or the app resolving one for them (the same entry, corrected).
+  const historyIntentRef = useRef<'push' | 'replace'>('replace')
   const appShortcutRef = useRef<(event: globalThis.KeyboardEvent) => void>(
     () => {},
   )
@@ -4447,6 +4450,7 @@ function App() {
   useEffect(
     () =>
       onShellDeepLink((target) => {
+        historyIntentRef.current = 'push'
         setSelectedKey(
           sessionKey({ computerId: target.computerId, id: target.sessionId }),
         )
@@ -4624,6 +4628,47 @@ function App() {
       JSON.stringify(knowledgePanels),
     )
   }, [knowledgePanels])
+
+  // The session lives in the URL, so a reload reopens it, a link opens it, and
+  // back and forward move between the sessions that were visited.
+  useEffect(() => {
+    const selectedSession = sessions.find(
+      (session) => sessionKey(session) === selectedKey,
+    )
+    const next = selectedSession
+      ? `${window.location.pathname}?${new URLSearchParams({
+          computer: selectedSession.computerId,
+          session: selectedSession.id,
+        }).toString()}`
+      : window.location.pathname
+    const intent = historyIntentRef.current
+    historyIntentRef.current = 'replace'
+    if (next === `${window.location.pathname}${window.location.search}`) {
+      return
+    }
+    if (intent === 'push') {
+      window.history.pushState({}, '', next)
+    } else {
+      // Auto-selection and stale links correct the address without leaving a
+      // history entry the user never navigated to.
+      window.history.replaceState({}, '', next)
+    }
+  }, [selectedKey, sessions])
+
+  useEffect(() => {
+    const followHistory = () => {
+      const parameters = new URLSearchParams(window.location.search)
+      const computerId = parameters.get('computer')
+      const sessionId = parameters.get('session')
+      if (!computerId || !sessionId) {
+        return
+      }
+      historyIntentRef.current = 'replace'
+      setSelectedKey(sessionKey({ computerId, id: sessionId }))
+    }
+    window.addEventListener('popstate', followHistory)
+    return () => window.removeEventListener('popstate', followHistory)
+  }, [])
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -5809,6 +5854,7 @@ function App() {
   }
 
   function selectSession(session: ManagedSession) {
+    historyIntentRef.current = 'push'
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
     setError(undefined)

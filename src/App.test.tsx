@@ -4156,6 +4156,46 @@ describe('App', () => {
     expect(list).toHaveTextContent('Expand or minimize knowledge')
   })
 
+  it('keeps the selected session in the URL and follows browser history', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    window.history.replaceState({}, '', '/')
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // Auto-selection corrects the address without adding a history entry.
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1',
+      ),
+    )
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+    )
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-2',
+      ),
+    )
+
+    // Going back returns to the session that was open before.
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-1',
+    )
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /Project chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
+    )
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

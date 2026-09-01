@@ -68,6 +68,7 @@ import {
   searchWorkspace,
 } from './workspace-browser.js'
 import {
+  isTerminalAgentWorking,
   isTerminalOverlay,
   terminalCommandOutput,
   TmuxTerminalSessionController,
@@ -2110,11 +2111,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async enqueuePrompt(
     sessionId: string,
     content: string,
+    command = false,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
       content,
       createdAt: new Date().toISOString(),
+      ...(command ? { command: true } : {}),
     }
     return this.serializeQueue(sessionId, async () => {
       const queued = await this.store.enqueuePrompt(sessionId, prompt)
@@ -2126,9 +2129,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async enqueueTerminalPrompt(
     sessionId: string,
     content: string,
+    command = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content)
+    const queued = await this.enqueuePrompt(sessionId, content, command)
     if (!wasIdle) {
       return queued
     }
@@ -2347,7 +2351,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, canonicalCommand)
+      return this.enqueueTerminalPrompt(sessionId, canonicalCommand, true)
     }
     const nativeEnqueue =
       !catalog.session &&
@@ -2459,6 +2463,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (isTerminalOverlay(after)) {
         return `${command}\n\nOpened an interactive view in the terminal. Continue there; it cannot be shown here.`
+      }
+      // The command started a turn, so anything appearing now is the agent
+      // writing rather than the command answering.
+      if (isTerminalAgentWorking(after)) {
+        return command
       }
       const output = terminalCommandOutput(before, after, command)
       // A response can be captured mid-paint, so report it only once it stops
@@ -3683,6 +3692,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return
         }
         const dispatchedAt = new Date().toISOString()
+        // A command reports what it printed instead of starting a turn, so its
+        // pane is captured before the keystrokes go in, exactly as it would be
+        // had the command not been queued.
+        const before = next.command
+          ? await this.terminalController.capture?.(sessionId)
+          : undefined
         if (!(await this.terminalController.send(sessionId, next.content, false))) {
           throw new Error('External terminal is no longer available')
         }
@@ -3691,6 +3706,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           next.id,
         )
         if (!prompt) {
+          return
+        }
+        if (next.command) {
+          const notice = await this.store.addMessage(sessionId, {
+            id: randomUUID(),
+            role: 'notice',
+            content: await this.terminalCommandFeedback(
+              sessionId,
+              next.content,
+              before,
+            ),
+            createdAt: new Date().toISOString(),
+          })
+          this.publish(notice)
           return
         }
         const running = await this.store.markTerminalPromptDispatched(

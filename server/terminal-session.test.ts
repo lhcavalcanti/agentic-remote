@@ -6,6 +6,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  isTerminalAgentWorking,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
   parseTerminalPermission,
@@ -669,6 +670,34 @@ describe('terminal slash command output', () => {
     ].join('\n')
 
     expect(isTerminalOverlay(picker)).toBe(true)
+  })
+
+  // Only offered while a turn is in flight, so it marks the frames whose new
+  // lines belong to the agent rather than to a command.
+  it('recognises the pane while the agent is working', () => {
+    const working = [
+      ' \u25cf Reading files',
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u25c9 Working - autopilot \u00b7 132.7 KiB esc interrupt',
+      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (18%)',
+    ].join('\n')
+
+    expect(isTerminalAgentWorking(working)).toBe(true)
+  })
+
+  it('does not think an idle pane is working', () => {
+    const idle = [
+      ' \u25cf Ready',
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
+      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+    ].join('\n')
+
+    expect(isTerminalAgentWorking(idle)).toBe(false)
   })
 
   it('does not mistake an ordinary transcript for a full-screen view', () => {

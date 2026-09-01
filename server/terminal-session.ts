@@ -791,6 +791,12 @@ export function isTerminalOverlay(pane: string): boolean {
   return hints.filter((hint) => hint.test(tail)).length >= 2
 }
 
+// The CLI only offers to interrupt while the agent is working, so this marks
+// the frames whose new lines belong to a turn rather than to a command.
+export function isTerminalAgentWorking(pane: string): boolean {
+  return /esc\s+interrupt/i.test(pane.split('\n').slice(-6).join(' '))
+}
+
 /**
  * Output a slash command added to the pane, or undefined when it produced
  * none. Compares against the frame captured before the command was sent so a

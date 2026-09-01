@@ -3443,11 +3443,16 @@ describe('AgentService deletion', () => {
       '/usage',
       false,
     )
+    // A command answers in the pane rather than starting a turn, so draining
+    // it reports what it printed and leaves the session idle.
     expect(service.store.get(client.session.sessionId)).toMatchObject({
-      status: 'running',
+      status: 'idle',
       queuedCount: 0,
       queuedPrompts: [],
     })
+    expect(
+      service.store.get(client.session.sessionId)?.messages.at(-1)?.role,
+    ).toBe('notice')
     await service.stop()
   })
 
@@ -3866,6 +3871,123 @@ describe('AgentService deletion', () => {
     expect(result.messages.at(-1)?.content).toContain(
       'Opened an interactive view in the terminal',
     )
+    await service.stop()
+  })
+
+  // Queued behind active work, a command used to be drained as an ordinary
+  // prompt and never reported the output it printed.
+  it('reports what a queued slash command printed once it is drained', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-queue-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        pane = [
+          ' \u25cf Tip: /plugin',
+          ' \u25cf Usage this month: 42 requests',
+          composer,
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      // A version is required before the queue path is taken at all.
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.executeCommand(client.session.sessionId, '/usage', true)
+
+    // Draining it as an ordinary prompt would mark a turn dispatched and add
+    // no notice at all.
+    const notice = service.store.get(client.session.sessionId)?.messages.at(-1)
+    expect(notice?.role).toBe('notice')
+    expect(notice?.content).toContain('Usage this month: 42 requests')
+    await service.stop()
+  })
+
+  // A command can start a turn, and the pane then fills with the agent's
+  // writing rather than an answer to the command.
+  it('reports nothing when the command started a turn', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-turn-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let pane = [
+      ' \u25cf Tip: /plugin',
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        pane = [
+          ' \u25cf Tip: /plugin',
+          ' \u25cf Let me look at the repository first.',
+          '\u257b\u2584\u2584\u2584\u2584',
+          '\u2503',
+          '\u2579\u2580\u2580\u2580\u2580',
+          ' \u25c9 Working - autopilot \u00b7 2.3 KiB esc interrupt',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const result = await service.executeCommand(
+      client.session.sessionId,
+      '/plan',
+    )
+
+    expect(result.messages.at(-1)?.content).toBe('/plan')
     await service.stop()
   })
 

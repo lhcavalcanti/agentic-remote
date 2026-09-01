@@ -59,9 +59,22 @@ Checked against Copilot CLI v1.0.82 in a terminal-backed session.
 CLI. That mismatch was previously invisible, because a rejected command and a
 successful one both reported only their own name.
 
+## Queued commands
+
+A command sent while the agent is working is queued, and reports what it printed
+when it is drained rather than being treated as a prompt. Draining it does not
+mark a turn as started, because the command answers in the pane instead of
+asking the agent for anything.
+
 ## Limits
 
-A command that changes state without painting anything, such as `/plan`, still
+Nothing is reported for a command sent while the agent is already working. Its
+output would arrive in the same pane as the agent's own writing, and the two
+cannot be told apart. The same applies to a command that starts a turn itself:
+once the pane offers to interrupt, everything appearing in it belongs to the
+turn, so the command reports only its name.
+
+A command that changes state without painting anything, such as `/plan`, also
 reports only its name. The mode indicator it updates lives in the composer
 chrome, which is deliberately excluded.
 
@@ -70,3 +83,6 @@ footer carries live counters such as token usage and diff stats. Everything from
 the composer down is therefore ignored; otherwise a changing counter would be
 reported as command output. The startup banner and tip are ignored for the same
 reason, since they can paint after the first capture is taken.
+
+Opening a full-screen view is reported, but the view is not dismissed. A prompt
+sent while one is open still reaches the view rather than the composer.

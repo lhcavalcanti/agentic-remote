@@ -563,6 +563,34 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('names the background agent that keeps a turn open', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task",
+          "arguments":{
+            "agent_type":"rubber-duck",
+            "description":"Final cache RCA review",
+            "prompt":"Review the artifact"
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:task-call',
+        content: 'Agent (rubber-duck) · Final cache RCA review',
+        activityStatus: 'running',
+      }),
+    ])
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',

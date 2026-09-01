@@ -1175,6 +1175,20 @@ button {
   background: rgba(110, 168, 254, 0.06);
 }
 
+.activity-message--agent {
+  color: #e0c78a;
+  border-color: rgba(224, 199, 138, 0.28);
+  background: rgba(224, 199, 138, 0.06);
+}
+
+/* Stays on the row, so the indicator costs no extra vertical space. */
+.activity-message__note {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
 .activity-message__spinner {
   animation: activity-spin 1s linear infinite;
 }

@@ -2243,6 +2243,74 @@ button {
   display: none;
 }
 
+/*
+ * A pointer can hit a small target, so on desktop the actions sit inside the
+ * text panel instead of occupying a second full-width bar of their own. Touch
+ * and narrow layouts keep the roomier stacked bar.
+ */
+@media (min-width: 961px) and (hover: hover) {
+  .composer {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    background: var(--panel-raised);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  }
+
+  .composer:focus-within {
+    border-color: #59634c;
+    box-shadow: 0 0 0 3px rgba(184, 243, 107, 0.055);
+  }
+
+  .composer > .composer-text-panel,
+  .composer > .composer-actions {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .composer > .composer-text-panel {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 0 7px 14px;
+  }
+
+  .composer > .composer-actions {
+    padding: 7px 8px;
+  }
+
+  /* The row is sized by the text panel, so the spacer would only stretch the
+     buttons away from it. */
+  .composer-actions__spacer {
+    display: none;
+  }
+
+  /* Recording replaces the buttons with a status panel that needs the full
+     width, and reads better as its own card than nested inside the box. */
+  .composer:has(.recording-panel) {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    gap: 7px;
+  }
+
+  .composer:has(.recording-panel) > .composer-text-panel {
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    background: var(--panel-raised);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    padding: 7px 14px;
+  }
+
+  .composer > .recording-panel {
+    flex: 1 0 100%;
+  }
+}
+
 .composer-attachment-button {
   color: var(--muted-strong);
   border: 1px solid var(--border-strong);

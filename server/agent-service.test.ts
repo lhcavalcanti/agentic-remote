@@ -3546,6 +3546,52 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('surfaces the update the terminal CLI is offering', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-upd-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      updateNotice: vi.fn(async () => '1.0.83'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+
+    expect(terminal.updateNotice).toHaveBeenCalled()
+    expect(
+      service.store.get(client.session.sessionId)?.runtime?.updateAvailable,
+    ).toBe('1.0.83')
+    await service.stop()
+  })
+
   it('detects and answers terminal ask-user requests', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

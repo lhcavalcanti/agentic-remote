@@ -13,6 +13,16 @@ import type {
 
 const execFileAsync = promisify(execFile)
 
+/**
+ * One field of the agent's structured form. Fields are tabs: a select is
+ * driven by moving the cursor and committing it, a text field by replacing
+ * its contents. Committing a field advances to the next one, and committing
+ * the last field submits the form.
+ */
+export type TerminalFormStep =
+  | { kind: 'select'; optionCount: number; index: number }
+  | { kind: 'text'; value: string }
+
 export interface TerminalSessionController {
   create?(
     sessionId: string,
@@ -49,6 +59,20 @@ export interface TerminalSessionController {
     wasFreeform: boolean,
   ): Promise<boolean>
   updateNotice?(sessionId: string): Promise<string | undefined>
+  /**
+   * Closes a prompt the agent is still showing. A structured form captures
+   * every keystroke, so anything typed while it is open lands in its fields
+   * instead of reaching the agent.
+   */
+  dismissUserInput?(sessionId: string): Promise<boolean>
+  /**
+   * Fills the structured form the agent is showing and submits it, so the
+   * agent receives a real tool result instead of a follow-up message.
+   */
+  fillUserInputForm?(
+    sessionId: string,
+    steps: TerminalFormStep[],
+  ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
@@ -425,6 +449,111 @@ export class TmuxTerminalSessionController
     } catch {
       return undefined
     }
+  }
+
+  async fillUserInputForm(
+    sessionId: string,
+    steps: TerminalFormStep[],
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner || steps.length === 0) {
+        return false
+      }
+      const pane = (
+        await execFileAsync('tmux', [
+          'capture-pane',
+          '-p',
+          '-t',
+          owner.target,
+          '-S',
+          '-40',
+        ])
+      ).stdout
+      if (!parseTerminalFormPrompt(pane)) {
+        return false
+      }
+      for (const step of steps) {
+        if (step.kind === 'select') {
+          // Normalising to the top first makes the move independent of
+          // whichever option the field currently holds.
+          for (let index = 0; index <= step.optionCount; index += 1) {
+            await execFileAsync('tmux', [
+              'send-keys',
+              '-t',
+              owner.target,
+              'Up',
+            ])
+            await new Promise((resolve) => setTimeout(resolve, 25))
+          }
+          for (let index = 0; index < step.index; index += 1) {
+            await execFileAsync('tmux', [
+              'send-keys',
+              '-t',
+              owner.target,
+              'Down',
+            ])
+            await new Promise((resolve) => setTimeout(resolve, 35))
+          }
+        } else {
+          // Ctrl+U clears the default the field was prefilled with, which
+          // would otherwise keep the typed value appended to it.
+          await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'C-u'])
+          await new Promise((resolve) => setTimeout(resolve, 35))
+          if (step.value) {
+            const buffer = `agentic-remote-form-${randomUUID()}`
+            await execFileAsync('tmux', [
+              'set-buffer',
+              '-b',
+              buffer,
+              '--',
+              step.value,
+            ])
+            await execFileAsync('tmux', [
+              'paste-buffer',
+              '-p',
+              '-d',
+              '-b',
+              buffer,
+              '-t',
+              owner.target,
+            ])
+            await new Promise((resolve) => setTimeout(resolve, 45))
+          }
+        }
+        // Committing a field advances to the next; the last one submits.
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
+        await new Promise((resolve) => setTimeout(resolve, 90))
+      }
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const settled = (
+          await execFileAsync('tmux', [
+            'capture-pane',
+            '-p',
+            '-t',
+            owner.target,
+            '-S',
+            '-40',
+          ])
+        ).stdout
+        if (!parseTerminalFormPrompt(settled)) {
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150))
+      }
+      return false
+    })
+  }
+
+  async dismissUserInput(sessionId: string): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        return false
+      }
+      await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Escape'])
+      return true
+    })
   }
 
   async cancel(sessionId: string): Promise<boolean> {
@@ -851,6 +980,24 @@ export function terminalCommandOutput(
     return undefined
   }
   return added.join('\n')
+}
+
+/**
+ * True while the agent is showing its structured form. The header is what the
+ * CLI prints above the field tabs, and the key hints are what it prints
+ * below them.
+ */
+export function parseTerminalFormPrompt(pane: string): boolean {
+  const lines = pane.split('\n').map(cleanDialogLine)
+  const header = lines.findLastIndex((line) =>
+    /^Copilot needs information\.?$/i.test(line),
+  )
+  if (header < 0) {
+    return false
+  }
+  return lines
+    .slice(header)
+    .some((line) => /enter accept/i.test(line) && /cancel/i.test(line))
 }
 
 export function parseTerminalUserInput(

@@ -11,6 +11,7 @@ import type {
   SessionEvent,
   SessionMetadata,
 } from '@github/copilot-sdk'
+import type { UserInputForm } from '../shared/contracts.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentService,
@@ -19,6 +20,7 @@ import {
   messagesFromHistory,
   pendingUserInputFromEvents,
   runtimeInfoFromEvents,
+  terminalFormSteps,
 } from './agent-service.js'
 import { SessionStore } from './session-store.js'
 
@@ -4456,6 +4458,210 @@ describe('AgentService deletion', () => {
       },
     })
     await service.stop()
+  })
+
+  it('fills the agent form instead of typing into it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async () => true),
+    }
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Choose the deployment",
+            "requestedSchema":{
+              "properties":{
+                "deploymentName":{"type":"string","title":"Name","default":"keepme"},
+                "catalogScope":{
+                  "type":"string",
+                  "title":"Scope",
+                  "oneOf":[
+                    {"const":"arm_only","title":"ARM only"},
+                    {"const":"new_dev_model","title":"New dev model"}
+                  ]
+                },
+                "confirmDeployment":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-answer-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+
+    const values = {
+      deploymentName: 'swec-gpt55-chat-cache-engine-treatment',
+      catalogScope: 'new_dev_model',
+      confirmDeployment: true,
+    }
+    const answered = await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // The answer goes into the form the agent is waiting on, so it arrives as
+    // that tool's result instead of being typed into a field.
+    expect(terminal.fillUserInputForm).toHaveBeenCalledWith(sessionId, [
+      { kind: 'text', value: 'swec-gpt55-chat-cache-engine-treatment' },
+      { kind: 'select', optionCount: 3, index: 1 },
+      { kind: 'select', optionCount: 3, index: 0 },
+    ])
+    expect(terminal.send).not.toHaveBeenCalled()
+    expect(terminal.dismissUserInput).not.toHaveBeenCalled()
+    expect(answered.pendingUserInput).toBeUndefined()
+    await service.stop()
+  })
+
+  it('cancels the form and answers in a message when it cannot be filled', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async () => false),
+    }
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-fallback-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+    await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // Closing the prompt first keeps the answer out of the form's fields.
+    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId)
+    const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
+    expect(content).toContain('confirmTransfer: true')
+    expect(content).not.toContain('{"confirmTransfer"')
+    await service.stop()
+  })
+
+  it('maps answered fields onto the agent form, and refuses what it cannot', () => {
+    const form: UserInputForm = {
+      fields: [
+        { name: 'name', title: 'Name', type: 'string', required: false },
+        {
+          name: 'scope',
+          title: 'Scope',
+          type: 'string',
+          required: false,
+          options: [
+            { value: 'arm_only', label: 'ARM only' },
+            { value: 'new_dev_model', label: 'New dev model' },
+          ],
+        },
+        { name: 'confirm', title: 'Confirm', type: 'boolean', required: false },
+      ],
+    }
+    expect(
+      terminalFormSteps(form, {
+        name: 'swec',
+        scope: 'new_dev_model',
+        confirm: false,
+      }),
+    ).toEqual([
+      { kind: 'text', value: 'swec' },
+      { kind: 'select', optionCount: 3, index: 1 },
+      // Yes is first, so a declined confirmation lands on No.
+      { kind: 'select', optionCount: 3, index: 1 },
+    ])
+
+    // An option the agent never offered must not be guessed at.
+    expect(
+      terminalFormSteps(form, { name: 'x', scope: 'other', confirm: true }),
+    ).toBeUndefined()
+    expect(
+      terminalFormSteps(
+        {
+          fields: [
+            { name: 'tags', title: 'Tags', type: 'array', required: false },
+          ],
+        },
+        { tags: ['a'] },
+      ),
+    ).toBeUndefined()
   })
 
   it('recovers and answers a persisted SDK ask-user request', async () => {

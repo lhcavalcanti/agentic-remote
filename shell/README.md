@@ -21,6 +21,57 @@ shaped this way. Read it before changing the security or window model.
 | Tray / menu-bar item | Yes | Not applicable |
 | Global shortcut (`CmdOrCtrl+Shift+A`) | Yes | Not applicable |
 
+## Install a build without a toolchain
+
+You do not need Rust or Node to install the app.
+
+**Any commit.** Open the repository's Actions tab, pick a run of the `CI`
+workflow, and download the artifact for your platform from the run summary:
+`agentic-remote-macos` (`.dmg`), `agentic-remote-windows` (`.exe` installer), or
+`agentic-remote-linux` (`.deb` and `.AppImage`). Artifacts are kept for 14 days
+and are attached to pull request runs too, so a change can be tried before it
+merges.
+
+**A published version.** Releases carry the same bundles and do not expire. The
+macOS build in a release is a universal binary, so one download runs on both
+Apple Silicon and Intel. Publish one by pushing a tag:
+
+```bash
+git tag shell-v0.1.0 && git push origin shell-v0.1.0
+```
+
+The `Shell release` workflow also accepts a manual run if you would rather not
+push a tag.
+
+### macOS: the first open
+
+The builds are not signed or notarized yet, so Gatekeeper refuses a plain
+double-click. Open it once with **right-click → Open**, then **Open** in the
+dialog. macOS remembers the choice.
+
+If macOS reports the app is damaged, the quarantine flag needs clearing:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Agentic Remote.app"
+```
+
+Signing and notarization remove this step entirely and are planned; see
+`docs/native-shell.md` §5.1.
+
+### Linux
+
+```bash
+sudo apt install ./agentic-remote_0.1.0_amd64.deb
+# or make the AppImage executable and run it
+chmod +x Agentic\ Remote_0.1.0_amd64.AppImage
+```
+
+### iOS
+
+There is no downloadable iOS build yet. It needs signing credentials, and
+distribution goes through TestFlight or ad-hoc provisioning rather than a file
+you can install directly. See `docs/native-shell.md` §5.2.
+
 ## Prerequisites
 
 - Node 24 and pnpm 10

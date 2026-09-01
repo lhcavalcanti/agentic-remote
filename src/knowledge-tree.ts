@@ -106,6 +106,12 @@ export function knowledgeTreeRows(
   expanded: string[],
   path: string = knowledgeRootPath,
   depth = 0,
+  /**
+   * Folders already open above this one. A listing that contains one of its
+   * own ancestors would otherwise recurse until the stack is exhausted,
+   * taking the whole app down rather than showing one odd branch.
+   */
+  ancestors: readonly string[] = [],
 ): KnowledgeRow[] {
   const state = folders[path]
   const listing = state?.listing
@@ -131,6 +137,9 @@ export function knowledgeTreeRows(
     return rows
   }
 
+  // The folders already open at or above this one, so a listing that repeats
+  // any of them is not followed a second time.
+  const chain = [...ancestors, path]
   for (const entry of listing.entries) {
     const expandable = entry.kind === 'directory'
     const isExpanded = expandable && expanded.includes(entry.path)
@@ -142,9 +151,9 @@ export function knowledgeTreeRows(
       expandable,
       expanded: isExpanded,
     })
-    if (isExpanded) {
+    if (isExpanded && !chain.includes(entry.path)) {
       rows.push(
-        ...knowledgeTreeRows(folders, expanded, entry.path, depth + 1),
+        ...knowledgeTreeRows(folders, expanded, entry.path, depth + 1, chain),
       )
     }
   }

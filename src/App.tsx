@@ -4855,7 +4855,7 @@ function App() {
       void (async () => {
         try {
           if (rootId !== activeRootId) {
-            if (!(await selectRoot(rootId))) {
+            if (!(await selectRoot(rootId, true))) {
               return
             }
           } else if (
@@ -4987,10 +4987,15 @@ function App() {
       })
     }
     const record = () => {
-      // A hidden panel reports 0, which would erase the position it is
-      // supposed to keep. A tree still waiting for its session's content
-      // would record the outgoing session's offset.
-      if (!node.closest('[hidden]') && !knowledgePendingScrollKey.current) {
+      // A hidden or detached tree reports 0, which would erase the position
+      // it is supposed to keep; the cleanup below runs after React has
+      // already removed the node. A tree still waiting for its session's
+      // content would record the outgoing session's offset.
+      if (
+        node.isConnected &&
+        !node.closest('[hidden]') &&
+        !knowledgePendingScrollKey.current
+      ) {
         knowledgeScrollTops.current[key] = node.scrollTop
       }
     }
@@ -6032,8 +6037,14 @@ function App() {
     }
   }
 
-  async function selectRoot(rootId: string): Promise<boolean> {
+  async function selectRoot(
+    rootId: string,
+    fromRestore = false,
+  ): Promise<boolean> {
     knowledgeHydrated.current = true
+    if (!fromRestore) {
+      cancelKnowledgeRestore()
+    }
     // Changing root invalidates the file being read as well as its folders,
     // or the old document would resolve its assets against the new root.
     knowledgeRequest.current += 1

@@ -135,6 +135,31 @@ describe('knowledge tree', () => {
     ).toEqual(['other'])
   })
 
+  it('refuses to follow a folder that contains itself', () => {
+    // A symlink loop, or a listing that simply repeats its own path, must not
+    // be able to recurse the renderer to death.
+    const looping: KnowledgeFolders = {
+      '.': {
+        listing: {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      },
+      guides: {
+        listing: {
+          path: 'guides',
+          parent: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      },
+    }
+    const rows = knowledgeTreeRows(looping, ['guides'])
+    expect(rows.map((row) => `${row.depth}:${row.path}`)).toEqual([
+      '0:guides',
+      '1:guides',
+    ])
+  })
+
   it('builds breadcrumbs rooted at the knowledge root', () => {
     expect(knowledgeCrumbs('.', 'docs')).toEqual([{ name: 'docs', path: '.' }])
     expect(knowledgeCrumbs('guides/deep', 'docs')).toEqual([

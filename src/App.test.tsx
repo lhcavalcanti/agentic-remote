@@ -193,6 +193,18 @@ const secondSession: ManagedSession = {
   messages: [],
 }
 
+/**
+ * Knowledge listings have to answer per path. A single fixed listing makes
+ * every folder contain itself, so expanding one recurses until the stack is
+ * exhausted and `<App>` crashes while the assertions still pass.
+ */
+function knowledgeListings(
+  listings: Record<string, WorkspaceListing>,
+): (rootId: string, path?: string) => Promise<WorkspaceListing> {
+  return async (_rootId, path = '.') =>
+    listings[path] || { path, parent: '.', entries: [] }
+}
+
 let restoreScrollTop: (() => void) | undefined
 
 describe('App', () => {
@@ -3980,10 +3992,14 @@ describe('App', () => {
         createdAt: '2026-08-01T00:00:00.000Z',
       },
     ])
-    vi.mocked(listKnowledgeEntries).mockResolvedValue({
-      path: '.',
-      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
-    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -4215,10 +4231,14 @@ describe('App', () => {
         createdAt: '2026-08-01T00:00:00.000Z',
       },
     ])
-    vi.mocked(listKnowledgeEntries).mockResolvedValue({
-      path: '.',
-      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
-    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
 
     render(<App />)
     // Configured roots stay browsable when no session exists at all.
@@ -4254,10 +4274,14 @@ describe('App', () => {
         createdAt: '2026-08-01T00:00:00.000Z',
       },
     ])
-    vi.mocked(listKnowledgeEntries).mockResolvedValue({
-      path: '.',
-      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
-    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -4468,10 +4492,14 @@ describe('App', () => {
         createdAt: '2026-08-01T00:00:00.000Z',
       },
     ])
-    vi.mocked(listKnowledgeEntries).mockResolvedValue({
-      path: '.',
-      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
-    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -4507,10 +4535,14 @@ describe('App', () => {
         createdAt: '2026-08-01T00:00:00.000Z',
       },
     ])
-    vi.mocked(listKnowledgeEntries).mockResolvedValue({
-      path: '.',
-      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
-    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
 
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
@@ -4601,13 +4633,17 @@ describe('App', () => {
         createdAt: '2026-08-01T00:00:00.000Z',
       },
     ])
-    vi.mocked(listKnowledgeEntries).mockResolvedValue({
-      path: '.',
-      entries: [
-        { name: 'slow.md', path: 'slow.md', kind: 'markdown', size: 8 },
-        { name: 'guides', path: 'guides', kind: 'directory' },
-      ],
-    })
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'slow.md', path: 'slow.md', kind: 'markdown', size: 8 },
+            { name: 'guides', path: 'guides', kind: 'directory' },
+          ],
+        },
+      }),
+    )
     let releaseFile: ((file: WorkspaceFile) => void) | undefined
     vi.mocked(readKnowledgeFile).mockImplementation(
       () =>
@@ -4929,6 +4965,115 @@ describe('App', () => {
       expect(window.location.search).toBe(
         '?computer=computer-1&session=session-1',
       ),
+    )
+  })
+
+  it('keeps a chosen root when a slow restore finishes late', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': {
+          rootId: 'root-1',
+          path: 'guides',
+          file: 'guides/remembered.md',
+        },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+      {
+        id: 'root-2',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/other',
+        name: 'other',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    let releaseGuides: (() => void) | undefined
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (rootId, path = '.') => {
+        if (rootId === 'root-1' && path === 'guides') {
+          return new Promise<WorkspaceListing>((resolve) => {
+            releaseGuides = () =>
+              resolve({
+                path: 'guides',
+                parent: '.',
+                entries: [
+                  {
+                    name: 'remembered.md',
+                    path: 'guides/remembered.md',
+                    kind: 'markdown',
+                    size: 10,
+                  },
+                ],
+              })
+          })
+        }
+        return rootId === 'root-2'
+          ? {
+              path: '.',
+              entries: [
+                { name: 'only-here.md', path: 'only-here.md', kind: 'markdown', size: 4 },
+              ],
+            }
+          : {
+              path: '.',
+              entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+            }
+      },
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'remembered.md',
+      path: 'guides/remembered.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 10,
+      content: '# Remembered document',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    await waitFor(() => expect(releaseGuides).toBeDefined())
+
+    // The reader switches root while the remembered branch is still loading.
+    fireEvent.click(
+      within(tree)
+        .getAllByRole('button', { name: /other/ })
+        .find((button) => button.closest('.knowledge-root'))!,
+    )
+    await within(tree).findByRole('treeitem', { name: /only-here.md/ })
+
+    releaseGuides?.()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    // The late restore belongs to the root that was left, so it must not
+    // reopen its document over the newly chosen one.
+    expect(
+      screen.queryByRole('heading', { name: 'Remembered document' }),
+    ).not.toBeInTheDocument()
+
+    // Abandoning the restore also has to hand recording back, or the root the
+    // reader chose is never remembered for this session.
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        )['computer-1:session-1'],
+      ).toMatchObject({ rootId: 'root-2' }),
     )
   })
 

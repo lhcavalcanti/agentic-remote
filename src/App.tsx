@@ -4229,6 +4229,7 @@ function App() {
   const appShortcutRef = useRef<(event: globalThis.KeyboardEvent) => void>(
     () => {},
   )
+  const syncSelectionAddressRef = useRef<() => void>(() => {})
   // Restoring a session's panel reads the newest values without re-running
   // whenever the reader moves, which would fight the user's own navigation.
   const knowledgePositionsRef = useRef<Record<string, KnowledgePosition>>({})
@@ -4678,32 +4679,38 @@ function App() {
   // The session lives in the URL, so a reload reopens it, a link opens it, and
   // back and forward move between the sessions that were visited.
   useEffect(() => {
-    // Rewriting while sessions are still loading would drop the deep link the
-    // loader is about to read.
-    if (loading) {
-      return
+    syncSelectionAddressRef.current = () => {
+      // Rewriting while sessions are still loading would drop the deep link
+      // the loader is about to read.
+      if (loading) {
+        return
+      }
+      const selectedSession = sessions.find(
+        (session) => sessionKey(session) === selectedKey,
+      )
+      const next = selectedSession
+        ? `${window.location.pathname}?${new URLSearchParams({
+            computer: selectedSession.computerId,
+            session: selectedSession.id,
+          }).toString()}`
+        : window.location.pathname
+      const intent = historyIntentRef.current
+      historyIntentRef.current = 'replace'
+      if (next === `${window.location.pathname}${window.location.search}`) {
+        return
+      }
+      if (intent === 'push') {
+        window.history.pushState({}, '', next)
+      } else {
+        // Auto-selection and stale links correct the address without leaving
+        // a history entry the user never navigated to.
+        window.history.replaceState({}, '', next)
+      }
     }
-    const selectedSession = sessions.find(
-      (session) => sessionKey(session) === selectedKey,
-    )
-    const next = selectedSession
-      ? `${window.location.pathname}?${new URLSearchParams({
-          computer: selectedSession.computerId,
-          session: selectedSession.id,
-        }).toString()}`
-      : window.location.pathname
-    const intent = historyIntentRef.current
-    historyIntentRef.current = 'replace'
-    if (next === `${window.location.pathname}${window.location.search}`) {
-      return
-    }
-    if (intent === 'push') {
-      window.history.pushState({}, '', next)
-    } else {
-      // Auto-selection and stale links correct the address without leaving a
-      // history entry the user never navigated to.
-      window.history.replaceState({}, '', next)
-    }
+  })
+
+  useEffect(() => {
+    syncSelectionAddressRef.current()
   }, [loading, selectedKey, sessions])
 
   useEffect(() => {
@@ -4711,10 +4718,13 @@ function App() {
       const parameters = new URLSearchParams(window.location.search)
       const computerId = parameters.get('computer')
       const sessionId = parameters.get('session')
+      historyIntentRef.current = 'replace'
       if (!computerId || !sessionId) {
+        // An entry that names no session cannot select one, so the address is
+        // brought back in step with what is actually open.
+        syncSelectionAddressRef.current()
         return
       }
-      historyIntentRef.current = 'replace'
       setSelectedKey(sessionKey({ computerId, id: sessionId }))
     }
     window.addEventListener('popstate', followHistory)
@@ -4862,7 +4872,7 @@ function App() {
           if (
             position.path &&
             position.path !== knowledgeRootPath &&
-            !(await openKnowledgeFolder(position.path, rootId))
+            !(await openKnowledgeFolder(position.path, rootId, true))
           ) {
             return
           }
@@ -4871,7 +4881,7 @@ function App() {
           }
           if (
             position.file &&
-            !(await openKnowledgeFile(position.file, rootId))
+            !(await openKnowledgeFile(position.file, rootId, true))
           ) {
             return
           }
@@ -5880,10 +5890,14 @@ function App() {
   async function openKnowledgeFolder(
     path = knowledgeRootPath,
     rootId = activeRootId,
+    fromRestore = false,
   ): Promise<boolean> {
     knowledgeHydrated.current = true
     if (!rootId) {
       return false
+    }
+    if (!fromRestore) {
+      cancelKnowledgeRestore()
     }
     // A file still being read belongs to where the reader just left, so it is
     // abandoned rather than allowed to arrive over the new folder.
@@ -5895,6 +5909,21 @@ function App() {
     return loadKnowledgeChain(rootId, path)
   }
 
+
+  /**
+   * Abandons a restore that is still loading, so the folder or file the reader
+   * just chose is not replaced when the remembered one finally arrives. The
+   * session still counts as restored: its position is now whatever was chosen.
+   */
+  function cancelKnowledgeRestore() {
+    if (!knowledgeRestoreStartedKey.current) {
+      return
+    }
+    knowledgeRestoreToken.current += 1
+    knowledgePendingScrollKey.current = undefined
+    knowledgeRestoredKey.current = knowledgeRestoreStartedKey.current
+    knowledgeRestoreStartedKey.current = undefined
+  }
 
   function collapseKnowledgeTree() {
     setExpandedKnowledge([])
@@ -5966,11 +5995,15 @@ function App() {
   async function openKnowledgeFile(
     path: string,
     rootOverride?: string,
+    fromRestore = false,
   ): Promise<boolean> {
     knowledgeHydrated.current = true
     const rootId = rootOverride || activeRootId
     if (!rootId) {
       return false
+    }
+    if (!fromRestore) {
+      cancelKnowledgeRestore()
     }
     const request = ++knowledgeRequest.current
     setKnowledgeLoading(true)
@@ -6115,6 +6148,7 @@ function App() {
 
   function created(session: ManagedSession) {
     setSessions((current) => upsertSession(current, session))
+    historyIntentRef.current = 'push'
     setSelectedKey(sessionKey(session))
     setNewSessionOpen(false)
     setSidebarOpen(false)

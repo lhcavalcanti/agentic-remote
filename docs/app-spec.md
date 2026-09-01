@@ -286,9 +286,15 @@ switches, failed sends, and clear replacement IDs.
 - The reader MUST reopen the root, folder, and document last being read, so
   returning does not mean choosing them again. Changing folder MUST remain an
   explicit action.
-- Knowledge MUST open as a panel belonging to the selected session, docked
-  beside the conversation or expanded over it, and MUST NOT be a second
-  sidebar tab. Each session keeps its own panel state and reading position.
+- Knowledge MUST open as a panel beside the selected session, docked next to
+  the conversation or expanded over it, and MUST NOT be a second sidebar tab.
+- Whether the panel is open, and how much room it takes, is a workspace mode:
+  it MUST persist across session switches, so a document being read is not
+  dismissed by moving to another session.
+- Each session MUST keep its own reading position — root, folder, and
+  document — and switching sessions MUST show that session's position.
+- File navigation MUST stay in the same place in every mode, so choosing a
+  file does not depend on how much room the reader is taking.
 - Reopening the panel MUST resume the tree where it was left rather than
   scrolling back to the top.
 - Folders MUST expand in place as a tree rather than replacing the listing, so

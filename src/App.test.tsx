@@ -4792,6 +4792,146 @@ describe('App', () => {
     ).not.toHaveClass('icon-button--active')
   })
 
+  it('keeps a chosen file when a slow restore finishes late', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': {
+          rootId: 'root-1',
+          path: 'guides',
+          file: 'guides/remembered.md',
+        },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    let releaseGuides: (() => void) | undefined
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (_root, path) =>
+        path === 'guides'
+          ? new Promise<WorkspaceListing>((resolve) => {
+              releaseGuides = () =>
+                resolve({
+                  path: 'guides',
+                  parent: '.',
+                  entries: [
+                    {
+                      name: 'remembered.md',
+                      path: 'guides/remembered.md',
+                      kind: 'markdown' as const,
+                      size: 10,
+                    },
+                  ],
+                })
+            })
+          : {
+              path: '.',
+              entries: [
+                {
+                  name: 'chosen.md',
+                  path: 'chosen.md',
+                  kind: 'markdown' as const,
+                  size: 10,
+                },
+                { name: 'guides', path: 'guides', kind: 'directory' as const },
+              ],
+            },
+    )
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_root, target) => ({
+      name: target.split('/').pop() || target,
+      path: target,
+      kind: 'markdown' as const,
+      mimeType: 'text/plain; charset=utf-8',
+      size: 10,
+      content:
+        target === 'chosen.md' ? '# Chosen document' : '# Remembered document',
+    }))
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    // The restore is parked on the remembered folder.
+    await waitFor(() => expect(releaseGuides).toBeDefined())
+
+    // Meanwhile the reader opens a different document.
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /chosen.md/ }),
+    )
+    await screen.findByRole('heading', { name: 'Chosen document' })
+
+    releaseGuides?.()
+
+    // The late restore must not reopen the remembered document over it.
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', 'guides'),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(
+      screen.getByRole('heading', { name: 'Chosen document' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: 'Remembered document' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('leaves a history entry when a session is created', async () => {
+    const fresh: ManagedSession = {
+      ...session,
+      id: 'session-fresh',
+      title: 'Fresh chat',
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(createSession).mockResolvedValue(fresh)
+    vi.mocked(listDirectories).mockResolvedValue({
+      path: '/home/tester',
+      parent: '/home',
+      directories: [{ name: 'src', path: '/home/tester/src' }],
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1',
+      ),
+    )
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0]!)
+    const dialog = await screen.findByRole('dialog', { name: 'Choose a folder' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Create session/ }))
+
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-fresh',
+      ),
+    )
+
+    // Creating a session is navigation, so Back returns to the one that was
+    // open before it rather than replacing that entry.
+    act(() => {
+      window.history.back()
+    })
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1',
+      ),
+    )
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

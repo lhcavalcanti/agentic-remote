@@ -1,9 +1,0 @@
-{
-  "$schema": "../gen/schemas/mobile-schema.json",
-  "identifier": "mobile",
-  "description": "Mobile-only permissions. iOS is single-window, so the settings page and the hub share one webview.",
-  "platforms": ["iOS", "android"],
-  "local": true,
-  "windows": ["main"],
-  "permissions": ["core:default"]
-}

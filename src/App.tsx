@@ -173,10 +173,19 @@ import {
 } from './pwa'
 import {
   attentionCount,
+  nativeShell,
   onShellDeepLink,
+  openShellSettings,
+  sendShellNotification,
   setShellBadge,
+  shellSettingsAvailable,
   withdrawShellNotifications,
 } from './shell'
+import {
+  notificationState,
+  shellNotifications,
+  type SessionNotificationState,
+} from './shell-notifications'
 
 function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string {
   return `${session.computerId}:${session.id}`
@@ -1595,6 +1604,23 @@ function AppSettingsDialog({
       onClose={onClose}
       title="App settings"
     >
+      {shellSettingsAvailable() && (
+        <section className="app-settings-section">
+          <h3>Hub connection</h3>
+          <p className="dialog-message">
+            This app is connected to a hub you chose when you installed it.
+            Change it if the hub moved or you entered the wrong address.
+          </p>
+          <button
+            className="secondary-button"
+            onClick={() => openShellSettings()}
+            type="button"
+          >
+            Change hub…
+          </button>
+        </section>
+      )}
+
       <section className="app-settings-section">
         <h3>Default models</h3>
         <p className="dialog-message">
@@ -4331,6 +4357,30 @@ function App() {
   useEffect(() => {
     setShellBadge(attentionCount(sessions))
   }, [sessions])
+  // An embedded webview gets no Web Push, so inside the shell the app raises
+  // its own notifications from the live session stream. A browser keeps using
+  // the hub's Web Push and must not double-notify, hence the shell check.
+  const notificationStateRef = useRef<Map<string, SessionNotificationState>>(
+    new Map(),
+  )
+  useEffect(() => {
+    if (!nativeShell()) {
+      return
+    }
+    const previous = notificationStateRef.current
+    notificationStateRef.current = notificationState(sessions)
+    for (const notification of shellNotifications(sessions, {
+      previous,
+      computerNames: new Map(
+        computers.map((computer) => [computer.id, computer.name]),
+      ),
+      mutedKeys: mutedSessions,
+      activeKey: selectedKey,
+      documentVisible: document.visibilityState === 'visible',
+    })) {
+      sendShellNotification(notification)
+    }
+  }, [computers, mutedSessions, selectedKey, sessions])
   // An `agentic://` link may arrive before the session list has loaded, so the
   // key is set optimistically and resolves once that session appears.
   useEffect(

@@ -9,10 +9,12 @@ import {
   shellVersion,
   onShellDeepLink,
   onShellNotificationReply,
+  openShellSettings,
   parseShellDeepLink,
   resetShellBadge,
   sendShellNotification,
   setShellBadge,
+  shellSettingsAvailable,
   withdrawShellNotifications,
 } from './shell'
 
@@ -303,5 +305,34 @@ describe('shellDeepLink', () => {
   it('round-trips through the parser', () => {
     const target = { computerId: 'my mac', sessionId: 'a/b' }
     expect(parseShellDeepLink(shellDeepLink(target))).toEqual(target)
+  })
+})
+
+describe('shell settings', () => {
+  it('reports unavailable without a shell or on an older shell', () => {
+    expect(shellSettingsAvailable()).toBe(false)
+    installBridge({ setBadge: vi.fn() })
+    expect(shellSettingsAvailable()).toBe(false)
+  })
+
+  it('reports available and forwards the request', () => {
+    const openSettings = vi.fn()
+    installBridge({ openSettings })
+    expect(shellSettingsAvailable()).toBe(true)
+    openShellSettings()
+    expect(openSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('does nothing without a shell', () => {
+    expect(() => openShellSettings()).not.toThrow()
+  })
+
+  it('survives a shell that throws', () => {
+    installBridge({
+      openSettings: () => {
+        throw new Error('no settings')
+      },
+    })
+    expect(() => openShellSettings()).not.toThrow()
   })
 })

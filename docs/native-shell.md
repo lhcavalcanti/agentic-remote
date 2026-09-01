@@ -184,6 +184,16 @@ for origin in configured_origins {
 app.add_capability(capability)?;
 ```
 
+Permissions must be named explicitly. Tauri refuses every custom command from a
+remote origin unless a capability lists it, so an empty permission list produces
+a capability that authorizes nothing and a bridge that silently does nothing.
+Declaring the commands in `build.rs` through `AppManifest` is what generates the
+`allow-<command>` permissions this references.
+
+`hub_config` and `save_hub_config` are deliberately **not** granted to the hub.
+The hub must not be able to read or rewrite which hub the app points at; those
+two are granted only to the locally served settings page.
+
 This is the security-critical code in the design.
 
 - The origin list MUST come from validated configuration. Wildcards MUST NOT be
@@ -258,24 +268,41 @@ in the platform config directory, and accepts an optional direct address used
 when the public hostname is unreachable — which also keeps the app working when
 Cloudflare or the tunnel is down.
 
-Switching hubs destroys the previous window and re-grants the capability so one
-hub's IPC grant is never presented to another. Clearing the webview cookie store
-for the previous host is not implemented yet; until it is, switching between
-hubs leaves the old Access cookie in the shared store.
+When both a primary and a direct address are configured, the shell probes the
+primary with a short TCP connect before opening it and falls back to the direct
+address when that fails. When a hub is configured but **neither** address
+answers, the shell opens its settings page and says so rather than showing a
+window that will never load; on iOS, where there is no tray, that is the only
+recovery route back to a corrected address. It is deliberately a connectivity probe rather than a
+health check, because the case it exists for is the public hostname being
+unroutable when the tunnel or network is down.
+
+Switching hubs re-points the window and re-grants the capability so one hub's
+IPC grant is never presented to another. Clearing the webview cookie store for
+the previous host is not implemented yet; until it is, switching between hubs
+leaves the old Access cookie in the shared store.
 
 ## 4. Native integrations
 
 | # | Integration | Why it beats the browser | Desktop | iOS |
 | --- | --- | --- | --- | --- |
-| 1 | **Notifications from the live event stream** | An embedded webview has no Web Push, so the shell notifies from the session WebSocket itself. | Implemented | Needs APNs (§4.2) |
+| 1 | **Notifications from the live event stream** | An embedded webview has no Web Push, so the shell notifies from the session WebSocket itself, honoring per-session mute. | Implemented | Foreground only until APNs (§4.2) |
 | 2 | **Notification actions** — approve/deny a permission from the notification | `docs/app-spec.md` §5 makes questions and permissions the top-priority state, so acting without focusing the app is the biggest win available. | Deferred (§4.1) | **Available**, not yet wired |
 | 3 | **Badge** — sessions awaiting input | Driven from the event stream rather than from notification permission. | Implemented | Blocked, see §4.4 |
-| 4 | **Deep links** — `agentic://computer/<id>/session/<id>` | Lets notifications, terminals, and scripts open an exact session. | Implemented | Needs Info.plist scheme (§4.3) |
+| 4 | **Deep links** — `agentic://computer/<id>/session/<id>` | Lets notifications, terminals, and scripts open an exact session. Cold-start links are read from the process arguments and queued until the page subscribes; a link arriving at a running app is forwarded by the single-instance plugin. | Implemented | Needs Info.plist scheme (§4.3) |
 | 5 | **Tray / menu-bar item** | Passive supervision without a window. | Implemented | Not applicable |
 | 6 | **Global hotkey** | Removes app-switching from the supervision loop. | Implemented | Not applicable |
 | 7 | **Launch at login, start hidden** | The app is a monitor; it should already be running. | Planned | Not applicable |
 | 8 | **Window state** — size, position, sidebar width | Complements the resizable-sidebar work. | Planned | Not applicable |
 | 9 | **Live Activity / Dynamic Island** for a running session | Would be the single best mobile supervision feature. | Not applicable | Requires a native Swift widget extension |
+
+Notification permission is requested before the first notification is shown. A
+fresh iOS install starts in `notDetermined` and silently drops everything until
+asked, so this cannot be left until the user visits a settings screen.
+
+Notifications carry a stable id derived from their tag, which is what lets
+`withdraw_notifications` retract them on iOS when the user opens the session.
+Desktop exposes no withdrawal, so there the request is accepted and ignored.
 
 ### 4.1 Why notification actions are deferred on desktop
 

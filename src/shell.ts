@@ -44,6 +44,7 @@ export interface ShellAttentionState {
 interface ShellBridge {
   version?: unknown
   platform?: unknown
+  openSettings?: () => unknown
   setBadge?: (count: number) => unknown
   notify?: (notification: ShellNotification) => unknown
   withdrawNotifications?: (tags: string[]) => unknown
@@ -112,6 +113,27 @@ export function attentionCount(
         : total,
     0,
   )
+}
+
+/**
+ * True when the shell can reopen its own hub settings. iOS has no tray, so
+ * without this the only way to change a wrong hub URL is to reinstall.
+ */
+export function shellSettingsAvailable(): boolean {
+  return method('openSettings') !== undefined
+}
+
+/** Ask the shell to show its hub settings. */
+export function openShellSettings(): void {
+  const openSettings = method('openSettings')
+  if (!openSettings) {
+    return
+  }
+  try {
+    openSettings()
+  } catch {
+    // A shell that cannot show settings must not break the page.
+  }
 }
 
 let lastBadge: number | undefined

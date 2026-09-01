@@ -15,7 +15,7 @@ shaped this way. Read it before changing the security or window model.
 | Opens straight to your hub, no address bar | Yes | Yes |
 | Persistent login across restarts | Yes, within the hub's Access session policy | Yes |
 | Badge of sessions awaiting input | Yes | Not yet, arrives with APNs |
-| Native notifications | Yes | Foreground only until APNs lands |
+| Native notifications from session events | Yes | Foreground only until APNs lands |
 | Notification action buttons | Not yet | Supported by the platform, not yet wired |
 | `agentic://` deep links | Yes | Needs the scheme in the Xcode project |
 | Tray / menu-bar item | Yes | Not applicable |
@@ -90,6 +90,9 @@ keep every method optional on the web side.
 
 - IPC is granted to the configured hub origins only. There are no wildcards, and
   no filesystem, shell, or process permission is ever granted to a remote origin.
+- The hub is granted a named list of commands and nothing else. `hub_config` and
+  `save_hub_config` are **not** in it, so the hub cannot read or change which hub
+  the app points at; only the local settings page can.
 - Only `http` and `https` hub URLs are accepted.
 - Switching hubs destroys the previous window so one hub's Access session is
   never presented to another.

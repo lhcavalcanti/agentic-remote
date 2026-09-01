@@ -3199,6 +3199,14 @@ button {
     background: var(--bg);
   }
 
+  /* A full-screen layer clears the notch the same way the conversation
+     header does, or its title and controls sit under it. */
+  .knowledge-panel__header {
+    padding: calc(10px + var(--app-content-safe-area-top))
+      max(12px, env(safe-area-inset-right)) 10px
+      max(12px, env(safe-area-inset-left));
+  }
+
   .workspace--docked .conversation {
     display: none;
   }

@@ -4844,7 +4844,16 @@ function App() {
       const current = () => token === knowledgeRestoreToken.current
       void (async () => {
         try {
-          if (rootId !== activeRootId && !(await selectRoot(rootId))) {
+          if (rootId !== activeRootId) {
+            if (!(await selectRoot(rootId))) {
+              return
+            }
+          } else if (
+            // The root is already active, but its listing may be missing or
+            // have failed, and skipping every loader would call that restored.
+            !knowledgeFolders[knowledgeRootPath]?.listing &&
+            !(await loadKnowledgeFolder(rootId, knowledgeRootPath))
+          ) {
             return
           }
           if (!current()) {
@@ -4894,10 +4903,14 @@ function App() {
       return
     }
     // A session change abandons whatever restore was still running, including
-    // the folder and file requests it had already issued.
+    // the folder and file requests it had already issued. The state the old
+    // restore owned is settled here rather than in its own cancelled finally,
+    // which can no longer run.
     knowledgeRestoreToken.current += 1
     knowledgeRequest.current += 1
     knowledgeRootGeneration.current += 1
+    knowledgePendingScrollKey.current = undefined
+    setKnowledgeLoading(false)
     knowledgeRestoreStartedKey.current = selectedKey
     const remembered = knowledgePositionsRef.current[selectedKey]
     if (
@@ -5680,6 +5693,26 @@ function App() {
     })
   }
 
+  /** Clearing a conversation gives it a new id; its reading position moves too. */
+  function moveKnowledgePosition(fromKey: string, toKey: string) {
+    if (fromKey === toKey) {
+      return
+    }
+    const offset = knowledgeScrollTops.current[fromKey]
+    delete knowledgeScrollTops.current[fromKey]
+    if (offset !== undefined) {
+      knowledgeScrollTops.current[toKey] = offset
+    }
+    if (knowledgeRestoredKey.current === fromKey) {
+      knowledgeRestoredKey.current = toKey
+    }
+    setKnowledgePositions((current) => {
+      const position = current[fromKey]
+      const { [fromKey]: _removed, ...remaining } = current
+      return position ? { ...remaining, [toKey]: position } : remaining
+    })
+  }
+
   function focusComposer(targetKey: string | undefined) {
     window.requestAnimationFrame(() => {
       const current = selectedRef.current
@@ -5829,6 +5862,10 @@ function App() {
     if (!rootId) {
       return false
     }
+    // A file still being read belongs to where the reader just left, so it is
+    // abandoned rather than allowed to arrive over the new folder.
+    knowledgeRequest.current += 1
+    setKnowledgeLoading(false)
     setExpandedKnowledge((current) => expandKnowledgeFolder(current, path))
     setKnowledgePath(path)
     setKnowledgeFile(undefined)
@@ -5941,6 +5978,10 @@ function App() {
 
   async function selectRoot(rootId: string): Promise<boolean> {
     knowledgeHydrated.current = true
+    // Changing root invalidates the file being read as well as its folders,
+    // or the old document would resolve its assets against the new root.
+    knowledgeRequest.current += 1
+    setKnowledgeLoading(false)
     const generation = ++knowledgeRootGeneration.current
     setActiveRootId(rootId)
     setKnowledgeFile(undefined)
@@ -6409,6 +6450,7 @@ function App() {
         ),
       )
       moveComposerDraft(sessionKey(target), sessionKey(cleared))
+      moveKnowledgePosition(sessionKey(target), sessionKey(cleared))
       setSelectedKey(sessionKey(cleared))
       return sessionKey(cleared)
     } catch (caught) {

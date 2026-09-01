@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ComputerSummary,
   ManagedSession,
+  WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
 import App from './App'
@@ -4528,6 +4529,120 @@ describe('App', () => {
     // composer or pull focus away from it.
     expect(textarea).toHaveValue('')
     expect(rootButton).toHaveFocus()
+  })
+
+  it('carries the reading position to a cleared conversation', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    vi.mocked(clearConversation).mockResolvedValue(replacement)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: 'guides',
+      parent: '.',
+      entries: [
+        { name: 'setup.md', path: 'guides/setup.md', kind: 'markdown', size: 8 },
+      ],
+    })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+
+    // Clearing gives the session a new id, so its reading position has to
+    // travel with it rather than being stranded under the old one.
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({
+        'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    confirmSpy.mockRestore()
+  })
+
+  it('drops a file still loading when the folder moves on', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [
+        { name: 'slow.md', path: 'slow.md', kind: 'markdown', size: 8 },
+        { name: 'guides', path: 'guides', kind: 'directory' },
+      ],
+    })
+    let releaseFile: ((file: WorkspaceFile) => void) | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(
+      () =>
+        new Promise<WorkspaceFile>((resolve) => {
+          releaseFile = resolve
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /slow.md/ }),
+    )
+    // Navigating with the breadcrumb clears the reader, so a late answer for
+    // the file left behind must not repopulate it.
+    const crumbs = within(tree).getByRole('group', { name: 'Knowledge folder' })
+    fireEvent.click(within(crumbs).getByRole('button', { name: 'docs' }))
+
+    releaseFile?.({
+      name: 'slow.md',
+      path: 'slow.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 8,
+      content: '# Stale document',
+    })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: 'Stale document' }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByRole('heading', { name: 'Stale document' }),
+    ).not.toBeInTheDocument()
   })
 
   it('no longer offers a separate saved paths panel', async () => {

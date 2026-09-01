@@ -3435,13 +3435,16 @@ describe('App', () => {
     await waitFor(() =>
       expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', '.'),
     )
-    fireEvent.click(await within(tree).findByRole('button', { name: /guides/ }))
+    // Folders are tree items that expand in place instead of replacing the list.
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
     await waitFor(() =>
       expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
     )
 
     fireEvent.click(
-      await within(tree).findByRole('button', { name: /setup.md/ }),
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
     )
     expect(
       await screen.findByRole('heading', { name: 'Setup' }),
@@ -3464,6 +3467,197 @@ describe('App', () => {
     expect(
       screen.getByRole('navigation', { name: 'Sessions' }),
     ).not.toHaveAttribute('hidden')
+  })
+
+  it('expands knowledge folders in place and remembers them', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? {
+            path: 'guides',
+            parent: '.',
+            entries: [
+              {
+                name: 'setup.md',
+                path: 'guides/setup.md',
+                kind: 'markdown' as const,
+                size: 30,
+              },
+            ],
+          }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+              {
+                name: 'readme.md',
+                path: 'readme.md',
+                kind: 'markdown' as const,
+                size: 10,
+              },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    const guides = await within(tree).findByRole('treeitem', {
+      name: /guides/,
+    })
+    expect(guides).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(guides)
+    await within(tree).findByRole('treeitem', { name: /setup.md/ })
+
+    // Expanding keeps the surrounding folder visible instead of replacing it.
+    expect(
+      within(tree).getByRole('treeitem', { name: /readme.md/ }),
+    ).toBeInTheDocument()
+    expect(
+      within(tree).getByRole('treeitem', { name: /guides/ }),
+    ).toHaveAttribute('aria-expanded', 'true')
+    // Children are one level deeper, so the sidebar can indent them.
+    expect(
+      within(tree).getByRole('treeitem', { name: /setup.md/ }),
+    ).toHaveAttribute('aria-level', '2')
+
+    const crumbs = within(tree).getByRole('group', { name: 'Knowledge folder' })
+    expect(
+      within(crumbs).getByRole('button', { name: 'guides' }),
+    ).toHaveAttribute('aria-current', 'true')
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-expanded') || '{}',
+      ),
+    ).toEqual({ 'root-1': ['guides'] })
+
+    fireEvent.click(within(tree).getByRole('treeitem', { name: /guides/ }))
+    expect(
+      within(tree).queryByRole('treeitem', { name: /setup.md/ }),
+    ).not.toBeInTheDocument()
+
+    // Reopening a folder reuses what was already read.
+    const loads = vi.mocked(listKnowledgeEntries).mock.calls.length
+    fireEvent.click(within(tree).getByRole('treeitem', { name: /guides/ }))
+    await within(tree).findByRole('treeitem', { name: /setup.md/ })
+    expect(vi.mocked(listKnowledgeEntries).mock.calls.length).toBe(loads)
+
+    fireEvent.click(
+      within(tree).getByRole('button', { name: 'Collapse all folders' }),
+    )
+    expect(
+      within(tree).queryByRole('treeitem', { name: /setup.md/ }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the tree usable when one folder cannot be read', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) => {
+      if (path === 'notes') {
+        throw new Error('offline')
+      }
+      return {
+        path: '.',
+        entries: [
+          { name: 'notes', path: 'notes', kind: 'directory' as const },
+          {
+            name: 'readme.md',
+            path: 'readme.md',
+            kind: 'markdown' as const,
+            size: 10,
+          },
+        ],
+      }
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /notes/ }))
+
+    // The failure is reported on its own branch, not by blanking the tree.
+    expect(await within(tree).findByText('offline')).toBeInTheDocument()
+    expect(
+      within(tree).getByRole('treeitem', { name: /readme.md/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('expands and collapses knowledge folders from the keyboard', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? {
+            path: 'guides',
+            parent: '.',
+            entries: [
+              {
+                name: 'setup.md',
+                path: 'guides/setup.md',
+                kind: 'markdown' as const,
+                size: 30,
+              },
+            ],
+          }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    const guides = await within(tree).findByRole('treeitem', { name: /guides/ })
+    guides.focus()
+
+    fireEvent.keyDown(guides, { key: 'ArrowRight' })
+    const child = await within(tree).findByRole('treeitem', {
+      name: /setup.md/,
+    })
+
+    // Right again steps into the branch that was just opened.
+    fireEvent.keyDown(guides, { key: 'ArrowRight' })
+    expect(child).toHaveFocus()
+
+    // Left from a child returns to its folder, and closes it from there.
+    fireEvent.keyDown(child, { key: 'ArrowLeft' })
+    expect(guides).toHaveFocus()
+    fireEvent.keyDown(guides, { key: 'ArrowLeft' })
+    expect(
+      within(tree).queryByRole('treeitem', { name: /setup.md/ }),
+    ).not.toBeInTheDocument()
   })
 
   it('adds a knowledge root by picking a computer folder', async () => {

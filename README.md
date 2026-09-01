@@ -195,6 +195,8 @@ matrix.
 - **Runtime**: configure supported model, effort, context, and mode options.
 - **App settings**: configure separate default model IDs for Copilot and Claude.
 - **Session files**: browse, search, preview, and save Knowledge paths.
+- **Knowledge**: expand folders in place as a tree, with remembered expansion,
+  breadcrumbs, and keyboard navigation.
 - **Paperclip / microphone**: upload supported files or transcribe audio.
 
 Copilot sessions can be tmux-backed:

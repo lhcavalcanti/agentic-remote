@@ -522,6 +522,19 @@ function shellTaskMode(
     requestedMode === 'background' ||
     requestedMode === 'async' ||
     detached
+  // assumeBackground is a fallback for transports that omit the mode, so it
+  // must not override an execution that said it was synchronous.
+  const explicitlySync =
+    executionMode === 'sync' ||
+    requestedMode === 'sync' ||
+    requestedMode === 'synchronous' ||
+    requestedMode === 'foreground' ||
+    args.async === false ||
+    args.background === false ||
+    telemetry.background === false
+  if (explicitlySync && !background) {
+    return undefined
+  }
   if (!background && !assumeBackground) {
     return undefined
   }

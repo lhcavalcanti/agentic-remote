@@ -315,6 +315,34 @@ describe('background task adapter', () => {
     )
   })
 
+  it('does not promote an explicitly synchronous shell when assuming background', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "sync-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:03:00.000Z",
+          "data": {
+            "toolCallId": "sync-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm check",
+              "description": "Run checks",
+              "mode": "sync"
+            }
+          }
+        }
+      ]`) as SessionEvent[],
+      // The tmux projection cannot see execution modes, so it assumes
+      // background. That assumption must not override a shell that said it
+      // was synchronous and never handed off.
+      { assumeBackground: true },
+    )
+
+    expect(tasks.find((task) => task.id === 'sync-call')).toBeUndefined()
+  })
+
   it('tracks attached async shells and promoted sync shells', () => {
     const tasks = backgroundTasksFromEvents(
       JSON.parse(`[

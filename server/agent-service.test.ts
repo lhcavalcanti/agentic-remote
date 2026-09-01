@@ -790,6 +790,71 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('refuses to cancel a task projected from a terminal session', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-terminal-cancel-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    // agent_idle is the projection path that marks a task cancellable.
+    const events = [
+      {
+        type: 'system.notification',
+        id: 'agent-idle',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {
+          kind: {
+            type: 'agent_idle',
+            agentId: 'agent-1',
+            description: 'Inspect the repository',
+          },
+        },
+      },
+    ] as unknown as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-cancel-events',
+      terminal,
+    )
+    await service.start()
+
+    const snapshot = await service.listBackgroundTasks(client.session.sessionId)
+
+    // Projected from an event log, so there is no channel to cancel through.
+    expect(snapshot.tasks.length).toBeGreaterThan(0)
+    for (const task of snapshot.tasks) {
+      expect(task.canCancel).toBe(false)
+    }
+
+    await expect(
+      service.cancelBackgroundTask(client.session.sessionId, 'agent-1'),
+    ).rejects.toThrow('cannot be cancelled')
+
+    // The live CLI still owns the session: cancelling must not have attached
+    // an SDK owner by resuming or creating one.
+    expect(client.resumedSessionIds).not.toContain(client.session.sessionId)
+    expect(client.createdConfigs).toHaveLength(0)
+    await service.stop()
+  })
+
   it('does not resume a finished terminal turn for background task activity', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-terminal-continuation-'),

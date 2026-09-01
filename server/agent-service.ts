@@ -2554,14 +2554,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Session not found')
     }
     if (this.externalSessionIds.has(sessionId)) {
-      return this.replaceBackgroundTasks(
-        sessionId,
-        backgroundTasksFromEvents(
-          await this.sessionEventReader(sessionId),
-          { assumeBackground: true },
-        ),
-        true,
-      )
+      // Projected from an event log rather than owned over RPC, so there is no
+      // channel to cancel through and loading one would attach an SDK owner to
+      // a session the live CLI already owns.
+      const projected = backgroundTasksFromEvents(
+        await this.sessionEventReader(sessionId),
+        { assumeBackground: true },
+      ).map((task) => ({ ...task, canCancel: false }))
+      return this.replaceBackgroundTasks(sessionId, projected, true)
     }
     return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
   }
@@ -2576,6 +2576,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Background task not found')
     }
     if (!task.canCancel) {
+      throw new Error('Background task cannot be cancelled')
+    }
+    // Checked again before loading: ensureLoaded would attach an SDK owner to a
+    // session the live CLI owns.
+    if (this.externalSessionIds.has(sessionId)) {
       throw new Error('Background task cannot be cancelled')
     }
     const session = await this.ensureLoaded(sessionId)

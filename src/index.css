@@ -826,7 +826,10 @@ button {
   --computer-tint: rgba(110, 168, 254, 0.1);
 }
 
-.session-item--background-running .status-dot.status-dot--running {
+/* Any status, not just running: a session can be idle in the foreground while
+   background work continues. The waiting and error rules below are more
+   specific, so they still take precedence. */
+.session-item--background-running .status-dot {
   background: #6ea8fe;
   box-shadow: 0 0 0 4px rgba(110, 168, 254, 0.12);
 }

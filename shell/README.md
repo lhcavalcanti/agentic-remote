@@ -14,7 +14,7 @@ shaped this way. Read it before changing the security or window model.
 | --- | --- | --- |
 | Opens straight to your hub, no address bar | Yes | Yes |
 | Persistent login across restarts | Yes, within the hub's Access session policy | Yes |
-| Badge of sessions awaiting input | Yes | Yes |
+| Badge of sessions awaiting input | Yes | Not yet, arrives with APNs |
 | Native notifications | Yes | Foreground only until APNs lands |
 | Notification action buttons | Not yet | Supported by the platform, not yet wired |
 | `agentic://` deep links | Yes | Needs the scheme in the Xcode project |
@@ -108,6 +108,14 @@ needs a direct `UNUserNotificationCenter` implementation.
 WKWebView, so the existing Web Push path does not reach it. Until an APNs
 transport is added to the hub, iOS notifies only while the app is in the
 foreground.
+
+**The iOS badge is not reachable yet.** `set_badge_count` is `#[cfg(desktop)]`
+in Tauri 2.11 despite its documentation mentioning iOS, so `set_badge` is a
+no-op on mobile. It arrives with the APNs work, which can carry a badge in the
+payload.
+
+When adding a native call, check the enclosing `impl` block's `cfg` rather than
+the doc comment, and let the `shell-ios` CI job confirm it.
 
 The bridge already carries `actions` and an `onNotificationReply` channel, so
 both can be finished in the shell without changing the web app.

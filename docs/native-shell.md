@@ -269,7 +269,7 @@ hubs leaves the old Access cookie in the shared store.
 | --- | --- | --- | --- | --- |
 | 1 | **Notifications from the live event stream** | An embedded webview has no Web Push, so the shell notifies from the session WebSocket itself. | Implemented | Needs APNs (§4.2) |
 | 2 | **Notification actions** — approve/deny a permission from the notification | `docs/app-spec.md` §5 makes questions and permissions the top-priority state, so acting without focusing the app is the biggest win available. | Deferred (§4.1) | **Available**, not yet wired |
-| 3 | **Badge** — sessions awaiting input | Driven from the event stream rather than from notification permission. | Implemented | Implemented |
+| 3 | **Badge** — sessions awaiting input | Driven from the event stream rather than from notification permission. | Implemented | Blocked, see §4.4 |
 | 4 | **Deep links** — `agentic://computer/<id>/session/<id>` | Lets notifications, terminals, and scripts open an exact session. | Implemented | Needs Info.plist scheme (§4.3) |
 | 5 | **Tray / menu-bar item** | Passive supervision without a window. | Implemented | Not applicable |
 | 6 | **Global hotkey** | Removes app-switching from the supervision loop. | Implemented | Not applicable |
@@ -324,9 +324,22 @@ generated Xcode project instead. Universal links are the better long-term
 answer because they tie the link to the hub the user actually owns, but they
 require the hub to serve an association file and are therefore deferred.
 
-## 5. Release and distribution
+### 4.4 The iOS badge is not reachable from Tauri today
 
-- Bundles cannot be cross-compiled. Each platform builds itself, so CI runs a
+`WebviewWindow::set_badge_count` documents iOS behavior, but it lives inside a
+`#[cfg(desktop)]` impl block in Tauri 2.11, so it does not exist on iOS. The
+`shell-ios` CI job caught this; the documentation alone was misleading.
+
+The `set_badge` command is therefore a no-op on mobile. An iOS badge needs
+either an APNs payload carrying `badge` or a small Swift addition to the
+generated Xcode project, so it is folded into the APNs work (§4.2) rather than
+tracked separately.
+
+More generally, `show`, `hide`, `close`, `destroy`, `set_focus`, and
+`set_badge_count` are all `#[cfg(desktop)]` on `WebviewWindow`, while
+`navigate`, `eval`, and the visibility getters are available everywhere. New
+shell code MUST assume nothing from a doc comment and MUST be checked by the
+`shell-ios` job.
 
 ## 5. Release and distribution
 

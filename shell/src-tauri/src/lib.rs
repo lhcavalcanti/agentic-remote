@@ -123,8 +123,13 @@ fn show_hub(app: &AppHandle, url: &str) -> Result<(), String> {
     match app.get_webview_window(MAIN_WINDOW) {
         Some(window) => {
             window.navigate(parsed).map_err(|error| error.to_string())?;
-            let _ = window.show();
-            let _ = window.set_focus();
+            // Showing and focusing a window is a desktop-only API; iOS has a
+            // single always-visible webview.
+            #[cfg(desktop)]
+            {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
             Ok(())
         }
         None => create_main_window(
@@ -172,11 +177,24 @@ fn deliver(app: &AppHandle, channel: &str, payload_json: &str) {
     }
 }
 
+/// Publish the count of sessions awaiting the user.
+///
+/// `set_badge_count` lives in a `#[cfg(desktop)]` impl block, so despite its
+/// documentation mentioning iOS it is not callable there. Setting an iOS badge
+/// needs either an APNs payload carrying `badge` or a small Swift addition to
+/// the generated Xcode project, both of which arrive with the APNs work.
 #[tauri::command]
 fn set_badge(app: AppHandle, count: i64) {
-    let value = if count > 0 { Some(count) } else { None };
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = window.set_badge_count(value);
+    #[cfg(desktop)]
+    {
+        let value = if count > 0 { Some(count) } else { None };
+        if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+            let _ = window.set_badge_count(value);
+        }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, count);
     }
 }
 

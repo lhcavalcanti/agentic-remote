@@ -1134,6 +1134,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
   >()
+  // An ask-user request answered from the UI stays unresolved in the event log
+  // until the agent writes its completion, so the recovery below must not
+  // resurrect the request the user just answered.
+  private readonly answeredPersistedInputs = new Map<
+    string,
+    { requestId: string; expiresAt: number }
+  >()
   private readonly elicitations = new Map<string, PendingSdkElicitation>()
   private discoveryTimer?: NodeJS.Timeout
   private discoveryInFlight?: Promise<void>
@@ -2604,6 +2611,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (action !== 'accept') {
       if (requestId.startsWith('persisted-user-input:')) {
+        this.answeredPersistedInputs.set(sessionId, {
+          requestId,
+          expiresAt: Date.now() + 60_000,
+        })
         const cleared = await this.store.update(sessionId, (session) => {
           session.pendingUserInput = undefined
           session.status = 'idle'
@@ -2640,6 +2651,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.userInputs.delete(requestId)
       sdkPending.resolve({ answer, wasFreeform: input.wasFreeform })
     } else if (requestId.startsWith('persisted-user-input:')) {
+      this.answeredPersistedInputs.set(sessionId, {
+        requestId,
+        expiresAt: Date.now() + 60_000,
+      })
       const cleared = await this.store.update(sessionId, (session) => {
         session.pendingUserInput = undefined
         session.status = 'idle'
@@ -2960,11 +2975,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         const version = await this.sessionEventVersion(sessionId)
         if (!version || this.eventLogVersions.get(sessionId) === version) {
+          await this.recoverHiddenUserInput(sessionId)
           return
         }
         const events = await this.sessionEventReader(sessionId)
         const fingerprint = `${events.length}:${events.at(-1)?.id || ''}`
         if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
+          await this.recoverHiddenUserInput(sessionId, events)
           return
         }
         const stored = this.store.get(sessionId)
@@ -2988,6 +3005,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             Date.parse(lastEventTimestamp) < Date.parse(watermark))
         ) {
           this.eventLogVersions.set(sessionId, version)
+          await this.recoverHiddenUserInput(sessionId, events)
           return
         }
         let status = syncedUserInput
@@ -3072,8 +3090,72 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
   }
 
-  private async syncTerminalUserInput(sessionId: string): Promise<void> {
+  /**
+   * An ask-user request only reaches the UI through a transcript sync, but the
+   * agent stops writing events while it waits for the answer. Every sync
+   * short-circuit therefore ends here, so a request recovered from the event
+   * log cannot stay invisible while the session waits forever.
+   */
+  private async recoverHiddenUserInput(
+    sessionId: string,
+    events?: SessionEvent[],
+  ): Promise<void> {
+    const stored = this.store.get(sessionId)
     if (
+      !stored ||
+      stored.pendingUserInput ||
+      stored.pendingPermission ||
+      this.activePrompts.has(sessionId) ||
+      this.deletedSessionIds.has(sessionId) ||
+      !this.hasUnansweredUserInputRow(stored)
+    ) {
+      return
+    }
+    const now = Date.now()
+    const answered = this.answeredPersistedInputs.get(sessionId)
+    if (answered && answered.expiresAt <= now) {
+      this.answeredPersistedInputs.delete(sessionId)
+    }
+    const pending = pendingUserInputFromEvents(
+      events || (await this.sessionEventReader(sessionId)),
+    )
+    if (
+      !pending ||
+      this.answeredPersistedInputs.get(sessionId)?.requestId ===
+        pending.requestId
+    ) {
+      return
+    }
+    const updated = await this.store.update(sessionId, (session) => {
+      if (session.pendingUserInput || session.pendingPermission) {
+        return
+      }
+      session.pendingUserInput = pending
+      session.status = 'waiting'
+      session.activity = pending.question
+    })
+    this.publish(updated)
+  }
+
+  /**
+   * Reads the newest running tool row only: an ask-user request that reached
+   * the transcript but not the session keeps this cheap for every other poll.
+   */
+  private hasUnansweredUserInputRow(stored: SessionDetail): boolean {
+    for (let index = stored.messages.length - 1; index >= 0; index -= 1) {
+      const message = stored.messages[index]
+      if (
+        message?.role !== 'activity' ||
+        message.activityStatus !== 'running'
+      ) {
+        continue
+      }
+      return message.content.startsWith('Ask User')
+    }
+    return false
+  }
+
+  private async syncTerminalUserInput(sessionId: string): Promise<void> {    if (
       !this.terminalController.pendingUserInput &&
       !this.terminalController.pendingPermission
     ) {

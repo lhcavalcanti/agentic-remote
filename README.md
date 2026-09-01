@@ -195,8 +195,11 @@ matrix.
 - **Runtime**: configure supported model, effort, context, and mode options.
 - **App settings**: configure separate default model IDs for Copilot and Claude.
 - **Session files**: browse, search, preview, and save Knowledge paths.
-- **Knowledge**: expand folders in place as a tree, with remembered expansion,
-  breadcrumbs, and keyboard navigation.
+- **Knowledge**: a per-session panel that docks beside the conversation or
+  expands over it, with an in-place folder tree, remembered expansion and
+  scroll position, breadcrumbs, and keyboard navigation.
+- **Shortcuts**: `Alt+↓`/`Alt+↑` move between sessions, `Alt+K` opens or closes
+  the knowledge panel, and `Alt+Shift+K` expands or minimizes it.
 - **Paperclip / microphone**: upload supported files or transcribe audio.
 
 Copilot sessions can be tmux-backed:

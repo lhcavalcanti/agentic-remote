@@ -57,8 +57,10 @@ import {
   List,
   LoaderCircle,
   ListPlus,
+  Maximize2,
   Menu,
   MessageSquare,
+  Minimize2,
   Mic,
   MonitorCog,
   Paperclip,
@@ -306,6 +308,20 @@ type ComposerHistoryState = {
   messages: string[]
   index: number
   draft: string
+}
+
+/**
+ * How much room a session's Knowledge panel takes. `expanded` covers the
+ * conversation so a document can be read at full width without losing the
+ * session it belongs to.
+ */
+type KnowledgePanelMode = 'hidden' | 'docked' | 'expanded'
+
+/** Where a session's Knowledge panel was last reading. */
+type KnowledgePosition = {
+  rootId?: string
+  path?: string
+  file?: string
 }
 
 const defaultModelSettings: DefaultModelSettings = {
@@ -1604,6 +1620,7 @@ function AppSettingsDialog({
       onClose={onClose}
       title="App settings"
     >
+      <div className="app-settings-dialog__sections">
       {shellSettingsAvailable() && (
         <section className="app-settings-section">
           <h3>Hub connection</h3>
@@ -1794,6 +1811,28 @@ function AppSettingsDialog({
           settings={statusline}
         />
       </section>
+
+      <section className="app-settings-section">
+        <h3>Keyboard shortcuts</h3>
+        <p className="dialog-message">
+          Available on a keyboard, outside dialogs and the message box.
+        </p>
+        <ul className="shortcut-list">
+          {[
+            ['Next session', 'Alt + \u2193'],
+            ['Previous session', 'Alt + \u2191'],
+            ['Open or close knowledge', 'Alt + K'],
+            ['Expand or minimize knowledge', 'Alt + Shift + K'],
+            ['Recall previous message', '\u2191'],
+          ].map(([label, keys]) => (
+            <li key={label}>
+              <span>{label}</span>
+              <kbd>{keys}</kbd>
+            </li>
+          ))}
+        </ul>
+      </section>
+      </div>
     </DialogFrame>
   )
 }
@@ -4115,9 +4154,16 @@ function App() {
   const [workspaceInitialKind, setWorkspaceInitialKind] = useState<
     'file' | 'folder'
   >()
-  const [sidebarMode, setSidebarMode] = useState<'sessions' | 'knowledge'>(
-    'sessions',
-  )
+  // Knowledge belongs to a session now, so each one remembers whether its
+  // panel is open and how much room it takes from the conversation.
+  const [knowledgePanels, setKnowledgePanels] = useState<
+    Record<string, KnowledgePanelMode>
+  >(() => readStoredOrder('agentic-remote:knowledge-panels', {}))
+  const [knowledgePositions, setKnowledgePositions] = useState<
+    Record<string, KnowledgePosition>
+  >(() => readStoredOrder('agentic-remote:knowledge-session-positions', {}))
+  const knowledgeMode: KnowledgePanelMode =
+    (selectedKey && knowledgePanels[selectedKey]) || 'hidden'
   const [roots, setRoots] = useState<KnowledgeRoot[]>([])
   const [activeRootId, setActiveRootId] = useState<string | undefined>(() =>
     readStoredOrder<string | undefined>(
@@ -4137,6 +4183,21 @@ function App() {
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
   const knowledgeRequest = useRef(0)
+  const knowledgeRestoredKey = useRef<string>(undefined)
+  const appShortcutRef = useRef<(event: globalThis.KeyboardEvent) => void>(
+    () => {},
+  )
+  // Restoring a session's panel reads the newest values without re-running
+  // whenever the reader moves, which would fight the user's own navigation.
+  const knowledgePositionsRef = useRef<Record<string, KnowledgePosition>>({})
+  const knowledgeViewRef = useRef<KnowledgePosition>({})
+  const restoreKnowledgeRef = useRef<(position: KnowledgePosition) => void>(
+    () => {},
+  )
+  // Toggling the panel must not send the tree back to the top, so its scroll
+  // offset is kept across hides and session switches.
+  const knowledgeTreeRef = useRef<HTMLDivElement>(null)
+  const knowledgeScrollTops = useRef<Record<string, number>>({})
   // Bumped only when the active root changes, so a folder that is still
   // loading cannot write its entries into a different root's tree.
   const knowledgeRootGeneration = useRef(0)
@@ -4556,6 +4617,140 @@ function App() {
       JSON.stringify(knowledgeRootsOpen),
     )
   }, [knowledgeRootsOpen])
+
+  useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-panels',
+      JSON.stringify(knowledgePanels),
+    )
+  }, [knowledgePanels])
+
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      appShortcutRef.current(event)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify(knowledgePositions),
+    )
+  }, [knowledgePositions])
+
+  // The panel belongs to the session, so what it was reading is recorded
+  // against that session rather than globally.
+  useEffect(() => {
+    if (!knowledgeHydrated.current || !selectedKey || !activeRootId) {
+      return
+    }
+    setKnowledgePositions((current) => {
+      const existing = current[selectedKey]
+      const next: KnowledgePosition = {
+        rootId: activeRootId,
+        path: knowledgePath,
+        file: knowledgeFile?.path,
+      }
+      return existing &&
+        existing.rootId === next.rootId &&
+        existing.path === next.path &&
+        existing.file === next.file
+        ? current
+        : { ...current, [selectedKey]: next }
+    })
+  }, [activeRootId, knowledgeFile?.path, knowledgePath, selectedKey])
+
+  // Reopening a session with its panel open restores what that session was
+  // reading, instead of whatever the previously selected session left behind.
+  // Refreshed after every render so the restore below always sees the newest
+  // reader position and loaders without re-running on each of them.
+  useEffect(() => {
+    knowledgePositionsRef.current = knowledgePositions
+    knowledgeViewRef.current = {
+      rootId: activeRootId,
+      path: knowledgePath,
+      file: knowledgeFile?.path,
+    }
+    restoreKnowledgeRef.current = (position: KnowledgePosition) => {
+      const rootId = position.rootId
+      if (!rootId) {
+        return
+      }
+      void (async () => {
+        if (rootId !== activeRootId) {
+          await selectRoot(rootId)
+        }
+        if (position.path && position.path !== knowledgeRootPath) {
+          await openKnowledgeFolder(position.path, rootId)
+        }
+        if (position.file) {
+          await openKnowledgeFile(position.file, rootId)
+        }
+      })()
+    }
+  })
+
+  useEffect(() => {
+    if (
+      !selectedKey ||
+      knowledgeMode === 'hidden' ||
+      roots.length === 0 ||
+      knowledgeRestoredKey.current === selectedKey
+    ) {
+      return
+    }
+    knowledgeRestoredKey.current = selectedKey
+    const remembered = knowledgePositionsRef.current[selectedKey]
+    if (
+      !remembered?.rootId ||
+      !roots.some((root) => root.id === remembered.rootId)
+    ) {
+      return
+    }
+    const current = knowledgeViewRef.current
+    if (
+      remembered.rootId === current.rootId &&
+      remembered.path === current.path &&
+      remembered.file === current.file
+    ) {
+      return
+    }
+    restoreKnowledgeRef.current(remembered)
+  }, [knowledgeMode, selectedKey, roots])
+
+  // Reopening the panel puts the tree back where it was left, so switching
+  // between a session and its files does not lose the reader's place.
+  useLayoutEffect(() => {
+    const node = knowledgeTreeRef.current
+    if (!node || knowledgeMode === 'hidden' || !selectedKey) {
+      return
+    }
+    const remembered = knowledgeScrollTops.current[selectedKey]
+    if (remembered !== undefined) {
+      node.scrollTop = remembered
+      // The tree grows as folders finish loading, so the offset is applied
+      // again once that layout settles.
+      requestAnimationFrame(() => {
+        if (node.isConnected && !node.closest('[hidden]')) {
+          node.scrollTop = remembered
+        }
+      })
+    }
+    const record = () => {
+      // A hidden panel reports 0, which would erase the position it is
+      // supposed to keep.
+      if (!node.closest('[hidden]')) {
+        knowledgeScrollTops.current[selectedKey] = node.scrollTop
+      }
+    }
+    node.addEventListener('scroll', record, { passive: true })
+    return () => {
+      record()
+      node.removeEventListener('scroll', record)
+    }
+  }, [knowledgeMode, selectedKey])
 
   useEffect(() => {
     void listKnowledgeRoots()
@@ -5298,6 +5493,44 @@ function App() {
 
   const activeRoot = roots.find((root) => root.id === activeRootId)
 
+  function setKnowledgeMode(mode: KnowledgePanelMode) {
+    if (!selectedKey) {
+      return
+    }
+    setKnowledgePanels((current) => ({ ...current, [selectedKey]: mode }))
+  }
+
+  function toggleKnowledgePanel() {
+    setKnowledgeMode(knowledgeMode === 'hidden' ? 'docked' : 'hidden')
+  }
+
+  function toggleKnowledgeExpanded() {
+    // Expanding from a closed panel opens it directly at full width, so one
+    // shortcut is enough to start reading.
+    setKnowledgeMode(knowledgeMode === 'expanded' ? 'docked' : 'expanded')
+  }
+
+  function stepSession(direction: -1 | 1) {
+    const ordered = orderedComputers.flatMap(
+      (computer) => sessionsByComputer.get(computer.id) || [],
+    )
+    if (ordered.length === 0) {
+      return
+    }
+    const index = ordered.findIndex(
+      (session) => sessionKey(session) === selectedKey,
+    )
+    const next =
+      ordered[
+        index < 0
+          ? 0
+          : (index + direction + ordered.length) % ordered.length
+      ]
+    if (next) {
+      selectSession(next)
+    }
+  }
+
   // Stable identity: a new loader each render would remount every image and
   // restart its download.
   const loadKnowledgeAsset = useCallback(
@@ -5399,6 +5632,35 @@ function App() {
     await loadKnowledgeChain(rootId, path)
   }
 
+  // Bound to the window rather than the shell: closing a panel moves focus
+  // back to the body, and the next shortcut must still work from there.
+  appShortcutRef.current = (event: globalThis.KeyboardEvent) => {
+    if (
+      !event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.defaultPrevented ||
+      hasBlockingUi
+    ) {
+      return
+    }
+    // Matched on `code`, so a macOS Option key that rewrites the character
+    // still resolves to the same physical key.
+    if (event.code === 'ArrowDown' || event.code === 'ArrowUp') {
+      event.preventDefault()
+      stepSession(event.code === 'ArrowDown' ? 1 : -1)
+      return
+    }
+    if (event.code === 'KeyK') {
+      event.preventDefault()
+      if (event.shiftKey) {
+        toggleKnowledgeExpanded()
+      } else {
+        toggleKnowledgePanel()
+      }
+    }
+  }
+
   function collapseKnowledgeTree() {
     setExpandedKnowledge([])
     setKnowledgePath(knowledgeRootPath)
@@ -5466,9 +5728,9 @@ function App() {
       ?.focus()
   }
 
-  async function openKnowledgeFile(path: string) {
+  async function openKnowledgeFile(path: string, rootOverride?: string) {
     knowledgeHydrated.current = true
-    const rootId = activeRootId
+    const rootId = rootOverride || activeRootId
     if (!rootId) {
       return
     }
@@ -6120,7 +6382,6 @@ function App() {
       event.ctrlKey ||
       event.metaKey ||
       event.shiftKey ||
-      sidebarMode !== 'sessions' ||
       hasBlockingUi ||
       sortableDragActiveRef.current
     ) {
@@ -6130,7 +6391,7 @@ function App() {
     if (
       target instanceof Element &&
       target.closest(
-        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle',
+        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle, .knowledge-panel',
       )
     ) {
       return
@@ -6366,248 +6627,28 @@ function App() {
           </button>
         </div>
 
-        <div aria-label="Sidebar section" className="sidebar-switch" role="tablist">
+        <div className="sidebar-actions">
           <button
-            aria-selected={sidebarMode === 'sessions'}
-            className={sidebarMode === 'sessions' ? 'is-active' : ''}
-            onClick={() => setSidebarMode('sessions')}
-            role="tab"
+            className="new-session-button"
+            onClick={() => setNewSessionOpen(true)}
             type="button"
           >
-            Sessions
+            <Plus size={18} />
+            New session
           </button>
           <button
-            aria-selected={sidebarMode === 'knowledge'}
-            className={sidebarMode === 'knowledge' ? 'is-active' : ''}
-            onClick={() => setSidebarMode('knowledge')}
-            role="tab"
+            aria-label="Manage computers"
+            className="manage-computers-button"
+            onClick={() => setComputersOpen(true)}
             type="button"
           >
-            Knowledge
+            <MonitorCog size={18} />
           </button>
         </div>
 
-        {sidebarMode === 'sessions' ? (
-          <div className="sidebar-actions">
-            <button
-              className="new-session-button"
-              onClick={() => setNewSessionOpen(true)}
-              type="button"
-            >
-              <Plus size={18} />
-              New session
-            </button>
-            <button
-              aria-label="Manage computers"
-              className="manage-computers-button"
-              onClick={() => setComputersOpen(true)}
-              type="button"
-            >
-              <MonitorCog size={18} />
-            </button>
-          </div>
-        ) : null}
-
         <div className="sidebar__body">
-          {sidebarMode === 'knowledge' ? (
-            <nav aria-label="Knowledge" className="session-list knowledge-tree">
-              {roots.length === 0 ? (
-                <p className="sidebar-message">
-                  Add a knowledge root to browse a folder on any computer.
-                </p>
-              ) : null}
-              {roots.length > 0 ? (
-                <div className="knowledge-roots">
-                  <button
-                    aria-expanded={knowledgeRootsOpen}
-                    className="knowledge-roots__summary"
-                    onClick={() => setKnowledgeRootsOpen(!knowledgeRootsOpen)}
-                    type="button"
-                  >
-                    <ChevronRight
-                      aria-hidden="true"
-                      className={`knowledge-chevron${
-                        knowledgeRootsOpen ? ' knowledge-chevron--open' : ''
-                      }`}
-                      size={13}
-                    />
-                    <span className="sidebar-label">Roots</span>
-                    <em>{roots.length}</em>
-                  </button>
-                  {knowledgeRootsOpen
-                    ? roots.map((root) => (
-                        <div className="knowledge-root" key={root.id}>
-                          <button
-                            aria-current={
-                              root.id === activeRootId ? 'true' : undefined
-                            }
-                            className={root.id === activeRootId ? 'is-active' : ''}
-                            onClick={() => void selectRoot(root.id)}
-                            type="button"
-                          >
-                            <FolderOpen size={15} />
-                            <span>
-                              <strong>{root.name}</strong>
-                              <small>
-                                {root.computerName} · {root.path}
-                              </small>
-                            </span>
-                          </button>
-                          <button
-                            aria-label={`Remove ${root.name} root`}
-                            className="icon-button icon-button--danger knowledge-root__remove"
-                            onClick={() => void removeRoot(root.id)}
-                            type="button"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      ))
-                    : null}
-                </div>
-              ) : null}
-              {activeRoot ? (
-                <>
-                  <div className="knowledge-toolbar">
-                    <div
-                      aria-label="Knowledge folder"
-                      className="knowledge-crumbs"
-                      role="group"
-                    >
-                      {knowledgeCrumbs(knowledgePath, activeRoot.name).map(
-                        (crumb, index, all) => (
-                          <span key={crumb.path}>
-                            {index > 0 ? (
-                              <span
-                                aria-hidden="true"
-                                className="knowledge-crumbs__sep"
-                              >
-                                /
-                              </span>
-                            ) : null}
-                            <button
-                              aria-current={
-                                index === all.length - 1 ? 'true' : undefined
-                              }
-                              onClick={() =>
-                                void openKnowledgeFolder(crumb.path)
-                              }
-                              type="button"
-                            >
-                              {crumb.name}
-                            </button>
-                          </span>
-                        ),
-                      )}
-                    </div>
-                    <button
-                      aria-label="Collapse all folders"
-                      className="icon-button"
-                      disabled={expandedKnowledge.length === 0}
-                      onClick={collapseKnowledgeTree}
-                      type="button"
-                    >
-                      <ChevronsDownUp size={14} />
-                    </button>
-                  </div>
-                  <div
-                    className="knowledge-nodes"
-                    onKeyDown={knowledgeTreeKeyDown}
-                    role="tree"
-                  >
-                    {knowledgeTreeRows(knowledgeFolders, expandedKnowledge).map(
-                      (row) =>
-                        row.type === 'status' ? (
-                          <p
-                            className={`knowledge-node__status${
-                              row.variant === 'error'
-                                ? ' knowledge-node__status--error'
-                                : ''
-                            }`}
-                            key={`${row.variant}:${row.path}`}
-                            style={
-                              {
-                                '--knowledge-depth': row.depth,
-                              } as CSSProperties
-                            }
-                          >
-                            {row.variant === 'loading'
-                              ? 'Loading…'
-                              : row.variant === 'empty'
-                                ? 'Empty folder'
-                                : row.message}
-                          </p>
-                        ) : (
-                          <button
-                            aria-current={
-                              knowledgeFile?.path === row.path
-                                ? 'page'
-                                : undefined
-                            }
-                            aria-expanded={
-                              row.expandable ? row.expanded : undefined
-                            }
-                            aria-level={row.depth + 1}
-                            className={`knowledge-node${
-                              knowledgeFile?.path === row.path
-                                ? ' knowledge-node--active'
-                                : ''
-                            }`}
-                            data-knowledge-path={row.path}
-                            key={row.path}
-                            onClick={() =>
-                              row.expandable
-                                ? void toggleKnowledgeFolder(row.path)
-                                : void openKnowledgeFile(row.path)
-                            }
-                            role="treeitem"
-                            style={
-                              {
-                                '--knowledge-depth': row.depth,
-                              } as CSSProperties
-                            }
-                            type="button"
-                          >
-                            {row.expandable ? (
-                              <ChevronRight
-                                aria-hidden="true"
-                                className={`knowledge-chevron${
-                                  row.expanded ? ' knowledge-chevron--open' : ''
-                                }`}
-                                size={13}
-                              />
-                            ) : (
-                              <span
-                                aria-hidden="true"
-                                className="knowledge-chevron knowledge-chevron--leaf"
-                              />
-                            )}
-                            {row.expandable ? (
-                              row.expanded ? (
-                                <FolderOpen size={14} />
-                              ) : (
-                                <Folder size={14} />
-                              )
-                            ) : (
-                              <FileText size={14} />
-                            )}
-                            <span className="knowledge-node__name">
-                              {row.entry.name}
-                            </span>
-                          </button>
-                        ),
-                    )}
-                  </div>
-                </>
-              ) : null}
-            </nav>
-          ) : null}
 
-          <nav
-            aria-label="Sessions"
-            className="session-list"
-            hidden={sidebarMode !== 'sessions'}
-          >
+          <nav aria-label="Sessions" className="session-list">
             <p className="sidebar-label">Recent</p>
             {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
             {!loading && sessions.length === 0 ? (
@@ -6654,7 +6695,9 @@ function App() {
             aria-label="Add knowledge root"
             className="sidebar-settings__button"
             onClick={() => {
-              setSidebarMode('knowledge')
+              if (knowledgeMode === 'hidden') {
+                setKnowledgeMode('docked')
+              }
               setAddRootOpen(true)
             }}
             type="button"
@@ -6692,60 +6735,9 @@ function App() {
         />
       ) : null}
 
-      {sidebarMode === 'knowledge' ? (
-        <main className="conversation conversation--knowledge">
-          <header className="conversation-header">
-            <button
-              aria-label="Open sessions"
-              className="icon-button mobile-menu"
-              onClick={() => setSidebarOpen(true)}
-              type="button"
-            >
-              <Menu size={21} />
-            </button>
-            <div className="conversation-header__title">
-              <strong>{activeRoot?.name || 'Knowledge'}</strong>
-              <span>
-                {activeRoot
-                  ? `${activeRoot.computerName} · ${activeRoot.path}`
-                  : 'Browse folders on any computer'}
-              </span>
-            </div>
-          </header>
-          {error ? (
-            <div className="error-banner">
-              <span>{error}</span>
-              <button
-                aria-label="Dismiss error"
-                onClick={() => setError(undefined)}
-              >
-                <X size={16} />
-              </button>
-            </div>
-          ) : null}
-          {activeRoot ? (
-            <KnowledgeReader
-              file={knowledgeFile}
-              key={knowledgeFile?.path || activeRoot.id}
-              listing={knowledgeListing}
-              loading={knowledgeLoading}
-              onLoadAsset={loadKnowledgeAsset}
-              onOpenFolder={(path) => void openKnowledgeFolder(path)}
-              root={activeRoot}
-            />
-          ) : (
-            <div className="knowledge-reader knowledge-reader--empty">
-              <BookOpen size={26} />
-              <p>
-                Add a knowledge root to read Markdown from any computer without
-                opening a session.
-              </p>
-            </div>
-          )}
-        </main>
-      ) : null}
 
-      <main className="conversation" hidden={sidebarMode === 'knowledge'}>
+      <div className={`workspace workspace--${knowledgeMode}`}>
+      <main className="conversation" hidden={knowledgeMode === 'expanded'}>
         <header className="conversation-header">
           <button
             aria-label="Open sessions"
@@ -6767,6 +6759,18 @@ function App() {
                 : 'Ready when you are'}
             </span>
           </div>
+          {selected ? (
+            <button
+              aria-label="Session knowledge"
+              aria-pressed={knowledgeMode !== 'hidden'}
+              className="icon-button"
+              onClick={toggleKnowledgePanel}
+              title="Knowledge for this session (Alt+K)"
+              type="button"
+            >
+              <BookOpen size={18} />
+            </button>
+          ) : null}
           {selected ? (
             <button
               aria-label="Browse current session folder"
@@ -7302,6 +7306,273 @@ function App() {
           </footer>
         ) : null}
       </main>
+
+      <aside
+        aria-label="Session knowledge"
+        className="knowledge-panel"
+        hidden={knowledgeMode === 'hidden'}
+      >
+        <header className="knowledge-panel__header">
+          <BookOpen aria-hidden="true" size={16} />
+          <div className="knowledge-panel__title">
+            <strong>{activeRoot?.name || 'Knowledge'}</strong>
+            <small>
+              {activeRoot
+                ? `${activeRoot.computerName} · ${activeRoot.path}`
+                : 'Add a root to read files beside this session'}
+            </small>
+          </div>
+          <button
+            aria-label="New knowledge root"
+            className="icon-button"
+            onClick={() => setAddRootOpen(true)}
+            type="button"
+          >
+            <Plus size={16} />
+          </button>
+          <button
+            aria-label={
+              knowledgeMode === 'expanded'
+                ? 'Minimize knowledge panel'
+                : 'Expand knowledge panel'
+            }
+            className="icon-button"
+            onClick={toggleKnowledgeExpanded}
+            title="Alt+Shift+K"
+            type="button"
+          >
+            {knowledgeMode === 'expanded' ? (
+              <Minimize2 size={16} />
+            ) : (
+              <Maximize2 size={16} />
+            )}
+          </button>
+          <button
+            aria-label="Close knowledge panel"
+            className="icon-button"
+            onClick={() => setKnowledgeMode('hidden')}
+            title="Alt+K"
+            type="button"
+          >
+            <X size={16} />
+          </button>
+        </header>
+        <div className="knowledge-panel__body">
+          <nav aria-label="Knowledge" className="knowledge-tree" ref={knowledgeTreeRef}>
+            {roots.length === 0 ? (
+              <p className="sidebar-message">
+                Add a knowledge root to browse a folder on any computer.
+              </p>
+            ) : null}
+            {roots.length > 0 ? (
+              <div className="knowledge-roots">
+                <button
+                  aria-expanded={knowledgeRootsOpen}
+                  className="knowledge-roots__summary"
+                  onClick={() => setKnowledgeRootsOpen(!knowledgeRootsOpen)}
+                  type="button"
+                >
+                  <ChevronRight
+                    aria-hidden="true"
+                    className={`knowledge-chevron${
+                      knowledgeRootsOpen ? ' knowledge-chevron--open' : ''
+                    }`}
+                    size={13}
+                  />
+                  <span className="sidebar-label">Roots</span>
+                  <em>{roots.length}</em>
+                </button>
+                {knowledgeRootsOpen
+                  ? roots.map((root) => (
+                      <div className="knowledge-root" key={root.id}>
+                        <button
+                          aria-current={
+                            root.id === activeRootId ? 'true' : undefined
+                          }
+                          className={root.id === activeRootId ? 'is-active' : ''}
+                          onClick={() => void selectRoot(root.id)}
+                          type="button"
+                        >
+                          <FolderOpen size={15} />
+                          <span>
+                            <strong>{root.name}</strong>
+                            <small>
+                              {root.computerName} · {root.path}
+                            </small>
+                          </span>
+                        </button>
+                        <button
+                          aria-label={`Remove ${root.name} root`}
+                          className="icon-button icon-button--danger knowledge-root__remove"
+                          onClick={() => void removeRoot(root.id)}
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))
+                  : null}
+              </div>
+            ) : null}
+            {activeRoot ? (
+              <>
+                <div className="knowledge-toolbar">
+                  <div
+                    aria-label="Knowledge folder"
+                    className="knowledge-crumbs"
+                    role="group"
+                  >
+                    {knowledgeCrumbs(knowledgePath, activeRoot.name).map(
+                      (crumb, index, all) => (
+                        <span key={crumb.path}>
+                          {index > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className="knowledge-crumbs__sep"
+                            >
+                              /
+                            </span>
+                          ) : null}
+                          <button
+                            aria-current={
+                              index === all.length - 1 ? 'true' : undefined
+                            }
+                            onClick={() =>
+                              void openKnowledgeFolder(crumb.path)
+                            }
+                            type="button"
+                          >
+                            {crumb.name}
+                          </button>
+                        </span>
+                      ),
+                    )}
+                  </div>
+                  <button
+                    aria-label="Collapse all folders"
+                    className="icon-button"
+                    disabled={expandedKnowledge.length === 0}
+                    onClick={collapseKnowledgeTree}
+                    type="button"
+                  >
+                    <ChevronsDownUp size={14} />
+                  </button>
+                </div>
+                <div
+                  className="knowledge-nodes"
+                  onKeyDown={knowledgeTreeKeyDown}
+                  role="tree"
+                >
+                  {knowledgeTreeRows(knowledgeFolders, expandedKnowledge).map(
+                    (row) =>
+                      row.type === 'status' ? (
+                        <p
+                          className={`knowledge-node__status${
+                            row.variant === 'error'
+                              ? ' knowledge-node__status--error'
+                              : ''
+                          }`}
+                          key={`${row.variant}:${row.path}`}
+                          style={
+                            {
+                              '--knowledge-depth': row.depth,
+                            } as CSSProperties
+                          }
+                        >
+                          {row.variant === 'loading'
+                            ? 'Loading…'
+                            : row.variant === 'empty'
+                              ? 'Empty folder'
+                              : row.message}
+                        </p>
+                      ) : (
+                        <button
+                          aria-current={
+                            knowledgeFile?.path === row.path
+                              ? 'page'
+                              : undefined
+                          }
+                          aria-expanded={
+                            row.expandable ? row.expanded : undefined
+                          }
+                          aria-level={row.depth + 1}
+                          className={`knowledge-node${
+                            knowledgeFile?.path === row.path
+                              ? ' knowledge-node--active'
+                              : ''
+                          }`}
+                          data-knowledge-path={row.path}
+                          key={row.path}
+                          onClick={() =>
+                            row.expandable
+                              ? void toggleKnowledgeFolder(row.path)
+                              : void openKnowledgeFile(row.path)
+                          }
+                          role="treeitem"
+                          style={
+                            {
+                              '--knowledge-depth': row.depth,
+                            } as CSSProperties
+                          }
+                          type="button"
+                        >
+                          {row.expandable ? (
+                            <ChevronRight
+                              aria-hidden="true"
+                              className={`knowledge-chevron${
+                                row.expanded ? ' knowledge-chevron--open' : ''
+                              }`}
+                              size={13}
+                            />
+                          ) : (
+                            <span
+                              aria-hidden="true"
+                              className="knowledge-chevron knowledge-chevron--leaf"
+                            />
+                          )}
+                          {row.expandable ? (
+                            row.expanded ? (
+                              <FolderOpen size={14} />
+                            ) : (
+                              <Folder size={14} />
+                            )
+                          ) : (
+                            <FileText size={14} />
+                          )}
+                          <span className="knowledge-node__name">
+                            {row.entry.name}
+                          </span>
+                        </button>
+                      ),
+                  )}
+                </div>
+              </>
+            ) : null}
+          </nav>
+          <div className="knowledge-panel__reader">
+            {activeRoot ? (
+              <KnowledgeReader
+                file={knowledgeFile}
+                key={knowledgeFile?.path || activeRoot.id}
+                listing={knowledgeListing}
+                loading={knowledgeLoading}
+                onLoadAsset={loadKnowledgeAsset}
+                onOpenFolder={(path) => void openKnowledgeFolder(path)}
+                root={activeRoot}
+              />
+            ) : (
+              <div className="knowledge-reader knowledge-reader--empty">
+                <BookOpen size={26} />
+                <p>
+                  Add a knowledge root to read files from any computer beside
+                  this session.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
+      </div>
 
       <NewSessionDialog
         computers={computers}

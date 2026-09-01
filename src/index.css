@@ -234,32 +234,113 @@ button {
   cursor: pointer;
 }
 
-.sidebar-switch {
+/* Conversation and its session knowledge sit in one grid, so the panel can
+   take room from the conversation or cover it entirely. */
+.workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace--docked {
+  --knowledge-width: clamp(320px, 34%, 560px);
+
+  grid-template-columns: minmax(0, 1fr) var(--knowledge-width);
+}
+
+.workspace--expanded {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.knowledge-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: rgba(23, 24, 21, 0.94);
+}
+
+.knowledge-panel[hidden] {
+  display: none;
+}
+
+.knowledge-panel__header {
   display: flex;
   flex: 0 0 auto;
-  margin: 0 14px 12px;
-  padding: 3px;
-  gap: 3px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-soft);
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-strong);
 }
 
-.sidebar-switch button {
+.knowledge-panel__title {
+  display: flex;
+  min-width: 0;
   flex: 1;
-  padding: 6px 0;
-  color: var(--muted);
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  font-size: 12px;
-  font-weight: 650;
-  cursor: pointer;
+  flex-direction: column;
 }
 
-.sidebar-switch button.is-active {
-  color: #111210;
-  background: var(--accent);
+.knowledge-panel__title strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-panel__title small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-panel__body {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-rows: minmax(0, 40%) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+/* Expanded gets the width back, so the tree and the document sit side by
+   side instead of stacking into two short scrollers. */
+.workspace--expanded .knowledge-panel__body {
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+}
+
+.knowledge-panel .knowledge-tree {
+  min-height: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace--expanded .knowledge-panel .knowledge-tree {
+  border-right: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.knowledge-panel__reader {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.knowledge-panel__reader .knowledge-reader {
+  min-height: 0;
+  height: 100%;
 }
 
 .knowledge-tree .workspace-entry {
@@ -2010,6 +2091,55 @@ button {
   overflow-y: auto;
 }
 
+@media (min-width: 900px) {
+  .dialog.app-settings-dialog {
+    width: min(100%, 940px);
+  }
+
+  .app-settings-dialog__sections {
+    display: grid;
+    align-items: start;
+    gap: 0 28px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-settings-dialog__sections > .app-settings-section:nth-of-type(2) {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+
+.shortcut-list {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shortcut-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.shortcut-list span {
+  color: var(--muted-strong);
+}
+
+.shortcut-list kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .app-settings-section {
   padding: 18px 0;
   border-top: 1px solid var(--border);
@@ -3033,6 +3163,40 @@ button {
 
   .sidebar-resizer {
     display: none;
+  }
+
+  /* There is no room to split a phone, so the panel covers the conversation
+     whenever it is open. */
+  .workspace,
+  .workspace--docked,
+  .workspace--expanded {
+    display: block;
+    position: relative;
+    height: 100%;
+  }
+
+  .workspace--docked .knowledge-panel,
+  .workspace--expanded .knowledge-panel {
+    position: absolute;
+    z-index: 6;
+    inset: 0;
+    border-left: 0;
+    background: var(--bg);
+  }
+
+  .workspace--docked .conversation {
+    display: none;
+  }
+
+  .workspace--docked .knowledge-panel__body,
+  .workspace--expanded .knowledge-panel__body {
+    grid-template-rows: minmax(0, 40%) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace--expanded .knowledge-panel .knowledge-tree {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 
   .app-shell {

@@ -286,6 +286,11 @@ switches, failed sends, and clear replacement IDs.
 - The reader MUST reopen the root, folder, and document last being read, so
   returning does not mean choosing them again. Changing folder MUST remain an
   explicit action.
+- Knowledge MUST open as a panel belonging to the selected session, docked
+  beside the conversation or expanded over it, and MUST NOT be a second
+  sidebar tab. Each session keeps its own panel state and reading position.
+- Reopening the panel MUST resume the tree where it was left rather than
+  scrolling back to the top.
 - Folders MUST expand in place as a tree rather than replacing the listing, so
   a parent stays visible while a child is open. Children are loaded on first
   expansion and reused afterwards.

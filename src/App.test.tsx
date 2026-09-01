@@ -3483,7 +3483,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
 
     // The first root is selected automatically and listed without any session.
@@ -3517,11 +3517,16 @@ describe('App', () => {
       within(outline).getByRole('button', { name: 'Install' }),
     ).toBeInTheDocument()
 
-    // Switching back leaves the conversation intact.
-    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
+    // Closing the panel leaves the conversation and its sessions intact.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
     expect(
       screen.getByRole('navigation', { name: 'Sessions' }),
     ).not.toHaveAttribute('hidden')
+    expect(
+      document.querySelector('.knowledge-panel'),
+    ).toHaveAttribute('hidden')
   })
 
   it('expands knowledge folders in place and remembers them', async () => {
@@ -3564,7 +3569,7 @@ describe('App', () => {
     )
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
 
     const guides = await within(tree).findByRole('treeitem', {
@@ -3646,7 +3651,7 @@ describe('App', () => {
     })
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
 
     fireEvent.click(await within(tree).findByRole('treeitem', { name: /notes/ }))
@@ -3692,7 +3697,7 @@ describe('App', () => {
     )
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
     const guides = await within(tree).findByRole('treeitem', { name: /guides/ })
     guides.focus()
@@ -3732,14 +3737,21 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     fireEvent.click(
       await screen.findByRole('button', { name: 'Add knowledge root' }),
     )
-    fireEvent.click(await screen.findByRole('button', { name: /src/ }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Add this folder' }),
-    )
+    // Sessions stay visible beside the panel, so the folder has to be picked
+    // inside the dialog rather than anywhere on screen.
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(await within(rootDialog).findByRole('button', { name: /src/ }))
+    const addFolder = within(rootDialog).getByRole('button', {
+      name: 'Add this folder',
+    })
+    await waitFor(() => expect(addFolder).toBeEnabled())
+    fireEvent.click(addFolder)
 
     await waitFor(() =>
       expect(addKnowledgeRoot).toHaveBeenCalledWith({
@@ -3907,7 +3919,7 @@ describe('App', () => {
         'guides/setup.md',
       ),
     )
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     expect(
       await screen.findByRole('heading', { name: 'Setup guide' }),
     ).toBeInTheDocument()
@@ -3951,11 +3963,205 @@ describe('App', () => {
     )
   })
 
+  it('keeps a knowledge panel per session with its own mode', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const panel = document.querySelector('.knowledge-panel')
+    expect(panel).toHaveAttribute('hidden')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--docked',
+    )
+
+    // The panel belongs to the session, so the other one stays closed.
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+    )
+    await waitFor(() =>
+      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
+        'hidden',
+      ),
+    )
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Project chat/ })[0]!,
+    )
+    await waitFor(() =>
+      expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+        'hidden',
+      ),
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-panels') || '{}',
+      ),
+    ).toMatchObject({ 'computer-1:session-1': 'docked' })
+  })
+
+  it('expands the knowledge panel over the conversation', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    expect(document.querySelector('.conversation')).not.toHaveAttribute(
+      'hidden',
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Expand knowledge panel' }),
+    )
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--expanded',
+    )
+    // Expanded covers the conversation instead of squeezing it.
+    expect(document.querySelector('.conversation')).toHaveAttribute('hidden')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Minimize knowledge panel' }),
+    )
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--docked',
+    )
+    expect(document.querySelector('.conversation')).not.toHaveAttribute(
+      'hidden',
+    )
+  })
+
+  it('restores the knowledge scroll position when the panel reopens', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: Array.from({ length: 40 }, (_, index) => ({
+        name: `note-${index}.md`,
+        path: `note-${index}.md`,
+        kind: 'markdown' as const,
+        size: 10,
+      })),
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    tree.scrollTop = 180
+    fireEvent.scroll(tree)
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
+    // A hidden panel reports 0; recording that would erase the position.
+    tree.scrollTop = 0
+    fireEvent.scroll(tree)
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+
+    // Reopening resumes where the reader was, instead of jumping to the top.
+    expect(
+      screen.getByRole('navigation', { name: 'Knowledge' }).scrollTop,
+    ).toBe(180)
+  })
+
+  it('drives sessions and the knowledge panel from the keyboard', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    // Shortcuts are bound to the window, so they work with focus anywhere.
+    const shell = window
+    const sessionItem = (title: RegExp) =>
+      screen
+        .getAllByRole('button', { name: title })
+        .find((item) => item.classList.contains('session-item'))!
+    expect(sessionItem(/Project chat/)).toHaveAttribute('aria-current', 'page')
+
+    fireEvent.keyDown(shell, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() =>
+      expect(sessionItem(/Second chat/)).toHaveAttribute('aria-current', 'page'),
+    )
+    fireEvent.keyDown(shell, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
+    await waitFor(() =>
+      expect(sessionItem(/Project chat/)).toHaveAttribute('aria-current', 'page'),
+    )
+
+    fireEvent.keyDown(shell, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+    fireEvent.keyDown(shell, {
+      key: 'K',
+      code: 'KeyK',
+      altKey: true,
+      shiftKey: true,
+    })
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--expanded',
+    )
+    fireEvent.keyDown(shell, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
+  })
+
+  it('lists the keyboard shortcuts in app settings', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    const shortcuts = await screen.findByRole('heading', {
+      name: 'Keyboard shortcuts',
+    })
+    const list = shortcuts.parentElement?.querySelector('.shortcut-list')
+    expect(list).toHaveTextContent('Next session')
+    expect(list).toHaveTextContent('Open or close knowledge')
+    expect(list).toHaveTextContent('Expand or minimize knowledge')
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    expect(screen.queryByLabelText('Knowledge')).not.toBeInTheDocument()
+    // Knowledge is a per-session panel now, closed until the session opens it.
+    expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
     expect(
       screen.getByRole('button', { name: 'Add knowledge root' }),
     ).toBeInTheDocument()

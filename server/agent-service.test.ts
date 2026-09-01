@@ -3806,6 +3806,108 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('re-surfaces an ask-user request a stale sync gate hid', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"user.message",
+        "id":"prompt",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{"content":"Plan the capacity move"}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":"prompt",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "toolTitle":"Asking user",
+          "arguments":{
+            "message":"Choose the capacity path",
+            "requestedSchema":{
+              "properties":{
+                "capacityPlan":{
+                  "type":"string",
+                  "title":"Capacity plan",
+                  "oneOf":[
+                    {"const":"use_default","title":"Use existing capacity"},
+                    {"const":"wait","title":"Wait for quota"}
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => events,
+      // The agent stops writing while it waits, so the log never changes again.
+      async () => 'hidden-question-v1',
+    )
+
+    await service.start()
+    await service.createSession(directory)
+    await service.refreshTranscripts()
+    const sessionId = client.session.sessionId
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+
+    // Reproduce the stuck session: the transcript kept the running ask-user
+    // row, but the request itself never reached the session.
+    await service.store.update(sessionId, (session) => {
+      session.pendingUserInput = undefined
+      session.status = 'running'
+      session.activity = 'Sent to terminal'
+    })
+    expect(service.store.get(sessionId)?.messages.at(-1)).toMatchObject({
+      role: 'activity',
+      activityStatus: 'running',
+      content: 'Ask User · Asking user',
+    })
+
+    // Every later poll short-circuits on the unchanged log, so recovery has to
+    // happen there or the request stays invisible forever.
+    await service.refreshTranscripts()
+
+    expect(service.store.get(sessionId)).toMatchObject({
+      status: 'waiting',
+      pendingUserInput: {
+        requestId: 'persisted-user-input:ask-call',
+        question: 'Choose the capacity path',
+      },
+    })
+    expect(
+      service.store.get(sessionId)?.pendingUserInput?.form?.fields.map(
+        (field) => field.name,
+      ),
+    ).toEqual(['capacityPlan'])
+
+    // Answering must not be undone by the same recovery on the next poll,
+    // because the log still has no completion for the call.
+    const answered = await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      {
+        answer: JSON.stringify({ capacityPlan: 'use_default' }),
+        wasFreeform: false,
+        values: { capacityPlan: 'use_default' },
+      },
+    )
+    expect(answered.pendingUserInput).toBeUndefined()
+    await service.refreshTranscripts()
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeUndefined()
+    await service.stop()
+  })
+
   it('detects and answers terminal permission requests', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

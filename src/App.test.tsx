@@ -891,6 +891,61 @@ describe('App', () => {
     ).toBeLessThan([...(stack?.children || [])].indexOf(response as Element))
   })
 
+  it('marks a running background agent as still working', async () => {
+    const runningSession: ManagedSession = {
+      ...session,
+      status: 'running',
+      messages: [
+        session.messages[0]!,
+        {
+          id: 'message-agent',
+          role: 'activity',
+          content: 'Agent (rubber-duck) · Final cache RCA review',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'running',
+        },
+        session.messages[2]!,
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([runningSession])
+    vi.mocked(getSession).mockResolvedValue(runningSession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The parent's last message reads as final, so the row has to say why the
+    // session is still running.
+    const row = document.querySelector('.activity-message--agent')
+    expect(row).toHaveTextContent('Agent (rubber-duck) · Final cache RCA review')
+    expect(row).toHaveTextContent('still working')
+  })
+
+  it('does not mark a finished background agent as still working', async () => {
+    const doneSession: ManagedSession = {
+      ...session,
+      messages: [
+        session.messages[0]!,
+        {
+          id: 'message-agent',
+          role: 'activity',
+          content: 'Agent (rubber-duck) · Final cache RCA review',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'completed',
+        },
+        session.messages[2]!,
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([doneSession])
+    vi.mocked(getSession).mockResolvedValue(doneSession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      document.querySelector('.activity-message--agent'),
+    ).not.toHaveTextContent('still working')
+  })
+
   it('opens app settings from the sessions panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -3530,6 +3585,50 @@ describe('App', () => {
       )
   })
 
+  it('shows the agent update the CLI is offering and can hide it', async () => {
+    const updateSession = {
+      ...session,
+      runtime: { mode: 'plan', updateAvailable: '1.0.83' },
+    }
+    vi.mocked(listSessions).mockResolvedValue([updateSession])
+    vi.mocked(getSession).mockResolvedValue(updateSession)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    expect(screen.getByTestId('web-statusline-update')).toHaveTextContent(
+      'v1.0.83 available',
+    )
+    expect(screen.getByTestId('web-statusline-update')).toHaveTextContent(
+      'run /update',
+    )
+
+    fireEvent.change(textarea, { target: { value: '/statusline' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(
+      await screen.findByRole('dialog', { name: 'Status line' }),
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Agent update available'))
+
+    expect(
+      screen.queryByTestId('web-statusline-update'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('hides the update segment when the CLI is not offering one', async () => {
+    const currentSession = {
+      ...session,
+      runtime: { mode: 'plan' },
+    }
+    vi.mocked(listSessions).mockResolvedValue([currentSession])
+    vi.mocked(getSession).mockResolvedValue(currentSession)
+    render(<App />)
+    await screen.findByLabelText('Message')
+
+    expect(
+      screen.queryByTestId('web-statusline-update'),
+    ).not.toBeInTheDocument()
+  })
+
   it('prevents runtime changes while the session is active', async () => {
     const runningSession = {
       ...session,
@@ -3801,13 +3900,16 @@ describe('App', () => {
     await waitFor(() =>
       expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', '.'),
     )
-    fireEvent.click(await within(tree).findByRole('button', { name: /guides/ }))
+    // Folders are tree items that expand in place instead of replacing the list.
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
     await waitFor(() =>
       expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
     )
 
     fireEvent.click(
-      await within(tree).findByRole('button', { name: /setup.md/ }),
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
     )
     expect(
       await screen.findByRole('heading', { name: 'Setup' }),
@@ -3830,6 +3932,197 @@ describe('App', () => {
     expect(
       screen.getByRole('navigation', { name: 'Sessions' }),
     ).not.toHaveAttribute('hidden')
+  })
+
+  it('expands knowledge folders in place and remembers them', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? {
+            path: 'guides',
+            parent: '.',
+            entries: [
+              {
+                name: 'setup.md',
+                path: 'guides/setup.md',
+                kind: 'markdown' as const,
+                size: 30,
+              },
+            ],
+          }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+              {
+                name: 'readme.md',
+                path: 'readme.md',
+                kind: 'markdown' as const,
+                size: 10,
+              },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    const guides = await within(tree).findByRole('treeitem', {
+      name: /guides/,
+    })
+    expect(guides).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(guides)
+    await within(tree).findByRole('treeitem', { name: /setup.md/ })
+
+    // Expanding keeps the surrounding folder visible instead of replacing it.
+    expect(
+      within(tree).getByRole('treeitem', { name: /readme.md/ }),
+    ).toBeInTheDocument()
+    expect(
+      within(tree).getByRole('treeitem', { name: /guides/ }),
+    ).toHaveAttribute('aria-expanded', 'true')
+    // Children are one level deeper, so the sidebar can indent them.
+    expect(
+      within(tree).getByRole('treeitem', { name: /setup.md/ }),
+    ).toHaveAttribute('aria-level', '2')
+
+    const crumbs = within(tree).getByRole('group', { name: 'Knowledge folder' })
+    expect(
+      within(crumbs).getByRole('button', { name: 'guides' }),
+    ).toHaveAttribute('aria-current', 'true')
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-expanded') || '{}',
+      ),
+    ).toEqual({ 'root-1': ['guides'] })
+
+    fireEvent.click(within(tree).getByRole('treeitem', { name: /guides/ }))
+    expect(
+      within(tree).queryByRole('treeitem', { name: /setup.md/ }),
+    ).not.toBeInTheDocument()
+
+    // Reopening a folder reuses what was already read.
+    const loads = vi.mocked(listKnowledgeEntries).mock.calls.length
+    fireEvent.click(within(tree).getByRole('treeitem', { name: /guides/ }))
+    await within(tree).findByRole('treeitem', { name: /setup.md/ })
+    expect(vi.mocked(listKnowledgeEntries).mock.calls.length).toBe(loads)
+
+    fireEvent.click(
+      within(tree).getByRole('button', { name: 'Collapse all folders' }),
+    )
+    expect(
+      within(tree).queryByRole('treeitem', { name: /setup.md/ }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the tree usable when one folder cannot be read', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) => {
+      if (path === 'notes') {
+        throw new Error('offline')
+      }
+      return {
+        path: '.',
+        entries: [
+          { name: 'notes', path: 'notes', kind: 'directory' as const },
+          {
+            name: 'readme.md',
+            path: 'readme.md',
+            kind: 'markdown' as const,
+            size: 10,
+          },
+        ],
+      }
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /notes/ }))
+
+    // The failure is reported on its own branch, not by blanking the tree.
+    expect(await within(tree).findByText('offline')).toBeInTheDocument()
+    expect(
+      within(tree).getByRole('treeitem', { name: /readme.md/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('expands and collapses knowledge folders from the keyboard', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? {
+            path: 'guides',
+            parent: '.',
+            entries: [
+              {
+                name: 'setup.md',
+                path: 'guides/setup.md',
+                kind: 'markdown' as const,
+                size: 30,
+              },
+            ],
+          }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    const guides = await within(tree).findByRole('treeitem', { name: /guides/ })
+    guides.focus()
+
+    fireEvent.keyDown(guides, { key: 'ArrowRight' })
+    const child = await within(tree).findByRole('treeitem', {
+      name: /setup.md/,
+    })
+
+    // Right again steps into the branch that was just opened.
+    fireEvent.keyDown(guides, { key: 'ArrowRight' })
+    expect(child).toHaveFocus()
+
+    // Left from a child returns to its folder, and closes it from there.
+    fireEvent.keyDown(child, { key: 'ArrowLeft' })
+    expect(guides).toHaveFocus()
+    fireEvent.keyDown(guides, { key: 'ArrowLeft' })
+    expect(
+      within(tree).queryByRole('treeitem', { name: /setup.md/ }),
+    ).not.toBeInTheDocument()
   })
 
   it('adds a knowledge root by picking a computer folder', async () => {

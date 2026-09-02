@@ -90,6 +90,7 @@ export interface SessionRuntimeInfo {
   contextEstimated?: boolean
   mode?: string
   allowAllPermissions?: boolean
+  updateAvailable?: string
 }
 
 export interface RuntimeModelOption {

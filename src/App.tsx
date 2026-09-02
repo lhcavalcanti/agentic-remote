@@ -45,6 +45,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronsDownUp,
   Command,
   Eraser,
   Folder,
@@ -151,6 +152,15 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import {
+  collapseKnowledgeFolder,
+  expandKnowledgeFolder,
+  knowledgeCrumbs,
+  knowledgePathChain,
+  knowledgeRootPath,
+  knowledgeTreeRows,
+  type KnowledgeFolders,
+} from './knowledge-tree'
 import { composerMaximumHeight } from './composer-sizing'
 import {
   activatePwaUpdate,
@@ -162,7 +172,23 @@ import {
   installedAsApp,
   pushNotificationsSupported,
   PWA_UPDATE_EVENT,
+  sessionNotificationTags,
 } from './pwa'
+import {
+  attentionCount,
+  nativeShell,
+  onShellDeepLink,
+  openShellSettings,
+  sendShellNotification,
+  setShellBadge,
+  shellSettingsAvailable,
+  withdrawShellNotifications,
+} from './shell'
+import {
+  notificationState,
+  shellNotifications,
+  type SessionNotificationState,
+} from './shell-notifications'
 
 function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string {
   return `${session.computerId}:${session.id}`
@@ -262,6 +288,7 @@ type StatuslineSettings = {
   contextUsage: boolean
   mode: boolean
   permissions: boolean
+  update: boolean
 }
 
 type DefaultRuntimeSelection = {
@@ -377,6 +404,7 @@ const defaultStatusline: StatuslineSettings = {
   contextUsage: true,
   mode: true,
   permissions: true,
+  update: true,
 }
 
 const timelineBottomThreshold = 48
@@ -397,6 +425,7 @@ const statuslineOptions: Array<{
   { key: 'contextUsage', label: 'Context usage' },
   { key: 'mode', label: 'Agent mode' },
   { key: 'permissions', label: 'Permission mode' },
+  { key: 'update', label: 'Agent update available' },
 ]
 
 const webCommands: SlashCommand[] = [
@@ -2033,6 +2062,23 @@ function AppSettingsDialog({
       onClose={onClose}
       title="App settings"
     >
+      {shellSettingsAvailable() && (
+        <section className="app-settings-section">
+          <h3>Hub connection</h3>
+          <p className="dialog-message">
+            This app is connected to a hub you chose when you installed it.
+            Change it if the hub moved or you entered the wrong address.
+          </p>
+          <button
+            className="secondary-button"
+            onClick={() => openShellSettings()}
+            type="button"
+          >
+            Change hub…
+          </button>
+        </section>
+      )}
+
       <section className="app-settings-section">
         <h3>Session defaults</h3>
         <p className="dialog-message">
@@ -2844,6 +2890,9 @@ function ActivityMessage({
   const [title, ...detailLines] = content.split('\n')
   const detail = detailLines.join('\n').trim()
   const isMcp = title.startsWith('MCP ·')
+  // A background agent is the one tool that routinely outlives the parent's
+  // last message, so a running one says so instead of looking finished.
+  const isAgent = title.startsWith('Agent (')
   const icon =
     status === 'failed' ? (
       <XCircle size={14} />
@@ -2856,11 +2905,14 @@ function ActivityMessage({
     <div
       className={`activity-message activity-message--${status || 'running'}${
         isMcp ? ' activity-message--mcp' : ''
-      }`}
+      }${isAgent ? ' activity-message--agent' : ''}`}
     >
       {icon}
       <span>
         <strong>{title}</strong>
+        {isAgent && status !== 'completed' && status !== 'failed' ? (
+          <em className="activity-message__note">still working</em>
+        ) : null}
         {detail ? <code>{detail}</code> : null}
       </span>
     </div>
@@ -4519,11 +4571,21 @@ function App() {
       undefined,
     ),
   )
-  const [knowledgeListing, setKnowledgeListing] = useState<WorkspaceListing>()
+  // Folders are cached per path and loaded only when expanded, so the tree can
+  // show structure without refetching a branch every time it reopens.
+  const [knowledgeFolders, setKnowledgeFolders] = useState<KnowledgeFolders>({})
+  const [expandedKnowledge, setExpandedKnowledge] = useState<string[]>([])
+  const [knowledgePath, setKnowledgePath] = useState(knowledgeRootPath)
+  const [knowledgeRootsOpen, setKnowledgeRootsOpen] = useState(() =>
+    readStoredOrder('agentic-remote:knowledge-roots-open', true),
+  )
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
   const knowledgeRequest = useRef(0)
+  // Bumped only when the active root changes, so a folder that is still
+  // loading cannot write its entries into a different root's tree.
+  const knowledgeRootGeneration = useRef(0)
   // Where the reader was left, so the next visit reopens it instead of asking
   // for the folder again.
   // Persisting is held back until the remembered position has been applied, so
@@ -4535,6 +4597,15 @@ function App() {
       {},
     ),
   )
+  const restoredKnowledgeExpansion = useRef(
+    readStoredOrder<Record<string, string[]>>(
+      'agentic-remote:knowledge-expanded',
+      {},
+    ),
+  )
+  // The folder the breadcrumb and the remembered position follow. It is only
+  // meaningful once that folder actually loaded.
+  const knowledgeListing = knowledgeFolders[knowledgePath]?.listing
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -4727,6 +4798,47 @@ function App() {
     () => sessions.find((session) => sessionKey(session) === selectedKey),
     [selectedKey, sessions],
   )
+  // The native shell shows how many sessions are blocked on the user. This is
+  // a no-op in a browser, so the badge never needs a capability check here.
+  useEffect(() => {
+    setShellBadge(attentionCount(sessions))
+  }, [sessions])
+  // An embedded webview gets no Web Push, so inside the shell the app raises
+  // its own notifications from the live session stream. A browser keeps using
+  // the hub's Web Push and must not double-notify, hence the shell check.
+  const notificationStateRef = useRef<Map<string, SessionNotificationState>>(
+    new Map(),
+  )
+  useEffect(() => {
+    if (!nativeShell()) {
+      return
+    }
+    const previous = notificationStateRef.current
+    notificationStateRef.current = notificationState(sessions)
+    for (const notification of shellNotifications(sessions, {
+      previous,
+      computerNames: new Map(
+        computers.map((computer) => [computer.id, computer.name]),
+      ),
+      mutedKeys: mutedSessions,
+      activeKey: selectedKey,
+      documentVisible: document.visibilityState === 'visible',
+    })) {
+      sendShellNotification(notification)
+    }
+  }, [computers, mutedSessions, selectedKey, sessions])
+  // An `agentic://` link may arrive before the session list has loaded, so the
+  // key is set optimistically and resolves once that session appears.
+  useEffect(
+    () =>
+      onShellDeepLink((target) => {
+        setSelectedKey(
+          sessionKey({ computerId: target.computerId, id: target.sessionId }),
+        )
+        setSidebarOpen(false)
+      }),
+    [],
+  )
   const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
   const hasBlockingUi =
     newSessionOpen ||
@@ -4870,6 +4982,28 @@ function App() {
   }, [activeRootId, knowledgeFile?.path, knowledgeListing?.path])
 
   useEffect(() => {
+    if (!knowledgeHydrated.current || !activeRootId) {
+      return
+    }
+    const stored = {
+      ...restoredKnowledgeExpansion.current,
+      [activeRootId]: expandedKnowledge,
+    }
+    restoredKnowledgeExpansion.current = stored
+    localStorage.setItem(
+      'agentic-remote:knowledge-expanded',
+      JSON.stringify(stored),
+    )
+  }, [activeRootId, expandedKnowledge])
+
+  useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-roots-open',
+      JSON.stringify(knowledgeRootsOpen),
+    )
+  }, [knowledgeRootsOpen])
+
+  useEffect(() => {
     void listKnowledgeRoots()
       .then(async (loaded) => {
         setRoots(loaded)
@@ -4884,19 +5018,29 @@ function App() {
           return
         }
         setActiveRootId(root.id)
+        const generation = ++knowledgeRootGeneration.current
         const request = ++knowledgeRequest.current
         const folder =
           root.id === remembered.rootId && remembered.path
             ? remembered.path
-            : '.'
+            : knowledgeRootPath
         try {
           const listing = await listKnowledgeEntries(root.id, folder).catch(
-            () => listKnowledgeEntries(root.id, '.'),
+            () => listKnowledgeEntries(root.id, knowledgeRootPath),
           )
           if (request !== knowledgeRequest.current) {
             return
           }
-          setKnowledgeListing(listing)
+          setKnowledgeFolders({ [folder]: { listing } })
+          setKnowledgePath(folder)
+          // The remembered folder may sit deep in the tree, so everything
+          // above it opens with it and the branch is visible on arrival.
+          setExpandedKnowledge((current) =>
+            expandKnowledgeFolder(current, folder),
+          )
+          void loadKnowledgeChain(root.id, folder, generation, {
+            [folder]: { listing },
+          })
           if (root.id === remembered.rootId && remembered.file) {
             const opened = await readKnowledgeFile(
               root.id,
@@ -5144,13 +5288,17 @@ function App() {
     if (!selectedComputerId || !selectedSessionId) {
       return
     }
-    const clearNotifications = () =>
+    const clearNotifications = () => {
+      withdrawShellNotifications(
+        sessionNotificationTags(selectedComputerId, selectedSessionId),
+      )
       void clearSessionPushNotifications(
         selectedComputerId,
         selectedSessionId,
       ).catch((caught: unknown) => {
         console.warn('Unable to clear opened session notifications:', caught)
       })
+    }
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         clearNotifications()
@@ -5603,31 +5751,165 @@ function App() {
     [activeRootId],
   )
 
-  async function openKnowledgeFolder(path = '.', rootId = activeRootId) {
+  async function loadKnowledgeFolder(
+    rootId: string,
+    path: string,
+    generation = knowledgeRootGeneration.current,
+  ): Promise<WorkspaceListing | undefined> {
+    setKnowledgeFolders((current) => ({
+      ...current,
+      [path]: { ...current[path], loading: true, error: undefined },
+    }))
+    try {
+      const listing = await listKnowledgeEntries(rootId, path)
+      // Switching roots invalidates every folder in flight, so a late reply
+      // cannot graft one root's entries onto another root's tree.
+      if (generation !== knowledgeRootGeneration.current) {
+        return undefined
+      }
+      setKnowledgeFolders((current) => ({
+        ...current,
+        [path]: { listing, loading: false },
+      }))
+      return listing
+    } catch (caught) {
+      if (generation === knowledgeRootGeneration.current) {
+        // Kept beside the folder that failed: one unreachable branch must not
+        // blank the rest of the tree.
+        setKnowledgeFolders((current) => ({
+          ...current,
+          [path]: {
+            ...current[path],
+            loading: false,
+            error: caught instanceof Error ? caught.message : String(caught),
+          },
+        }))
+      }
+      return undefined
+    }
+  }
+
+  /** Loads every folder above `path`, so a deep target is actually reachable. */
+  async function loadKnowledgeChain(
+    rootId: string,
+    path: string,
+    generation = knowledgeRootGeneration.current,
+    loaded: KnowledgeFolders = knowledgeFolders,
+  ) {
+    for (const folder of [knowledgeRootPath, ...knowledgePathChain(path)]) {
+      if (loaded[folder]?.listing) {
+        continue
+      }
+      await loadKnowledgeFolder(rootId, folder, generation)
+      if (generation !== knowledgeRootGeneration.current) {
+        return
+      }
+    }
+  }
+
+  async function toggleKnowledgeFolder(path: string) {
+    knowledgeHydrated.current = true
+    const rootId = activeRootId
     if (!rootId) {
       return
     }
-    // Responses can land out of order while roots or folders are switched, so
-    // only the newest request is allowed to write shared state.
-    const request = ++knowledgeRequest.current
-    setKnowledgeLoading(true)
-    setError(undefined)
-    try {
-      const listing = await listKnowledgeEntries(rootId, path)
-      if (request !== knowledgeRequest.current) {
-        return
+    if (expandedKnowledge.includes(path)) {
+      setExpandedKnowledge((current) => collapseKnowledgeFolder(current, path))
+      // Following the collapse keeps the breadcrumb pointing at something the
+      // tree still shows.
+      if (knowledgePath === path || knowledgePath.startsWith(`${path}/`)) {
+        setKnowledgePath(
+          knowledgePathChain(path).slice(0, -1).pop() || knowledgeRootPath,
+        )
       }
-      setKnowledgeListing(listing)
-      setKnowledgeFile(undefined)
-    } catch (caught) {
-      if (request === knowledgeRequest.current) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      }
-    } finally {
-      if (request === knowledgeRequest.current) {
-        setKnowledgeLoading(false)
-      }
+      return
     }
+    setExpandedKnowledge((current) => expandKnowledgeFolder(current, path))
+    setKnowledgePath(path)
+    if (!knowledgeFolders[path]?.listing) {
+      await loadKnowledgeFolder(rootId, path)
+    }
+  }
+
+  async function openKnowledgeFolder(
+    path = knowledgeRootPath,
+    rootId = activeRootId,
+  ) {
+    knowledgeHydrated.current = true
+    if (!rootId) {
+      return
+    }
+    setExpandedKnowledge((current) => expandKnowledgeFolder(current, path))
+    setKnowledgePath(path)
+    setKnowledgeFile(undefined)
+    await loadKnowledgeChain(rootId, path)
+  }
+
+  function collapseKnowledgeTree() {
+    setExpandedKnowledge([])
+    setKnowledgePath(knowledgeRootPath)
+  }
+
+  function knowledgeTreeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      !['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(
+        event.key,
+      )
+    ) {
+      return
+    }
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>(
+        '[role="treeitem"]',
+      ),
+    )
+    if (items.length === 0) {
+      return
+    }
+    const index = items.indexOf(
+      document.activeElement as HTMLButtonElement,
+    )
+    const focusAt = (next: number) => {
+      items[Math.min(Math.max(next, 0), items.length - 1)]?.focus()
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      focusAt(event.key === 'ArrowDown' ? index + 1 : index - 1)
+      return
+    }
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      focusAt(event.key === 'Home' ? 0 : items.length - 1)
+      return
+    }
+    const current = index >= 0 ? items[index] : undefined
+    const path = current?.dataset.knowledgePath
+    if (!current || !path) {
+      return
+    }
+    const expanded = current.getAttribute('aria-expanded')
+    event.preventDefault()
+    if (event.key === 'ArrowRight') {
+      // Right opens a closed folder, then steps into what it revealed.
+      if (expanded === 'false') {
+        void toggleKnowledgeFolder(path)
+      } else if (expanded === 'true') {
+        focusAt(index + 1)
+      }
+      return
+    }
+    if (expanded === 'true') {
+      void toggleKnowledgeFolder(path)
+      return
+    }
+    const parent = knowledgePathChain(path).slice(0, -1).pop()
+    items
+      .find((item) => item.dataset.knowledgePath === parent)
+      ?.focus()
   }
 
   async function openKnowledgeFile(path: string) {
@@ -5661,10 +5943,24 @@ function App() {
 
   async function selectRoot(rootId: string) {
     knowledgeHydrated.current = true
+    const generation = ++knowledgeRootGeneration.current
     setActiveRootId(rootId)
     setKnowledgeFile(undefined)
-    setKnowledgeListing(undefined)
-    await openKnowledgeFolder('.', rootId)
+    setKnowledgeFolders({})
+    setKnowledgePath(knowledgeRootPath)
+    // Reopening a root restores the branches that were open in it, bounded so
+    // a very wide tree cannot fan out into unbounded requests.
+    const remembered = (
+      restoredKnowledgeExpansion.current[rootId] || []
+    ).slice(0, 24)
+    setExpandedKnowledge(remembered)
+    await loadKnowledgeFolder(rootId, knowledgeRootPath, generation)
+    for (const folder of remembered) {
+      if (generation !== knowledgeRootGeneration.current) {
+        return
+      }
+      await loadKnowledgeFolder(rootId, folder, generation)
+    }
   }
 
   async function removeRoot(rootId: string) {
@@ -5673,8 +5969,11 @@ function App() {
       setRoots((current) => current.filter((root) => root.id !== rootId))
       if (rootId === activeRootId) {
         knowledgeRequest.current += 1
+        knowledgeRootGeneration.current += 1
         setActiveRootId(undefined)
-        setKnowledgeListing(undefined)
+        setKnowledgeFolders({})
+        setExpandedKnowledge([])
+        setKnowledgePath(knowledgeRootPath)
         setKnowledgeFile(undefined)
       }
     } catch (caught) {
@@ -6564,81 +6863,187 @@ function App() {
                 </p>
               ) : null}
               {roots.length > 0 ? (
-                <>
-                  <p className="sidebar-label">Roots</p>
-                  {roots.map((root) => (
-                    <div className="knowledge-root" key={root.id}>
-                      <button
-                        aria-current={root.id === activeRootId ? 'true' : undefined}
-                        className={root.id === activeRootId ? 'is-active' : ''}
-                        onClick={() => void selectRoot(root.id)}
-                        type="button"
-                      >
-                        <FolderOpen size={15} />
-                        <span>
-                          <strong>{root.name}</strong>
-                          <small>
-                            {root.computerName} · {root.path}
-                          </small>
-                        </span>
-                      </button>
-                      <button
-                        aria-label={`Remove ${root.name} root`}
-                        className="icon-button icon-button--danger"
-                        onClick={() => void removeRoot(root.id)}
-                        type="button"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </>
+                <div className="knowledge-roots">
+                  <button
+                    aria-expanded={knowledgeRootsOpen}
+                    className="knowledge-roots__summary"
+                    onClick={() => setKnowledgeRootsOpen(!knowledgeRootsOpen)}
+                    type="button"
+                  >
+                    <ChevronRight
+                      aria-hidden="true"
+                      className={`knowledge-chevron${
+                        knowledgeRootsOpen ? ' knowledge-chevron--open' : ''
+                      }`}
+                      size={13}
+                    />
+                    <span className="sidebar-label">Roots</span>
+                    <em>{roots.length}</em>
+                  </button>
+                  {knowledgeRootsOpen
+                    ? roots.map((root) => (
+                        <div className="knowledge-root" key={root.id}>
+                          <button
+                            aria-current={
+                              root.id === activeRootId ? 'true' : undefined
+                            }
+                            className={root.id === activeRootId ? 'is-active' : ''}
+                            onClick={() => void selectRoot(root.id)}
+                            type="button"
+                          >
+                            <FolderOpen size={15} />
+                            <span>
+                              <strong>{root.name}</strong>
+                              <small>
+                                {root.computerName} · {root.path}
+                              </small>
+                            </span>
+                          </button>
+                          <button
+                            aria-label={`Remove ${root.name} root`}
+                            className="icon-button icon-button--danger knowledge-root__remove"
+                            onClick={() => void removeRoot(root.id)}
+                            type="button"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))
+                    : null}
+                </div>
               ) : null}
-              {activeRoot && knowledgeListing ? (
+              {activeRoot ? (
                 <>
-                  <p className="sidebar-label">
-                    {knowledgeListing.path === '.'
-                      ? activeRoot.name
-                      : knowledgeListing.path}
-                  </p>
-                  {knowledgeListing.parent !== undefined ? (
-                    <button
-                      className="workspace-entry"
-                      onClick={() =>
-                        void openKnowledgeFolder(knowledgeListing.parent)
-                      }
-                      type="button"
+                  <div className="knowledge-toolbar">
+                    <div
+                      aria-label="Knowledge folder"
+                      className="knowledge-crumbs"
+                      role="group"
                     >
-                      <ArrowUp size={15} />
-                      <span>
-                        <strong>Parent folder</strong>
-                      </span>
-                    </button>
-                  ) : null}
-                  {knowledgeListing.entries.length === 0 ? (
-                    <p className="sidebar-message">This folder is empty.</p>
-                  ) : null}
-                  {knowledgeListing.entries.map((entry) => (
-                    <button
-                      className="workspace-entry"
-                      key={entry.path}
-                      onClick={() =>
-                        entry.kind === 'directory'
-                          ? void openKnowledgeFolder(entry.path)
-                          : void openKnowledgeFile(entry.path)
-                      }
-                      type="button"
-                    >
-                      {entry.kind === 'directory' ? (
-                        <FolderOpen size={15} />
-                      ) : (
-                        <FileText size={15} />
+                      {knowledgeCrumbs(knowledgePath, activeRoot.name).map(
+                        (crumb, index, all) => (
+                          <span key={crumb.path}>
+                            {index > 0 ? (
+                              <span
+                                aria-hidden="true"
+                                className="knowledge-crumbs__sep"
+                              >
+                                /
+                              </span>
+                            ) : null}
+                            <button
+                              aria-current={
+                                index === all.length - 1 ? 'true' : undefined
+                              }
+                              onClick={() =>
+                                void openKnowledgeFolder(crumb.path)
+                              }
+                              type="button"
+                            >
+                              {crumb.name}
+                            </button>
+                          </span>
+                        ),
                       )}
-                      <span>
-                        <strong>{entry.name}</strong>
-                      </span>
+                    </div>
+                    <button
+                      aria-label="Collapse all folders"
+                      className="icon-button"
+                      disabled={expandedKnowledge.length === 0}
+                      onClick={collapseKnowledgeTree}
+                      type="button"
+                    >
+                      <ChevronsDownUp size={14} />
                     </button>
-                  ))}
+                  </div>
+                  <div
+                    className="knowledge-nodes"
+                    onKeyDown={knowledgeTreeKeyDown}
+                    role="tree"
+                  >
+                    {knowledgeTreeRows(knowledgeFolders, expandedKnowledge).map(
+                      (row) =>
+                        row.type === 'status' ? (
+                          <p
+                            className={`knowledge-node__status${
+                              row.variant === 'error'
+                                ? ' knowledge-node__status--error'
+                                : ''
+                            }`}
+                            key={`${row.variant}:${row.path}`}
+                            style={
+                              {
+                                '--knowledge-depth': row.depth,
+                              } as CSSProperties
+                            }
+                          >
+                            {row.variant === 'loading'
+                              ? 'Loading…'
+                              : row.variant === 'empty'
+                                ? 'Empty folder'
+                                : row.message}
+                          </p>
+                        ) : (
+                          <button
+                            aria-current={
+                              knowledgeFile?.path === row.path
+                                ? 'page'
+                                : undefined
+                            }
+                            aria-expanded={
+                              row.expandable ? row.expanded : undefined
+                            }
+                            aria-level={row.depth + 1}
+                            className={`knowledge-node${
+                              knowledgeFile?.path === row.path
+                                ? ' knowledge-node--active'
+                                : ''
+                            }`}
+                            data-knowledge-path={row.path}
+                            key={row.path}
+                            onClick={() =>
+                              row.expandable
+                                ? void toggleKnowledgeFolder(row.path)
+                                : void openKnowledgeFile(row.path)
+                            }
+                            role="treeitem"
+                            style={
+                              {
+                                '--knowledge-depth': row.depth,
+                              } as CSSProperties
+                            }
+                            type="button"
+                          >
+                            {row.expandable ? (
+                              <ChevronRight
+                                aria-hidden="true"
+                                className={`knowledge-chevron${
+                                  row.expanded ? ' knowledge-chevron--open' : ''
+                                }`}
+                                size={13}
+                              />
+                            ) : (
+                              <span
+                                aria-hidden="true"
+                                className="knowledge-chevron knowledge-chevron--leaf"
+                              />
+                            )}
+                            {row.expandable ? (
+                              row.expanded ? (
+                                <FolderOpen size={14} />
+                              ) : (
+                                <Folder size={14} />
+                              )
+                            ) : (
+                              <FileText size={14} />
+                            )}
+                            <span className="knowledge-node__name">
+                              {row.entry.name}
+                            </span>
+                          </button>
+                        ),
+                    )}
+                  </div>
                 </>
               ) : null}
             </nav>
@@ -7068,6 +7473,14 @@ function App() {
             selected.runtime?.allowAllPermissions !== undefined ? (
               <span>
                 {selected.runtime.allowAllPermissions ? 'allow all' : 'ask'}
+              </span>
+            ) : null}
+            {statusline.update && selected.runtime?.updateAvailable ? (
+              <span
+                className="web-statusline__update"
+                data-testid="web-statusline-update"
+              >
+                v{selected.runtime.updateAvailable} available · run /update
               </span>
             ) : null}
           </div>

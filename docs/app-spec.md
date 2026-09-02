@@ -286,6 +286,15 @@ switches, failed sends, and clear replacement IDs.
 - The reader MUST reopen the root, folder, and document last being read, so
   returning does not mean choosing them again. Changing folder MUST remain an
   explicit action.
+- Folders MUST expand in place as a tree rather than replacing the listing, so
+  a parent stays visible while a child is open. Children are loaded on first
+  expansion and reused afterwards.
+- Expanded folders MUST be remembered per root, and reopening a remembered
+  document MUST open the folders above it.
+- A folder that cannot be read MUST report the failure on its own branch and
+  leave the rest of the tree usable.
+- The tree MUST expose `tree`/`treeitem` semantics with expansion state and
+  depth, and support ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, and End.
 - Knowledge stores root metadata on the hub; file content MUST remain on the
   owning computer.
 

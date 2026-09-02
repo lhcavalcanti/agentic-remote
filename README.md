@@ -93,7 +93,7 @@ an immutable release under `~/.config/agentic-remote/releases/current`.
 
 `--role hub|node` describes the runtime topology; it does not select the
 development or production channel. A machine-local, opt-in monitor may pull
-`main`, run the configured validation and matching CI gate, promote the exact
+`main`, run the configured validation, promote the exact
 commit, restart the managed service, and verify recovery. The monitor and its
 machine paths belong outside this repository so application development cannot
 break the external access path.
@@ -195,6 +195,8 @@ matrix.
 - **Runtime**: configure supported model, effort, context, and mode options.
 - **App settings**: configure separate default model IDs for Copilot and Claude.
 - **Session files**: browse, search, preview, and save Knowledge paths.
+- **Knowledge**: expand folders in place as a tree, with remembered expansion,
+  breadcrumbs, and keyboard navigation.
 - **Paperclip / microphone**: upload supported files or transcribe audio.
 
 Copilot sessions can be tmux-backed:

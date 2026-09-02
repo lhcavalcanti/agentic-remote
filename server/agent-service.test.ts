@@ -563,6 +563,34 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('names the background agent that keeps a turn open', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"task-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"task-call",
+          "toolName":"task",
+          "arguments":{
+            "agent_type":"rubber-duck",
+            "description":"Final cache RCA review",
+            "prompt":"Review the artifact"
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:task-call',
+        content: 'Agent (rubber-duck) · Final cache RCA review',
+        activityStatus: 'running',
+      }),
+    ])
+  })
+
   it('reconstructs only unresolved root ask-user requests', () => {
     const question = {
       type: 'tool.execution_start',
@@ -3597,6 +3625,109 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('surfaces the update the terminal CLI is offering', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-upd-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      updateNotice: vi.fn(async () => '1.0.83'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+
+    expect(terminal.updateNotice).toHaveBeenCalled()
+    expect(
+      service.store.get(client.session.sessionId)?.runtime?.updateAvailable,
+    ).toBe('1.0.83')
+    await service.stop()
+  })
+
+  // The notice is only true while the terminal that painted it is running, and
+  // nothing polls a session discovery has dropped.
+  it('clears the update once the terminal session is gone', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-updx-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    let running = true
+    const terminal = {
+      has: vi.fn(async () => running),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      updateNotice: vi.fn(async () => '1.0.83'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () =>
+        running
+          ? [
+              {
+                id: client.session.sessionId,
+                cwd: directory,
+                title: 'Active Copilot session',
+                updatedAt: new Date().toISOString(),
+              },
+            ]
+          : [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+    expect(
+      service.store.get(client.session.sessionId)?.runtime?.updateAvailable,
+    ).toBe('1.0.83')
+
+    running = false
+    await service.refreshDiscovery()
+
+    expect(
+      service.store.get(client.session.sessionId)?.runtime?.updateAvailable,
+    ).toBeUndefined()
+    await service.stop()
+  })
+
   it('detects and answers terminal ask-user requests', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -3854,6 +3985,108 @@ describe('AgentService deletion', () => {
     await vi.waitFor(() =>
       expect(service.store.get(client.session.sessionId)?.status).toBe('idle'),
     )
+    await service.stop()
+  })
+
+  it('re-surfaces an ask-user request a stale sync gate hid', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"user.message",
+        "id":"prompt",
+        "parentId":null,
+        "timestamp":"2026-07-22T00:00:00.000Z",
+        "data":{"content":"Plan the capacity move"}
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":"prompt",
+        "timestamp":"2026-07-22T00:00:01.000Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "toolTitle":"Asking user",
+          "arguments":{
+            "message":"Choose the capacity path",
+            "requestedSchema":{
+              "properties":{
+                "capacityPlan":{
+                  "type":"string",
+                  "title":"Capacity plan",
+                  "oneOf":[
+                    {"const":"use_default","title":"Use existing capacity"},
+                    {"const":"wait","title":"Wait for quota"}
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => events,
+      // The agent stops writing while it waits, so the log never changes again.
+      async () => 'hidden-question-v1',
+    )
+
+    await service.start()
+    await service.createSession(directory)
+    await service.refreshTranscripts()
+    const sessionId = client.session.sessionId
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+
+    // Reproduce the stuck session: the transcript kept the running ask-user
+    // row, but the request itself never reached the session.
+    await service.store.update(sessionId, (session) => {
+      session.pendingUserInput = undefined
+      session.status = 'running'
+      session.activity = 'Sent to terminal'
+    })
+    expect(service.store.get(sessionId)?.messages.at(-1)).toMatchObject({
+      role: 'activity',
+      activityStatus: 'running',
+      content: 'Ask User · Asking user',
+    })
+
+    // Every later poll short-circuits on the unchanged log, so recovery has to
+    // happen there or the request stays invisible forever.
+    await service.refreshTranscripts()
+
+    expect(service.store.get(sessionId)).toMatchObject({
+      status: 'waiting',
+      pendingUserInput: {
+        requestId: 'persisted-user-input:ask-call',
+        question: 'Choose the capacity path',
+      },
+    })
+    expect(
+      service.store.get(sessionId)?.pendingUserInput?.form?.fields.map(
+        (field) => field.name,
+      ),
+    ).toEqual(['capacityPlan'])
+
+    // Answering must not be undone by the same recovery on the next poll,
+    // because the log still has no completion for the call.
+    const answered = await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      {
+        answer: JSON.stringify({ capacityPlan: 'use_default' }),
+        wasFreeform: false,
+        values: { capacityPlan: 'use_default' },
+      },
+    )
+    expect(answered.pendingUserInput).toBeUndefined()
+    await service.refreshTranscripts()
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeUndefined()
     await service.stop()
   })
 

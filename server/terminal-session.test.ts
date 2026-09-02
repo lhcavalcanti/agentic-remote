@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   isTerminalSessionInUsePrompt,
   parseTerminalPermission,
+  parseTerminalUpdateNotice,
   parseTerminalUserInput,
   TmuxTerminalSessionController,
 } from './terminal-session.js'
@@ -421,5 +422,107 @@ Permission request (1 remaining)
     expect(await readFile(output, 'utf8')).toBe(
       'MESSAGE-AAAA\nMESSAGE-BBBB',
     )
+  })
+})
+
+// The notice below is the status bar the CLI paints when it is offering an
+// update, reproduced from github/copilot-cli#2307.
+describe('terminal update notice', () => {
+  const composer = [
+    '\u257b\u2584\u2584\u2584\u2584',
+    '\u2503  Type @ to mention files, # for issues/PRs, / for commands',
+    '\u2579\u2580\u2580\u2580\u2580',
+  ].join('\n')
+
+  it('reports the version the CLI is offering', () => {
+    const pane = [
+      ' \u25cf Ready',
+      composer,
+      ' v1.0.12-1 available \u00b7 run /update \u00b7 shift+tab switch mode',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBe('1.0.12-1')
+  })
+
+  it('reports nothing when the status bar offers no update', () => {
+    const pane = [
+      ' \u25cf Ready',
+      composer,
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
+      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
+  })
+
+  // Without the /update requirement any sentence mentioning a version would
+  // be mistaken for the CLI offering one.
+  it('does not treat transcript text as an update offer', () => {
+    const pane = [
+      ' \u25cf I checked whether v2.1.0 available upstream fixes the crash.',
+      composer,
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
+  })
+
+  // The agent's own transcript can quote the notice. It sits directly above
+  // the composer with nothing separating it, so only the status bar the CLI
+  // paints below the composer counts as an offer.
+  it('does not treat a quoted notice in the transcript as an offer', () => {
+    const pane = [
+      ' \u25cf The CLI told me: v9.9.9 available \u00b7 run /update',
+      ' ~/src/project',
+      composer,
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
+      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
+  })
+
+  // tmux pads a capture out to the full pane height, so the status bar is not
+  // always the last line of the capture.
+  it('finds the notice above trailing blank lines', () => {
+    const pane = [
+      ' \u25cf Ready',
+      composer,
+      ' v1.0.83 available \u00b7 run /update \u00b7 shift+tab switch mode',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBe('1.0.83')
+  })
+
+  // Text typed into the composer is not the CLI offering an update.
+  it('does not treat composer input as an offer', () => {
+    const pane = [
+      ' \u25cf Ready',
+      ' ~/src/project',
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503 v9.9.9 available \u00b7 run /update',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
+  })
+
+  it('reads the notice through a panel border', () => {
+    const pane = [
+      composer,
+      ' \u2503 v1.2.3 available \u00b7 run /update                      \u2503',
+    ].join('\n')
+
+    expect(parseTerminalUpdateNotice(pane)).toBe('1.2.3')
   })
 })

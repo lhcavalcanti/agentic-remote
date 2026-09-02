@@ -768,6 +768,14 @@ function toolActivityContent(data: unknown): string {
     normalizedToolName === 'skill'
       ? previewText(argumentsValue.skill) || previewText(argumentsValue.name)
       : undefined
+  // A background agent keeps the turn open long after the parent's last
+  // message, so its row has to name the agent instead of reading like an
+  // ordinary finished tool call.
+  const agentType =
+    normalizedToolName === 'task'
+      ? previewText(argumentsValue.agent_type) ||
+        previewText(argumentsValue.name)
+      : undefined
   const description =
     previewText(tool.toolTitle) ||
     previewText(toolDescription.description) ||
@@ -775,7 +783,7 @@ function toolActivityContent(data: unknown): string {
     previewText(argumentsValue.message)
   const command = previewText(argumentsValue.command, true)
   const detail =
-    normalizedToolName === 'skill'
+    normalizedToolName === 'skill' || normalizedToolName === 'task'
       ? undefined
       : command ||
         previewText(argumentsValue.path) ||
@@ -797,7 +805,9 @@ function toolActivityContent(data: unknown): string {
       ]
         .filter(Boolean)
         .join(' · ')
-    : readableToolName(toolName)
+    : agentType
+      ? 'Agent'
+      : readableToolName(toolName)
   const titleDescription =
     description &&
     (isMcp
@@ -811,7 +821,9 @@ function toolActivityContent(data: unknown): string {
   const title = `${baseTitle}${
     skillName
       ? ` (${skillName})${titleDescription}`
-      : titleDescription
+      : agentType
+        ? ` (${agentType})${titleDescription}`
+        : titleDescription
   }`
   if (!detail) {
     return title
@@ -1136,6 +1148,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
   private readonly terminalUserInputChecks = new Map<string, number>()
+  private readonly terminalUpdateChecks = new Map<string, number>()
   private readonly answeredTerminalPermissions = new Map<
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
@@ -1143,6 +1156,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly answeredTerminalInputs = new Map<
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
+  >()
+  // An ask-user request answered from the UI stays unresolved in the event log
+  // until the agent writes its completion, so the recovery below must not
+  // resurrect the request the user just answered.
+  private readonly answeredPersistedInputs = new Map<
+    string,
+    { requestId: string; expiresAt: number }
   >()
   private readonly elicitations = new Map<string, PendingSdkElicitation>()
   private discoveryTimer?: NodeJS.Timeout
@@ -1261,6 +1281,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.elicitations.clear()
     this.terminalUserInputChecks.clear()
+    this.terminalUpdateChecks.clear()
     this.answeredTerminalPermissions.clear()
     this.answeredTerminalInputs.clear()
     const disconnected = await Promise.allSettled(
@@ -1985,6 +2006,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
       this.terminalUserInputChecks.delete(id)
+      this.terminalUpdateChecks.delete(id)
       this.answeredTerminalPermissions.delete(id)
       this.answeredTerminalInputs.delete(id)
       const cleared = await this.store.replaceWithClearedSession(
@@ -2570,6 +2592,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.queueOperations.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
+      this.terminalUpdateChecks.delete(sessionId)
       this.answeredTerminalPermissions.delete(sessionId)
       this.answeredTerminalInputs.delete(sessionId)
       completed = true
@@ -2690,6 +2713,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (action !== 'accept') {
       if (requestId.startsWith('persisted-user-input:')) {
+        this.answeredPersistedInputs.set(sessionId, {
+          requestId,
+          expiresAt: Date.now() + 60_000,
+        })
         const cleared = await this.store.update(sessionId, (session) => {
           session.pendingUserInput = undefined
           session.status = 'idle'
@@ -2726,6 +2753,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.userInputs.delete(requestId)
       sdkPending.resolve({ answer, wasFreeform: input.wasFreeform })
     } else if (requestId.startsWith('persisted-user-input:')) {
+      this.answeredPersistedInputs.set(sessionId, {
+        requestId,
+        expiresAt: Date.now() + 60_000,
+      })
       const cleared = await this.store.update(sessionId, (session) => {
         session.pendingUserInput = undefined
         session.status = 'idle'
@@ -2928,6 +2959,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const storedBeforeDiscovery = this.store.list()
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
+    const previouslyExternal = this.externalSessionIds
     this.externalSessionIds = new Set(
       [
         ...activeSessions
@@ -2936,6 +2968,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ...this.launchingTerminalSessionIds,
       ],
     )
+    await this.clearUpdateNoticeForExited(previouslyExternal)
     const indexedSessions = sessions.flatMap((session) => {
       if (this.deletedSessionIds.has(session.sessionId)) {
         return []
@@ -3043,14 +3076,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.externalSessionIds.has(sessionId)) {
           await this.syncExternalWorkspace(sessionId)
           await this.syncTerminalUserInput(sessionId)
+          await this.syncTerminalUpdateNotice(sessionId)
         }
         const version = await this.sessionEventVersion(sessionId)
         if (!version || this.eventLogVersions.get(sessionId) === version) {
+          await this.recoverHiddenUserInput(sessionId)
           return
         }
         const events = await this.sessionEventReader(sessionId)
         const fingerprint = `${events.length}:${events.at(-1)?.id || ''}`
         if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
+          await this.recoverHiddenUserInput(sessionId, events)
           return
         }
         const stored = this.store.get(sessionId)
@@ -3074,6 +3110,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             Date.parse(lastEventTimestamp) < Date.parse(watermark))
         ) {
           this.eventLogVersions.set(sessionId, version)
+          await this.recoverHiddenUserInput(sessionId, events)
           return
         }
         let status = syncedUserInput
@@ -3156,6 +3193,125 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }),
     )
+  }
+
+  /**
+   * The notice is only true while the terminal that painted it is running.
+   * Once discovery drops the session nothing polls it again, so a stale offer
+   * would otherwise stay on screen until the terminal came back.
+   */
+  private async clearUpdateNoticeForExited(
+    previouslyExternal: Set<string>,
+  ): Promise<void> {
+    for (const sessionId of previouslyExternal) {
+      if (this.externalSessionIds.has(sessionId)) {
+        continue
+      }
+      this.terminalUpdateChecks.delete(sessionId)
+      if (this.store.get(sessionId)?.runtime?.updateAvailable === undefined) {
+        continue
+      }
+      const updated = await this.store.update(sessionId, (session) => {
+        session.runtime = { ...session.runtime, updateAvailable: undefined }
+      })
+      this.publish(updated)
+    }
+  }
+
+  /**
+   * Mirrors the update the CLI is advertising in its own status bar, so a
+   * session supervised from the web is not the only place the recommendation
+   * is invisible. The CLI checks rarely, so this does too.
+   */
+  private async syncTerminalUpdateNotice(sessionId: string): Promise<void> {
+    if (!this.terminalController.updateNotice) {
+      return
+    }
+    const stored = this.store.get(sessionId)
+    if (!stored || this.deletedSessionIds.has(sessionId)) {
+      return
+    }
+    const now = Date.now()
+    const lastCheck = this.terminalUpdateChecks.get(sessionId) || 0
+    if (now - lastCheck < 60_000) {
+      return
+    }
+    this.terminalUpdateChecks.set(sessionId, now)
+    const updateAvailable = await this.terminalController
+      .updateNotice(sessionId)
+      .catch(() => undefined)
+    if ((stored.runtime?.updateAvailable ?? undefined) === updateAvailable) {
+      return
+    }
+    const updated = await this.store.update(sessionId, (session) => {
+      session.runtime = { ...session.runtime, updateAvailable }
+    })
+    this.publish(updated)
+  }
+
+  /**
+   * An ask-user request only reaches the UI through a transcript sync, but the
+   * agent stops writing events while it waits for the answer. Every sync
+   * short-circuit therefore ends here, so a request recovered from the event
+   * log cannot stay invisible while the session waits forever.
+   */
+  private async recoverHiddenUserInput(
+    sessionId: string,
+    events?: SessionEvent[],
+  ): Promise<void> {
+    const stored = this.store.get(sessionId)
+    if (
+      !stored ||
+      stored.pendingUserInput ||
+      stored.pendingPermission ||
+      this.activePrompts.has(sessionId) ||
+      this.deletedSessionIds.has(sessionId) ||
+      !this.hasUnansweredUserInputRow(stored)
+    ) {
+      return
+    }
+    const now = Date.now()
+    const answered = this.answeredPersistedInputs.get(sessionId)
+    if (answered && answered.expiresAt <= now) {
+      this.answeredPersistedInputs.delete(sessionId)
+    }
+    const pending = pendingUserInputFromEvents(
+      events || (await this.sessionEventReader(sessionId)),
+    )
+    if (
+      !pending ||
+      this.answeredPersistedInputs.get(sessionId)?.requestId ===
+        pending.requestId
+    ) {
+      return
+    }
+    const updated = await this.store.update(sessionId, (session) => {
+      if (session.pendingUserInput || session.pendingPermission) {
+        return
+      }
+      session.pendingUserInput = pending
+      session.status = 'waiting'
+      session.activity = pending.question
+    })
+    this.publish(updated)
+  }
+
+  /**
+   * Reads the newest running tool row only: an ask-user request that reached
+   * the transcript but not the session keeps this cheap for every other poll.
+   */
+  private hasUnansweredUserInputRow(stored: SessionDetail): boolean {
+    for (let index = stored.messages.length - 1; index >= 0; index -= 1) {
+      const message = stored.messages[index]
+      if (
+        message?.role !== 'activity' ||
+        message.activityStatus !== 'running'
+      ) {
+        continue
+      }
+      return message.content.startsWith('Ask User')
+    }
+    return false
   }
 
   private async syncTerminalUserInput(sessionId: string): Promise<void> {

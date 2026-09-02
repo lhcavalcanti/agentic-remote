@@ -112,6 +112,22 @@ describe('PushNotificationService', () => {
     expect(service.settings()).toEqual({
       mutedSessions: ['computer:session'],
     })
+
+    // Clearing replaces a session rather than ending it, and the mute belongs
+    // to the conversation, so silence has to survive being cleared.
+    events.emit('event', {
+      type: 'session.removed',
+      computerId: 'computer',
+      sessionId: 'session',
+      replacedBy: 'session-cleared',
+    })
+    await vi.waitFor(() =>
+      expect(service.settings()).toEqual({
+        mutedSessions: ['computer:session-cleared'],
+      }),
+    )
+    await service.setSessionMuted('computer', 'session-cleared', false)
+    await service.setSessionMuted('computer', 'session', true)
     events.emit('event', {
       ...event,
       session: {

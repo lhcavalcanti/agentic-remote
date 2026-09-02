@@ -5499,6 +5499,113 @@ describe('App', () => {
     )
   })
 
+  it('keeps a cleared session muted and selected', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(getPushSettings).mockResolvedValue({
+      mutedSessions: ['computer-1:session-1'],
+    })
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Unmute session notifications' }),
+      ).toBeInTheDocument(),
+    )
+
+    // Removal and upsert arrive separately. Following the replacement keeps
+    // the conversation selected and silenced across the gap, instead of
+    // landing on an unrelated session with notifications switched back on.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: 'session-1-cleared',
+        }),
+      } as MessageEvent)
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, id: 'session-1-cleared', messages: [] },
+        }),
+      } as MessageEvent)
+    })
+
+    // The address carries the selection, so it says plainly which session is
+    // open once the replacement arrives.
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1-cleared',
+      ),
+    )
+    expect(
+      screen.getByRole('button', { name: 'Unmute session notifications' }),
+    ).toBeInTheDocument()
+  })
+
+  it('loads the root listing even if the first attempt was superseded', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify({ rootId: 'root-1', path: '.' }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    const rootListing: WorkspaceListing = {
+      path: '.',
+      entries: [
+        { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 8 },
+      ],
+    }
+    let releaseRoot: (() => void) | undefined
+    let held = false
+    vi.mocked(listKnowledgeEntries).mockImplementation(async () => {
+      if (held) {
+        return rootListing
+      }
+      held = true
+      // Only the startup load is held open; the recovery that follows has to
+      // answer normally or the test could not tell the two apart.
+      return new Promise<WorkspaceListing>((resolve) => {
+        releaseRoot = () => resolve(rootListing)
+      })
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(releaseRoot).toBeDefined())
+
+    // Switching session supersedes the startup load, which then writes
+    // nothing. The panel must still end up with a listing rather than sit
+    // blank until the root is picked again by hand.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    releaseRoot?.()
+
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    expect(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    ).toBeInTheDocument()
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

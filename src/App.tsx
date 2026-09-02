@@ -4234,6 +4234,13 @@ function App() {
   const moveComposerDraftRef = useRef<(from: string, to: string) => void>(
     () => {},
   )
+  const loadKnowledgeFolderRef = useRef<
+    (rootId: string, path: string) => Promise<unknown>
+  >(async () => undefined)
+  // Replacements announced by a removal but not yet delivered by their upsert.
+  // The fallback below must not treat one as a missing session and select
+  // something unrelated in the gap.
+  const pendingReplacements = useRef(new Set<string>())
   // Captured before the first synchronisation, so a direct session link is not
   // erased by the address being rewritten while sessions are still loading.
   const initialUrlSelection = useRef(readSelectionFromLocation())
@@ -4850,6 +4857,7 @@ function App() {
     forgetKnowledgeSessionRef.current = forgetKnowledgeSession
     moveKnowledgeSessionRef.current = moveKnowledgePosition
     moveComposerDraftRef.current = moveComposerDraft
+    loadKnowledgeFolderRef.current = loadKnowledgeFolder
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
       const rootId = position.rootId
       if (!rootId) {
@@ -4859,7 +4867,8 @@ function App() {
       const current = () => token === knowledgeRequest.current
       void (async () => {
         try {
-          if (rootId !== activeRootId) {
+          const switchedRoot = rootId !== activeRootId
+          if (switchedRoot) {
             if (!(await selectRoot(rootId, true))) {
               return
             }
@@ -4877,7 +4886,15 @@ function App() {
           if (
             position.path &&
             position.path !== knowledgeRootPath &&
-            !(await openKnowledgeFolder(position.path, rootId, true))
+            // After switching root the folder cache in this closure is the one
+            // captured before the switch. Two roots can hold the same relative
+            // path, so consulting it would skip loading the new root's copy.
+            !(await openKnowledgeFolder(
+              position.path,
+              rootId,
+              true,
+              switchedRoot ? {} : undefined,
+            ))
           ) {
             return
           }
@@ -4911,6 +4928,21 @@ function App() {
       })()
     }
   })
+
+  // An open panel with an active root always ends up with a root listing. The
+  // startup load can be superseded by a session change, and a superseded load
+  // writes nothing, so without this the tree could sit blank until the root
+  // was picked again by hand.
+  useEffect(() => {
+    if (
+      knowledgeMode === 'hidden' ||
+      !activeRootId ||
+      knowledgeFolders[knowledgeRootPath] !== undefined
+    ) {
+      return
+    }
+    void loadKnowledgeFolderRef.current(activeRootId, knowledgeRootPath)
+  }, [activeRootId, knowledgeFolders, knowledgeMode])
 
   // Knowledge work belongs to the session that asked for it. Changing session
   // abandons all of it, whatever the decision below then chooses to do: a file
@@ -5298,7 +5330,9 @@ function App() {
       return
     }
     setSelectedKey((current) =>
-      current && sessions.some((session) => sessionKey(session) === current)
+      current &&
+      (sessions.some((session) => sessionKey(session) === current) ||
+        pendingReplacements.current.has(current))
         ? current
         : sessions[0]
           ? sessionKey(sessions[0])
@@ -5508,6 +5542,7 @@ function App() {
             sessionKey(event.session),
             eventSequenceRef.current,
           )
+          pendingReplacements.current.delete(sessionKey(event.session))
           setSessions((current) => upsertSession(current, event.session))
         } else if (event.type === 'session.removed') {
           const removedKey = `${event.computerId}:${event.sessionId}`
@@ -5523,6 +5558,21 @@ function App() {
             const replacementKey = `${event.computerId}:${event.replacedBy}`
             moveComposerDraftRef.current(removedKey, replacementKey)
             moveKnowledgeSessionRef.current(removedKey, replacementKey)
+            setMutedSessions((current) =>
+              current.includes(removedKey)
+                ? [
+                    ...current.filter((key) => key !== removedKey),
+                    replacementKey,
+                  ]
+                : current,
+            )
+            // Removal and upsert are separate events. Following the
+            // replacement now stops the fallback from selecting an unrelated
+            // session in the gap, which the later upsert would not undo.
+            pendingReplacements.current.add(replacementKey)
+            setSelectedKey((current) =>
+              current === removedKey ? replacementKey : current,
+            )
           } else {
             setComposerDrafts((current) => {
               const { [removedKey]: _removed, ...remaining } = current
@@ -5983,6 +6033,7 @@ function App() {
     path = knowledgeRootPath,
     rootId = activeRootId,
     fromRestore = false,
+    loadedOverride?: KnowledgeFolders,
   ): Promise<boolean> {
     knowledgeHydrated.current = true
     if (!rootId) {
@@ -5999,7 +6050,12 @@ function App() {
     setExpandedKnowledge((current) => expandKnowledgeFolder(current, path))
     setKnowledgePath(path)
     setKnowledgeFile(undefined)
-    return loadKnowledgeChain(rootId, path)
+    return loadKnowledgeChain(
+      rootId,
+      path,
+      knowledgeRequest.current,
+      loadedOverride,
+    )
   }
 
 

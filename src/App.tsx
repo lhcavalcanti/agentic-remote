@@ -5654,6 +5654,9 @@ function App() {
   const eventSequenceRef = useRef(0)
   const backgroundTaskSnapshotsRef = useRef(backgroundTaskSnapshots)
   const computersRef = useRef(computers)
+  // The sessions as last committed, so reconciliation can be worked out
+  // without depending on a state updater having already run.
+  const sessionsRef = useRef(sessions)
   const backgroundTasksOpenRef = useRef(backgroundTasksOpen)
   const selectedKeyStateRef = useRef(selectedKey)
   const backgroundTaskRequestsRef = useRef(new Set<string>())
@@ -5914,6 +5917,7 @@ function App() {
     addRootOpen ||
     Boolean(selected?.pendingPermission || selected?.pendingUserInput)
   selectedRef.current = selected
+  sessionsRef.current = sessions
   const currentTool = selected?.messages.findLast(
     (message) =>
       message.role === 'activity' && message.activityStatus === 'running',
@@ -6809,7 +6813,6 @@ function App() {
         if (!active) {
           return
         }
-        claimReplacedSessions(loadedSessions)
         setSessions((current) => {
           let reconciled = sortSessions(loadedSessions)
           for (const existing of current) {
@@ -6817,6 +6820,16 @@ function App() {
           }
           return reconciled
         })
+        // Events that arrived while this was in flight describe the sessions
+        // more recently than it does, so lineage is followed from those and
+        // from the snapshot only where nothing has replaced it. Claiming from
+        // a session that has since been replaced would move state into one
+        // that is already gone, where its own replacement never looks.
+        let reconciledSessions = sortSessions(loadedSessions)
+        for (const existing of sessionsRef.current) {
+          reconciledSessions = upsertSession(reconciledSessions, existing)
+        }
+        claimReplacedSessions(reconciledSessions)
         setComputers(loadedComputers)
         const requestedKey = initialUrlSelection.current
         const requested = loadedSessions.find(
@@ -7016,25 +7029,26 @@ function App() {
           (computerEventSequenceRef.current.get(computer.id) || 0) <=
           startedAtSequence,
       )
-      let reconciledSessions: ManagedSession[] = []
-      setSessions((current) => {
+      const reconcile = (existingSessions: ManagedSession[]) => {
         let reconciled = sortSessions(snapshotSessions)
-        for (const existing of current) {
+        for (const existing of existingSessions) {
           const changedAt =
             sessionEventSequenceRef.current.get(sessionKey(existing)) || 0
           if (changedAt > startedAtSequence) {
             reconciled = upsertSession(reconciled, existing)
           }
         }
-        reconciledSessions = reconciled
         return reconciled
-      })
-      // Lineage is followed from the sessions that survived reconciliation.
-      // A snapshot session the refresh already rejected as stale may have been
+      }
+      setSessions(reconcile)
+      // Lineage is followed from the sessions that survived reconciliation. A
+      // snapshot session the refresh already rejected as stale may have been
       // replaced again while it was in flight, and moving state into it would
       // put it under a session that no longer exists, where the replacement
-      // that took its place will never look for it.
-      claimReplacedSessions(reconciledSessions)
+      // that took its place will never look for it. Worked out from the last
+      // committed sessions rather than inside the updater, which React is free
+      // to run whenever it likes.
+      claimReplacedSessions(reconcile(sessionsRef.current))
       setComputers((current) => {
         let reconciled = snapshotComputers
         for (const existing of current) {

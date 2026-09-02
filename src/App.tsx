@@ -3311,13 +3311,23 @@ const TranscriptMessage = memo(function TranscriptMessage({
  * composer is typed into, so it is kept out of that render. Rebuilding a few
  * thousand rows for every keystroke is what made typing lag.
  */
+/**
+ * How much history is rendered at once. Everything older is kept in memory and
+ * revealed on request, so a long session does not pay for its whole past on
+ * every switch.
+ */
+const RENDERED_HISTORY = 250
+
 const ConversationMessages = memo(function ConversationMessages({
-  messages,
+  messages: allMessages,
   currentToolId,
 }: {
   messages: ChatMessage[]
   currentToolId?: string
 }) {
+  const [showAll, setShowAll] = useState(false)
+  const hidden = showAll ? 0 : Math.max(0, allMessages.length - RENDERED_HISTORY)
+  const messages = hidden ? allMessages.slice(hidden) : allMessages
   const activityMessages = new Map(
     messages
       .filter((message) => message.role === 'activity')
@@ -3389,6 +3399,18 @@ const ConversationMessages = memo(function ConversationMessages({
     )
   }
   const rendered: ReactNode[] = []
+  if (hidden > 0) {
+    rendered.push(
+      <button
+        className="transcript-earlier"
+        key="show-earlier"
+        onClick={() => setShowAll(true)}
+        type="button"
+      >
+        {`Show ${hidden} earlier message${hidden === 1 ? '' : 's'}`}
+      </button>,
+    )
+  }
   for (const message of messages) {
     if (message.role === 'activity') {
       if (groupedActivityIds.has(message.id)) {

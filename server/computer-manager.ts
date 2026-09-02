@@ -308,9 +308,26 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     provider: AgentProvider,
   ): Promise<ProviderRuntimeOptions> {
     this.requireComputer(computerId)
-    return computerId === this.identity.info.id
-      ? this.localService.providerRuntimeOptions(provider)
-      : this.requireClient(computerId).providerRuntimeOptions(provider)
+    if (computerId === this.identity.info.id) {
+      return this.localService.providerRuntimeOptions(provider)
+    }
+    const client = this.requireClient(computerId)
+    const options = await client.providerRuntimeOptions(provider)
+    const advertised = client.providers.some(
+      (capability) => capability.id === provider && capability.available,
+    )
+    if (!advertised) {
+      // The node answered for a provider its cached capabilities call
+      // unavailable, so that cache was taken before the provider existed
+      // there. Refreshing it now keeps the recovered provider from staying
+      // hidden until the node happens to reconnect.
+      await client.getInfo().catch(() => undefined)
+      this.emit('event', {
+        type: 'computer.updated',
+        computer: this.requireComputer(computerId),
+      })
+    }
+    return options
   }
 
   async uploadFile(

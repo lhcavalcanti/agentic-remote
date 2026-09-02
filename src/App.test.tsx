@@ -1192,6 +1192,41 @@ describe('App', () => {
     })
   })
 
+  it('keeps model catalogs incomplete while a computer has not reported its providers', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-models',
+      JSON.stringify({
+        claude: {
+          model: 'node-claude-model',
+          reasoningEffort: 'high',
+          contextTier: 'default',
+        },
+      }),
+    )
+    // Online, but its capabilities never arrived, so it is only assumed to
+    // offer Copilot and is never asked about Claude.
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    const claudeModel = await screen.findByLabelText(
+      'Claude Agent default model',
+    )
+    await waitFor(() => expect(claudeModel).toHaveValue('node-claude-model'))
+    // Assuming the provider is absent must not be strong enough to retire the
+    // saved model: the computer was simply never asked.
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}')
+        .claude,
+    ).toEqual({
+      model: 'node-claude-model',
+      reasoningEffort: 'high',
+      contextTier: 'default',
+    })
+  })
+
   it('uses a computer-specific fallback without replacing the saved default', async () => {
     localStorage.setItem(
       'agentic-remote:default-models',

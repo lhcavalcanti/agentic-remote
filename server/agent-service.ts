@@ -72,6 +72,7 @@ import {
   isTerminalOverlay,
   terminalCommandOutput,
   TmuxTerminalSessionController,
+  type TerminalFormStep,
   type TerminalSessionController,
 } from './terminal-session.js'
 
@@ -679,6 +680,74 @@ export function pendingUserInputFromEvents(
     }
   }
   return pending?.input
+}
+
+/**
+ * Turns an answered form into the moves that fill the agent's own form.
+ * Anything that cannot be mapped confidently returns undefined, so the caller
+ * falls back to cancelling the prompt and answering in a message rather than
+ * submitting a value the user did not choose.
+ */
+export function terminalFormSteps(
+  form: UserInputForm,
+  values: Record<string, UserInputFieldValue>,
+): TerminalFormStep[] | undefined {
+  const steps: TerminalFormStep[] = []
+  for (const field of form.fields) {
+    const value = values[field.name]
+    if (field.type === 'array') {
+      return undefined
+    }
+    if (field.type === 'boolean') {
+      if (typeof value !== 'boolean') {
+        return undefined
+      }
+      // The agent lists Yes, No, then a freeform row.
+      steps.push({ kind: 'select', optionCount: 3, index: value ? 0 : 1 })
+      continue
+    }
+    const options = field.options
+    if (options && options.length > 0) {
+      const index = options.findIndex((option) => option.value === value)
+      if (index < 0) {
+        return undefined
+      }
+      steps.push({
+        kind: 'select',
+        optionCount: options.length + 1,
+        index,
+      })
+      continue
+    }
+    if (value !== undefined && typeof value !== 'string' && typeof value !== 'number') {
+      return undefined
+    }
+    steps.push({ kind: 'text', value: value === undefined ? '' : String(value) })
+  }
+  return steps.length === form.fields.length ? steps : undefined
+}
+
+/**
+ * A cancelled prompt leaves the agent without its answer, so the reply spells
+ * out every field it asked for instead of sending an opaque JSON blob.
+ */
+function persistedFormAnswer(
+  request: PendingUserInput,
+  values: Record<string, UserInputFieldValue>,
+): string {
+  const lines = (request.form?.fields || []).map((field) => {
+    const value = values[field.name]
+    const rendered = Array.isArray(value)
+      ? value.join(', ')
+      : value === undefined
+        ? ''
+        : String(value)
+    return `- ${field.name}: ${rendered}`
+  })
+  return [
+    'Answering the question you just asked, from the Agentic Remote app:',
+    ...lines,
+  ].join('\n')
 }
 
 function visibleUserContent(content: string): string {
@@ -2749,6 +2818,93 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         requestId,
         expiresAt: Date.now() + 60_000,
       })
+      // The agent is still showing this prompt in its terminal. Typing the
+      // answer while a structured form is open fills that form's focused
+      // field and submits every other field at its default, which silently
+      // turns confirmations into `false`. Close the prompt first, then answer.
+      const toolCallId = requestId.slice('persisted-user-input:'.length)
+      const terminalBacked = await this.terminalController.has(sessionId)
+      if (
+        terminalBacked &&
+        (await this.isToolCallComplete(sessionId, toolCallId))
+      ) {
+        // The agent already stopped waiting on this request, so it was
+        // answered or cancelled in the terminal. Whatever is on screen now
+        // belongs to something else, and filling it would answer the wrong
+        // prompt; the reply is dropped and the stale request cleared instead.
+        this.answeredPersistedInputs.delete(sessionId)
+        const settled = await this.store.update(sessionId, (session) => {
+          session.pendingUserInput = undefined
+        })
+        this.publish(settled)
+        return settled
+      }
+      if (terminalBacked && request.form) {
+        // Filling the agent's own form answers the tool it is waiting on, so
+        // the values arrive as the result it asked for.
+        const steps = terminalFormSteps(request.form, input.values || {})
+        const identity = {
+          question: request.question,
+          fields: request.form.fields.map((field) => field.title),
+        }
+        const filled =
+          steps &&
+          (await this.terminalController
+            .fillUserInputForm?.(sessionId, steps, identity)
+            .catch(() => false))
+        // Filling reports failure for a capture that timed out as well as for
+        // keys never sent, and the last Enter may already have submitted the
+        // form. Answering again would then submit a second time, so the agent
+        // is asked whether the request it was waiting on has finished.
+        if (
+          !filled &&
+          (await this.isToolCallComplete(sessionId, toolCallId))
+        ) {
+          const submitted = await this.store.update(sessionId, (session) => {
+            session.pendingUserInput = undefined
+            session.status = 'running'
+            session.activity = 'Continuing'
+          })
+          this.publish(submitted)
+          return submitted
+        }
+        if (filled) {
+          const answeredSession = await this.store.update(
+            sessionId,
+            (session) => {
+              session.pendingUserInput = undefined
+              session.status = 'running'
+              session.activity = 'Continuing'
+            },
+          )
+          this.publish(answeredSession)
+          return answeredSession
+        }
+      }
+      if (terminalBacked) {
+        const dismissed =
+          (await this.terminalController
+            .dismissUserInput?.(
+              sessionId,
+              request.form && {
+                question: request.question,
+                fields: request.form.fields.map((field) => field.title),
+              },
+            )
+            .catch(() => false)) ?? false
+        const closed =
+          dismissed && (await this.waitForToolCompletion(sessionId, toolCallId))
+        // The answer is about to be typed at the prompt. A form that is still
+        // open captures those keystrokes into its fields and submits the rest
+        // at their defaults, which is the corruption this path exists to
+        // avoid, so nothing is sent unless the form is known to have closed.
+        if (request.form && !closed) {
+          this.answeredPersistedInputs.delete(sessionId)
+          throw new Error(
+            'The agent is still showing its prompt, so the answer was not sent. Try again.',
+          )
+        }
+      }
       const cleared = await this.store.update(sessionId, (session) => {
         session.pendingUserInput = undefined
         session.status = 'idle'
@@ -2757,7 +2913,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(cleared)
       return this.sendMessage(
         sessionId,
-        request.form ? JSON.stringify(input.values) : answer,
+        request.form
+          ? persistedFormAnswer(request, input.values || {})
+          : answer,
         false,
       )
     } else {
@@ -3302,6 +3460,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         continue
       }
       return message.content.startsWith('Ask User')
+    }
+    return false
+  }
+
+  /**
+   * Whether the agent has already recorded this tool call as finished. A
+   * request answered or cancelled in an attached terminal completes there, so
+   * this is what tells a reply that it is answering a prompt the agent has
+   * stopped waiting on.
+   */
+  private async isToolCallComplete(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<boolean> {
+    const events = await this.sessionEventReader(sessionId).catch(() => [])
+    return events.some(
+      (event) =>
+        event.type === 'tool.execution_complete' &&
+        !event.agentId &&
+        stringValue(recordValue(event.data).toolCallId) === toolCallId,
+    )
+  }
+
+  /**
+   * Waits for the agent to record the prompt as finished, so the answer that
+   * follows is typed at the prompt instead of into the closing form.
+   */
+  private async waitForToolCompletion(
+    sessionId: string,
+    toolCallId: string,
+    attempts = 20,
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      if (await this.isToolCallComplete(sessionId, toolCallId)) {
+        return true
+      }
     }
     return false
   }

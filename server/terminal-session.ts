@@ -414,6 +414,14 @@ export class TmuxTerminalSessionController
         return false
       }
       await resumeSessionIfPrompted(target)
+      // What the pane already holds is not evidence that this message
+      // arrived: the same text may have been sent before, and an earlier
+      // large paste leaves a placeholder of its own.
+      const confirmation = content.split('\n').at(-1) || content
+      const alreadyShown = paneEvidenceCount(
+        await capturePane(target),
+        confirmation,
+      )
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -431,9 +439,7 @@ export class TmuxTerminalSessionController
         '-t',
         target,
       ])
-      if (
-        !(await waitForPaneText(target, content.split('\n').at(-1) || content))
-      ) {
+      if (!(await waitForPaneText(target, confirmation, alreadyShown))) {
         // The prompt never showed the message, so pressing Enter would send
         // whatever it does hold and still be reported as delivered. The text
         // is left where the reader can see it and send it again.
@@ -939,14 +945,43 @@ async function copilotCommand(
  * plainly there. Whitespace is therefore removed from both sides rather than
  * collapsed.
  */
-export function paneShowsText(pane: string, expected: string): boolean {
+export function paneEvidenceCount(pane: string, expected: string): number {
   const compact = (value: string) => value.replace(/\s+/g, '')
   const wanted = compact(expected)
   if (!wanted) {
-    return true
+    return 0
+  }
+  let found = 0
+  let index = 0
+  const haystack = compact(pane)
+  for (;;) {
+    const at = haystack.indexOf(wanted, index)
+    if (at < 0) {
+      break
+    }
+    found += 1
+    index = at + wanted.length
   }
   // Copilot collapses a large paste into a placeholder instead of echoing it.
-  return compact(pane).includes(wanted) || pane.includes('[Pasted text')
+  return found + (pane.match(/\[Pasted text/g) || []).length
+}
+
+/**
+ * Whether a pane has gained the text that was just pasted into it.
+ *
+ * The same message can be sent twice, and the pane keeps the scrollback of
+ * everything before it, so its mere presence proves nothing. Only one more
+ * occurrence than the pane already had does.
+ */
+export function paneShowsText(
+  pane: string,
+  expected: string,
+  before = 0,
+): boolean {
+  if (!expected.replace(/\s+/g, '')) {
+    return true
+  }
+  return paneEvidenceCount(pane, expected) > before
 }
 
 /**
@@ -955,22 +990,19 @@ export function paneShowsText(pane: string, expected: string): boolean {
  * prompt happened to hold, and report a message as delivered that the
  * terminal never received.
  */
+async function capturePane(target: string): Promise<string> {
+  return (
+    await execFileAsync('tmux', ['capture-pane', '-p', '-t', target, '-S', '-30'])
+  ).stdout
+}
+
 async function waitForPaneText(
   target: string,
   expected: string,
+  before: number,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const pane = (
-      await execFileAsync('tmux', [
-        'capture-pane',
-        '-p',
-        '-t',
-        target,
-        '-S',
-        '-30',
-      ])
-    ).stdout
-    if (paneShowsText(pane, expected)) {
+    if (paneShowsText(await capturePane(target), expected, before)) {
       return true
     }
     await new Promise((resolve) => setTimeout(resolve, 50))

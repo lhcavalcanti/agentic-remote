@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   isTerminalSessionInUsePrompt,
+  paneEvidenceCount,
   paneShowsText,
   parseTerminalPermission,
   parseTerminalUserInput,
@@ -442,6 +443,29 @@ describe('paneShowsText', () => {
     expect(
       paneShowsText('> [Pasted text #1 +40 lines]', 'a very long message'),
     ).toBe(true)
+  })
+
+  it('does not accept the same message sent earlier as this one arriving', () => {
+    const message = 'Retry the deployment'
+    const before = `> ${message}\n  done\n`
+    // The reader sent it once already, so the pane held it before this paste.
+    expect(
+      paneShowsText(before, message, paneEvidenceCount(before, message)),
+    ).toBe(false)
+    expect(
+      paneShowsText(
+        `${before}> ${message}`,
+        message,
+        paneEvidenceCount(before, message),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not accept an earlier large paste as this one arriving', () => {
+    const before = '> [Pasted text #1 +40 lines]\n  done\n'
+    expect(
+      paneShowsText(before, 'a different long message', paneEvidenceCount(before, 'a different long message')),
+    ).toBe(false)
   })
 
   it('does not claim an empty prompt is showing the message', () => {

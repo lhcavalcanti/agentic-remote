@@ -4320,6 +4320,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [statuslineOpen, setStatuslineOpen] = useState(false)
   const [mutedSessions, setMutedSessions] = useState<string[]>([])
+  const mutedSessionsRef = useRef<string[]>([])
   const [mutingSession, setMutingSession] = useState(false)
   const [updateRegistration, setUpdateRegistration] =
     useState<ServiceWorkerRegistration>()
@@ -4390,6 +4391,10 @@ function App() {
   // A session whose silence changed in the meantime is described more recently
   // by that change than by the answer, so the answer does not get to speak for
   // it: a clear moves the mute to a replacement it has never heard of.
+  useEffect(() => {
+    mutedSessionsRef.current = mutedSessions
+  }, [mutedSessions])
+
   const applyMutedSessions = useCallback(
     (incoming: string[], startedAtRevision: number) => {
       setMutedSessions((current) => {
@@ -5006,7 +5011,7 @@ function App() {
   // read left in flight would otherwise surface, and be saved, under the
   // session that replaced its owner.
   useLayoutEffect(() => {
-    if (knowledgeOwnerKey.current === selectedKey) {
+    if (knowledgeOwnerKey.current === knowledgePanelKey) {
       return
     }
     if (knowledgeOwnerKey.current !== undefined) {
@@ -5015,8 +5020,8 @@ function App() {
       knowledgeRestoreStartedKey.current = undefined
       setKnowledgeLoading(false)
     }
-    knowledgeOwnerKey.current = selectedKey
-  }, [selectedKey])
+    knowledgeOwnerKey.current = knowledgePanelKey
+  }, [knowledgePanelKey])
 
   useEffect(() => {
     // No early return here: a restore belonging to a session that is no longer
@@ -6005,7 +6010,9 @@ function App() {
     }
     moveComposerDraft(fromKey, toKey)
     moveKnowledgePosition(fromKey, toKey)
-    recordMuteChange(fromKey, toKey)
+    if (mutedSessionsRef.current.includes(fromKey)) {
+      recordMuteChange(fromKey, toKey)
+    }
     setMutedSessions((current) =>
       current.includes(fromKey)
         ? [...current.filter((key) => key !== fromKey), toKey]
@@ -6136,6 +6143,10 @@ function App() {
     if (!rootId) {
       return
     }
+    // Opening or closing a branch is the reader choosing where to be, so a
+    // restore still on its way is abandoned rather than allowed to land on
+    // top of that choice.
+    cancelKnowledgeRestore()
     if (expandedKnowledge.includes(path)) {
       setExpandedKnowledge((current) => collapseKnowledgeFolder(current, path))
       // Following the collapse keeps the breadcrumb pointing at something the
@@ -6191,7 +6202,9 @@ function App() {
    */
   function cancelKnowledgeRestore() {
     // The reader is choosing what to show, so this session owns the view.
-    knowledgeViewOwnerKey.current = selectedKey
+    // Before there is a session, the panel itself owns it: leaving it unowned
+    // would let the first session inherit a document it never opened.
+    knowledgeViewOwnerKey.current = knowledgePanelKey
     if (!knowledgeRestoreStartedKey.current) {
       return
     }
@@ -6202,6 +6215,7 @@ function App() {
   }
 
   function collapseKnowledgeTree() {
+    cancelKnowledgeRestore()
     setExpandedKnowledge([])
     setKnowledgePath(knowledgeRootPath)
   }

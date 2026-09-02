@@ -3752,7 +3752,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           createdAt: new Date().toISOString(),
         })
         this.publish(notice)
-        return !feedback.startedTurn
+        if (!feedback.startedTurn) {
+          return true
+        }
+        // The command began a turn instead of answering, so the terminal is
+        // busy until it ends. Recording the dispatch now keeps anything else
+        // from being sent into that turn before polling observes it.
+        const started = await this.store.markTerminalPromptDispatched(
+          sessionId,
+          dispatchedAt,
+        )
+        this.publish(started)
+        return false
       }
       const running = await this.store.markTerminalPromptDispatched(
         sessionId,

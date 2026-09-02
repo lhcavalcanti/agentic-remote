@@ -4022,6 +4022,95 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('marks the session busy when a queued command starts a turn', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-turn-'),
+    )
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const seed = new SessionStore(stateDirectory)
+    await seed.initialize()
+    await seed.create(
+      {
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'External session',
+        updatedAt: '2026-07-25T01:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        queuedCount: 2,
+        queuedPrompts: [
+          {
+            id: 'queued-init',
+            content: '/init',
+            command: true,
+            createdAt: '2026-07-25T01:00:01.000Z',
+          },
+          {
+            id: 'queued-cwd',
+            content: '/cwd',
+            command: true,
+            createdAt: '2026-07-25T01:00:02.000Z',
+          },
+        ],
+        messages: [],
+      },
+      { managedOpen: true },
+    )
+    const answered: string[] = []
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async (_sessionId: string, content: string) => {
+        answered.push(content)
+        // /init answers by starting a turn rather than printing.
+        pane = [
+          ' \u25cf Working on it',
+          composer,
+          ' esc interrupt \u00b7 ctrl+c quit',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.executeCommand(client.session.sessionId, '/model', true)
+
+    // The turn owns the terminal, so the entries behind it wait rather than
+    // being typed into the running agent.
+    expect(answered).toEqual(['/init'])
+    const stored = service.store.get(client.session.sessionId)
+    expect(stored?.status).toBe('running')
+    expect(stored?.queuedCount ?? 0).toBe(2)
+    await service.stop()
+  })
+
   it('reports nothing when the command started a turn', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-slash-turn-'),

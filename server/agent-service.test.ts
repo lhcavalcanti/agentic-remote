@@ -847,6 +847,42 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('keeps a suspended terminal session when it is opened', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'resting-session',
+        cwd: '/tmp/project',
+        title: 'Resting project',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.setSuspended('resting-session', true)
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+
+    // A suspended session has no window on purpose. Taking that as proof it
+    // is gone would close it, drop it from recovery, and lose it for good.
+    await expect(service.openSession('resting-session')).resolves.toMatchObject(
+      { id: 'resting-session', suspended: true },
+    )
+    expect(store.get('resting-session')).toMatchObject({ isOpen: true })
+    expect(
+      store.terminalRecoverySessions().map((session) => session.id),
+    ).toEqual([])
+  })
+
   it('lists, updates, and cancels SDK background tasks independently of session status', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
     directories.push(directory)

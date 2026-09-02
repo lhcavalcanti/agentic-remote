@@ -1859,6 +1859,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.hydratedSessions.has(id)) {
       return stored
     }
+    if (stored.suspended) {
+      // Having nothing running is what was asked for, not evidence that the
+      // session is gone. Closing it here would drop it from recovery and take
+      // the conversation with it.
+      return stored
+    }
     if (this.store.backend(id) === 'terminal') {
       const closed = await this.store.setOpen(id, false, true)
       this.publish(closed)
@@ -3573,6 +3579,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const active = this.sessions.get(sessionId)
     if (active) {
       return active
+    }
+    if (this.store.get(sessionId)?.suspended) {
+      // Attaching would start the runtime this session was suspended to be
+      // rid of, so it is asked for rather than assumed.
+      throw new Error('Resume the session before using it')
     }
     const inFlight = this.loadingSessions.get(sessionId)
     if (inFlight) {

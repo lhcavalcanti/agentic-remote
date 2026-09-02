@@ -522,6 +522,9 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
   ): Promise<SessionDetail> {
+    if (this.store.get(sessionId)?.suspended) {
+      throw new Error('Resume the session before sending to it')
+    }
     await this.refreshAuthentication()
     const session = this.requireSession(sessionId)
     if (session.status === 'running' || session.status === 'waiting') {

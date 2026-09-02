@@ -288,7 +288,9 @@ export class TmuxTerminalSessionController
         // and nothing is.
         return true
       }
-      await execFileAsync('tmux', ['kill-window', '-t', owner.target])
+      // The target names a pane. Killing the window would take any pane
+      // beside it, which belongs to whoever split it there.
+      await execFileAsync('tmux', ['kill-pane', '-t', owner.target])
       // The pane is torn down asynchronously, and a resume that raced it would
       // find the old window and take it for the new one.
       for (let attempt = 0; attempt < 50; attempt += 1) {

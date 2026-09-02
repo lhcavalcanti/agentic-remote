@@ -327,7 +327,9 @@ run() {
   remove_validation_worktree
   log "checking out $candidate_commit for validation"
   git -C "$DEV_ROOT" worktree add --detach "$validation_root" "$candidate_commit" >/dev/null
-  trap 'remove_validation_worktree' RETURN
+  # An EXIT trap, not RETURN: `set -e` exits the shell on a failed check
+  # rather than returning, and a RETURN trap would never run.
+  trap 'remove_validation_worktree' EXIT
 
   log "installing validation dependencies"
   CI=true run_pnpm "$validation_root" install --frozen-lockfile
@@ -344,7 +346,7 @@ run() {
   [[ "$validated_commit" == "$candidate_commit" ]] ||
     die "validation worktree is at $validated_commit, not $candidate_commit"
   remove_validation_worktree
-  trap - RETURN
+  trap - EXIT
 
 
   assert_clean "$PROD_ROOT"

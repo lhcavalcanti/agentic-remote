@@ -354,6 +354,24 @@ describe('promotion monitor', () => {
     expect(worktrees).not.toContain('validation')
   })
 
+  it('removes the pinned worktree when validation fails', async () => {
+    const context = await fixture()
+    const previous = await git(context.runtime, 'rev-parse', 'HEAD')
+    await advanceMain(context)
+
+    // `set -e` exits on a failed check rather than returning, so cleanup has
+    // to survive that path or the worktree is left behind.
+    const result = await monitor(context, { CHECK_EXIT: '1' })
+
+    expect(result.code).not.toBe(0)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
+    const worktrees = await git(context.dev, 'worktree', 'list')
+    expect(worktrees).not.toContain('validation')
+    expect(existsSync(path.join(context.root, 'state', 'validation'))).toBe(
+      false,
+    )
+  })
+
   it('runs the whole suite before promoting', async () => {
     const context = await fixture()
     await advanceMain(context)

@@ -337,6 +337,8 @@ binaries means the digest did not match the table in
   differences
 - [Background tasks](docs/background-tasks.md) — SDK review, UI gaps, and
   visual states
+- [Slash command feedback](docs/slash-command-feedback.md) — what terminal-backed
+  sessions report for each command
 - [Security policy](SECURITY.md) — reporting and deployment boundaries
 
 Agentic Remote is available under the [MIT License](LICENSE).

@@ -79,6 +79,9 @@ export interface QueuedPrompt {
   id: string
   content: string
   createdAt: string
+  // A slash command reports what it printed rather than starting a turn, so
+  // draining it has to follow the command path and not the prompt one.
+  command?: boolean
 }
 
 export interface SessionRuntimeInfo {

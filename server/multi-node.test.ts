@@ -24,6 +24,10 @@ import type {
 import { buildApp } from './app.js'
 import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
+import type {
+  AudioUpload,
+  TranscriptionService,
+} from './transcription-service.js'
 
 class FakeSessionService extends EventEmitter implements SessionService {
   private readonly sessions = new Map<string, SessionDetail>()
@@ -431,6 +435,26 @@ async function temporaryDirectory(label: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), `${label}-`))
   directories.push(directory)
   return directory
+}
+
+function multipartAudio(
+  filename: string,
+  mimeType: string,
+  content: string,
+): { boundary: string; payload: Buffer } {
+  const boundary = 'agentic-remote-audio-boundary'
+  const payload = Buffer.from(
+    [
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="audio"; filename="${filename}"`,
+      `Content-Type: ${mimeType}`,
+      '',
+      content,
+      `--${boundary}--`,
+      '',
+    ].join('\r\n'),
+  )
+  return { boundary, payload }
 }
 
 function waitForEvent(
@@ -1177,6 +1201,212 @@ describe('multi-node hub', () => {
             .body,
         ).roots,
       ).toHaveLength(0)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it('transcribes hub audio on the assigned computer', async () => {
+    const transcribe = vi.fn(async (upload: AudioUpload) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of upload.stream) {
+        chunks.push(Buffer.from(chunk))
+      }
+      expect(Buffer.concat(chunks).toString()).toBe('recorded audio')
+      expect(upload.filename).toBe('memo.m4a')
+      expect(upload.mimeType).toBe('audio/x-m4a')
+      return { transcript: 'Ship the delegated transcriber', durationSeconds: 6 }
+    })
+    const workerTranscription: TranscriptionService = {
+      initialize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      transcribe,
+    }
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-voice-node'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+      transcriptionService: workerTranscription,
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const workerAddress = worker.app.server.address() as AddressInfo
+
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', 'workstation')
+    const hubTranscription: TranscriptionService = {
+      initialize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      transcribe: vi.fn(async () => ({
+        transcript: 'Hub transcript',
+        durationSeconds: 1,
+      })),
+    }
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-voice-hub'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(),
+      transcriptionService: hubTranscription,
+    })
+
+    try {
+      const registered = await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${workerAddress.port}`,
+          token: worker.identity.token,
+          name: 'workstation',
+        },
+      })
+      expect(registered.statusCode).toBe(201)
+      const computerId = registered.json().computer.id as string
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const status = await hub.app.inject({
+          method: 'GET',
+          url: '/api/computers',
+        })
+        const online = status
+          .json()
+          .computers.find((entry: { id: string }) => entry.id === computerId)
+          ?.online
+        if (online) {
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const { boundary, payload } = multipartAudio(
+        'memo.m4a',
+        'audio/x-m4a',
+        'recorded audio',
+      )
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: '/api/transcriptions',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload,
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        transcript: 'Ship the delegated transcriber',
+        durationSeconds: 6,
+      })
+      expect(transcribe).toHaveBeenCalledTimes(1)
+      expect(hubTranscription.transcribe).not.toHaveBeenCalled()
+
+      const authorization = { authorization: `Bearer ${worker.identity.token}` }
+      const unauthenticated = await worker.app.inject({
+        method: 'POST',
+        url: '/node-api/transcriptions',
+        headers: { 'content-type': 'application/octet-stream' },
+        payload: Buffer.from('recorded audio'),
+      })
+      expect(unauthenticated.statusCode).toBe(401)
+
+      const unnamed = await worker.app.inject({
+        method: 'POST',
+        url: '/node-api/transcriptions',
+        headers: { ...authorization, 'content-type': 'application/octet-stream' },
+        payload: Buffer.from('recorded audio'),
+      })
+      expect(unnamed.statusCode).toBe(400)
+      expect(unnamed.json().error).toContain('name is required')
+
+      const empty = await worker.app.inject({
+        method: 'POST',
+        url: '/node-api/transcriptions',
+        headers: {
+          ...authorization,
+          'content-type': 'application/octet-stream',
+          'x-agentic-audio-filename':
+            Buffer.from('memo.m4a').toString('base64url'),
+        },
+        payload: Buffer.alloc(0),
+      })
+      expect(empty.statusCode).toBe(400)
+      expect(empty.json().error).toContain('audio file is required')
+      expect(transcribe).toHaveBeenCalledTimes(1)
+    } finally {
+      await hub.app.close()
+      await worker.app.close()
+    }
+  })
+
+  it('keeps transcribing on the hub when no computer is assigned', async () => {
+    const hubTranscription: TranscriptionService = {
+      initialize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      transcribe: vi.fn(async () => ({
+        transcript: 'Hub transcript',
+        durationSeconds: 2,
+      })),
+    }
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-voice-local'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(),
+      transcriptionService: hubTranscription,
+    })
+
+    try {
+      const { boundary, payload } = multipartAudio(
+        'memo.m4a',
+        'audio/x-m4a',
+        'recorded audio',
+      )
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: '/api/transcriptions',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload,
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ transcript: 'Hub transcript' })
+      expect(hubTranscription.transcribe).toHaveBeenCalledTimes(1)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it('reports an assigned computer that is not paired', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', 'missing-workstation')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-voice-missing'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(),
+      transcriptionService: {
+        initialize: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+        transcribe: vi.fn(),
+      },
+    })
+
+    try {
+      const { boundary, payload } = multipartAudio(
+        'memo.m4a',
+        'audio/x-m4a',
+        'recorded audio',
+      )
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: '/api/transcriptions',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload,
+      })
+
+      expect(response.statusCode).toBe(503)
+      expect(response.json().error).toContain('missing-workstation')
     } finally {
       await hub.app.close()
     }

@@ -27,6 +27,10 @@ import {
   type TranscriptionService,
 } from './transcription-service.js'
 import {
+  DelegatedTranscriptionService,
+  transcriptionComputerName,
+} from './delegated-transcription-service.js'
+import {
   FileUploadError,
   registerFileUploadRoutes,
 } from './file-upload-routes.js'
@@ -119,7 +123,11 @@ export async function buildApp(
   })
 
   await app.register(fastifyWebsocket)
-  await registerNodeRoutes(app, service, identity)
+  const localTranscription =
+    options.transcriptionService ??
+    new LocalTranscriptionService(localTranscriptionOptions(dataDirectory))
+  await localTranscription.initialize()
+  await registerNodeRoutes(app, service, identity, localTranscription)
 
   let manager: ComputerManager | undefined
   let pushService: PushNotificationService | undefined
@@ -142,10 +150,14 @@ export async function buildApp(
     pushService.attach(manager)
     await registerHubRoutes(app, manager, knowledgeStore)
     await registerPushRoutes(app, pushService)
-    transcriptionService =
-      options.transcriptionService ??
-      new LocalTranscriptionService(localTranscriptionOptions(dataDirectory))
-    await transcriptionService.initialize()
+    const delegate = transcriptionComputerName()
+    transcriptionService = delegate
+      ? new DelegatedTranscriptionService({
+          manager,
+          computerName: delegate,
+          local: localTranscription,
+        })
+      : localTranscription
     await app.register(fastifyMultipart, transcriptionMultipartOptions)
     await registerTranscriptionRoutes(app, transcriptionService)
     await registerFileUploadRoutes(app, manager)
@@ -186,7 +198,7 @@ export async function buildApp(
   app.addHook('onClose', async () => {
     manager?.stop()
     pushService?.stop()
-    await transcriptionService?.stop()
+    await (transcriptionService ?? localTranscription).stop()
     await service.stop()
   })
 
@@ -196,7 +208,7 @@ export async function buildApp(
     identity,
     manager,
     pushService,
-    transcriptionService,
+    transcriptionService: transcriptionService ?? localTranscription,
     knowledgeStore,
   }
 }

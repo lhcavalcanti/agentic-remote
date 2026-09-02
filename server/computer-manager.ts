@@ -2,6 +2,7 @@ import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
   AddComputerInput,
+  AudioTranscription,
   ConfigureRuntimeInput,
   ComputerSummary,
   CreateSessionInput,
@@ -309,6 +310,31 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return computerId === this.identity.info.id
       ? this.localService.uploadFile(sessionId, filename, data)
       : this.requireClient(computerId).uploadFile(sessionId, filename, data)
+  }
+
+  findComputer(nameOrId: string): ComputerSummary | undefined {
+    const wanted = nameOrId.trim().toLowerCase()
+    return this.listComputers().find(
+      (computer) =>
+        computer.id.toLowerCase() === wanted ||
+        computer.name.toLowerCase() === wanted,
+    )
+  }
+
+  async transcribeAudio(
+    computerId: string,
+    filename: string,
+    mimeType: string,
+    data: Buffer,
+    signal?: AbortSignal,
+  ): Promise<AudioTranscription> {
+    this.requireComputer(computerId)
+    return this.requireClient(computerId).transcribe(
+      filename,
+      mimeType,
+      data,
+      signal,
+    )
   }
 
   async activateSession(

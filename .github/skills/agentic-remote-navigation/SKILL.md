@@ -50,6 +50,7 @@ it end to end.
 | Session cwd containment | `server/session-directory.ts` |
 | Folder picker containment | `server/directory-browser.ts` |
 | Audio transcription | `server/transcription-service.ts` |
+| Transcription on another computer | `server/delegated-transcription-service.ts` |
 | Push notifications | `server/push-notification-service.ts`, `public/sw.js` |
 | Install and service management | `bin/agentic-remote` |
 
@@ -133,7 +134,10 @@ Do not weaken these without an explicit product decision.
   `agentic-remote pair-info` for troubleshooting; it prints that token.
 - Never copy state, pairing tokens, provider credentials, repositories, or SSH
   keys between hosts. Each host pulls from GitHub independently.
-- Uploads, transcripts, and audio stay on the owning computer.
+- Uploads, transcripts, and audio stay on the owning computer. The one exception
+  is `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER`, which forwards a recording to the
+  named paired computer so Whisper runs there; the audio is buffered in hub
+  memory only for the length of that request and never written to hub storage.
 
 ## Performance invariants
 

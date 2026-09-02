@@ -2371,20 +2371,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         nativeEnqueue,
       )
     ) {
+      const feedback = await this.terminalCommandFeedback(
+        sessionId,
+        canonicalCommand,
+        before,
+      )
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
         role: 'notice',
-        content: (
-          await this.terminalCommandFeedback(
-            sessionId,
-            canonicalCommand,
-            before,
-          )
-        ).notice,
+        content: feedback.notice,
         createdAt: new Date().toISOString(),
       })
       this.publish(notice)
-      return notice
+      if (!feedback.startedTurn) {
+        return notice
+      }
+      // A command sent directly can start a turn just as a queued one can, and
+      // the session has to read as busy for it too, or the next prompt is sent
+      // into the turn before polling notices it.
+      const started = await this.store.markTerminalPromptDispatched(
+        sessionId,
+        new Date().toISOString(),
+      )
+      this.publish(started)
+      return started
     }
     const session = catalog.session
     if (!session) {
@@ -2449,18 +2459,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * command itself when there is nothing to report.
    */
   /**
-   * The notice a command produced, and whether it started an agent turn
-   * instead of answering. The caller needs that apart from the text: a command
-   * that began a turn leaves the terminal busy, so nothing further may be sent
-   * until the turn completes.
+   * The notice a command produced, and what it left the terminal doing. Both
+   * matter apart from the text: a command that began a turn, and one that
+   * opened a full-screen view, each keep the keyboard, so nothing further may
+   * be sent until they release it.
    */
   private async terminalCommandFeedback(
     sessionId: string,
     command: string,
     before: string | undefined,
-  ): Promise<{ notice: string; startedTurn: boolean }> {
+  ): Promise<{ notice: string; startedTurn: boolean; overlayOpen: boolean }> {
     if (before === undefined || !this.terminalController.capture) {
-      return { notice: command, startedTurn: false }
+      return { notice: command, startedTurn: false, overlayOpen: false }
     }
     let previous: string | undefined
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -2470,27 +2480,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         continue
       }
       if (isTerminalOverlay(after)) {
+        // The view takes the keyboard: anything sent now lands in its search
+        // box instead of the composer, so the terminal counts as held.
         return {
           notice: `${command}\n\nOpened an interactive view in the terminal. Continue there; it cannot be shown here.`,
           startedTurn: false,
+          overlayOpen: true,
         }
       }
       // The command started a turn, so anything appearing now is the agent
       // writing rather than the command answering.
       if (isTerminalAgentWorking(after)) {
-        return { notice: command, startedTurn: true }
+        return { notice: command, startedTurn: true, overlayOpen: false }
       }
       const output = terminalCommandOutput(before, after, command)
       // A response can be captured mid-paint, so report it only once it stops
       // growing; otherwise a multi-line response is cut short.
       if (output && output === previous) {
-        return { notice: `${command}\n\n${output}`, startedTurn: false }
+        return {
+          notice: `${command}\n\n${output}`,
+          startedTurn: false,
+          overlayOpen: false,
+        }
       }
       previous = output
     }
     return {
       notice: previous ? `${command}\n\n${previous}` : command,
       startedTurn: false,
+      overlayOpen: false,
     }
   }
 
@@ -3752,18 +3770,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           createdAt: new Date().toISOString(),
         })
         this.publish(notice)
-        if (!feedback.startedTurn) {
-          return true
+        if (feedback.startedTurn) {
+          // The command began a turn instead of answering, so the terminal is
+          // busy until it ends. Recording the dispatch now keeps anything else
+          // from being sent into that turn before polling observes it.
+          const started = await this.store.markTerminalPromptDispatched(
+            sessionId,
+            dispatchedAt,
+          )
+          this.publish(started)
+          return false
         }
-        // The command began a turn instead of answering, so the terminal is
-        // busy until it ends. Recording the dispatch now keeps anything else
-        // from being sent into that turn before polling observes it.
-        const started = await this.store.markTerminalPromptDispatched(
-          sessionId,
-          dispatchedAt,
-        )
-        this.publish(started)
-        return false
+        // A full-screen view owns the keyboard without starting a turn, so the
+        // session stays idle while the rest of the queue waits for it to close
+        // rather than being typed into its search box.
+        return !feedback.overlayOpen
       }
       const running = await this.store.markTerminalPromptDispatched(
         sessionId,

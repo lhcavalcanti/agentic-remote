@@ -4111,6 +4111,97 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('stops draining when a queued command opens a full-screen view', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-overlay-'),
+    )
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const seed = new SessionStore(stateDirectory)
+    await seed.initialize()
+    await seed.create(
+      {
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'External session',
+        updatedAt: '2026-07-25T01:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        queuedCount: 2,
+        queuedPrompts: [
+          {
+            id: 'queued-model',
+            content: '/model',
+            command: true,
+            createdAt: '2026-07-25T01:00:01.000Z',
+          },
+          {
+            id: 'queued-cwd',
+            content: '/cwd',
+            command: true,
+            createdAt: '2026-07-25T01:00:02.000Z',
+          },
+        ],
+        messages: [],
+      },
+      { managedOpen: true },
+    )
+    const answered: string[] = []
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async (_sessionId: string, content: string) => {
+        answered.push(content)
+        // /model opens the picker, which repaints over the composer and takes
+        // the keyboard for its own search box.
+        pane = [
+          ' Select a model',
+          ' > claude-sonnet-4.6',
+          '   gpt-5.6-sol',
+          ' esc close \u00b7 enter select',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.executeCommand(client.session.sessionId, '/usage', true)
+
+    // The view owns the keyboard, so the entries behind it wait instead of
+    // being typed into its search box.
+    expect(answered).toEqual(['/model'])
+    expect(
+      service.store.get(client.session.sessionId)?.queuedCount ?? 0,
+    ).toBe(2)
+    await service.stop()
+  })
+
   it('reports nothing when the command started a turn', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-slash-turn-'),

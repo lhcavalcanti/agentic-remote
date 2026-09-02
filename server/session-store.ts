@@ -9,6 +9,7 @@ import type {
   SessionDetail,
   SessionRuntimeInfo,
   SessionStatus,
+  ActivityKind,
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
 
@@ -31,6 +32,20 @@ interface StoredSession extends SessionDetail {
   queueDispatchAt?: string
   contextCwd?: boolean
   workspaceTitle?: boolean
+}
+
+function activityDuration(startedAt: string, completedAt: string): number | undefined {
+  const start = Date.parse(startedAt)
+  const end = Date.parse(completedAt)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return undefined
+  }
+  return end - start
+}
+
+function activityResultPreview(value: string): string {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  return normalized.length > 320 ? `${normalized.slice(0, 319)}…` : normalized
 }
 
 function cloneSession(session: StoredSession): SessionDetail {
@@ -507,6 +522,8 @@ export class SessionStore {
     toolCallId: string,
     content: string,
     createdAt: string,
+    activityKind: ActivityKind = 'tool',
+    activityGroupId?: string,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const id = `tool:${toolCallId}`
@@ -516,6 +533,8 @@ export class SessionStore {
         content,
         createdAt,
         activityStatus: 'running',
+        activityKind,
+        activityGroupId,
       })
       session.activity = content.split('\n', 1)[0]
       session.updatedAt = createdAt
@@ -526,6 +545,8 @@ export class SessionStore {
     sessionId: string,
     toolCallId: string,
     success: boolean,
+    completedAt?: string,
+    result?: string,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const activity = session.messages.find(
@@ -533,6 +554,17 @@ export class SessionStore {
       )
       if (activity) {
         activity.activityStatus = success ? 'completed' : 'failed'
+        const duration = completedAt
+          ? activityDuration(activity.createdAt, completedAt)
+          : undefined
+        if (duration !== undefined) {
+          activity.activityDurationMs = duration
+        }
+        if (result?.trim()) {
+          activity.activityResult = activityResultPreview(result)
+        } else if (!success) {
+          activity.activityResult = 'Error: tool failed; inspect the session log'
+        }
       }
 
       session.activity = session.messages

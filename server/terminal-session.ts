@@ -686,8 +686,11 @@ export class TmuxTerminalSessionController
         // The prompt never showed the message, so pressing Enter would send
         // whatever it does hold and still be reported as delivered. The text
         // is left where the reader can see it and send it again.
-        throw new Error(
-          'The terminal did not receive the message. Please try again.',
+        throw Object.assign(
+          new Error(
+            'The terminal did not receive the message. Please try again.',
+          ),
+          { statusCode: 409 },
         )
       }
       let paneTty = ''
@@ -1434,9 +1437,8 @@ async function copilotCommand(
  * Whether a pane is already showing text that was pasted into it.
  *
  * A pane wraps a long line at whatever column it ends on, and the break can
- * fall inside a word, so comparing line by line would miss text that is
- * plainly there. Whitespace is therefore removed from both sides rather than
- * collapsed.
+ * fall inside a word. The composer also adds a border to each wrapped line.
+ * Strip those line edges and whitespace before comparing the visible text.
  */
 export function paneEvidenceCount(pane: string, expected: string): number {
   const compact = (value: string) => value.replace(/\s+/g, '')
@@ -1446,7 +1448,9 @@ export function paneEvidenceCount(pane: string, expected: string): number {
   }
   let found = 0
   let index = 0
-  const haystack = compact(pane)
+  const haystack = compact(
+    pane.split('\n').map(cleanDialogLine).join(''),
+  )
   for (;;) {
     const at = haystack.indexOf(wanted, index)
     if (at < 0) {

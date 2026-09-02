@@ -338,6 +338,11 @@ hardware to accelerate it:
 AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER=workstation
 ```
 
+`agentic-remote setup` records the assignment and reads it back from the
+environment file it replaces, so it survives updates and promotions. Clear it by
+removing the line from `~/.config/agentic-remote/environment` and re-running
+setup.
+
 The hub still receives the recording, but it streams it straight to that
 computer's authenticated node API and keeps nothing on disk. Only the transcript
 comes back. Naming the hub's own computer is the same as leaving the variable

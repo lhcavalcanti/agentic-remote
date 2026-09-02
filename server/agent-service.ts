@@ -2843,10 +2843,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // Filling the agent's own form answers the tool it is waiting on, so
         // the values arrive as the result it asked for.
         const steps = terminalFormSteps(request.form, input.values || {})
+        const fields = request.form.fields.map((field) => field.title)
         const filled =
           steps &&
           (await this.terminalController
-            .fillUserInputForm?.(sessionId, steps)
+            .fillUserInputForm?.(sessionId, steps, fields)
             .catch(() => false))
         if (filled) {
           const answeredSession = await this.store.update(
@@ -2864,7 +2865,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (terminalBacked) {
         const dismissed =
           (await this.terminalController
-            .dismissUserInput?.(sessionId)
+            .dismissUserInput?.(
+              sessionId,
+              request.form?.fields.map((field) => field.title),
+            )
             .catch(() => false)) ?? false
         const closed =
           dismissed && (await this.waitForToolCompletion(sessionId, toolCallId))

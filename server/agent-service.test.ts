@@ -4537,11 +4537,17 @@ describe('AgentService deletion', () => {
 
     // The answer goes into the form the agent is waiting on, so it arrives as
     // that tool's result instead of being typed into a field.
-    expect(terminal.fillUserInputForm).toHaveBeenCalledWith(sessionId, [
-      { kind: 'text', value: 'swec-gpt55-chat-cache-engine-treatment' },
-      { kind: 'select', optionCount: 3, index: 1 },
-      { kind: 'select', optionCount: 3, index: 0 },
-    ])
+    // The field titles travel with the answer so the controller can confirm
+    // the form on screen is still the one being answered.
+    expect(terminal.fillUserInputForm).toHaveBeenCalledWith(
+      sessionId,
+      [
+        { kind: 'text', value: 'swec-gpt55-chat-cache-engine-treatment' },
+        { kind: 'select', optionCount: 3, index: 1 },
+        { kind: 'select', optionCount: 3, index: 0 },
+      ],
+      ['Name', 'Scope', 'Confirm'],
+    )
     expect(terminal.send).not.toHaveBeenCalled()
     expect(terminal.dismissUserInput).not.toHaveBeenCalled()
     expect(answered.pendingUserInput).toBeUndefined()
@@ -4624,7 +4630,9 @@ describe('AgentService deletion', () => {
     )
 
     // Closing the prompt first keeps the answer out of the form's fields.
-    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId)
+    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, [
+      'Confirm',
+    ])
     const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
     expect(content).toContain('confirmTransfer: true')
     expect(content).not.toContain('{"confirmTransfer"')

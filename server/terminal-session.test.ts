@@ -9,10 +9,12 @@ import {
   isTerminalAgentWorking,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
+  parseTerminalFormActiveField,
   parseTerminalPermission,
   parseTerminalUpdateNotice,
   parseTerminalUserInput,
   terminalCommandOutput,
+  terminalFormShowsFields,
   TmuxTerminalSessionController,
 } from './terminal-session.js'
 
@@ -707,5 +709,72 @@ describe('terminal slash command output', () => {
     ].join('\n')
 
     expect(isTerminalOverlay(pane)).toBe(false)
+  })
+})
+
+// Captured from a real Copilot CLI form: a text field focused, with the tabs
+// naming every field above it.
+const formPaneFirstField = [
+  ' Copilot needs information.',
+  ' Configure the deployment request.',
+  '',
+  '  Deployment name   Catalog scope   Confirm deployment',
+  '',
+  ' Deployment name',
+  ' ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+  '  ❯ swec-default',
+  ' ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+  '',
+  ' enter accept · tab next · ctrl+d decline · esc cancel',
+].join('\n')
+
+// The same form after an attached client moved to the last field, which is a
+// list and so prints its title with a colon.
+const formPaneLastField = [
+  ' Copilot needs information.',
+  ' Configure the deployment request.',
+  '',
+  '  Deployment name   Catalog scope   Confirm deployment',
+  '',
+  ' Confirm deployment:',
+  '   Yes',
+  ' ❯ No',
+  '   Other (type your answer)',
+  '',
+  ' ↑/↓ select · enter accept · shift+tab prev · ctrl+d decline · esc cancel',
+].join('\n')
+
+describe('terminal form identity', () => {
+  const fields = ['Deployment name', 'Catalog scope', 'Confirm deployment']
+
+  it('recognizes the form the given fields describe', () => {
+    expect(terminalFormShowsFields(formPaneFirstField, fields)).toBe(true)
+    expect(terminalFormShowsFields(formPaneLastField, fields)).toBe(true)
+  })
+
+  it('rejects a form that belongs to another request', () => {
+    // A prompt that replaced the one being answered shows its own fields, so
+    // an answer written for the old form must not reach it.
+    const other = formPaneFirstField.replace(
+      '  Deployment name   Catalog scope   Confirm deployment',
+      '  Branch name   Force push',
+    )
+    expect(terminalFormShowsFields(other, fields)).toBe(false)
+    expect(terminalFormShowsFields(other, ['Branch name', 'Force push'])).toBe(
+      true,
+    )
+  })
+
+  it('reads which field the form has focused', () => {
+    expect(parseTerminalFormActiveField(formPaneFirstField, fields)).toBe(
+      'Deployment name',
+    )
+    expect(parseTerminalFormActiveField(formPaneLastField, fields)).toBe(
+      'Confirm deployment',
+    )
+  })
+
+  it('reports no focus for a pane that is not this form', () => {
+    expect(parseTerminalFormActiveField('nothing here', fields)).toBeUndefined()
   })
 })

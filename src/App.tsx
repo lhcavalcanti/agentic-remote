@@ -4371,6 +4371,32 @@ function App() {
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
   const eventSequenceRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
+
+  // A settings answer describes the world as it was when the request went out.
+  // A session that changed in the meantime is described more recently by the
+  // event than by the answer, so the answer does not get to speak for it: a
+  // clear moves the mute to a replacement the answer has never heard of.
+  const applyMutedSessions = useCallback(
+    (incoming: string[], startedAtSequence: number) => {
+      setMutedSessions((current) => {
+        const reconciled = new Set(incoming)
+        for (const key of new Set([...current, ...reconciled])) {
+          if (
+            (sessionEventSequenceRef.current.get(key) || 0) <= startedAtSequence
+          ) {
+            continue
+          }
+          if (current.includes(key)) {
+            reconciled.add(key)
+          } else {
+            reconciled.delete(key)
+          }
+        }
+        return [...reconciled]
+      })
+    },
+    [],
+  )
   const computerEventSequenceRef = useRef(new Map<string, number>())
   const sidebarResizeRef = useRef<
     | { pointerId: number; startX: number; startWidth: number; width: number }
@@ -4634,10 +4660,14 @@ function App() {
 
   useEffect(() => {
     let active = true
+    const startedAtSequence = eventSequenceRef.current
     void getPushSettings()
       .then((settings) => {
         if (active) {
-          setMutedSessions(settings.mutedSessions)
+          // This answer can be older than a clear that has since moved the
+          // mute to a replacement it has never heard of, exactly as a
+          // reconnect's answer can.
+          applyMutedSessions(settings.mutedSessions, startedAtSequence)
         }
       })
       .catch((caught: unknown) => {
@@ -4886,16 +4916,20 @@ function App() {
           if (!current()) {
             return
           }
+          // The remembered position names a folder even when that folder is
+          // the root, and going there is what leaves the previous session's
+          // folder behind. Skipping the navigation because there is nowhere
+          // to descend to would keep that folder on screen, and the reader's
+          // next move would then save it under this session.
           if (
-            position.path &&
-            position.path !== knowledgeRootPath &&
-            // After switching root the folder cache in this closure is the one
-            // captured before the switch. Two roots can hold the same relative
-            // path, so consulting it would skip loading the new root's copy.
             !(await openKnowledgeFolder(
-              position.path,
+              position.path || knowledgeRootPath,
               rootId,
               true,
+              // After switching root the folder cache in this closure is the
+              // one captured before the switch. Two roots can hold the same
+              // relative path, so consulting it would skip loading the new
+              // root's copy.
               switchedRoot ? {} : undefined,
             ))
           ) {
@@ -5520,20 +5554,7 @@ function App() {
       const changedSinceRefresh = (key: string) =>
         (sessionEventSequenceRef.current.get(key) || 0) > startedAtSequence
       if (pushSettings) {
-        setMutedSessions((current) => {
-          const reconciled = new Set(pushSettings.mutedSessions)
-          for (const key of new Set([...current, ...reconciled])) {
-            if (!changedSinceRefresh(key)) {
-              continue
-            }
-            if (current.includes(key)) {
-              reconciled.add(key)
-            } else {
-              reconciled.delete(key)
-            }
-          }
-          return [...reconciled]
-        })
+        applyMutedSessions(pushSettings.mutedSessions, startedAtSequence)
       }
       const selectedAtRefresh = selectedRef.current
       // A replacement selected while the refresh was in flight is missing

@@ -202,10 +202,25 @@ function originAllowed(
   return policy.origins.has(parsed.origin)
 }
 
+/**
+ * The part of the notification state a cleared conversation has to carry with
+ * it. Kept to what the clear route needs so the routes do not depend on the
+ * whole push service.
+ */
+export interface SessionMuteCarrier {
+  settings(): { mutedSessions: string[] }
+  setSessionMuted(
+    computerId: string,
+    sessionId: string,
+    muted: boolean,
+  ): Promise<{ mutedSessions: string[] }>
+}
+
 export async function registerHubRoutes(
   app: FastifyInstance,
   manager: ComputerManager,
   knowledge: KnowledgeStore,
+  mutes?: SessionMuteCarrier,
 ): Promise<void> {
   const policy = originPolicy()
   app.addHook('onRequest', async (request, reply) => {
@@ -450,12 +465,21 @@ export async function registerHubRoutes(
 
   app.post<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/clear',
-    async (request) => ({
-      session: await manager.clearConversation(
-        request.params.computerId,
-        request.params.sessionId,
-      ),
-    }),
+    async (request) => {
+      const { computerId, sessionId } = request.params
+      // Silence belongs to the conversation, not to the id it happens to be
+      // under. A paired node that predates the replacement link reports a
+      // clear as a plain removal, which takes the silence with it, so it is
+      // read before the clear and put back on whatever replaces the session.
+      const silenced =
+        mutes?.settings().mutedSessions.includes(`${computerId}:${sessionId}`) ??
+        false
+      const session = await manager.clearConversation(computerId, sessionId)
+      if (silenced && session.id !== sessionId) {
+        await mutes?.setSessionMuted(computerId, session.id, true)
+      }
+      return { session }
+    },
   )
 
   app.post<{ Params: SessionParams }>(

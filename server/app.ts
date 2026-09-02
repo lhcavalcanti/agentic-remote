@@ -140,7 +140,7 @@ export async function buildApp(
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
     pushService.attach(manager)
-    await registerHubRoutes(app, manager, knowledgeStore)
+    await registerHubRoutes(app, manager, knowledgeStore, pushService)
     await registerPushRoutes(app, pushService)
     transcriptionService =
       options.transcriptionService ??

@@ -4426,6 +4426,122 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('leaves the previous folder when the next session sits at the root', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+        'computer-1:session-2': { rootId: 'root-1', path: '.' },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+        guides: {
+          path: 'guides',
+          parent: '.',
+          entries: [
+            { name: 'setup.md', path: 'guides/setup.md', kind: 'markdown' },
+          ],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'guides', current: true }),
+      ).toBeInTheDocument(),
+    )
+
+    // Both sessions share the active root, so nothing has to be reloaded, but
+    // the second session was left at the root and must be taken back there.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'docs', current: true }),
+      ).toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByRole('button', { name: 'guides', current: true }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the migrated mute when the first settings read answers late', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    let answerSettings: (() => void) | undefined
+    vi.mocked(getPushSettings).mockImplementation(
+      () =>
+        new Promise<{ mutedSessions: string[] }>((resolve) => {
+          // The first read goes out before anything is muted, so its answer
+          // describes a world without either the mute or the replacement.
+          answerSettings = () => resolve({ mutedSessions: [] })
+        }),
+    )
+    vi.mocked(clearConversation).mockResolvedValue(replacement)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(answerSettings).toBeDefined())
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mute session notifications' }),
+    )
+    await screen.findByRole('button', {
+      name: 'Unmute session notifications',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSettings?.()
+    })
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Unmute session notifications',
+      }),
+    ).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',

@@ -9867,7 +9867,9 @@ function App() {
             <button
               aria-label="Restart session"
               className="icon-button"
-              disabled={restarting || selected.status !== 'idle'}
+              disabled={
+                restarting || selected.suspended || selected.status !== 'idle'
+              }
               onClick={() => void restartSelectedSession()}
               type="button"
             >
@@ -9878,7 +9880,9 @@ function App() {
             <button
               aria-label="Clear conversation"
               className="icon-button"
-              disabled={clearing || selected.status !== 'idle'}
+              disabled={
+                clearing || selected.suspended || selected.status !== 'idle'
+              }
               onClick={() => void clearSelectedConversation()}
               type="button"
             >

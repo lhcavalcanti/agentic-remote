@@ -241,6 +241,10 @@ export class SessionStore {
     for (const session of Object.values(this.state.sessions)) {
       session.isOpen =
         active.has(session.id) ||
+        // A suspended session has nothing running by design. Reading that as
+        // closed would hide it from the list, and the only way back to it is
+        // the button on the session itself.
+        session.suspended === true ||
         (session.managedOpen === true && session.backend !== 'terminal')
     }
     await this.persist()

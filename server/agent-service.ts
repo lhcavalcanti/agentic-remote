@@ -2185,6 +2185,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error('The terminal window could not be closed')
       }
     } else {
+      // An attachment already on its way would insert a live runtime after
+      // this point, so it is waited for and then let go of rather than left
+      // to land behind the suspension.
+      const loading = this.loadingSessions.get(id)
+      if (loading) {
+        await loading.catch(() => undefined)
+      }
       const active = this.sessions.get(id)
       if (active) {
         await active.disconnect()
@@ -2240,6 +2247,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
+    }
+    if (stored.suspended) {
+      // Restarting would start a runtime while the session still says it has
+      // none, and for a terminal session leave a second owner behind it.
+      throw new Error('Resume the session before restarting it')
     }
     if (
       stored.status === 'running' ||

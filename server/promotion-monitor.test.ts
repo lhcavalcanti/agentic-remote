@@ -324,15 +324,14 @@ describe('promotion monitor', () => {
     )
   })
 
-  it('refuses to promote a commit that validation did not see', async () => {
+  it('validates a pinned checkout, so development moving cannot matter', async () => {
     const context = await fixture()
-    const previous = await git(context.runtime, 'rev-parse', 'HEAD')
     await advanceMain(context)
     const candidate = await git(context.dev, 'rev-parse', 'HEAD')
 
-    // The development checkout is writable and shared. Moving it while the
-    // suite runs leaves a clean tree, so only re-reading HEAD can tell that
-    // the commit about to be promoted is not the one that was tested.
+    // The development checkout is writable and shared. Validation runs against
+    // a worktree pinned to the candidate, so a commit landing in development
+    // mid-run neither corrupts the result nor changes what is promoted.
     await stub(
       path.join(context.root, 'bin'),
       'corepack',
@@ -348,10 +347,11 @@ describe('promotion monitor', () => {
 
     const result = await monitor(context)
 
-    expect(result.code).not.toBe(0)
-    expect(result.output).toContain('during validation')
-    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
-    expect(await git(context.dev, 'rev-parse', 'HEAD')).not.toBe(candidate)
+    expect(result.code).toBe(0)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(candidate)
+    // The pinned worktree is temporary and must not be left behind.
+    const worktrees = await git(context.dev, 'worktree', 'list')
+    expect(worktrees).not.toContain('validation')
   })
 
   it('runs the whole suite before promoting', async () => {

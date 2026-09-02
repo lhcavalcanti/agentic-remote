@@ -16,7 +16,10 @@ describe('reproducible promotion setup', () => {
     expect(script).toContain('git -C "$DEV_ROOT" pull --ff-only')
     // Local validation is the only gate, so it must be the whole of `check`
     // — lint, the test suite, and the build — not a subset of it.
-    expect(script).toContain('run_pnpm "$DEV_ROOT" check')
+    expect(script).toContain('run_pnpm "$validation_root" check')
+    // Validation must be pinned to the candidate, not run in the shared
+    // development checkout, which another process can move mid-run.
+    expect(script).toContain('worktree add --detach "$validation_root"')
     expect(script).toContain('audit --prod --audit-level=moderate')
     expect(script).toContain('git -C "$PROD_ROOT" switch --detach "$candidate_commit"')
     expect(script).toContain('"$RELEASE_ROOT/current"')

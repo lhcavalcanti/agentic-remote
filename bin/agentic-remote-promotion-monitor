@@ -224,6 +224,15 @@ print(version)
 PY
 }
 
+# Left behind by a crashed run, so it is cleared before use and after.
+remove_validation_worktree() {
+  local validation_root="$STATE_DIR/validation"
+  [[ -e "$validation_root" ]] || return 0
+  git -C "$DEV_ROOT" worktree remove --force "$validation_root" >/dev/null 2>&1 ||
+    rm -rf "$validation_root"
+  git -C "$DEV_ROOT" worktree prune >/dev/null 2>&1 || true
+}
+
 run_pnpm() {
   local root="$1"
   shift
@@ -309,25 +318,33 @@ run() {
     log "main advanced to $candidate_commit"
   fi
 
-  log "installing development dependencies"
-  CI=true run_pnpm "$DEV_ROOT" install --frozen-lockfile
+  # Validation runs against a detached worktree pinned to the candidate, never
+  # against the development checkout. That checkout is writable and shared, so
+  # another process can move it mid-run; comparing HEAD before and after would
+  # still miss a switch away and back. A pinned worktree cannot move at all,
+  # so what passed is provably what gets promoted.
+  local validation_root="$STATE_DIR/validation"
+  remove_validation_worktree
+  log "checking out $candidate_commit for validation"
+  git -C "$DEV_ROOT" worktree add --detach "$validation_root" "$candidate_commit" >/dev/null
+  trap 'remove_validation_worktree' RETURN
+
+  log "installing validation dependencies"
+  CI=true run_pnpm "$validation_root" install --frozen-lockfile
   # `check` is lint, the test suite, and the build. The test suite used to be
   # gated in GitHub Actions; it runs here so that promotion is never the first
   # thing to discover a broken commit.
-  log "validating development (lint, tests, build)"
-  CI=true run_pnpm "$DEV_ROOT" check
+  log "validating $candidate_commit (lint, tests, build)"
+  CI=true run_pnpm "$validation_root" check
   log "auditing production dependencies"
-  CI=true run_pnpm "$DEV_ROOT" audit --prod --audit-level=moderate
-  assert_clean "$DEV_ROOT"
+  CI=true run_pnpm "$validation_root" audit --prod --audit-level=moderate
 
-  # The development checkout is writable and shared, so it can move while the
-  # suite runs. A clean tree afterwards proves nothing about *which* commit was
-  # tested, and promoting the captured SHA would then ship something no gate
-  # ever saw. Re-reading HEAD is what ties the result to the commit.
   local validated_commit
-  validated_commit="$(git -C "$DEV_ROOT" rev-parse HEAD)"
+  validated_commit="$(git -C "$validation_root" rev-parse HEAD)"
   [[ "$validated_commit" == "$candidate_commit" ]] ||
-    die "development moved from $candidate_commit to $validated_commit during validation"
+    die "validation worktree is at $validated_commit, not $candidate_commit"
+  remove_validation_worktree
+  trap - RETURN
 
 
   assert_clean "$PROD_ROOT"

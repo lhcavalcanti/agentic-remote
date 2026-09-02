@@ -24,6 +24,27 @@ const execFileAsync = promisify(execFile)
 const directories: string[] = []
 const tmuxSessions: string[] = []
 
+/**
+ * Reads system state that a separate process is still settling, retrying until
+ * it matches or the deadline passes. tmux windows, `/proc`, and a spawned
+ * program's own output all appear when the machine gets round to it, so a
+ * single read turns machine load into a test result. A genuine mismatch still
+ * fails, just after the deadline rather than before the work happened.
+ */
+async function eventually<T>(
+  read: () => Promise<T>,
+  matches: (value: T) => boolean,
+  timeoutMs = 10_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  let value = await read()
+  while (!matches(value) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    value = await read()
+  }
+  return value
+}
+
 afterEach(async () => {
   vi.unstubAllEnvs()
   await Promise.all(
@@ -208,11 +229,13 @@ Permission request (1 remaining)
         '#{pane_pid}',
       ])
     ).stdout.trim()
-    const initialCommandLine = (
-      await readFile(`/proc/${initialPanePid}/cmdline`, 'utf8')
+    const initialCommandLine = await eventually(
+      async () =>
+        (await readFile(`/proc/${initialPanePid}/cmdline`, 'utf8'))
+          .replaceAll('\0', ' ')
+          .trim(),
+      (line) => line.includes('--model gpt-boot'),
     )
-      .replaceAll('\0', ' ')
-      .trim()
     expect(initialCommandLine).toContain('--model gpt-boot')
     expect(initialCommandLine).toContain('--effort medium')
     expect(initialCommandLine).toContain('--context default')
@@ -228,16 +251,25 @@ Permission request (1 remaining)
     ).toBe(true)
 
     expect(location.sessionName).toBe(tmuxSession)
-    expect(await readFile(output, 'utf8')).toBe(directory)
-    const windows = (
-      await execFileAsync('tmux', [
-        'list-windows',
-        '-t',
-        tmuxSession,
-        '-F',
-        '#{window_name}',
-      ])
-    ).stdout
+    expect(
+      await eventually(
+        () => readFile(output, 'utf8'),
+        (written) => written === directory,
+      ),
+    ).toBe(directory)
+    const windows = await eventually(
+      async () =>
+        (
+          await execFileAsync('tmux', [
+            'list-windows',
+            '-t',
+            tmuxSession,
+            '-F',
+            '#{window_name}',
+          ])
+        ).stdout,
+      (names) => names.includes('Renamed project'),
+    )
     expect(windows).toContain('Renamed project')
     const panePid = (
       await execFileAsync('tmux', [

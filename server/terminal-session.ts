@@ -1092,19 +1092,24 @@ export async function submitTerminalForm(
   showsAnsweredForm: (pane: string) => boolean,
   attempts = 24,
 ): Promise<boolean> {
+  // Committing the last field either closed the form or moved focus to its
+  // Submit row, and which one only shows in the frame right after. That is
+  // where Submit is pressed, and the only place it can be: a form is named by
+  // its question and its fields, so the same question asked again is
+  // indistinguishable from the one just answered, and an Enter held back for
+  // later would eventually be pressed into it.
+  await settle(200)
+  const afterFields = await capture()
+  if (!parseTerminalFormPrompt(afterFields)) {
+    return true
+  }
+  if (showsAnsweredForm(afterFields)) {
+    await pressEnter()
+  }
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const pane = await capture()
-    if (!parseTerminalFormPrompt(pane)) {
+    if (!parseTerminalFormPrompt(pane) || !showsAnsweredForm(pane)) {
       return true
-    }
-    if (!showsAnsweredForm(pane)) {
-      // A different form is up, which the agent only reaches by finishing the
-      // question this one answered. Pressing Enter now would submit somebody
-      // else's form on whatever it happens to be showing.
-      return true
-    }
-    if (attempt > 0 && attempt % 8 === 0) {
-      await pressEnter()
     }
     await settle(150)
   }

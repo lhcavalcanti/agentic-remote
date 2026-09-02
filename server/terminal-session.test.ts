@@ -928,6 +928,26 @@ describe('submitTerminalForm', () => {
     expect(pressEnter).not.toHaveBeenCalled()
   })
 
+  it('does not hold an Enter back for whatever is asked next', async () => {
+    // The same question asked again looks exactly like the one just answered,
+    // so an Enter that waits cannot tell them apart. Only the frame straight
+    // after the last field is safe, and by then the form has closed.
+    const pressEnter = vi.fn(async () => {})
+    let frames = 0
+    await expect(
+      submitTerminalForm(
+        async () => {
+          frames += 1
+          return frames > 1 ? openForm : closed
+        },
+        pressEnter,
+        async () => {},
+        answered,
+      ),
+    ).resolves.toBe(true)
+    expect(pressEnter).not.toHaveBeenCalled()
+  })
+
   it('activates the Submit row a form is still waiting on', async () => {
     let submitted = false
     const pressEnter = vi.fn(async () => {

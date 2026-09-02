@@ -431,7 +431,16 @@ export class TmuxTerminalSessionController
         '-t',
         target,
       ])
-      await waitForPaneText(target, content.split('\n').at(-1) || content)
+      if (
+        !(await waitForPaneText(target, content.split('\n').at(-1) || content))
+      ) {
+        // The prompt never showed the message, so pressing Enter would send
+        // whatever it does hold and still be reported as delivered. The text
+        // is left where the reader can see it and send it again.
+        throw new Error(
+          'The terminal did not receive the message. Please try again.',
+        )
+      }
       let paneTty = ''
       let restoreIxon = false
       if (enqueue) {
@@ -922,9 +931,35 @@ async function copilotCommand(
   return result
 }
 
-async function waitForPaneText(target: string, expected: string): Promise<void> {
-  const normalizedExpected = expected.replace(/\s+/g, ' ').trim()
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+/**
+ * Whether a pane is already showing text that was pasted into it.
+ *
+ * A pane wraps a long line at whatever column it ends on, and the break can
+ * fall inside a word, so comparing line by line would miss text that is
+ * plainly there. Whitespace is therefore removed from both sides rather than
+ * collapsed.
+ */
+export function paneShowsText(pane: string, expected: string): boolean {
+  const compact = (value: string) => value.replace(/\s+/g, '')
+  const wanted = compact(expected)
+  if (!wanted) {
+    return true
+  }
+  // Copilot collapses a large paste into a placeholder instead of echoing it.
+  return compact(pane).includes(wanted) || pane.includes('[Pasted text')
+}
+
+/**
+ * Waits for pasted text to reach the pane, reporting whether it ever did.
+ * A caller that pressed Enter without knowing would submit whatever the
+ * prompt happened to hold, and report a message as delivered that the
+ * terminal never received.
+ */
+async function waitForPaneText(
+  target: string,
+  expected: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
     const pane = (
       await execFileAsync('tmux', [
         'capture-pane',
@@ -935,14 +970,12 @@ async function waitForPaneText(target: string, expected: string): Promise<void> 
         '-30',
       ])
     ).stdout
-    if (
-      pane.replace(/\s+/g, ' ').includes(normalizedExpected) ||
-      pane.includes('[Pasted text')
-    ) {
-      return
+    if (paneShowsText(pane, expected)) {
+      return true
     }
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
+  return false
 }
 
 async function tmuxTargetForPid(pid: number): Promise<string | undefined> {

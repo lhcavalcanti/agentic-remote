@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   isTerminalSessionInUsePrompt,
+  paneShowsText,
   parseTerminalPermission,
   parseTerminalUserInput,
   TmuxTerminalSessionController,
@@ -421,5 +422,33 @@ Permission request (1 remaining)
     expect(await readFile(output, 'utf8')).toBe(
       'MESSAGE-AAAA\nMESSAGE-BBBB',
     )
+  })
+})
+
+describe('paneShowsText', () => {
+  it('recognises a long line the pane wrapped inside a word', () => {
+    const message =
+      'Please refactor the deployment-orchestration-controller module today'
+    // The pane wraps at its own width, which lands in the middle of a word.
+    const pane = [
+      '> Please refactor the deployment-orchestrat',
+      'ion-controller module today',
+      '',
+    ].join('\n')
+    expect(paneShowsText(pane, message)).toBe(true)
+  })
+
+  it('recognises a paste Copilot replaced with a placeholder', () => {
+    expect(
+      paneShowsText('> [Pasted text #1 +40 lines]', 'a very long message'),
+    ).toBe(true)
+  })
+
+  it('does not claim an empty prompt is showing the message', () => {
+    expect(paneShowsText('> \n', 'Deploy the treatment engine')).toBe(false)
+  })
+
+  it('treats a message of only whitespace as already shown', () => {
+    expect(paneShowsText('> \n', '   ')).toBe(true)
   })
 })

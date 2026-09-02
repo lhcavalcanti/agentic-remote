@@ -2560,7 +2560,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const projected = backgroundTasksFromEvents(
         await this.sessionEventReader(sessionId),
         { assumeBackground: true },
-      ).map((task) => ({ ...task, canCancel: false }))
+      )
       return this.replaceBackgroundTasks(sessionId, projected, true)
     }
     return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
@@ -3636,9 +3636,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     tasks: BackgroundTask[],
     supported: boolean,
   ): BackgroundTaskSnapshot {
+    // An externally owned session is projected from its event log, so there is
+    // no channel to cancel a task through however that projection was
+    // produced. Enforcing it here rather than at each call site keeps a path
+    // that publishes a raw projection from re-enabling the control.
+    const owned = this.externalSessionIds.has(sessionId)
+      ? tasks.map((task) =>
+          task.canCancel ? { ...task, canCancel: false } : task,
+        )
+      : tasks
     const update = this.backgroundTaskTracker.replace(
       sessionId,
-      tasks,
+      owned,
       supported,
     )
     if (update.changed) {

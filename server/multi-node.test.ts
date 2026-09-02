@@ -24,6 +24,9 @@ import type {
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
+import { ComputerManager } from './computer-manager.js'
+import type { ComputerRegistry } from './computer-registry.js'
+import type { NodeIdentityStore } from './node-identity.js'
 import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
 
@@ -1270,6 +1273,51 @@ describe('multi-node hub', () => {
 })
 
 describe('readiness endpoints by role', () => {
+  it('removes sessions deleted while a node was disconnected', async () => {
+    const computer = {
+      id: 'node-1',
+      name: 'Workshop',
+      baseUrl: 'http://node-1.local:4319',
+      token: 'node-token',
+    }
+    const manager = new ComputerManager(
+      new FakeSessionService(),
+      { info: { id: 'hub' } } as unknown as NodeIdentityStore,
+      { list: () => [computer] } as unknown as ComputerRegistry,
+    )
+    // The node held two sessions when the connection dropped.
+    manager['sessionCache'].set('node-1', [
+      { ...session('kept-session', 'Kept'), computerId: 'node-1' },
+      { ...session('deleted-session', 'Deleted'), computerId: 'node-1' },
+    ] as never)
+    const events: ServerEvent[] = []
+    manager.on('event', (event) => events.push(event as ServerEvent))
+
+    // One of them was deleted before it came back, so it is simply absent.
+    await manager['resyncRemoteComputer'](computer, {
+      listSessions: async () => [session('kept-session', 'Kept')],
+      providers: [],
+    } as never)
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'session.removed',
+        computerId: 'node-1',
+        sessionId: 'deleted-session',
+      }),
+    )
+    // The surviving session is refreshed rather than removed.
+    expect(
+      events.filter((event) => event.type === 'session.removed'),
+    ).toHaveLength(1)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'session.upserted',
+        session: expect.objectContaining({ id: 'kept-session' }),
+      }),
+    )
+  })
+
   it('serves /health on a node while /api/health stays hub-only', async () => {
     const node = await buildApp({
       dataDirectory: await temporaryDirectory('agentic-remote-node-health'),

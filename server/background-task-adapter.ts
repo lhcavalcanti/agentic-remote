@@ -1147,8 +1147,18 @@ export function backgroundTasksFromEvents(
         continue
       }
       const shellId = shellIdFromValue(data)
+      const shellExit = shellExitFromValue(data)
+      // A detached shell reports its exit through whichever call observed it,
+      // and a follow-up read_bash/read_shell carries its own tool call id. The
+      // task is therefore looked up by the shell the exit names before falling
+      // back to the call that started it, or the exit and output would never
+      // reach it and the task would stay running.
+      const namedShellId = shellExit?.shellId || shellId
       const id = taskIdAlias(aliases, toolCallId)
-      let current = tasks.get(id)
+      let current =
+        (namedShellId
+          ? tasks.get(taskIdAlias(aliases, namedShellId))
+          : undefined) || tasks.get(id)
       const start = shellStartFor(toolCallId) || shellStartFor(shellId)
       const handoffMode = backgroundHandoff(data)
       if (!current && start && handoffMode) {
@@ -1164,8 +1174,7 @@ export function backgroundTasksFromEvents(
         aliases.set(backgroundId, backgroundId)
       }
       if (current?.type === 'shell') {
-        const shellExit = shellExitFromValue(data)
-        const resolvedShellId = shellExit?.shellId || shellId
+        const resolvedShellId = namedShellId
         if (resolvedShellId && current.id !== resolvedShellId) {
           current =
             rekeyTask(tasks, aliases, current.id, resolvedShellId) || current

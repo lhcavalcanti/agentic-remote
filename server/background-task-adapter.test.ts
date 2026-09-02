@@ -515,6 +515,93 @@ describe('background task adapter', () => {
     ])
   })
 
+  it('completes a detached shell reported by a later read_bash call', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "shell-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:05:00.000Z",
+          "data": {
+            "toolCallId": "shell-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm dev"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "shell-launch",
+          "parentId": "shell-start",
+          "timestamp": "2026-08-31T18:05:01.000Z",
+          "data": {
+            "toolCallId": "shell-call",
+            "success": true,
+            "toolTelemetry": {
+              "properties": {
+                "executionMode": "async",
+                "detached": "true"
+              }
+            },
+            "result": {
+              "content": "<command started in detached background with shellId: shell-2>"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_start",
+          "id": "read-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:06:00.000Z",
+          "data": {
+            "toolCallId": "read-call",
+            "toolName": "read_bash",
+            "arguments": {
+              "shellId": "shell-2"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "read-finish",
+          "parentId": "read-start",
+          "timestamp": "2026-08-31T18:06:01.000Z",
+          "data": {
+            "toolCallId": "read-call",
+            "success": true,
+            "result": {
+              "contents": [
+                {
+                  "type": "shell_exit",
+                  "shellId": "shell-2",
+                  "exitCode": 3,
+                  "outputPreview": "dev server stopped"
+                }
+              ]
+            }
+          }
+        }
+      ]`) as SessionEvent[],
+    )
+
+    // The exit is reported under the reading call, not the one that started
+    // the shell, so resolving by tool call alone would leave it running.
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        id: 'shell-2',
+        status: 'failed',
+        completedAt: '2026-08-31T18:06:01.000Z',
+        error: 'Shell exited with status 3',
+        progress: {
+          type: 'shell',
+          recentOutput: 'dev server stopped',
+        },
+      }),
+    ])
+  })
+
   it('projects tmux shell tasks when the CLI omits the execution mode', () => {
     const events = [
       {

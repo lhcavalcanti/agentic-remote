@@ -570,9 +570,23 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     const sessions = (await client.listSessions()).map((session) =>
       managedSession(session, computer),
     )
+    const previous = this.sessionCache.get(computer.id) || []
     this.sessionCache.set(computer.id, sessions)
     for (const session of sessions) {
       this.emit('event', { type: 'session.upserted', session })
+    }
+    // A session deleted while the node was unreachable is simply absent from
+    // the refreshed list. Without this it would keep its place in every
+    // browser, along with whatever task state it had when the node dropped.
+    const live = new Set(sessions.map((session) => session.id))
+    for (const session of previous) {
+      if (!live.has(session.id)) {
+        this.emit('event', {
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: session.id,
+        })
+      }
     }
     if (
       !client.providers.some(

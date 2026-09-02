@@ -217,8 +217,23 @@ describe('delegated transcription service', () => {
     })
   })
 
-  it('reports an unreachable computer as a gateway failure', async () => {
+  it('explains that an older computer cannot transcribe yet', async () => {
     const hub = manager([hubComputer, workstation], async () => {
+      throw Object.assign(new Error('Not found'), { statusCode: 404 })
+    })
+    const service = new DelegatedTranscriptionService({
+      manager: hub,
+      computerName: 'workstation',
+      local: localService(),
+    })
+
+    await expect(service.transcribe(audio())).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining('does not transcribe audio yet'),
+    })
+  })
+
+  it('reports an unreachable computer as a gateway failure', async () => {    const hub = manager([hubComputer, workstation], async () => {
       throw new Error('fetch failed')
     })
     const service = new DelegatedTranscriptionService({

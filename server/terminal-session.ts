@@ -583,23 +583,13 @@ export class TmuxTerminalSessionController
         await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
         await new Promise((resolve) => setTimeout(resolve, 90))
       }
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const settled = (
-          await execFileAsync('tmux', [
-            'capture-pane',
-            '-p',
-            '-t',
-            owner.target,
-            '-S',
-            '-40',
-          ])
-        ).stdout
-        if (!parseTerminalFormPrompt(settled)) {
-          return true
-        }
-        await new Promise((resolve) => setTimeout(resolve, 150))
-      }
-      return false
+      return submitTerminalForm(
+        capture,
+        async () => {
+          await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
+        },
+        (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      )
     })
   }
 
@@ -1084,6 +1074,34 @@ export function terminalCommandOutput(
  * CLI prints above the field tabs, and the key hints are what it prints
  * below them.
  */
+/**
+ * Waits for a filled form to close, activating its Submit row if it has one.
+ *
+ * Committing the last field closes a form whose fields are all there is, and
+ * leaves focus on Submit in a form that ends with one. Nothing on screen says
+ * which kind is open, so the form is given time to close on its own and only
+ * then offered an Enter. That Enter is sent while the form is still showing,
+ * so one that closed itself never receives a stray keystroke into whatever
+ * replaced it.
+ */
+export async function submitTerminalForm(
+  capture: () => Promise<string>,
+  pressEnter: () => Promise<void>,
+  settle: (ms: number) => Promise<void>,
+  attempts = 24,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!parseTerminalFormPrompt(await capture())) {
+      return true
+    }
+    if (attempt > 0 && attempt % 8 === 0) {
+      await pressEnter()
+    }
+    await settle(150)
+  }
+  return false
+}
+
 export function parseTerminalFormPrompt(pane: string): boolean {
   const lines = pane.split('\n').map(cleanDialogLine)
   const header = lines.findLastIndex((line) =>

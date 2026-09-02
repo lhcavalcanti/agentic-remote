@@ -13,6 +13,7 @@ import {
   paneShowsText,
   parseTerminalFormActiveField,
   parseTerminalPermission,
+  submitTerminalForm,
   parseTerminalUpdateNotice,
   parseTerminalUserInput,
   terminalCommandOutput,
@@ -901,5 +902,47 @@ describe('terminal form identity', () => {
 
   it('reports no focus for a pane that is not this form', () => {
     expect(parseTerminalFormActiveField('nothing here', form)).toBeUndefined()
+  })
+})
+
+describe('submitTerminalForm', () => {
+  const openForm = [
+    ' Copilot needs information.',
+    ' Which sessions get the button',
+    ' Submit',
+    ' enter accept · esc cancel',
+  ].join('\n')
+  const closed = '❯ \n'
+
+  it('presses nothing when committing the last field closed the form', async () => {
+    const pressEnter = vi.fn(async () => {})
+    await expect(
+      submitTerminalForm(async () => closed, pressEnter, async () => {}),
+    ).resolves.toBe(true)
+    expect(pressEnter).not.toHaveBeenCalled()
+  })
+
+  it('activates the Submit row a form is still waiting on', async () => {
+    let submitted = false
+    const pressEnter = vi.fn(async () => {
+      submitted = true
+    })
+    // The fields are all answered and the form is sitting on its Submit row,
+    // which is where committing the last field leaves it.
+    await expect(
+      submitTerminalForm(
+        async () => (submitted ? closed : openForm),
+        pressEnter,
+        async () => {},
+      ),
+    ).resolves.toBe(true)
+    expect(pressEnter).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up on a form that will not close', async () => {
+    const pressEnter = vi.fn(async () => {})
+    await expect(
+      submitTerminalForm(async () => openForm, pressEnter, async () => {}, 10),
+    ).resolves.toBe(false)
   })
 })

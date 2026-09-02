@@ -4552,18 +4552,6 @@ describe('AgentService deletion', () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
-    const terminal = {
-      has: vi.fn(async () => true),
-      send: vi.fn(
-        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
-      ),
-      cancel: vi.fn(async () => true),
-      pendingPermission: vi.fn(async () => undefined),
-      pendingUserInput: vi.fn(async () => undefined),
-      replyUserInput: vi.fn(async () => true),
-      dismissUserInput: vi.fn(async () => true),
-      fillUserInputForm: vi.fn(async () => false),
-    }
     const events = JSON.parse(`[
       {
         "type":"tool.execution_start",
@@ -4584,6 +4572,31 @@ describe('AgentService deletion', () => {
         }
       }
     ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      // Escape cancels the tool the agent was waiting on, which it records as
+      // complete; that is what makes typing the answer safe afterwards.
+      dismissUserInput: vi.fn(async () => {
+        events.push(
+          JSON.parse(`{
+            "type":"tool.execution_complete",
+            "id":"ask-end",
+            "parentId":null,
+            "timestamp":"2026-09-01T04:30:24.000Z",
+            "data":{"toolCallId":"ask-call"}
+          }`) as SessionEvent,
+        )
+        return true
+      }),
+      fillUserInputForm: vi.fn(async () => false),
+    }
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
@@ -4615,6 +4628,166 @@ describe('AgentService deletion', () => {
     const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
     expect(content).toContain('confirmTransfer: true')
     expect(content).not.toContain('{"confirmTransfer"')
+    await service.stop()
+  })
+
+  it('does not send an answer while the form is still open', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      // Escape never lands, so the tool stays open and the form keeps the
+      // keyboard.
+      dismissUserInput: vi.fn(async () => false),
+      fillUserInputForm: vi.fn(async () => false),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-open-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+
+    await expect(
+      service.replyUserInput(sessionId, 'persisted-user-input:ask-call', {
+        answer: JSON.stringify(values),
+        wasFreeform: false,
+        values,
+      }),
+    ).rejects.toThrow('still showing its prompt')
+
+    // Typing now would land in the open form and submit every other field at
+    // its default, which is the corruption this path exists to avoid.
+    expect(terminal.send).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('drops a reply to a request the agent already finished', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"unrelated-end",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:22.000Z",
+        "data":{"toolCallId":"unrelated-call"}
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-answered-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+    // The prompt is answered in the attached terminal after the app synced it,
+    // so the agent records the tool as finished while the reply is in flight.
+    events.push(
+      JSON.parse(`{
+        "type":"tool.execution_complete",
+        "id":"ask-end",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:23.000Z",
+        "data":{"toolCallId":"ask-call"}
+      }`) as SessionEvent,
+    )
+    await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // Whatever is on screen now belongs to something else, so it must not be
+    // filled or typed into.
+    expect(terminal.fillUserInputForm).not.toHaveBeenCalled()
+    expect(terminal.send).not.toHaveBeenCalled()
     await service.stop()
   })
 

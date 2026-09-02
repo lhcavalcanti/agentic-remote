@@ -2824,6 +2824,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // turns confirmations into `false`. Close the prompt first, then answer.
       const toolCallId = requestId.slice('persisted-user-input:'.length)
       const terminalBacked = await this.terminalController.has(sessionId)
+      if (
+        terminalBacked &&
+        (await this.isToolCallComplete(sessionId, toolCallId))
+      ) {
+        // The agent already stopped waiting on this request, so it was
+        // answered or cancelled in the terminal. Whatever is on screen now
+        // belongs to something else, and filling it would answer the wrong
+        // prompt; the reply is dropped and the stale request cleared instead.
+        this.answeredPersistedInputs.delete(sessionId)
+        const settled = await this.store.update(sessionId, (session) => {
+          session.pendingUserInput = undefined
+        })
+        this.publish(settled)
+        return settled
+      }
       if (terminalBacked && request.form) {
         // Filling the agent's own form answers the tool it is waiting on, so
         // the values arrive as the result it asked for.
@@ -2847,8 +2862,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }
       if (terminalBacked) {
-        await this.terminalController.dismissUserInput?.(sessionId)
-        await this.waitForToolCompletion(sessionId, toolCallId)
+        const dismissed =
+          (await this.terminalController
+            .dismissUserInput?.(sessionId)
+            .catch(() => false)) ?? false
+        const closed =
+          dismissed && (await this.waitForToolCompletion(sessionId, toolCallId))
+        // The answer is about to be typed at the prompt. A form that is still
+        // open captures those keystrokes into its fields and submits the rest
+        // at their defaults, which is the corruption this path exists to
+        // avoid, so nothing is sent unless the form is known to have closed.
+        if (request.form && !closed) {
+          this.answeredPersistedInputs.delete(sessionId)
+          throw new Error(
+            'The agent is still showing its prompt, so the answer was not sent. Try again.',
+          )
+        }
       }
       const cleared = await this.store.update(sessionId, (session) => {
         session.pendingUserInput = undefined
@@ -3410,6 +3439,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   /**
+   * Whether the agent has already recorded this tool call as finished. A
+   * request answered or cancelled in an attached terminal completes there, so
+   * this is what tells a reply that it is answering a prompt the agent has
+   * stopped waiting on.
+   */
+  private async isToolCallComplete(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<boolean> {
+    const events = await this.sessionEventReader(sessionId).catch(() => [])
+    return events.some(
+      (event) =>
+        event.type === 'tool.execution_complete' &&
+        !event.agentId &&
+        stringValue(recordValue(event.data).toolCallId) === toolCallId,
+    )
+  }
+
+  /**
    * Waits for the agent to record the prompt as finished, so the answer that
    * follows is typed at the prompt instead of into the closing form.
    */
@@ -3420,15 +3468,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<boolean> {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 150))
-      const events = await this.sessionEventReader(sessionId).catch(() => [])
-      if (
-        events.some(
-          (event) =>
-            event.type === 'tool.execution_complete' &&
-            !event.agentId &&
-            stringValue(recordValue(event.data).toolCallId) === toolCallId,
-        )
-      ) {
+      if (await this.isToolCallComplete(sessionId, toolCallId)) {
         return true
       }
     }

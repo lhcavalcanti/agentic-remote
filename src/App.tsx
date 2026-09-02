@@ -4231,7 +4231,7 @@ function App() {
   const moveKnowledgeSessionRef = useRef<(from: string, to: string) => void>(
     () => {},
   )
-  const moveComposerDraftRef = useRef<(from: string, to: string) => void>(
+  const migrateSessionStateRef = useRef<(from: string, to: string) => void>(
     () => {},
   )
   const loadKnowledgeFolderRef = useRef<
@@ -4241,6 +4241,9 @@ function App() {
   // The fallback below must not treat one as a missing session and select
   // something unrelated in the gap.
   const pendingReplacements = useRef(new Set<string>())
+  // The generation a root listing was last requested under, so a load
+  // abandoned by a newer generation is retried instead of waited on.
+  const knowledgeRootLoadGeneration = useRef(-1)
   // Captured before the first synchronisation, so a direct session link is not
   // erased by the address being rewritten while sessions are still loading.
   const initialUrlSelection = useRef(readSelectionFromLocation())
@@ -4856,7 +4859,7 @@ function App() {
     }
     forgetKnowledgeSessionRef.current = forgetKnowledgeSession
     moveKnowledgeSessionRef.current = moveKnowledgePosition
-    moveComposerDraftRef.current = moveComposerDraft
+    migrateSessionStateRef.current = migrateSessionState
     loadKnowledgeFolderRef.current = loadKnowledgeFolder
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
       const rootId = position.rootId
@@ -4934,15 +4937,29 @@ function App() {
   // writes nothing, so without this the tree could sit blank until the root
   // was picked again by hand.
   useEffect(() => {
+    const root = knowledgeFolders[knowledgeRootPath]
     if (
       knowledgeMode === 'hidden' ||
       !activeRootId ||
-      knowledgeFolders[knowledgeRootPath] !== undefined
+      root?.listing !== undefined ||
+      root?.error !== undefined
     ) {
       return
     }
+    // A superseded load leaves the entry marked loading with nothing on the
+    // way, so waiting for it would wait for ever. Only a listing or a
+    // reported failure counts as settled.
+    if (
+      root?.loading &&
+      knowledgeRootLoadGeneration.current === knowledgeRequest.current
+    ) {
+      return
+    }
+    knowledgeRootLoadGeneration.current = knowledgeRequest.current
     void loadKnowledgeFolderRef.current(activeRootId, knowledgeRootPath)
-  }, [activeRootId, knowledgeFolders, knowledgeMode])
+    // `selectedKey` is what supersedes a load: the discarded reply changes no
+    // state, so without it nothing would bring this effect back to notice.
+  }, [activeRootId, knowledgeFolders, knowledgeMode, selectedKey])
 
   // Knowledge work belongs to the session that asked for it. Changing session
   // abandons all of it, whatever the decision below then chooses to do: a file
@@ -5495,15 +5512,40 @@ function App() {
         }
         return reconciled
       })
+      // A session that changed while the refresh was in flight is described
+      // more recently by the event than by the snapshot, exactly as the two
+      // reconciliations above assume. A clear moves the mute to a replacement
+      // the snapshot has never heard of, so the snapshot must not speak for
+      // either session.
+      const changedSinceRefresh = (key: string) =>
+        (sessionEventSequenceRef.current.get(key) || 0) > startedAtSequence
       if (pushSettings) {
-        setMutedSessions(pushSettings.mutedSessions)
+        setMutedSessions((current) => {
+          const reconciled = new Set(pushSettings.mutedSessions)
+          for (const key of new Set([...current, ...reconciled])) {
+            if (!changedSinceRefresh(key)) {
+              continue
+            }
+            if (current.includes(key)) {
+              reconciled.add(key)
+            } else {
+              reconciled.delete(key)
+            }
+          }
+          return [...reconciled]
+        })
       }
       const selectedAtRefresh = selectedRef.current
+      // A replacement selected while the refresh was in flight is missing
+      // from the snapshot by definition, and dropping it would jump the
+      // reader to an unrelated session.
       const selectedStillExists =
         selectedAtRefresh &&
-        snapshotSessions.some(
+        (snapshotSessions.some(
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
-        )
+        ) ||
+          changedSinceRefresh(sessionKey(selectedAtRefresh)) ||
+          pendingReplacements.current.has(sessionKey(selectedAtRefresh)))
       if (selectedAtRefresh && selectedStillExists) {
         const detailStartedAtSequence = eventSequenceRef.current
         const detail = await getSession(
@@ -5556,24 +5598,24 @@ function App() {
           // all of them instead of being discarded on any of them.
           if (event.replacedBy) {
             const replacementKey = `${event.computerId}:${event.replacedBy}`
-            moveComposerDraftRef.current(removedKey, replacementKey)
-            moveKnowledgeSessionRef.current(removedKey, replacementKey)
-            setMutedSessions((current) =>
-              current.includes(removedKey)
-                ? [
-                    ...current.filter((key) => key !== removedKey),
-                    replacementKey,
-                  ]
-                : current,
-            )
+            migrateSessionStateRef.current(removedKey, replacementKey)
             // Removal and upsert are separate events. Following the
             // replacement now stops the fallback from selecting an unrelated
             // session in the gap, which the later upsert would not undo.
             pendingReplacements.current.add(replacementKey)
+            // The replacement changed here too, so a snapshot taken before
+            // this event cannot speak for it either.
+            sessionEventSequenceRef.current.set(
+              replacementKey,
+              eventSequenceRef.current,
+            )
             setSelectedKey((current) =>
               current === removedKey ? replacementKey : current,
             )
-          } else {
+          } else if (!clearingSessions.current.has(removedKey)) {
+            // A clear issued here has not returned its replacement yet. A node
+            // on an older build sends no link, so everything this session
+            // carries is held until the response names the replacement.
             setComposerDrafts((current) => {
               const { [removedKey]: _removed, ...remaining } = current
               return remaining
@@ -5881,11 +5923,39 @@ function App() {
     if (knowledgeRestoredKey.current === fromKey) {
       knowledgeRestoredKey.current = toKey
     }
+    if (knowledgeViewOwnerKey.current === fromKey) {
+      // Without this the replacement treats the document already on screen as
+      // another session's, clears it, and fetches it again — and loses it
+      // entirely if the root has become unreachable.
+      knowledgeViewOwnerKey.current = toKey
+    }
+    if (knowledgeOwnerKey.current === fromKey) {
+      knowledgeOwnerKey.current = toKey
+    }
     setKnowledgePositions((current) => {
       const position = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
       return position ? { ...remaining, [toKey]: position } : remaining
     })
+  }
+
+  /**
+   * Everything a session carries, moved in one step. Clearing replaces a
+   * session's id, and each store that gets forgotten here is something the
+   * conversation visibly loses, so they move together rather than one per
+   * bug report.
+   */
+  function migrateSessionState(fromKey: string, toKey: string) {
+    if (fromKey === toKey) {
+      return
+    }
+    moveComposerDraft(fromKey, toKey)
+    moveKnowledgePosition(fromKey, toKey)
+    setMutedSessions((current) =>
+      current.includes(fromKey)
+        ? [...current.filter((key) => key !== fromKey), toKey]
+        : current,
+    )
   }
 
   function focusComposer(targetKey: string | undefined) {
@@ -6669,8 +6739,7 @@ function App() {
           cleared,
         ),
       )
-      moveComposerDraft(targetKey, sessionKey(cleared))
-      moveKnowledgePosition(targetKey, sessionKey(cleared))
+      migrateSessionState(targetKey, sessionKey(cleared))
       setSelectedKey(sessionKey(cleared))
       return sessionKey(cleared)
     } catch (caught) {

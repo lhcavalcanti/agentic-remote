@@ -5606,6 +5606,193 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('keeps everything when an older node omits the replacement', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    let releaseClear: (() => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(
+      () =>
+        new Promise<ManagedSession>((resolve) => {
+          releaseClear = () => resolve(replacement)
+        }),
+    )
+    vi.mocked(getPushSettings).mockResolvedValue({
+      mutedSessions: ['computer-1:session-1'],
+    })
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Draft worth keeping' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(releaseClear).toBeDefined())
+
+    // A node on an older build sends no replacement link, so the removal
+    // looks like a deletion. Everything the conversation carries has to
+    // survive until the response names the replacement.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      releaseClear?.()
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({
+        'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    expect(screen.getByLabelText('Message')).toHaveValue('Draft worth keeping')
+    expect(
+      screen.getByRole('button', { name: 'Unmute session notifications' }),
+    ).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('keeps the migrated mute when a stale refresh answers late', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    vi.mocked(getPushSettings).mockResolvedValue({
+      mutedSessions: ['computer-1:session-1'],
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await screen.findByRole('button', {
+      name: 'Unmute session notifications',
+    })
+
+    let answerSettings: (() => void) | undefined
+    vi.mocked(getPushSettings).mockImplementation(
+      () =>
+        new Promise<{ mutedSessions: string[] }>((resolve) => {
+          // A reconnect asks before the clear happens, so its answer still
+          // names the session that is about to be replaced.
+          answerSettings = () =>
+            resolve({ mutedSessions: ['computer-1:session-1'] })
+        }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+
+    const socket = MockWebSocket.instances[0]!
+    act(() => {
+      socket.onopen?.()
+    })
+    await waitFor(() => expect(answerSettings).toBeDefined())
+
+    act(() => {
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      socket.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSettings?.()
+    })
+
+    // The reply predates the clear, so it must not unmute the replacement the
+    // mute was just moved to.
+    expect(
+      await screen.findByRole('button', {
+        name: 'Unmute session notifications',
+      }),
+    ).toBeInTheDocument()
+  })
+
+  it('recovers a root listing abandoned mid-flight', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: '.' },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    const rootListing: WorkspaceListing = {
+      path: '.',
+      entries: [
+        { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 8 },
+      ],
+    }
+    let switched = false
+    const stalled: ((listing: WorkspaceListing) => void)[] = []
+    vi.mocked(listKnowledgeEntries).mockImplementation(async () => {
+      if (switched) {
+        return rootListing
+      }
+      // Every reply is held back until the session has changed, so the
+      // generation check discards them all and the folder is left marked
+      // loading with nothing on the way.
+      return new Promise<WorkspaceListing>((resolve) => {
+        stalled.push(resolve)
+      })
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(stalled.length).toBeGreaterThan(0))
+
+    // Changing session abandons the load. The new session has nothing to
+    // restore, so nothing else asks for the root: the discarded reply would
+    // otherwise leave the folder marked loading for ever.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    switched = true
+    await act(async () => {
+      for (const resolve of stalled) {
+        resolve(rootListing)
+      }
+    })
+
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    expect(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    ).toBeInTheDocument()
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

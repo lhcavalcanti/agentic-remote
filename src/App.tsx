@@ -4280,6 +4280,8 @@ function App() {
       {},
     ),
   )
+  const legacyKnowledgeAdopted = useRef(false)
+  const openedFromLink = useRef(readSelectionFromLocation() !== undefined)
   const restoredKnowledgeExpansion = useRef(
     readStoredOrder<Record<string, string[]>>(
       'agentic-remote:knowledge-expanded',
@@ -4372,17 +4374,29 @@ function App() {
   const eventSequenceRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
 
+  // Silence changes on its own schedule: counting every session event would
+  // treat an ordinary status update as one, and discard the answer's own
+  // sessions for no reason. Only what actually moves a mute is counted.
+  const muteRevisionRef = useRef(0)
+  const muteSessionRevisionRef = useRef(new Map<string, number>())
+  const recordMuteChange = useCallback((...keys: string[]) => {
+    muteRevisionRef.current += 1
+    for (const key of keys) {
+      muteSessionRevisionRef.current.set(key, muteRevisionRef.current)
+    }
+  }, [])
+
   // A settings answer describes the world as it was when the request went out.
-  // A session that changed in the meantime is described more recently by the
-  // event than by the answer, so the answer does not get to speak for it: a
-  // clear moves the mute to a replacement the answer has never heard of.
+  // A session whose silence changed in the meantime is described more recently
+  // by that change than by the answer, so the answer does not get to speak for
+  // it: a clear moves the mute to a replacement it has never heard of.
   const applyMutedSessions = useCallback(
-    (incoming: string[], startedAtSequence: number) => {
+    (incoming: string[], startedAtRevision: number) => {
       setMutedSessions((current) => {
         const reconciled = new Set(incoming)
         for (const key of new Set([...current, ...reconciled])) {
           if (
-            (sessionEventSequenceRef.current.get(key) || 0) <= startedAtSequence
+            (muteSessionRevisionRef.current.get(key) || 0) <= startedAtRevision
           ) {
             continue
           }
@@ -4660,14 +4674,14 @@ function App() {
 
   useEffect(() => {
     let active = true
-    const startedAtSequence = eventSequenceRef.current
+    const startedAtRevision = muteRevisionRef.current
     void getPushSettings()
       .then((settings) => {
         if (active) {
           // This answer can be older than a clear that has since moved the
           // mute to a replacement it has never heard of, exactly as a
           // reconnect's answer can.
-          applyMutedSessions(settings.mutedSessions, startedAtSequence)
+          applyMutedSessions(settings.mutedSessions, startedAtRevision)
         }
       })
       .catch((caught: unknown) => {
@@ -4689,15 +4703,7 @@ function App() {
       'agentic-remote:knowledge-root',
       JSON.stringify(activeRootId),
     )
-    localStorage.setItem(
-      'agentic-remote:knowledge-position',
-      JSON.stringify({
-        rootId: activeRootId,
-        path: knowledgeListing?.path,
-        file: knowledgeFile?.path,
-      }),
-    )
-  }, [activeRootId, knowledgeFile?.path, knowledgeListing?.path])
+  }, [activeRootId])
 
   useEffect(() => {
     if (!knowledgeHydrated.current || !activeRootId) {
@@ -5138,12 +5144,50 @@ function App() {
   }, [knowledgeMode, knowledgePanelKey])
 
 
+  // An older build remembered one position for the whole app. It becomes the
+  // first session's own position once there is a session to attribute it to,
+  // and is then gone: nothing writes it again, so it can never resurface under
+  // a session it did not belong to.
+  useEffect(() => {
+    if (legacyKnowledgeAdopted.current || !selectedKey) {
+      return
+    }
+    legacyKnowledgeAdopted.current = true
+    const legacy = restoredKnowledge.current
+    restoredKnowledge.current = {}
+    localStorage.removeItem('agentic-remote:knowledge-position')
+    if (
+      !legacy.rootId ||
+      knowledgePositionsRef.current[selectedKey] ||
+      // A link names the session to open, which says nothing about the one
+      // the position was left in. Guessing would show one session's document
+      // under another, so it is dropped rather than misfiled.
+      openedFromLink.current
+    ) {
+      return
+    }
+    // The session was settled as having nothing to restore before this ran,
+    // so that verdict is withdrawn along with the position it was missing.
+    if (knowledgeRestoredKey.current === selectedKey) {
+      knowledgeRestoredKey.current = undefined
+    }
+    setKnowledgePositions((current) => ({
+      ...current,
+      [selectedKey]: {
+        rootId: legacy.rootId,
+        path: legacy.path,
+        file: legacy.file,
+      },
+    }))
+  }, [selectedKey])
+
   useEffect(() => {
     void listKnowledgeRoots()
       .then(async (loaded) => {
         setRoots(loaded)
-        // Reopen whatever was being read, so returning to Knowledge does not
-        // mean picking the folder and the document again.
+        // Only the root is reopened here. Where a session was reading belongs
+        // to that session, and this runs before one is known, so applying it
+        // would show one session's document under another.
         const remembered = restoredKnowledge.current
         const root =
           loaded.find((entry) => entry.id === remembered.rootId) || loaded[0]
@@ -5157,10 +5201,7 @@ function App() {
         // the first stale, and the ancestor chain would reject its own results.
         const request = ++knowledgeRequest.current
         const generation = request
-        const folder =
-          root.id === remembered.rootId && remembered.path
-            ? remembered.path
-            : knowledgeRootPath
+        const folder = knowledgeRootPath
         try {
           const listing = await listKnowledgeEntries(root.id, folder).catch(
             () => listKnowledgeEntries(root.id, knowledgeRootPath),
@@ -5178,15 +5219,6 @@ function App() {
           void loadKnowledgeChain(root.id, folder, generation, {
             [folder]: { listing },
           })
-          if (root.id === remembered.rootId && remembered.file) {
-            const opened = await readKnowledgeFile(
-              root.id,
-              remembered.file,
-            ).catch(() => undefined)
-            if (opened && request === knowledgeRequest.current) {
-              setKnowledgeFile(opened)
-            }
-          }
           knowledgeHydrated.current = true
         } catch (caught) {
           // Leave the position unhydrated so a transient failure — an offline
@@ -5504,6 +5536,7 @@ function App() {
 
     const refreshSnapshot = async () => {
       const startedAtSequence = eventSequenceRef.current
+      const startedAtMuteRevision = muteRevisionRef.current
       const [loadedSessions, loadedComputers, pushSettings] = await Promise.all([
         listSessions(),
         listComputers(),
@@ -5554,7 +5587,7 @@ function App() {
       const changedSinceRefresh = (key: string) =>
         (sessionEventSequenceRef.current.get(key) || 0) > startedAtSequence
       if (pushSettings) {
-        applyMutedSessions(pushSettings.mutedSessions, startedAtSequence)
+        applyMutedSessions(pushSettings.mutedSessions, startedAtMuteRevision)
       }
       const selectedAtRefresh = selectedRef.current
       // A replacement selected while the refresh was in flight is missing
@@ -5972,6 +6005,7 @@ function App() {
     }
     moveComposerDraft(fromKey, toKey)
     moveKnowledgePosition(fromKey, toKey)
+    recordMuteChange(fromKey, toKey)
     setMutedSessions((current) =>
       current.includes(fromKey)
         ? [...current.filter((key) => key !== fromKey), toKey]
@@ -7063,6 +7097,7 @@ function App() {
         selected.id,
         !selectedNotificationsMuted,
       )
+      recordMuteChange(sessionKey(selected))
       setMutedSessions(settings.mutedSessions)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))

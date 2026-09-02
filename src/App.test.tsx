@@ -3884,6 +3884,10 @@ describe('App', () => {
 
   it('reopens the document that was being read', async () => {
     localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
       'agentic-remote:knowledge-position',
       JSON.stringify({
         rootId: 'root-1',
@@ -3935,9 +3939,117 @@ describe('App', () => {
         'guides/setup.md',
       ),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     expect(
       await screen.findByRole('heading', { name: 'Setup guide' }),
+    ).toBeInTheDocument()
+    // Adopted by the session that was open, and gone from where an older
+    // build kept it.
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      ),
+    ).toEqual({
+      'computer-1:session-1': {
+        rootId: 'root-1',
+        path: 'guides',
+        file: 'guides/setup.md',
+      },
+    })
+    expect(localStorage.getItem('agentic-remote:knowledge-position')).toBeNull()
+  })
+
+  it('drops an app-wide position rather than filing it under a linked session', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2',
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify({
+        rootId: 'root-1',
+        path: 'guides',
+        file: 'guides/setup.md',
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Second chat')
+    await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
+
+    // The link says which session to open, not where that session was
+    // reading, so the position an older build kept is discarded.
+    await waitFor(() =>
+      expect(
+        localStorage.getItem('agentic-remote:knowledge-position'),
+      ).toBeNull(),
+    )
+    expect(readKnowledgeFile).not.toHaveBeenCalled()
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )['computer-1:session-2'],
+    ).toBeUndefined()
+    window.history.replaceState({}, '', '/')
+  })
+
+  it('keeps a muted session muted when an update lands during a settings read', async () => {
+    let answerSettings: (() => void) | undefined
+    vi.mocked(getPushSettings).mockImplementation(
+      () =>
+        new Promise<{ mutedSessions: string[] }>((resolve) => {
+          answerSettings = () =>
+            resolve({ mutedSessions: ['computer-1:session-1'] })
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(answerSettings).toBeDefined())
+
+    // An ordinary update says nothing about notifications, so it must not
+    // make the answer look stale for the session it mentions.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, activity: 'Thinking' },
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSettings?.()
+    })
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Unmute session notifications',
+      }),
     ).toBeInTheDocument()
   })
 
@@ -5366,6 +5478,10 @@ describe('App', () => {
 
   it('loads the folders above a remembered document on startup', async () => {
     localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
       'agentic-remote:knowledge-position',
       JSON.stringify({ rootId: 'root-1', path: 'guides/deep' }),
     )
@@ -5945,13 +6061,18 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
     await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
 
-    // A failed restore must not erase where the reader was.
+    // A failed restore must not erase where the reader was. The position now
+    // belongs to the session that adopted it, and the app-wide one an older
+    // build left behind is gone for good.
     await waitFor(() =>
       expect(
         JSON.parse(
-          localStorage.getItem('agentic-remote:knowledge-position') || '{}',
+          localStorage.getItem(
+            'agentic-remote:knowledge-session-positions',
+          ) || '{}',
         ),
-      ).toEqual(remembered),
+      ).toEqual({ 'computer-1:session-1': remembered }),
     )
+    expect(localStorage.getItem('agentic-remote:knowledge-position')).toBeNull()
   })
 })

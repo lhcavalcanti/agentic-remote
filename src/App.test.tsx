@@ -651,6 +651,61 @@ describe('App', () => {
     )
   })
 
+  it('keeps a parent group together across a nested child', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:agent-call',
+          role: 'activity',
+          content: 'Agent (reviewer)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'agent',
+        },
+        {
+          id: 'tool:nested-skill-call',
+          role: 'activity',
+          content: 'Skill (agentic-remote-navigation)',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+          activityGroupId: 'tool:agent-call',
+        },
+        {
+          id: 'tool:nested-child-call',
+          role: 'activity',
+          content: 'View\n docs/app-spec.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:nested-skill-call',
+        },
+        {
+          id: 'tool:later-agent-call',
+          role: 'activity',
+          content: 'Search\n "cache" in *.md',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:agent-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The agent's own later tool belongs to it, and a child owning activity of
+    // its own in between must not turn that into a top-level row.
+    const agentGroup = [...document.querySelectorAll('.activity-group')].find(
+      (group) => group.textContent?.includes('agent(reviewer)'),
+    )
+    expect(
+      agentGroup?.querySelector('.activity-group__children'),
+    ).toHaveTextContent('Search')
+  })
+
   it('keeps non-contiguous activity in chronological order', async () => {
     const activitySession: ManagedSession = {
       ...session,

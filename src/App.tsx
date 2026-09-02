@@ -2707,14 +2707,24 @@ function ConversationMessages({
   const activityChildren = new Map<string, ChatMessage[]>()
   const groupedActivityIds = new Set<string>()
   for (const [parentId, parentIndex] of activityIndexes) {
+    // A child can own activity of its own, and those entries are grouped under
+    // it rather than this parent. Walking over them keeps the parent's later
+    // tools in its group instead of stopping at the first nested one and
+    // leaving them at the top level.
+    const owned = new Set<string>([parentId])
     for (let index = parentIndex + 1; index < messages.length; index += 1) {
       const message = messages[index]
       if (
         !message ||
         message.role !== 'activity' ||
-        message.activityGroupId !== parentId
+        !message.activityGroupId ||
+        !owned.has(message.activityGroupId)
       ) {
         break
+      }
+      owned.add(message.id)
+      if (message.activityGroupId !== parentId) {
+        continue
       }
       const children = activityChildren.get(parentId) || []
       children.push(message)

@@ -738,17 +738,16 @@ export class ClaudeAgentService
         stored.activity = undefined
         stored.pendingPermission = undefined
         stored.pendingUserInput = undefined
-        if (!aborted) {
-          for (const entry of stored.messages) {
-            if (
-              entry.role === 'activity' &&
-              entry.activityStatus === 'running'
-            ) {
-              entry.activityStatus = 'failed'
-              entry.activityResult = `Error: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            }
+        // A cancelled turn ends its tools too. Leaving them running would show
+        // work still going on in a session that has already stopped.
+        for (const entry of stored.messages) {
+          if (entry.role === 'activity' && entry.activityStatus === 'running') {
+            entry.activityStatus = 'failed'
+            entry.activityResult = aborted
+              ? 'Cancelled'
+              : `Error: ${
+                  error instanceof Error ? error.message : String(error)
+                }`
           }
         }
       })

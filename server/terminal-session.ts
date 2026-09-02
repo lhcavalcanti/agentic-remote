@@ -589,6 +589,7 @@ export class TmuxTerminalSessionController
           await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
         },
         (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        (pane) => terminalFormShowsFields(pane, form),
       )
     })
   }
@@ -1088,10 +1089,18 @@ export async function submitTerminalForm(
   capture: () => Promise<string>,
   pressEnter: () => Promise<void>,
   settle: (ms: number) => Promise<void>,
+  showsAnsweredForm: (pane: string) => boolean,
   attempts = 24,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (!parseTerminalFormPrompt(await capture())) {
+    const pane = await capture()
+    if (!parseTerminalFormPrompt(pane)) {
+      return true
+    }
+    if (!showsAnsweredForm(pane)) {
+      // A different form is up, which the agent only reaches by finishing the
+      // question this one answered. Pressing Enter now would submit somebody
+      // else's form on whatever it happens to be showing.
       return true
     }
     if (attempt > 0 && attempt % 8 === 0) {

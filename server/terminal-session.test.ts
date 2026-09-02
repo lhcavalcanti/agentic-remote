@@ -913,11 +913,17 @@ describe('submitTerminalForm', () => {
     ' enter accept · esc cancel',
   ].join('\n')
   const closed = '❯ \n'
+  const answered = (pane: string) => pane === openForm
 
   it('presses nothing when committing the last field closed the form', async () => {
     const pressEnter = vi.fn(async () => {})
     await expect(
-      submitTerminalForm(async () => closed, pressEnter, async () => {}),
+      submitTerminalForm(
+        async () => closed,
+        pressEnter,
+        async () => {},
+        answered,
+      ),
     ).resolves.toBe(true)
     expect(pressEnter).not.toHaveBeenCalled()
   })
@@ -934,6 +940,7 @@ describe('submitTerminalForm', () => {
         async () => (submitted ? closed : openForm),
         pressEnter,
         async () => {},
+        answered,
       ),
     ).resolves.toBe(true)
     expect(pressEnter).toHaveBeenCalledTimes(1)
@@ -942,7 +949,35 @@ describe('submitTerminalForm', () => {
   it('gives up on a form that will not close', async () => {
     const pressEnter = vi.fn(async () => {})
     await expect(
-      submitTerminalForm(async () => openForm, pressEnter, async () => {}, 10),
+      submitTerminalForm(
+        async () => openForm,
+        pressEnter,
+        async () => {},
+        answered,
+        10,
+      ),
     ).resolves.toBe(false)
+  })
+
+  it('never presses Enter on a form it did not answer', async () => {
+    const pressEnter = vi.fn(async () => {})
+    const replacement = [
+      ' Copilot needs information.',
+      ' An entirely different question',
+      ' Submit',
+      ' enter accept · esc cancel',
+    ].join('\n')
+
+    // The agent only reaches a second question by finishing the first, so the
+    // answer landed; pressing Enter here would submit the new form blind.
+    await expect(
+      submitTerminalForm(
+        async () => replacement,
+        pressEnter,
+        async () => {},
+        answered,
+      ),
+    ).resolves.toBe(true)
+    expect(pressEnter).not.toHaveBeenCalled()
   })
 })

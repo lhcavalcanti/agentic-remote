@@ -76,8 +76,7 @@ validate_profile() {
     AGENTIC_REMOTE_MONITOR_SERVICE \
     AGENTIC_REMOTE_MONITOR_HEALTH_URL \
     AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR \
-    AGENTIC_REMOTE_MONITOR_GITHUB_USER \
-    AGENTIC_REMOTE_MONITOR_REPOSITORY; do
+    AGENTIC_REMOTE_MONITOR_GITHUB_USER; do
     [[ -n "$(profile_value "$profile" "$key")" ]] ||
       die "profile is missing $key: $profile"
   done

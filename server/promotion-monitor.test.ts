@@ -103,7 +103,18 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
   const remote = path.join(root, 'remote')
   await run('git', ['clone', origin, remote])
 
-  await stub(bin, 'corepack', 'exit "${COREPACK_EXIT:-0}"')
+  await stub(
+    bin,
+    'corepack',
+    [
+      // Failing selectively, so a test can stop validation on its own rather
+      // than only by breaking every pnpm call at once.
+      'case "$*" in',
+      '  *" check"*) exit "${CHECK_EXIT:-0}";;',
+      'esac',
+      'exit "${COREPACK_EXIT:-0}"',
+    ].join('\n'),
+  )
   await stub(
     bin,
     'systemctl',
@@ -144,8 +155,6 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
     AGENTIC_REMOTE_MONITOR_HEALTH_URL: 'http://127.0.0.1:1/health',
     AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR: root,
     AGENTIC_REMOTE_MONITOR_GITHUB_USER: 'tester',
-    AGENTIC_REMOTE_MONITOR_REPOSITORY: 'owner/repo',
-    AGENTIC_REMOTE_MONITOR_WORKFLOW: 'ci.yml',
     AGENTIC_REMOTE_RUNTIME_TOOLS: bin,
     AGENTIC_REMOTE_MONITOR_DOWNSTREAM_SSH: 'ssh',
     AGENTIC_REMOTE_MONITOR_READY_ATTEMPTS: '2',
@@ -299,18 +308,38 @@ describe('promotion monitor', () => {
     )
   })
 
-  it('does not graduate when CI did not pass', async () => {
+  it('does not graduate when validation fails', async () => {
     const context = await fixture()
     const previous = await git(context.runtime, 'rev-parse', 'HEAD')
     await advanceMain(context)
 
-    const result = await monitor(context, { GH_RUN: '1\tcompleted\tfailure' })
+    // Local validation is the only gate now, so a failing suite has to stop
+    // promotion by itself.
+    const result = await monitor(context, { CHECK_EXIT: '1' })
 
     expect(result.code).not.toBe(0)
     expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
     expect(existsSync(path.join(context.root, 'state', 'promotion-state'))).toBe(
       false,
     )
+  })
+
+  it('runs the whole suite before promoting', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    const result = await monitor(context)
+
+    expect(result.code).toBe(0)
+    const calls = (await readFile(context.callLog, 'utf8')).split('\n')
+    // `check` is lint, tests, and build. Anything narrower would let a broken
+    // commit reach the runtime, since nothing else gates it now.
+    expect(calls.some((call) => call.includes(' check'))).toBe(true)
+    expect(
+      calls.some((call) =>
+        call.includes(' audit --prod --audit-level=moderate'),
+      ),
+    ).toBe(true)
   })
 
   it('restores the previous commit and release when health fails', async () => {

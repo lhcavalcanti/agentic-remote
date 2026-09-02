@@ -7011,12 +7011,12 @@ function App() {
           (computerEventSequenceRef.current.get(session.computerId) || 0) <=
             startedAtSequence,
       )
-      claimReplacedSessions(loadedSessions)
       const snapshotComputers = loadedComputers.filter(
         (computer) =>
           (computerEventSequenceRef.current.get(computer.id) || 0) <=
           startedAtSequence,
       )
+      let reconciledSessions: ManagedSession[] = []
       setSessions((current) => {
         let reconciled = sortSessions(snapshotSessions)
         for (const existing of current) {
@@ -7026,8 +7026,15 @@ function App() {
             reconciled = upsertSession(reconciled, existing)
           }
         }
+        reconciledSessions = reconciled
         return reconciled
       })
+      // Lineage is followed from the sessions that survived reconciliation.
+      // A snapshot session the refresh already rejected as stale may have been
+      // replaced again while it was in flight, and moving state into it would
+      // put it under a session that no longer exists, where the replacement
+      // that took its place will never look for it.
+      claimReplacedSessions(reconciledSessions)
       setComputers((current) => {
         let reconciled = snapshotComputers
         for (const existing of current) {

@@ -151,6 +151,7 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import { knowledgeRestoreAction } from './knowledge-restore'
 import {
   collapseKnowledgeFolder,
   expandKnowledgeFolder,
@@ -4212,17 +4213,18 @@ function App() {
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
+  // A single generation for every asynchronous knowledge operation. Anything
+  // that changes what the panel should show bumps it once; every loader
+  // captures it and checks it before writing. Three separate counters could
+  // be bumped in different combinations, and each wrong combination was a
+  // race.
   const knowledgeRequest = useRef(0)
   const knowledgeRestoredKey = useRef<string>(undefined)
   // Captured before the first synchronisation, so a direct session link is not
   // erased by the address being rewritten while sessions are still loading.
   const initialUrlSelection = useRef(readSelectionFromLocation())
-  // Bound to the session being restored: a restore that outlives its session
-  // must not write into the tree that replaced it.
-  const knowledgeRestoreToken = useRef(0)
   const knowledgeRestoreStartedKey = useRef<string>(undefined)
   const applyKnowledgeScrollRef = useRef<(key: string) => void>(() => {})
-  const knowledgeViewLoadedRef = useRef(false)
   // Whether the next selection change is the user navigating (a new history
   // entry) or the app resolving one for them (the same entry, corrected).
   const historyIntentRef = useRef<'push' | 'replace'>('replace')
@@ -4233,7 +4235,6 @@ function App() {
   // Restoring a session's panel reads the newest values without re-running
   // whenever the reader moves, which would fight the user's own navigation.
   const knowledgePositionsRef = useRef<Record<string, KnowledgePosition>>({})
-  const knowledgeViewRef = useRef<KnowledgePosition>({})
   const restoreKnowledgeRef = useRef<
     (position: KnowledgePosition, key: string) => void
   >(() => {})
@@ -4244,9 +4245,6 @@ function App() {
   // Set while a session's tree is still being rebuilt, so the saved offset is
   // applied to the new content instead of the tree that is going away.
   const knowledgePendingScrollKey = useRef<string>(undefined)
-  // Bumped only when the active root changes, so a folder that is still
-  // loading cannot write its entries into a different root's tree.
-  const knowledgeRootGeneration = useRef(0)
   // Where the reader was left, so the next visit reopens it instead of asking
   // for the folder again.
   // Persisting is held back until the remembered position has been applied, so
@@ -4816,16 +4814,6 @@ function App() {
   // reader position and loaders without re-running on each of them.
   useEffect(() => {
     knowledgePositionsRef.current = knowledgePositions
-    knowledgeViewRef.current = {
-      rootId: activeRootId,
-      path: knowledgePath,
-      file: knowledgeFile?.path,
-    }
-    // The path is set before its listing arrives, so "already there" has to
-    // mean the folder actually loaded, not merely that it was requested.
-    knowledgeViewLoadedRef.current = Boolean(
-      knowledgeFolders[knowledgePath]?.listing,
-    )
     // The offset is applied when the restore that asked for it finishes, so it
     // lands on the branch it belongs to rather than on a loading placeholder.
     applyKnowledgeScrollRef.current = (key: string) => {
@@ -4850,8 +4838,8 @@ function App() {
       if (!rootId) {
         return
       }
-      const token = ++knowledgeRestoreToken.current
-      const current = () => token === knowledgeRestoreToken.current
+      const token = ++knowledgeRequest.current
+      const current = () => token === knowledgeRequest.current
       void (async () => {
         try {
           if (rootId !== activeRootId) {
@@ -4888,12 +4876,13 @@ function App() {
           if (!current()) {
             return
           }
-          // Only a restore that finished every step may hand recording over,
-          // so a failure is retried the next time the session is opened.
-          knowledgeRestoredKey.current = key
           applyKnowledgeScrollRef.current(key)
         } finally {
           if (current()) {
+            // The attempt is over either way: recording is handed back so the
+            // reader's next choice becomes this session's position, and a
+            // failure is retried when the panel is reopened.
+            knowledgeRestoredKey.current = key
             knowledgeRestoreStartedKey.current = undefined
           }
           if (current() && knowledgePendingScrollKey.current === key) {
@@ -4907,65 +4896,78 @@ function App() {
   })
 
   useEffect(() => {
-    if (!selectedKey || knowledgeMode === 'hidden' || roots.length === 0) {
+    // No early return here: a restore belonging to a session that is no longer
+    // selected has to be abandoned even when the panel is closed or the
+    // session is gone, or it lands on whatever is selected next. The decision
+    // covers those cases, so this only carries it out.
+    // The decision itself lives in `knowledge-restore.ts`, where it can be
+    // tested directly.
+    const action = knowledgeRestoreAction({
+      selectedKey,
+
+      panelOpen: knowledgeMode !== 'hidden',
+      rootsLoaded: roots.length > 0,
+      remembered: selectedKey
+        ? knowledgePositionsRef.current[selectedKey]
+        : undefined,
+      rememberedRootExists: roots.some(
+        (root) =>
+          root.id ===
+          (selectedKey
+            ? knowledgePositionsRef.current[selectedKey]?.rootId
+            : undefined),
+      ),
+      restoredKey: knowledgeRestoredKey.current,
+      runningKey: knowledgeRestoreStartedKey.current,
+    })
+
+    if (action.kind === 'none') {
       return
     }
-    // A restore belonging to a session that is no longer selected is abandoned
-    // first, before any shortcut below can return: otherwise it keeps running
-    // and writes its reader state and position into this session. The state it
-    // owned is settled here, because its own cancelled finally cannot.
-    if (
-      knowledgeRestoreStartedKey.current &&
-      knowledgeRestoreStartedKey.current !== selectedKey
-    ) {
-      knowledgeRestoreToken.current += 1
+    if (action.kind === 'reset') {
+      // The panel closed, ending the episode: abandon anything running and
+      // stop counting the session as handled, so reopening retries.
       knowledgeRequest.current += 1
-      knowledgeRootGeneration.current += 1
+      knowledgePendingScrollKey.current = undefined
+      knowledgeRestoreStartedKey.current = undefined
+      knowledgeRestoredKey.current = undefined
+      setKnowledgeLoading(false)
+      return
+    }
+    if (action.kind === 'cancel' || action.kind === 'cancel-and-settle') {
+      // The abandoned restore's own cleanup can no longer run, so its state is
+      // settled here.
+      knowledgeRequest.current += 1
       knowledgePendingScrollKey.current = undefined
       knowledgeRestoreStartedKey.current = undefined
       setKnowledgeLoading(false)
-    }
-    const remembered = knowledgePositionsRef.current[selectedKey]
-    const current = knowledgeViewRef.current
-    const showingRememberedView =
-      knowledgeViewLoadedRef.current &&
-      remembered?.rootId === current.rootId &&
-      remembered?.path === current.path &&
-      remembered?.file === current.file
-    // Already restored only counts while the view still belongs to this
-    // session; a cancelled restore may have moved it in the meantime.
-    if (
-      knowledgeRestoredKey.current === selectedKey &&
-      (!remembered?.rootId || showingRememberedView)
-    ) {
+      if (action.kind === 'cancel-and-settle' && selectedKey) {
+        knowledgeRestoredKey.current = selectedKey
+      }
       return
     }
-    if (
-      !remembered?.rootId ||
-      !roots.some((root) => root.id === remembered.rootId)
-    ) {
-      // Nothing to restore, so nothing is cancelled either: creating the first
-      // root starts its own listing, and invalidating here would discard it.
-      knowledgeRestoredKey.current = selectedKey
+    if (action.kind === 'settle') {
+      // A session with nothing to restore must not be left showing the
+      // document belonging to the session that was open before it. Only a
+      // handover clears the reader: on the first load there is no previous
+      // session, and the position restored from storage stands.
+      const handover =
+        knowledgeRestoredKey.current !== undefined &&
+        knowledgeRestoredKey.current !== selectedKey
+      if (selectedKey) {
+        knowledgeRestoredKey.current = selectedKey
+      }
+      if (handover) {
+        setKnowledgeFile(undefined)
+      }
       return
     }
-    if (showingRememberedView) {
-      knowledgeRestoredKey.current = selectedKey
-      return
-    }
-    // Only a restore that is actually about to run supersedes the work in
-    // flight.
-    knowledgeRestoreToken.current += 1
     knowledgeRequest.current += 1
-    knowledgeRootGeneration.current += 1
-    knowledgePendingScrollKey.current = undefined
+    knowledgePendingScrollKey.current = action.key
+    knowledgeRestoreStartedKey.current = action.key
     setKnowledgeLoading(false)
-    knowledgeRestoreStartedKey.current = selectedKey
-    // The tree is rebuilt asynchronously, so the scroll offset is re-applied
-    // once that content lands rather than against the outgoing tree.
-    knowledgePendingScrollKey.current = selectedKey
-    restoreKnowledgeRef.current(remembered, selectedKey)
-  }, [knowledgeMode, selectedKey, roots])
+    restoreKnowledgeRef.current(action.position, action.key)
+  }, [knowledgeMode, selectedKey, roots, knowledgePositions])
 
   // Reopening the panel puts the tree back where it was left, so switching
   // between a session and its files does not lose the reader's place.
@@ -5022,7 +5024,7 @@ function App() {
           return
         }
         setActiveRootId(root.id)
-        const generation = ++knowledgeRootGeneration.current
+        const generation = ++knowledgeRequest.current
         const request = ++knowledgeRequest.current
         const folder =
           root.id === remembered.rootId && remembered.path
@@ -5811,7 +5813,7 @@ function App() {
   async function loadKnowledgeFolder(
     rootId: string,
     path: string,
-    generation = knowledgeRootGeneration.current,
+    generation = knowledgeRequest.current,
   ): Promise<WorkspaceListing | undefined> {
     setKnowledgeFolders((current) => ({
       ...current,
@@ -5821,7 +5823,7 @@ function App() {
       const listing = await listKnowledgeEntries(rootId, path)
       // Switching roots invalidates every folder in flight, so a late reply
       // cannot graft one root's entries onto another root's tree.
-      if (generation !== knowledgeRootGeneration.current) {
+      if (generation !== knowledgeRequest.current) {
         return undefined
       }
       setKnowledgeFolders((current) => ({
@@ -5830,7 +5832,7 @@ function App() {
       }))
       return listing
     } catch (caught) {
-      if (generation === knowledgeRootGeneration.current) {
+      if (generation === knowledgeRequest.current) {
         // Kept beside the folder that failed: one unreachable branch must not
         // blank the rest of the tree.
         setKnowledgeFolders((current) => ({
@@ -5850,7 +5852,7 @@ function App() {
   async function loadKnowledgeChain(
     rootId: string,
     path: string,
-    generation = knowledgeRootGeneration.current,
+    generation = knowledgeRequest.current,
     loaded: KnowledgeFolders = knowledgeFolders,
   ): Promise<boolean> {
     for (const folder of [knowledgeRootPath, ...knowledgePathChain(path)]) {
@@ -5858,7 +5860,7 @@ function App() {
         continue
       }
       const listing = await loadKnowledgeFolder(rootId, folder, generation)
-      if (generation !== knowledgeRootGeneration.current) {
+      if (generation !== knowledgeRequest.current) {
         return false
       }
       if (!listing) {
@@ -5902,12 +5904,13 @@ function App() {
       return false
     }
     if (!fromRestore) {
+      // A file still being read belongs to where the reader just left, so it
+      // is abandoned rather than allowed to arrive over the new folder. A
+      // restore navigating its own steps must not invalidate itself.
       cancelKnowledgeRestore()
+      knowledgeRequest.current += 1
+      setKnowledgeLoading(false)
     }
-    // A file still being read belongs to where the reader just left, so it is
-    // abandoned rather than allowed to arrive over the new folder.
-    knowledgeRequest.current += 1
-    setKnowledgeLoading(false)
     setExpandedKnowledge((current) => expandKnowledgeFolder(current, path))
     setKnowledgePath(path)
     setKnowledgeFile(undefined)
@@ -5924,7 +5927,7 @@ function App() {
     if (!knowledgeRestoreStartedKey.current) {
       return
     }
-    knowledgeRestoreToken.current += 1
+    knowledgeRequest.current += 1
     knowledgePendingScrollKey.current = undefined
     knowledgeRestoredKey.current = knowledgeRestoreStartedKey.current
     knowledgeRestoreStartedKey.current = undefined
@@ -6010,7 +6013,11 @@ function App() {
     if (!fromRestore) {
       cancelKnowledgeRestore()
     }
-    const request = ++knowledgeRequest.current
+    // A restore reads under the generation it started with, so its own steps
+    // never invalidate it; anything user-driven starts a new one.
+    const request = fromRestore
+      ? knowledgeRequest.current
+      : ++knowledgeRequest.current
     setKnowledgeLoading(true)
     setError(undefined)
     try {
@@ -6043,13 +6050,14 @@ function App() {
   ): Promise<boolean> {
     knowledgeHydrated.current = true
     if (!fromRestore) {
+      // Changing root invalidates the file being read as well as its folders,
+      // or the old document would resolve its assets against the new root.
       cancelKnowledgeRestore()
+      setKnowledgeLoading(false)
     }
-    // Changing root invalidates the file being read as well as its folders,
-    // or the old document would resolve its assets against the new root.
-    knowledgeRequest.current += 1
-    setKnowledgeLoading(false)
-    const generation = ++knowledgeRootGeneration.current
+    const generation = fromRestore
+      ? knowledgeRequest.current
+      : ++knowledgeRequest.current
     setActiveRootId(rootId)
     setKnowledgeFile(undefined)
     setKnowledgeFolders({})
@@ -6066,12 +6074,12 @@ function App() {
       generation,
     )
     for (const folder of remembered) {
-      if (generation !== knowledgeRootGeneration.current) {
+      if (generation !== knowledgeRequest.current) {
         return false
       }
       await loadKnowledgeFolder(rootId, folder, generation)
     }
-    return Boolean(opened) && generation === knowledgeRootGeneration.current
+    return Boolean(opened) && generation === knowledgeRequest.current
   }
 
   async function removeRoot(rootId: string) {
@@ -6080,7 +6088,6 @@ function App() {
       setRoots((current) => current.filter((root) => root.id !== rootId))
       if (rootId === activeRootId) {
         knowledgeRequest.current += 1
-        knowledgeRootGeneration.current += 1
         setActiveRootId(undefined)
         setKnowledgeFolders({})
         setExpandedKnowledge([])

@@ -5077,6 +5077,60 @@ describe('App', () => {
     )
   })
 
+  it('does not show one session document while another is selected', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 10 },
+          ],
+        },
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'setup.md',
+      path: 'setup.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 10,
+      content: '# Setup guide',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    )
+    await screen.findByRole('heading', { name: 'Setup guide' })
+
+    // The second session has never opened anything, so the panel must not
+    // leave the first session's document on screen under its name.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: 'Setup guide' }),
+      ).not.toBeInTheDocument(),
+    )
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

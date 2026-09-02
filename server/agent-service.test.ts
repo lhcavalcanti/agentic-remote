@@ -5136,6 +5136,19 @@ describe('statusFromEvents', () => {
     ).toBe('running')
   })
 
+  it('goes idle when a background agent fails rather than completes', () => {
+    // Failing ends an agent too. Tracking only completions would leave the
+    // session running for good after one failed.
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('subagent.failed', 'agent-1'),
+      ]),
+    ).toBe('idle')
+  })
+
   it('goes idle once every background agent has finished', () => {
     expect(
       statusFromEvents([

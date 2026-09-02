@@ -910,7 +910,13 @@ export function statusFromEvents(events: SessionEvent[]): SessionStatus {
     if (event.agentId) {
       if (event.type === 'subagent.started') {
         workingAgents.add(event.agentId)
-      } else if (event.type === 'subagent.completed') {
+      } else if (
+        event.type === 'subagent.completed' ||
+        event.type === 'subagent.failed'
+      ) {
+        // Failing ends an agent just as completing does. Tracking only the
+        // completions would leave a failed agent working for good, and the
+        // session running with it.
         workingAgents.delete(event.agentId)
       }
       continue
@@ -3343,6 +3349,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (event) =>
             event.type === 'assistant.turn_end' ||
             event.type === 'session.idle' ||
+            // A turn that handed its work to background agents ends before
+            // they do, so the last agent finishing is the completion a prompt
+            // queued behind them is waiting on.
+            event.type === 'subagent.completed' ||
+            event.type === 'subagent.failed' ||
             event.type === 'session.error' ||
             event.type === 'abort' ||
             event.type === 'session.shutdown',

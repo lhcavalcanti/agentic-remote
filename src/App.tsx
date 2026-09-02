@@ -4231,6 +4231,9 @@ function App() {
   const moveKnowledgeSessionRef = useRef<(from: string, to: string) => void>(
     () => {},
   )
+  const moveComposerDraftRef = useRef<(from: string, to: string) => void>(
+    () => {},
+  )
   // Captured before the first synchronisation, so a direct session link is not
   // erased by the address being rewritten while sessions are still loading.
   const initialUrlSelection = useRef(readSelectionFromLocation())
@@ -4846,6 +4849,7 @@ function App() {
     }
     forgetKnowledgeSessionRef.current = forgetKnowledgeSession
     moveKnowledgeSessionRef.current = moveKnowledgePosition
+    moveComposerDraftRef.current = moveComposerDraft
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
       const rootId = position.rootId
       if (!rootId) {
@@ -4982,9 +4986,12 @@ function App() {
       // document belonging to the session that was open before it. Only a
       // handover clears the reader: on the first load there is no previous
       // session, and the position restored from storage stands.
+      // The view owner survives closing the panel, while the handled marker
+      // is reset by it. Asking the owner is what still catches a document
+      // left behind by the session that was open before this one.
       const handover =
-        knowledgeRestoredKey.current !== undefined &&
-        knowledgeRestoredKey.current !== selectedKey
+        knowledgeViewOwnerKey.current !== undefined &&
+        knowledgeViewOwnerKey.current !== selectedKey
       if (selectedKey) {
         knowledgeRestoredKey.current = selectedKey
         knowledgeViewOwnerKey.current = selectedKey
@@ -5509,19 +5516,18 @@ function App() {
             removedKey,
             eventSequenceRef.current,
           )
-          setComposerDrafts((current) => {
-            const { [removedKey]: _removed, ...remaining } = current
-            return remaining
-          })
           // Removal reaches every client. A cleared session was replaced
-          // rather than deleted, so its reading position moves across on all
-          // of them instead of being discarded on any of them.
+          // rather than deleted, so everything it was carrying moves across on
+          // all of them instead of being discarded on any of them.
           if (event.replacedBy) {
-            moveKnowledgeSessionRef.current(
-              removedKey,
-              `${event.computerId}:${event.replacedBy}`,
-            )
+            const replacementKey = `${event.computerId}:${event.replacedBy}`
+            moveComposerDraftRef.current(removedKey, replacementKey)
+            moveKnowledgeSessionRef.current(removedKey, replacementKey)
           } else {
+            setComposerDrafts((current) => {
+              const { [removedKey]: _removed, ...remaining } = current
+              return remaining
+            })
             forgetKnowledgeSessionRef.current(removedKey)
           }
           setSessions((current) =>

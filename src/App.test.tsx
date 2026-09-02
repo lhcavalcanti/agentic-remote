@@ -5405,6 +5405,100 @@ describe('App', () => {
     )
   })
 
+  it('carries the draft across a clear on every client', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Draft worth keeping' } })
+
+    // Another browser cleared this conversation. The replacement is a new
+    // session id, so the draft has to travel with it rather than be dropped.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: 'session-1-cleared',
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, id: 'session-1-cleared', messages: [] },
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue(
+        'Draft worth keeping',
+      ),
+    )
+  })
+
+  it('clears a foreign document after the panel was closed in between', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 10 },
+          ],
+        },
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'setup.md',
+      path: 'setup.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 10,
+      content: '# Setup guide',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    )
+    await screen.findByRole('heading', { name: 'Setup guide' })
+
+    // Closing the panel resets the handled marker, so only the view owner
+    // still knows this document belongs to the first session.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: 'Setup guide' }),
+      ).not.toBeInTheDocument(),
+    )
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

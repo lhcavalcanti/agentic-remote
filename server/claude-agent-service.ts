@@ -383,7 +383,11 @@ export class ClaudeAgentService
     }
     const replacementId = randomUUID()
     const cleared = await this.store.replaceWithClearedSession(id, replacementId)
-    this.emit('event', { type: 'session.removed', sessionId: id })
+    this.emit('event', {
+      type: 'session.removed',
+      sessionId: id,
+      replacedBy: replacementId,
+    })
     this.publish(cleared)
     return cleared
   }

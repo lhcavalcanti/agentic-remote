@@ -4490,6 +4490,53 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('refuses a prompt while a full-screen view holds the keyboard', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-overlay-prompt-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const pane = [
+      ' Settings',
+      ' \u276f allowedUrls        (default)',
+      ' / search \u00b7 \u2191/\u2193 navigate \u00b7 tab switch scope \u00b7 enter edit',
+      ' esc close',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await expect(
+      service.sendMessage(client.session.sessionId, 'Deploy the engine'),
+    ).rejects.toThrow('full-screen view')
+
+    // Typing now would filter the picker's list, and a stray Enter could
+    // choose from it, with nothing to say the prompt never arrived.
+    expect(terminal.send).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
   it('says so when a terminal slash command opens a full-screen view', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-slash-overlay-'),

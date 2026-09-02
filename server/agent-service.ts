@@ -2500,6 +2500,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Message cannot be empty')
     }
     const terminalBacked = await this.terminalController.has(sessionId)
+    if (terminalBacked) {
+      // A full-screen view takes the keyboard, so a prompt sent now is typed
+      // into its search box: it filters a list, a stray Enter can pick from
+      // it, and nothing says the prompt was never delivered. Refusing is
+      // recoverable in a way that silently losing it is not.
+      const pane = await this.terminalController.capture?.(sessionId)
+      if (pane && isTerminalOverlay(pane)) {
+        throw new Error(
+          'The terminal is showing a full-screen view. Close it there, then send this again.',
+        )
+      }
+    }
     if (
       enqueue &&
       terminalBacked &&

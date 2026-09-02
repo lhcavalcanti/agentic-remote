@@ -169,12 +169,27 @@ export interface NodeInfo {
 
 export type ServerEvent =
   | { type: 'session.upserted'; session: SessionDetail }
-  | { type: 'session.removed'; sessionId: string }
+  | {
+      type: 'session.removed'
+      sessionId: string
+      /**
+       * Set when the session was replaced rather than deleted, as clearing a
+       * conversation does. Without it a client cannot tell the two apart, and
+       * discards state that should have moved to the replacement.
+       */
+      replacedBy?: string
+    }
   | { type: 'error'; sessionId?: string; message: string }
 
 export type HubEvent =
   | { type: 'session.upserted'; session: ManagedSession }
-  | { type: 'session.removed'; computerId: string; sessionId: string }
+  | {
+      type: 'session.removed'
+      computerId: string
+      sessionId: string
+      /** See the node event above. */
+      replacedBy?: string
+    }
   | { type: 'computer.updated'; computer: ComputerSummary }
   | { type: 'computer.removed'; computerId: string }
   | { type: 'error'; computerId?: string; sessionId?: string; message: string }

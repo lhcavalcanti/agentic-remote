@@ -293,6 +293,9 @@ switches, failed sends, and clear replacement IDs.
   dismissed by moving to another session.
 - Each session MUST keep its own reading position — root, folder, and
   document — and switching sessions MUST show that session's position.
+- Clearing a conversation replaces a session rather than deleting it, so the
+  removal event MUST name the replacement and every client MUST carry that
+  session's reading position across rather than discard it.
 - File navigation MUST stay in the same place in every mode, so choosing a
   file does not depend on how much room the reader is taking.
 - Reopening the panel MUST resume the tree where it was left rather than

@@ -4228,6 +4228,9 @@ function App() {
   // pruning has to wait or the position is lost on the way through.
   const clearingSessions = useRef(new Set<string>())
   const forgetKnowledgeSessionRef = useRef<(key: string) => void>(() => {})
+  const moveKnowledgeSessionRef = useRef<(from: string, to: string) => void>(
+    () => {},
+  )
   // Captured before the first synchronisation, so a direct session link is not
   // erased by the address being rewritten while sessions are still loading.
   const initialUrlSelection = useRef(readSelectionFromLocation())
@@ -4842,6 +4845,7 @@ function App() {
       })
     }
     forgetKnowledgeSessionRef.current = forgetKnowledgeSession
+    moveKnowledgeSessionRef.current = moveKnowledgePosition
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
       const rootId = position.rootId
       if (!rootId) {
@@ -5509,9 +5513,17 @@ function App() {
             const { [removedKey]: _removed, ...remaining } = current
             return remaining
           })
-          // Removal reaches every client, so none of them keep reading state
-          // for a session that no longer exists.
-          forgetKnowledgeSessionRef.current(removedKey)
+          // Removal reaches every client. A cleared session was replaced
+          // rather than deleted, so its reading position moves across on all
+          // of them instead of being discarded on any of them.
+          if (event.replacedBy) {
+            moveKnowledgeSessionRef.current(
+              removedKey,
+              `${event.computerId}:${event.replacedBy}`,
+            )
+          } else {
+            forgetKnowledgeSessionRef.current(removedKey)
+          }
           setSessions((current) =>
             current.filter(
               (session) =>
@@ -5776,8 +5788,9 @@ function App() {
   /** A session that is gone leaves nothing of its reading behind. */
   function forgetKnowledgeSession(key: string) {
     if (clearingSessions.current.has(key)) {
-      // A clear is in flight for this session: its position is about to move
-      // to the replacement rather than be discarded.
+      // The removal carries its replacement, so this is normally unnecessary.
+      // A node running an older build sends no link, and hosts update
+      // independently, so the clear this client issued still protects itself.
       return
     }
     delete knowledgeScrollTops.current[key]

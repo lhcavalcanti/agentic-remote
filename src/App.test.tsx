@@ -5365,6 +5365,46 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('moves the position on a client that did not issue the clear', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // Another browser cleared the conversation. This client only sees the
+    // removal, so the event has to say the session was replaced rather than
+    // deleted, or the position is thrown away here.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-2',
+          replacedBy: 'session-2-cleared',
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({
+        'computer-1:session-2-cleared': { rootId: 'root-1', path: 'notes' },
+      }),
+    )
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

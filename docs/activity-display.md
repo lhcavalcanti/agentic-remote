@@ -3,7 +3,7 @@
 How a session shows its tool calls, skills, MCP calls, and sub-agents.
 
 Mockups live in [`mockups/activity-view.html`](mockups/activity-view.html).
-Open it in a browser: it renders the same eleven steps twice, inside a frame
+Open it in a browser: it renders the same nine activities twice, inside a frame
 that stands in for the app, so the comparison is about the view rather than the
 wording.
 
@@ -44,8 +44,9 @@ and the row itself reads left to right:
 
 Every call is a bordered pill with a tint, stacked one per row.
 
-- Six steps fill the column that the proposal fits eleven into, with room left
-  over.
+- The same nine activities need eleven pills, because each skill and agent
+  takes a row of its own, and they fill the column the proposal fits them all
+  into with room left over.
 - Three different treatments — plain, blue for MCP, amber for agents — compete
   inside the same list, so the eye has no single thing to follow.
 - Nothing lines up: each pill is only as wide as its text, so there is no

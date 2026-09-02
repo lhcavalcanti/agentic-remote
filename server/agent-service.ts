@@ -68,6 +68,9 @@ import {
   searchWorkspace,
 } from './workspace-browser.js'
 import {
+  isTerminalAgentWorking,
+  isTerminalOverlay,
+  terminalCommandOutput,
   TmuxTerminalSessionController,
   type TerminalSessionController,
 } from './terminal-session.js'
@@ -2108,11 +2111,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async enqueuePrompt(
     sessionId: string,
     content: string,
+    command = false,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
       content,
       createdAt: new Date().toISOString(),
+      ...(command ? { command: true } : {}),
     }
     return this.serializeQueue(sessionId, async () => {
       const queued = await this.store.enqueuePrompt(sessionId, prompt)
@@ -2124,9 +2129,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async enqueueTerminalPrompt(
     sessionId: string,
     content: string,
+    command = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content)
+    const queued = await this.enqueuePrompt(sessionId, content, command)
     if (!wasIdle) {
       return queued
     }
@@ -2345,11 +2351,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, canonicalCommand)
+      return this.enqueueTerminalPrompt(sessionId, canonicalCommand, true)
     }
     const nativeEnqueue =
       !catalog.session &&
       this.shouldUseNativeTerminalQueue(sessionId, enqueue)
+    // Taken before the command is sent so the response can be told apart from
+    // content the pane was already showing. While the agent is working its own
+    // streaming output arrives in the same pane and cannot be told apart from
+    // the command's response, so no attempt is made to report one.
+    const before =
+      nativeEnqueue || busy || this.store.get(sessionId)?.status === 'running'
+        ? undefined
+        : await this.terminalController.capture?.(sessionId)
     if (
       await this.terminalController.send(
         sessionId,
@@ -2357,14 +2371,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         nativeEnqueue,
       )
     ) {
+      const feedback = await this.terminalCommandFeedback(
+        sessionId,
+        canonicalCommand,
+        before,
+      )
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
         role: 'notice',
-        content: canonicalCommand,
+        content: feedback.notice,
         createdAt: new Date().toISOString(),
       })
       this.publish(notice)
-      return notice
+      if (!feedback.startedTurn) {
+        return notice
+      }
+      // A command sent directly can start a turn just as a queued one can, and
+      // the session has to read as busy for it too, or the next prompt is sent
+      // into the turn before polling notices it.
+      const started = await this.store.markTerminalPromptDispatched(
+        sessionId,
+        new Date().toISOString(),
+      )
+      this.publish(started)
+      return started
     }
     const session = catalog.session
     if (!session) {
@@ -2420,6 +2450,66 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
     this.publish(notice)
     return notice
+  }
+
+  /**
+   * The CLI writes a slash command's response into the terminal rather than
+   * the event log, so without this the conversation only shows the command
+   * that was sent. Polls briefly for the response and falls back to the
+   * command itself when there is nothing to report.
+   */
+  /**
+   * The notice a command produced, and what it left the terminal doing. Both
+   * matter apart from the text: a command that began a turn, and one that
+   * opened a full-screen view, each keep the keyboard, so nothing further may
+   * be sent until they release it.
+   */
+  private async terminalCommandFeedback(
+    sessionId: string,
+    command: string,
+    before: string | undefined,
+  ): Promise<{ notice: string; startedTurn: boolean; overlayOpen: boolean }> {
+    if (before === undefined || !this.terminalController.capture) {
+      return { notice: command, startedTurn: false, overlayOpen: false }
+    }
+    let previous: string | undefined
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      const after = await this.terminalController.capture(sessionId)
+      if (!after) {
+        continue
+      }
+      if (isTerminalOverlay(after)) {
+        // The view takes the keyboard: anything sent now lands in its search
+        // box instead of the composer, so the terminal counts as held.
+        return {
+          notice: `${command}\n\nOpened an interactive view in the terminal. Continue there; it cannot be shown here.`,
+          startedTurn: false,
+          overlayOpen: true,
+        }
+      }
+      // The command started a turn, so anything appearing now is the agent
+      // writing rather than the command answering.
+      if (isTerminalAgentWorking(after)) {
+        return { notice: command, startedTurn: true, overlayOpen: false }
+      }
+      const output = terminalCommandOutput(before, after, command)
+      // A response can be captured mid-paint, so report it only once it stops
+      // growing; otherwise a multi-line response is cut short.
+      if (output && output === previous) {
+        return {
+          notice: `${command}\n\n${output}`,
+          startedTurn: false,
+          overlayOpen: false,
+        }
+      }
+      previous = output
+    }
+    return {
+      notice: previous ? `${command}\n\n${previous}` : command,
+      startedTurn: false,
+      overlayOpen: false,
+    }
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -3627,34 +3717,82 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.drainingSessions.add(sessionId)
     try {
-      await this.serializeQueue(sessionId, async () => {
-        const stored = this.store.get(sessionId)
-        const next = stored?.queuedPrompts?.[0]
-        if (!next || stored.status !== 'idle') {
-          return
-        }
-        const dispatchedAt = new Date().toISOString()
-        if (!(await this.terminalController.send(sessionId, next.content, false))) {
-          throw new Error('External terminal is no longer available')
-        }
-        const { prompt } = await this.store.removeQueuedPrompt(
-          sessionId,
-          next.id,
-        )
-        if (!prompt) {
-          return
-        }
-        const running = await this.store.markTerminalPromptDispatched(
-          sessionId,
-          dispatchedAt,
-        )
-        this.publish(running)
-      })
+      // A command answers in the pane instead of starting a turn, so it adds
+      // no completion event and nothing else would drain what is queued behind
+      // it. Draining continues here until the queue is empty or a turn begins.
+      while (await this.drainNextTerminalPrompt(sessionId)) {
+        // Keep draining while commands keep answering.
+      }
     } catch (error) {
       this.publishError(sessionId, error)
     } finally {
       this.drainingSessions.delete(sessionId)
     }
+  }
+
+  /**
+   * Sends the next queued entry. Returns true when the caller should drain
+   * again immediately, which is only the case for a command that answered
+   * without starting a turn: a dispatched prompt and a command that began a
+   * turn both leave the terminal busy, and their completion drains the rest.
+   */
+  private async drainNextTerminalPrompt(sessionId: string): Promise<boolean> {
+    return await this.serializeQueue(sessionId, async () => {
+      const stored = this.store.get(sessionId)
+      const next = stored?.queuedPrompts?.[0]
+      if (!next || stored.status !== 'idle') {
+        return false
+      }
+      const dispatchedAt = new Date().toISOString()
+      // A command reports what it printed instead of starting a turn, so its
+      // pane is captured before the keystrokes go in, exactly as it would be
+      // had the command not been queued.
+      const before = next.command
+        ? await this.terminalController.capture?.(sessionId)
+        : undefined
+      if (!(await this.terminalController.send(sessionId, next.content, false))) {
+        throw new Error('External terminal is no longer available')
+      }
+      const { prompt } = await this.store.removeQueuedPrompt(sessionId, next.id)
+      if (!prompt) {
+        return false
+      }
+      if (next.command) {
+        const feedback = await this.terminalCommandFeedback(
+          sessionId,
+          next.content,
+          before,
+        )
+        const notice = await this.store.addMessage(sessionId, {
+          id: randomUUID(),
+          role: 'notice',
+          content: feedback.notice,
+          createdAt: new Date().toISOString(),
+        })
+        this.publish(notice)
+        if (feedback.startedTurn) {
+          // The command began a turn instead of answering, so the terminal is
+          // busy until it ends. Recording the dispatch now keeps anything else
+          // from being sent into that turn before polling observes it.
+          const started = await this.store.markTerminalPromptDispatched(
+            sessionId,
+            dispatchedAt,
+          )
+          this.publish(started)
+          return false
+        }
+        // A full-screen view owns the keyboard without starting a turn, so the
+        // session stays idle while the rest of the queue waits for it to close
+        // rather than being typed into its search box.
+        return !feedback.overlayOpen
+      }
+      const running = await this.store.markTerminalPromptDispatched(
+        sessionId,
+        dispatchedAt,
+      )
+      this.publish(running)
+      return false
+    })
   }
 
   private async serializeQueue<T>(

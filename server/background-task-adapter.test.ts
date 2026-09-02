@@ -602,6 +602,124 @@ describe('background task adapter', () => {
     ])
   })
 
+  it('does not keep attached work running past the turn it belonged to', () => {
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "attached-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "attached-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm test" }
+        }
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "detached-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "detached-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm dev" }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "detached-launch",
+        "parentId": "detached-start",
+        "timestamp": "2026-09-02T08:00:02.000Z",
+        "data": {
+          "toolCallId": "detached-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "async", "detached": "true" }
+          },
+          "result": {
+            "content": "<command started in detached background with shellId: shell-9>"
+          }
+        }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": {}
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+    const running = tasks.filter((task) => task.status === 'running')
+
+    // The command that never reported went with its turn; the detached shell
+    // outliving one is the whole point of it.
+    expect(running.map((task) => task.id)).toEqual(['shell-9'])
+    expect(
+      tasks.find((task) => task.id === 'attached-call'),
+    ).toMatchObject({ status: 'failed' })
+  })
+
+  it('does not let a repeated shell id finish an unrelated command', () => {
+    // Shell ids are small per-run counters that come round again. Two ordinary
+    // commands in a long session can name the same one, and the second must
+    // not close the first, which would leave it running for good.
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "first-start",
+          "parentId": null,
+          "timestamp": "2026-09-02T08:18:27.445Z",
+          "data": {
+            "toolCallId": "call-first",
+            "toolName": "bash",
+            "arguments": { "command": "echo one" }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "first-finish",
+          "parentId": "first-start",
+          "timestamp": "2026-09-02T08:18:27.586Z",
+          "data": {
+            "toolCallId": "call-first",
+            "success": true,
+            "result": { "content": "one\\n<shellId: 75 completed with exit code 0>" }
+          }
+        },
+        {
+          "type": "tool.execution_start",
+          "id": "second-start",
+          "parentId": null,
+          "timestamp": "2026-09-02T09:00:00.000Z",
+          "data": {
+            "toolCallId": "call-second",
+            "toolName": "bash",
+            "arguments": { "command": "echo two" }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "second-finish",
+          "parentId": "second-start",
+          "timestamp": "2026-09-02T09:00:00.200Z",
+          "data": {
+            "toolCallId": "call-second",
+            "success": true,
+            "result": { "content": "two\\n<shellId: 75 completed with exit code 0>" }
+          }
+        }
+      ]`) as SessionEvent[],
+      { assumeBackground: true },
+    )
+
+    expect(tasks.filter((task) => task.status === 'running')).toEqual([])
+    expect(tasks).toHaveLength(2)
+  })
+
   it('keeps a task asked to run synchronously out of the background', () => {
     const tasks = backgroundTasksFromEvents(
       JSON.parse(`[

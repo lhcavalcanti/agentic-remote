@@ -796,6 +796,28 @@ function backgroundHandoff(
   return undefined
 }
 
+/**
+ * When the agent last finished a turn of its own. Work that belongs to a turn
+ * cannot still be running after one ended.
+ */
+function lastForegroundCompletionAt(events: SessionEvent[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event.agentId) {
+      continue
+    }
+    if (
+      event.type === 'assistant.turn_end' ||
+      event.type === 'session.idle' ||
+      event.type === 'abort' ||
+      event.type === 'session.shutdown'
+    ) {
+      return event.timestamp
+    }
+  }
+  return undefined
+}
+
 function addActivity(
   task: BackgroundTask,
   message: string,
@@ -1155,16 +1177,18 @@ export function backgroundTasksFromEvents(
       const shellId = shellIdFromValue(data)
       const shellExit = shellExitFromValue(data)
       // A detached shell reports its exit through whichever call observed it,
-      // and a follow-up read_bash/read_shell carries its own tool call id. The
-      // task is therefore looked up by the shell the exit names before falling
-      // back to the call that started it, or the exit and output would never
-      // reach it and the task would stay running.
+      // and a follow-up read_bash/read_shell carries its own tool call id, so
+      // the shell it names is consulted when the call itself owns no task.
+      // The call comes first: a shell id is a small per-run counter that comes
+      // round again, and preferring it lands one command's completion on an
+      // unrelated task that then never finishes.
       const namedShellId = shellExit?.shellId || shellId
       const id = taskIdAlias(aliases, toolCallId)
       let current =
+        tasks.get(id) ||
         (namedShellId
           ? tasks.get(taskIdAlias(aliases, namedShellId))
-          : undefined) || tasks.get(id)
+          : undefined)
       const start = shellStartFor(toolCallId) || shellStartFor(shellId)
       const handoffMode = backgroundHandoff(data)
       if (!current && start && handoffMode) {
@@ -1180,10 +1204,27 @@ export function backgroundTasksFromEvents(
         aliases.set(backgroundId, backgroundId)
       }
       if (current?.type === 'shell') {
-        const resolvedShellId = namedShellId
-        if (resolvedShellId && current.id !== resolvedShellId) {
+        if (handoffMode) {
+          // The task already exists when a session projects every tool as
+          // background, so the handoff has to be applied to it rather than
+          // only used to create one. Without this a detached shell stays
+          // recorded as attached and is treated as part of its turn.
+          current.executionMode = handoffMode.executionMode
+          // Detachment only ever becomes known: a later report that says
+          // nothing about it must not take it back.
+          if (handoffMode.attachmentMode === 'detached') {
+            current.attachmentMode = 'detached'
+          }
+        }
+        // Only a real handoff renames the task after the shell it created. An
+        // ordinary command prints the same marker when it finishes, and taking
+        // that as its identity merges unrelated commands that happen to reuse
+        // the number, so one of them can never finish.
+        const handoffShellId =
+          shellExit?.shellId || (handoffMode ? shellId : undefined)
+        if (handoffShellId && current.id !== handoffShellId) {
           current =
-            rekeyTask(tasks, aliases, current.id, resolvedShellId) || current
+            rekeyTask(tasks, aliases, current.id, handoffShellId) || current
         }
         if (shellExit) {
           current.status = shellExit.exitCode === 0 ? 'completed' : 'failed'
@@ -1224,6 +1265,28 @@ export function backgroundTasksFromEvents(
       const toolName = eventString(data, 'toolName') || 'tool'
       addActivity(current, toolName, event.timestamp)
       tasks.set(id, current)
+    }
+  }
+  // A shell that runs inside the turn cannot outlive it. One that started
+  // before the agent last finished and never reported is not still going: the
+  // turn ended and took it along, and leaving it running fills the panel with
+  // work that stopped hours ago. Detached shells and agents are exempt, since
+  // outliving the turn is the whole point of both, and each has its own
+  // completion to close it.
+  const lastTurnEndAt = lastForegroundCompletionAt(events)
+  if (lastTurnEndAt) {
+    for (const task of tasks.values()) {
+      if (
+        task.status === 'running' &&
+        task.type === 'shell' &&
+        task.attachmentMode !== 'detached' &&
+        task.startedAt < lastTurnEndAt
+      ) {
+        task.status = 'failed'
+        task.completedAt = lastTurnEndAt
+        task.error = task.error || 'Ended without reporting completion'
+        task.canCancel = false
+      }
     }
   }
   return [...tasks.values()]

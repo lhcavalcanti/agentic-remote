@@ -4577,6 +4577,59 @@ describe('App', () => {
       ).toBe(240),
     )
   })
+  it('moves the session to a folder browsed in Knowledge', async () => {
+    vi.mocked(executeCommand).mockImplementation(
+      async (_computerId, _sessionId, input) => ({
+        ...session,
+        cwd: input.command.slice('/cwd '.length),
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? { path: 'guides', parent: '.', entries: [] }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
+    )
+
+    // Browsing to a folder is how the session is moved there: the reader picks
+    // it in the tree rather than opening a separate browser for it.
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Move session to this folder',
+      }),
+    )
+    await waitFor(() =>
+      expect(executeCommand).toHaveBeenCalledWith(computer.id, session.id, {
+        command: '/cwd /home/tester/docs/guides',
+      }),
+    )
+  })
+
   it('browses a knowledge root from the sidebar switch', async () => {
     vi.mocked(listKnowledgeRoots).mockResolvedValue([
       {

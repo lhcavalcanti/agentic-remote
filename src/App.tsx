@@ -51,6 +51,7 @@ import {
   Command,
   Eraser,
   Folder,
+  FolderInput,
   FolderOpen,
   File as FileIcon,
   FileText,
@@ -5543,6 +5544,7 @@ function App() {
   const [clearing, setClearing] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
+  const [movingSessionFolder, setMovingSessionFolder] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
@@ -7454,6 +7456,44 @@ function App() {
 
   const activeRoot = roots.find((root) => root.id === activeRootId)
 
+  /**
+   * Where the Knowledge panel is browsing, on the computer that owns it. The
+   * tree works in paths relative to the root, and the session has to be told
+   * an absolute one.
+   */
+  const browsedFolderPath =
+    activeRoot && knowledgePath && knowledgePath !== knowledgeRootPath
+      ? `${activeRoot.path.replace(/\/$/, '')}/${knowledgePath}`
+      : activeRoot?.path
+  // Moving the session means asking the CLI to change directory, which only a
+  // terminal-backed session on the root's own computer can be asked to do.
+  const canMoveSessionHere = Boolean(
+    selected &&
+      browsedFolderPath &&
+      selected.executionMode === 'tmux' &&
+      activeRoot &&
+      activeRoot.computerId === selected.computerId &&
+      browsedFolderPath !== selected.cwd,
+  )
+
+  async function moveSessionToBrowsedFolder() {
+    if (!selected || !browsedFolderPath || movingSessionFolder) {
+      return
+    }
+    setMovingSessionFolder(true)
+    setError(undefined)
+    try {
+      const updated = await executeCommand(selected.computerId, selected.id, {
+        command: `/cwd ${browsedFolderPath}`,
+      })
+      setSessions((current) => upsertSession(current, updated))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setMovingSessionFolder(false)
+    }
+  }
+
   function setKnowledgeMode(mode: KnowledgePanelMode) {
     setKnowledgeModeState(mode)
   }
@@ -8830,6 +8870,18 @@ function App() {
                       ),
                     )}
                   </div>
+                  {canMoveSessionHere ? (
+                    <button
+                      aria-label="Move session to this folder"
+                      className="icon-button"
+                      disabled={movingSessionFolder}
+                      onClick={() => void moveSessionToBrowsedFolder()}
+                      title={`Move this session to ${browsedFolderPath}`}
+                      type="button"
+                    >
+                      <FolderInput size={14} />
+                    </button>
+                  ) : null}
                   <button
                     aria-label="Collapse all folders"
                     className="icon-button"
@@ -8992,15 +9044,32 @@ function App() {
           </button>
           <div className="conversation-header__title">
             <strong>{selected?.title || 'Agentic Remote'}</strong>
-            <span>
-              {selected
-                ? `${providerName(selected.provider)}${
-                    executionModeName(selected.executionMode)
-                      ? ` · ${executionModeName(selected.executionMode)}`
-                      : ''
-                  } · ${selected.computerName} · ${shortPath(selected.cwd)}`
-                : 'Ready when you are'}
-            </span>
+            {selected ? (
+              <span>
+                {`${providerName(selected.provider)}${
+                  executionModeName(selected.executionMode)
+                    ? ` · ${executionModeName(selected.executionMode)}`
+                    : ''
+                } · ${selected.computerName} · `}
+                {/* The folder the session is in is also the way into it, so it
+                    does not need a button of its own in the header. */}
+                <button
+                  aria-label="Browse current session folder"
+                  className="conversation-header__cwd"
+                  onClick={() => {
+                    setWorkspaceInitialPath(undefined)
+                    setWorkspaceInitialKind(undefined)
+                    setWorkspaceOpen(true)
+                  }}
+                  title={`Browse ${selected.cwd}`}
+                  type="button"
+                >
+                  {shortPath(selected.cwd)}
+                </button>
+              </span>
+            ) : (
+              <span>Ready when you are</span>
+            )}
           </div>
           <button
             aria-label="Session knowledge"
@@ -9018,40 +9087,6 @@ function App() {
           >
             <BookOpen size={18} />
           </button>
-          {selected ? (
-            <button
-              aria-label="Browse current session folder"
-              className="icon-button"
-              onClick={() => {
-                setWorkspaceInitialPath(undefined)
-                setWorkspaceInitialKind(undefined)
-                setWorkspaceOpen(true)
-              }}
-              type="button"
-            >
-              <FolderOpen size={18} />
-            </button>
-          ) : null}
-          {selected && selectedSupportsBackgroundTasks ? (
-            <button
-              aria-label="View background tasks"
-              className={`icon-button ${
-                selectedRunningBackgroundTasks > 0
-                  ? 'icon-button--task-running'
-                  : ''
-              }`}
-              onClick={openBackgroundTasks}
-              title="View background tasks"
-              type="button"
-            >
-              <List size={18} />
-              {selectedRunningBackgroundTasks > 0 ? (
-                <span className="background-task-button__count">
-                  {selectedRunningBackgroundTasks}
-                </span>
-              ) : null}
-            </button>
-          ) : null}
           {selected?.provider !== 'claude' &&
           selected?.executionMode === 'sdk' &&
           selectedProviderCapability?.supportsTmuxMigration === true ? (
@@ -9254,10 +9289,20 @@ function App() {
               <span>{selected.queuedCount || 0} queued</span>
             ) : null}
             {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
-              <span className="web-statusline__tasks">
+              <button
+                aria-label="View background tasks"
+                className={`web-statusline__tasks ${
+                  selectedRunningBackgroundTasks > 0
+                    ? 'web-statusline__tasks--running'
+                    : ''
+                }`}
+                onClick={openBackgroundTasks}
+                title="View background tasks"
+                type="button"
+              >
                 {selectedRunningBackgroundTasks} background task
                 {selectedRunningBackgroundTasks === 1 ? '' : 's'} running
-              </span>
+              </button>
             ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>

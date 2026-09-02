@@ -5131,6 +5131,123 @@ describe('App', () => {
     )
   })
 
+  it('drops a file read left behind by the session that started it', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'slow.md', path: 'slow.md', kind: 'markdown', size: 10 },
+          ],
+        },
+      }),
+    )
+    let releaseFile: (() => void) | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(
+      () =>
+        new Promise<WorkspaceFile>((resolve) => {
+          releaseFile = () =>
+            resolve({
+              name: 'slow.md',
+              path: 'slow.md',
+              kind: 'markdown',
+              mimeType: 'text/plain; charset=utf-8',
+              size: 10,
+              content: '# Slow document',
+            })
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    // The first session starts reading a document.
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /slow.md/ }),
+    )
+    await waitFor(() => expect(releaseFile).toBeDefined())
+
+    // Before it lands, the reader moves to a session that has never opened
+    // anything at all.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /Second chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
+    )
+
+    releaseFile?.()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    // The read belongs to the session that asked for it, so it must not
+    // surface under the one now selected, nor be saved as its position.
+    expect(
+      screen.queryByRole('heading', { name: 'Slow document' }),
+    ).not.toBeInTheDocument()
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )['computer-1:session-2']?.file,
+    ).toBeUndefined()
+  })
+
+  it('forgets knowledge state for a session removed elsewhere', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+        'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The removal reaches every connected client, not only the one that
+    // closed the session, so each has to forget what it was reading.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-2',
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1': { rootId: 'root-1', path: 'guides' } }),
+    )
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

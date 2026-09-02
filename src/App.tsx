@@ -4220,6 +4220,8 @@ function App() {
   // race.
   const knowledgeRequest = useRef(0)
   const knowledgeRestoredKey = useRef<string>(undefined)
+  const knowledgeOwnerKey = useRef<string>(undefined)
+  const forgetKnowledgeSessionRef = useRef<(key: string) => void>(() => {})
   // Captured before the first synchronisation, so a direct session link is not
   // erased by the address being rewritten while sessions are still loading.
   const initialUrlSelection = useRef(readSelectionFromLocation())
@@ -4833,6 +4835,7 @@ function App() {
         }
       })
     }
+    forgetKnowledgeSessionRef.current = forgetKnowledgeSession
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
       const rootId = position.rootId
       if (!rootId) {
@@ -4894,6 +4897,23 @@ function App() {
       })()
     }
   })
+
+  // Knowledge work belongs to the session that asked for it. Changing session
+  // abandons all of it, whatever the decision below then chooses to do: a file
+  // read left in flight would otherwise surface, and be saved, under the
+  // session that replaced its owner.
+  useLayoutEffect(() => {
+    if (knowledgeOwnerKey.current === selectedKey) {
+      return
+    }
+    if (knowledgeOwnerKey.current !== undefined) {
+      knowledgeRequest.current += 1
+      knowledgePendingScrollKey.current = undefined
+      knowledgeRestoreStartedKey.current = undefined
+      setKnowledgeLoading(false)
+    }
+    knowledgeOwnerKey.current = selectedKey
+  }, [selectedKey])
 
   useEffect(() => {
     // No early return here: a restore belonging to a session that is no longer
@@ -5472,6 +5492,9 @@ function App() {
             const { [removedKey]: _removed, ...remaining } = current
             return remaining
           })
+          // Removal reaches every client, so none of them keep reading state
+          // for a session that no longer exists.
+          forgetKnowledgeSessionRef.current(removedKey)
           setSessions((current) =>
             current.filter(
               (session) =>
@@ -5730,6 +5753,24 @@ function App() {
       const value = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
       return value ? { ...remaining, [toKey]: value } : remaining
+    })
+  }
+
+  /** A session that is gone leaves nothing of its reading behind. */
+  function forgetKnowledgeSession(key: string) {
+    delete knowledgeScrollTops.current[key]
+    if (knowledgeRestoredKey.current === key) {
+      knowledgeRestoredKey.current = undefined
+    }
+    if (knowledgeRestoreStartedKey.current === key) {
+      knowledgeRestoreStartedKey.current = undefined
+    }
+    setKnowledgePositions((current) => {
+      if (!(key in current)) {
+        return current
+      }
+      const { [key]: _removed, ...remaining } = current
+      return remaining
     })
   }
 
@@ -6785,14 +6826,7 @@ function App() {
       setComposerForKey(closedKey, '')
       // Drafts are cleared for a closed session, and so is everything the
       // knowledge panel remembered about it.
-      delete knowledgeScrollTops.current[closedKey]
-      setKnowledgePositions((current) => {
-        if (!(closedKey in current)) {
-          return current
-        }
-        const { [closedKey]: _removed, ...remaining } = current
-        return remaining
-      })
+      forgetKnowledgeSession(closedKey)
       const remaining = sessions.filter(
         (session) => sessionKey(session) !== sessionKey(selected),
       )

@@ -1921,12 +1921,17 @@ function AppSettingsDialog({
         const hasOfflineProviderComputer = computers.some(
           (computer) => !computer.isLocal && !computer.online,
         )
-        // An online computer that has not reported its capabilities is only
-        // assumed to offer Copilot. That assumption is not strong enough to
-        // retire a saved model, so while one stands the catalog is treated as
-        // partial rather than authoritative.
-        const hasUnreportedProviderComputer = computers.some(
-          (computer) => computer.online && !computer.providers,
+        // Discovery only asks computers that advertise the provider, and a
+        // node can synthesize Copilot-only metadata it never confirmed. Any
+        // online computer left unasked is therefore an unknown rather than a
+        // no, and a saved model must not be retired on an unknown.
+        const queried = new Set(
+          sources
+            .filter((source) => source.provider === provider)
+            .map((source) => source.computer.id),
+        )
+        const hasUnqueriedProviderComputer = computers.some(
+          (computer) => computer.online && !queried.has(computer.id),
         )
         const providerResults = results.filter(
           (_result, index) => sources[index].provider === provider,
@@ -1940,7 +1945,7 @@ function AppSettingsDialog({
           models[provider] = mergeRuntimeModelOptions(catalogs)
           complete[provider] =
             !hasOfflineProviderComputer &&
-            !hasUnreportedProviderComputer &&
+            !hasUnqueriedProviderComputer &&
             providerResults.every((result) => result.status === 'fulfilled')
         } else if (providerResults.length === 0) {
           errors[provider] =

@@ -310,7 +310,20 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   ): Promise<ProviderRuntimeOptions> {
     this.requireComputer(computerId)
     if (computerId === this.identity.info.id) {
-      return this.localService.providerRuntimeOptions(provider)
+      const before = this.requireComputer(computerId).providers
+      const options = await this.localService.providerRuntimeOptions(provider)
+      const after = this.requireComputer(computerId).providers
+      // Discovery can succeed after a provider was recorded unavailable, and
+      // the UI keeps it disabled until it hears otherwise.
+      if (
+        JSON.stringify(before ?? []) !== JSON.stringify(after ?? [])
+      ) {
+        this.emit('event', {
+          type: 'computer.updated',
+          computer: this.requireComputer(computerId),
+        })
+      }
+      return options
     }
     const client = this.requireClient(computerId)
     const options = await client.providerRuntimeOptions(provider)

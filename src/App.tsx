@@ -4221,6 +4221,12 @@ function App() {
   const knowledgeRequest = useRef(0)
   const knowledgeRestoredKey = useRef<string>(undefined)
   const knowledgeOwnerKey = useRef<string>(undefined)
+  // The session whose content the panel is actually showing.
+  const knowledgeViewOwnerKey = useRef<string>(undefined)
+  // Sessions being cleared. Clear removes a session and creates a replacement,
+  // and the removal reaches this client before the replacement id does, so
+  // pruning has to wait or the position is lost on the way through.
+  const clearingSessions = useRef(new Set<string>())
   const forgetKnowledgeSessionRef = useRef<(key: string) => void>(() => {})
   // Captured before the first synchronisation, so a direct session link is not
   // erased by the address being rewritten while sessions are still loading.
@@ -4939,6 +4945,7 @@ function App() {
       ),
       restoredKey: knowledgeRestoredKey.current,
       runningKey: knowledgeRestoreStartedKey.current,
+      viewOwner: knowledgeViewOwnerKey.current,
     })
 
     if (action.kind === 'none') {
@@ -4976,6 +4983,7 @@ function App() {
         knowledgeRestoredKey.current !== selectedKey
       if (selectedKey) {
         knowledgeRestoredKey.current = selectedKey
+        knowledgeViewOwnerKey.current = selectedKey
       }
       if (handover) {
         setKnowledgeFile(undefined)
@@ -4985,6 +4993,13 @@ function App() {
     knowledgeRequest.current += 1
     knowledgePendingScrollKey.current = action.key
     knowledgeRestoreStartedKey.current = action.key
+    if (knowledgeViewOwnerKey.current !== action.key) {
+      // Whatever is on screen belongs to another session, so it goes before
+      // this one's content arrives — and stays gone if the remembered
+      // position names no document.
+      setKnowledgeFile(undefined)
+    }
+    knowledgeViewOwnerKey.current = action.key
     setKnowledgeLoading(false)
     restoreKnowledgeRef.current(action.position, action.key)
   }, [knowledgeMode, selectedKey, roots, knowledgePositions])
@@ -5044,8 +5059,10 @@ function App() {
           return
         }
         setActiveRootId(root.id)
-        const generation = ++knowledgeRequest.current
+        // One token for the whole restoration: a second increment would make
+        // the first stale, and the ancestor chain would reject its own results.
         const request = ++knowledgeRequest.current
+        const generation = request
         const folder =
           root.id === remembered.rootId && remembered.path
             ? remembered.path
@@ -5758,7 +5775,15 @@ function App() {
 
   /** A session that is gone leaves nothing of its reading behind. */
   function forgetKnowledgeSession(key: string) {
+    if (clearingSessions.current.has(key)) {
+      // A clear is in flight for this session: its position is about to move
+      // to the replacement rather than be discarded.
+      return
+    }
     delete knowledgeScrollTops.current[key]
+    if (knowledgeViewOwnerKey.current === key) {
+      knowledgeViewOwnerKey.current = undefined
+    }
     if (knowledgeRestoredKey.current === key) {
       knowledgeRestoredKey.current = undefined
     }
@@ -5965,6 +5990,8 @@ function App() {
    * session still counts as restored: its position is now whatever was chosen.
    */
   function cancelKnowledgeRestore() {
+    // The reader is choosing what to show, so this session owns the view.
+    knowledgeViewOwnerKey.current = selectedKey
     if (!knowledgeRestoreStartedKey.current) {
       return
     }
@@ -6551,6 +6578,8 @@ function App() {
     }
 
     const target = selected
+    const targetKey = sessionKey(target)
+    clearingSessions.current.add(targetKey)
     setClearing(true)
     setError(undefined)
     try {
@@ -6565,14 +6594,17 @@ function App() {
           cleared,
         ),
       )
-      moveComposerDraft(sessionKey(target), sessionKey(cleared))
-      moveKnowledgePosition(sessionKey(target), sessionKey(cleared))
+      moveComposerDraft(targetKey, sessionKey(cleared))
+      moveKnowledgePosition(targetKey, sessionKey(cleared))
       setSelectedKey(sessionKey(cleared))
       return sessionKey(cleared)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
       return sessionKey(target)
     } finally {
+      // Released only once the replacement is known, so a removal arriving
+      // first cannot discard the position on its way across.
+      clearingSessions.current.delete(targetKey)
       setClearing(false)
     }
   }

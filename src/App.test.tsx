@@ -5248,6 +5248,123 @@ describe('App', () => {
     )
   })
 
+  it('loads the folders above a remembered document on startup', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify({ rootId: 'root-1', path: 'guides/deep' }),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+        guides: {
+          path: 'guides',
+          parent: '.',
+          entries: [
+            { name: 'deep', path: 'guides/deep', kind: 'directory' },
+          ],
+        },
+        'guides/deep': {
+          path: 'guides/deep',
+          parent: 'guides',
+          entries: [
+            {
+              name: 'note.md',
+              path: 'guides/deep/note.md',
+              kind: 'markdown',
+              size: 6,
+            },
+          ],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The remembered folder sits two levels down, so its ancestors have to
+    // load for the branch to be reachable at all.
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', 'guides'),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    expect(
+      await within(tree).findByRole('treeitem', { name: /note.md/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('carries the position across a clear even as the removal arrives', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    let releaseClear: (() => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(
+      () =>
+        new Promise<ManagedSession>((resolve) => {
+          releaseClear = () => resolve(replacement)
+        }),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(releaseClear).toBeDefined())
+
+    // The server removes the old session and creates a replacement, and the
+    // removal reaches this client first. Pruning then would throw the
+    // position away before it could be moved across.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      releaseClear?.()
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({
+        'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    confirmSpy.mockRestore()
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

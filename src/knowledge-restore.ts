@@ -20,6 +20,12 @@ export interface KnowledgeRestoreState {
   rememberedRootExists: boolean
   /** The session already handled in this episode. */
   restoredKey?: string
+  /**
+   * The session whose content the reader is actually showing. A cancelled
+   * restore can leave another session's root, folder, or document on screen,
+   * and being marked handled is not enough to make that right.
+   */
+  viewOwner?: string
   /** The session whose restore is still running. */
   runningKey?: string
 }
@@ -74,8 +80,12 @@ export function knowledgeRestoreAction(
     return foreignRestore ? { kind: 'cancel' } : { kind: 'none' }
   }
 
-  // Already handled in this episode: the reader is in charge from here.
-  if (state.restoredKey === state.selectedKey) {
+  // Already handled in this episode, and showing this session's own content:
+  // the reader is in charge from here.
+  if (
+    state.restoredKey === state.selectedKey &&
+    state.viewOwner === state.selectedKey
+  ) {
     return foreignRestore ? { kind: 'cancel' } : { kind: 'none' }
   }
 

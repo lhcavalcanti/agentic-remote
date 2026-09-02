@@ -12,6 +12,7 @@ const base: KnowledgeRestoreState = {
   rememberedRootExists: true,
   restoredKey: undefined,
   runningKey: undefined,
+  viewOwner: undefined,
 }
 
 const state = (overrides: Partial<KnowledgeRestoreState> = {}) => ({
@@ -59,7 +60,10 @@ describe('knowledge restore decision', () => {
     // be undone by the remembered document arriving late.
     expect(
       knowledgeRestoreAction(
-        state({ restoredKey: 'computer-1:session-1' }),
+        state({
+          restoredKey: 'computer-1:session-1',
+          viewOwner: 'computer-1:session-1',
+        }),
       ),
     ).toEqual({ kind: 'none' })
   })
@@ -96,6 +100,7 @@ describe('knowledge restore decision', () => {
         state({
           runningKey: 'computer-1:session-2',
           restoredKey: 'computer-1:session-1',
+          viewOwner: 'computer-1:session-1',
         }),
       ),
     ).toEqual({ kind: 'cancel' })
@@ -126,6 +131,20 @@ describe('knowledge restore decision', () => {
     ).toMatchObject({ kind: 'restore', key: 'computer-1:session-1' })
   })
 
+  it('restores again when the view belongs to another session', () => {
+    // A cancelled foreign restore can leave its own root and folder on
+    // screen. Being marked handled is not enough: the reader would otherwise
+    // sit on another session's content and record it as this one's position.
+    expect(
+      knowledgeRestoreAction(
+        state({
+          restoredKey: 'computer-1:session-1',
+          viewOwner: 'computer-1:session-2',
+        }),
+      ),
+    ).toMatchObject({ kind: 'restore', key: 'computer-1:session-1' })
+  })
+
   it('reaches a fixed point, so the effect cannot loop', () => {
     // Every action, once applied, must leave the decision asking for nothing.
     const apply = (
@@ -138,19 +157,26 @@ describe('knowledge restore decision', () => {
         case 'cancel':
           return { ...current, runningKey: undefined }
         case 'settle':
-          return { ...current, restoredKey: current.selectedKey }
+          return {
+            ...current,
+            restoredKey: current.selectedKey,
+            viewOwner: current.selectedKey,
+          }
         case 'cancel-and-settle':
           return {
             ...current,
             runningKey: undefined,
             restoredKey: current.selectedKey,
+            viewOwner: current.selectedKey,
           }
         case 'restore':
-          // The restore runs, then completes and marks the session handled.
+          // The restore runs, then completes: the session is handled and the
+          // view is now its own.
           return {
             ...current,
             runningKey: undefined,
             restoredKey: action.key,
+            viewOwner: action.key,
           }
         default:
           return current
@@ -171,6 +197,11 @@ describe('knowledge restore decision', () => {
                 'computer-1:session-1',
                 'computer-1:session-2',
               ]) {
+                for (const viewOwner of [
+                  undefined,
+                  'computer-1:session-1',
+                  'computer-1:session-2',
+                ]) {
                 let current = state({
                   panelOpen,
                   rootsLoaded,
@@ -178,6 +209,7 @@ describe('knowledge restore decision', () => {
                   rememberedRootExists,
                   restoredKey,
                   runningKey,
+                  viewOwner,
                 })
                 // Applying decisions must converge rather than oscillate.
                 let steps = 0
@@ -188,6 +220,7 @@ describe('knowledge restore decision', () => {
                   steps += 1
                 }
                 expect(action).toEqual({ kind: 'none' })
+                }
               }
             }
           }

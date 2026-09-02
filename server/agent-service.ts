@@ -901,10 +901,18 @@ function stripAnsi(value: string): string {
   return value.replace(ansiSequence, '')
 }
 
-function statusFromEvents(events: SessionEvent[]): SessionStatus {
+export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
+  // Work a turn handed to background agents outlives the turn itself, so the
+  // agents still running are tracked separately from it.
+  const workingAgents = new Set<string>()
   for (const event of events) {
     if (event.agentId) {
+      if (event.type === 'subagent.started') {
+        workingAgents.add(event.agentId)
+      } else if (event.type === 'subagent.completed') {
+        workingAgents.delete(event.agentId)
+      }
       continue
     }
     switch (event.type) {
@@ -922,13 +930,21 @@ function statusFromEvents(events: SessionEvent[]): SessionStatus {
         break
       case 'assistant.turn_end':
       case 'session.idle':
+        status = 'idle'
+        break
       case 'abort':
       case 'session.shutdown':
+        // Nothing outlives the session ending, so agents it was waiting on
+        // are not still working.
+        workingAgents.clear()
         status = 'idle'
         break
     }
   }
-  return status
+  // A turn that handed its work to background agents and then ended has not
+  // finished it. Reporting the session as idle offers it for the next prompt
+  // and calls the work done while it is still going on.
+  return status === 'idle' && workingAgents.size > 0 ? 'running' : status
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

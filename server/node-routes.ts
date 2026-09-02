@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { ServerEvent } from '../shared/contracts.js'
@@ -9,6 +10,14 @@ import {
 } from './file-upload-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import type { SessionService } from './session-service.js'
+import {
+  MAX_AUDIO_BYTES,
+  TranscriptionError,
+  type TranscriptionService,
+} from './transcription-service.js'
+
+export const AUDIO_FILENAME_HEADER = 'x-agentic-audio-filename'
+export const AUDIO_TYPE_HEADER = 'x-agentic-audio-type'
 
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
@@ -16,6 +25,8 @@ const createSessionSchema = z.object({
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
   model: z.string().trim().min(1).max(200).optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  contextTier: z.enum(['default', 'long_context']).optional(),
 })
 
 const renameSessionSchema = z.object({
@@ -65,7 +76,7 @@ const executeCommandSchema = z.object({
 
 const configureRuntimeSchema = z.object({
   model: z.string().trim().min(1).max(200),
-  reasoningEffort: z.string().trim().min(1).max(50),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   contextTier: z.enum(['default', 'long_context']),
   mode: z.enum(['interactive', 'plan', 'autopilot']).optional(),
 })
@@ -109,6 +120,7 @@ export async function registerNodeRoutes(
   app: FastifyInstance,
   service: SessionService,
   identity: NodeIdentityStore,
+  transcription: TranscriptionService,
 ): Promise<void> {
   await app.register(
     async (node) => {
@@ -116,7 +128,7 @@ export async function registerNodeRoutes(
         'application/octet-stream',
         {
           parseAs: 'buffer',
-          bodyLimit: MAX_SESSION_FILE_BYTES,
+          bodyLimit: Math.max(MAX_SESSION_FILE_BYTES, MAX_AUDIO_BYTES),
         },
         (_request, body, done) => done(null, body),
       )
@@ -130,6 +142,44 @@ export async function registerNodeRoutes(
         ...identity.info,
         providers: service.providers(),
       }))
+
+      node.post<{ Body: Buffer }>(
+        '/transcriptions',
+        { bodyLimit: MAX_AUDIO_BYTES },
+        async (request, reply) => {
+          const encodedName = request.headers[AUDIO_FILENAME_HEADER]
+          if (typeof encodedName !== 'string') {
+            throw new TranscriptionError('An audio file name is required', 400)
+          }
+          const filename = Buffer.from(encodedName, 'base64url').toString('utf8')
+          if (!filename) {
+            throw new TranscriptionError('The audio file name is invalid', 400)
+          }
+          const audioType = request.headers[AUDIO_TYPE_HEADER]
+          const body = request.body
+          if (!Buffer.isBuffer(body) || body.length === 0) {
+            throw new TranscriptionError('An audio file is required', 400)
+          }
+          const controller = new AbortController()
+          const cancel = () => controller.abort()
+          request.raw.once('aborted', cancel)
+          reply.raw.once('close', cancel)
+          try {
+            return await transcription.transcribe(
+              {
+                filename,
+                mimeType: typeof audioType === 'string' ? audioType : '',
+                stream: Readable.from(body),
+                truncated: () => false,
+              },
+              controller.signal,
+            )
+          } finally {
+            request.raw.off('aborted', cancel)
+            reply.raw.off('close', cancel)
+          }
+        },
+      )
 
       node.get('/sessions', async () => ({
         sessions: service.listSessions(),
@@ -221,9 +271,19 @@ export async function registerNodeRoutes(
               input.allowAllPermissions,
               input.provider,
               input.model,
+              input.reasoningEffort,
+              input.contextTier,
             ),
           })
       })
+
+      node.get<{ Params: { provider: 'copilot' | 'claude' } }>(
+        '/providers/:provider/runtime',
+        async (request) =>
+          service.providerRuntimeOptions(
+            z.enum(['copilot', 'claude']).parse(request.params.provider),
+          ),
+      )
 
       node.post<{
         Params: { sessionId: string }

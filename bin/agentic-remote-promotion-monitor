@@ -249,7 +249,6 @@ run() {
 
   require_command corepack
   require_command curl
-  require_command gh
   require_command git
   require_command python3
   require_command systemctl

@@ -9,10 +9,12 @@ import {
   isTerminalAgentWorking,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
+  parseTerminalFormActiveField,
   parseTerminalPermission,
   parseTerminalUpdateNotice,
   parseTerminalUserInput,
   terminalCommandOutput,
+  terminalFormShowsFields,
   TmuxTerminalSessionController,
 } from './terminal-session.js'
 
@@ -707,5 +709,99 @@ describe('terminal slash command output', () => {
     ].join('\n')
 
     expect(isTerminalOverlay(pane)).toBe(false)
+  })
+})
+
+// Captured from a real Copilot CLI form: a text field focused, with the tabs
+// naming every field above it.
+const formPaneFirstField = [
+  ' Copilot needs information.',
+  ' Configure the deployment request.',
+  '',
+  '  Deployment name   Catalog scope   Confirm deployment',
+  '',
+  ' Deployment name',
+  ' ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+  '  ❯ swec-default',
+  ' ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+  '',
+  ' enter accept · tab next · ctrl+d decline · esc cancel',
+].join('\n')
+
+// The same form after an attached client moved to the last field, which is a
+// list and so prints its title with a colon.
+const formPaneLastField = [
+  ' Copilot needs information.',
+  ' Configure the deployment request.',
+  '',
+  '  Deployment name   Catalog scope   Confirm deployment',
+  '',
+  ' Confirm deployment:',
+  '   Yes',
+  ' ❯ No',
+  '   Other (type your answer)',
+  '',
+  ' ↑/↓ select · enter accept · shift+tab prev · ctrl+d decline · esc cancel',
+].join('\n')
+
+describe('terminal form identity', () => {
+  const form = {
+    question: 'Configure the deployment request.',
+    fields: ['Deployment name', 'Catalog scope', 'Confirm deployment'],
+  }
+
+  it('recognizes the form the given request describes', () => {
+    expect(terminalFormShowsFields(formPaneFirstField, form)).toBe(true)
+    expect(terminalFormShowsFields(formPaneLastField, form)).toBe(true)
+  })
+
+  it('rejects a form that belongs to another request', () => {
+    // A prompt that replaced the one being answered shows its own fields, so
+    // an answer written for the old form must not reach it.
+    const other = formPaneFirstField.replace(
+      '  Deployment name   Catalog scope   Confirm deployment',
+      '  Branch name   Force push',
+    )
+    expect(terminalFormShowsFields(other, form)).toBe(false)
+    expect(
+      terminalFormShowsFields(other, {
+        question: form.question,
+        fields: ['Branch name', 'Force push'],
+      }),
+    ).toBe(true)
+  })
+
+  it('rejects a repeat of the same schema asked for something else', () => {
+    // Two requests can share a schema, so the fields alone cannot tell them
+    // apart; the question the CLI prints above them is what does.
+    const reasked = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      ' Configure the rollback request.',
+    )
+    expect(terminalFormShowsFields(reasked, form)).toBe(false)
+  })
+
+  it('reads which field the form has focused, by position', () => {
+    expect(parseTerminalFormActiveField(formPaneFirstField, form)).toBe(0)
+    expect(parseTerminalFormActiveField(formPaneLastField, form)).toBe(2)
+  })
+
+  it('refuses to guess focus when a title is repeated', () => {
+    // Answers are written per position, so an ambiguous title would shift
+    // every one of them.
+    const duplicated = formPaneFirstField.replace(
+      '  Deployment name   Catalog scope   Confirm deployment',
+      '  Name   Name   Confirm deployment',
+    )
+    expect(
+      parseTerminalFormActiveField(duplicated, {
+        question: form.question,
+        fields: ['Name', 'Name', 'Confirm deployment'],
+      }),
+    ).toBeUndefined()
+  })
+
+  it('reports no focus for a pane that is not this form', () => {
+    expect(parseTerminalFormActiveField('nothing here', form)).toBeUndefined()
   })
 })

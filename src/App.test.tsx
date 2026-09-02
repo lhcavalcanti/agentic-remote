@@ -28,6 +28,7 @@ import {
   deleteSession,
   executeCommand,
   getPushSettings,
+  getProviderRuntimeOptions,
   getSession,
   getRuntimeOptions,
   listBackgroundTasks,
@@ -83,6 +84,7 @@ vi.mock('./api', () => ({
   createSession: vi.fn(),
   configureRuntime: vi.fn(),
   getRuntimeOptions: vi.fn(),
+  getProviderRuntimeOptions: vi.fn(),
   clearConversation: vi.fn(),
   restartSession: vi.fn(),
   activateSession: vi.fn(),
@@ -407,6 +409,39 @@ describe('App', () => {
         },
       ],
     })
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (_computerId, provider) => ({
+        models:
+          provider === 'copilot'
+            ? [
+                {
+                  id: 'gpt-5.6-sol',
+                  name: 'GPT-5.6 Sol',
+                  reasoningEfforts: ['medium', 'high', 'xhigh'],
+                  contextTiers: ['default', 'long_context'],
+                  contextTokenLimits: {
+                    default: 114_000,
+                    long_context: 922_000,
+                  },
+                },
+                {
+                  id: 'gpt-fast',
+                  name: 'GPT Fast',
+                  reasoningEfforts: ['low', 'medium'],
+                  contextTiers: ['default'],
+                },
+              ]
+            : [
+                {
+                  id: 'sonnet',
+                  name: 'Sonnet',
+                  description: '**Efficient** for routine tasks',
+                  reasoningEfforts: ['low', 'medium', 'high'],
+                  contextTiers: ['default'],
+                },
+              ],
+      }),
+    )
     vi.mocked(configureRuntime).mockResolvedValue(session)
     vi.mocked(clearConversation).mockResolvedValue({
       ...session,
@@ -557,6 +592,214 @@ describe('App', () => {
     expect(document.querySelector('.activity-message--mcp')).toHaveTextContent(
       'agentic-remote',
     )
+  })
+
+  it('renders transcript headings, statuses, results, and optional durations', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:skill-call',
+          role: 'activity',
+          content: 'Skill (tool-model-catalog)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+        },
+        {
+          id: 'mcp-call',
+          role: 'activity',
+          content: 'MCP · ecs-mcp-server · search_config',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityResult: '48 lines read',
+          activityDurationMs: 1_250,
+          activityGroupId: 'tool:skill-call',
+        },
+        {
+          id: 'failed-call',
+          role: 'activity',
+          content: 'Read\nmissing.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'failed',
+          activityResult: 'Error: file not found',
+        },
+        {
+          id: 'pending-call',
+          role: 'activity',
+          content: 'Search\ncache',
+          createdAt: '2026-07-22T00:00:01.500Z',
+          activityStatus: 'pending',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(screen.getByText('skill(tool-model-catalog)')).toBeInTheDocument()
+    expect(screen.getByText('search_config')).toBeInTheDocument()
+    expect(screen.getByText('(MCP: ecs-mcp-server)')).toBeInTheDocument()
+    expect(screen.getByText('48 lines read')).toBeInTheDocument()
+    expect(screen.getByText('1.3s')).toBeInTheDocument()
+    expect(screen.getByText('Error: file not found')).toBeInTheDocument()
+    expect(screen.getByText('cache')).toBeInTheDocument()
+    expect(document.querySelectorAll('.activity-message')).toHaveLength(4)
+    expect(document.querySelector('.activity-group__children')).toHaveTextContent(
+      'search_config',
+    )
+    expect(
+      document.querySelector('.activity-message--pending'),
+    ).toHaveTextContent('—')
+    expect(
+      document.querySelectorAll('.activity-message__glyph'),
+    ).toHaveLength(4)
+  })
+
+  it('renders nested activity groups recursively', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:agent-call',
+          role: 'activity',
+          content: 'Agent (reviewer)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'agent',
+        },
+        {
+          id: 'tool:nested-skill-call',
+          role: 'activity',
+          content: 'Skill (agentic-remote-navigation)',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+          activityGroupId: 'tool:agent-call',
+        },
+        {
+          id: 'tool:nested-child-call',
+          role: 'activity',
+          content: 'View\n docs/app-spec.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:nested-skill-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelectorAll('.activity-group')).toHaveLength(2)
+    const nestedGroup = [...document.querySelectorAll('.activity-group')].find(
+      (group) => group.textContent?.includes('skill(agentic-remote-navigation)'),
+    )
+    expect(nestedGroup?.querySelector('.activity-group__children')).toHaveTextContent(
+      'View',
+    )
+  })
+
+  it('keeps a parent group together across a nested child', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:agent-call',
+          role: 'activity',
+          content: 'Agent (reviewer)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'agent',
+        },
+        {
+          id: 'tool:nested-skill-call',
+          role: 'activity',
+          content: 'Skill (agentic-remote-navigation)',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+          activityGroupId: 'tool:agent-call',
+        },
+        {
+          id: 'tool:nested-child-call',
+          role: 'activity',
+          content: 'View\n docs/app-spec.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:nested-skill-call',
+        },
+        {
+          id: 'tool:later-agent-call',
+          role: 'activity',
+          content: 'Search\n "cache" in *.md',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:agent-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The agent's own later tool belongs to it, and a child owning activity of
+    // its own in between must not turn that into a top-level row.
+    const agentGroup = [...document.querySelectorAll('.activity-group')].find(
+      (group) => group.textContent?.includes('agent(reviewer)'),
+    )
+    expect(
+      agentGroup?.querySelector('.activity-group__children'),
+    ).toHaveTextContent('Search')
+  })
+
+  it('keeps non-contiguous activity in chronological order', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'skill-call',
+          role: 'activity',
+          content: 'Skill (tool-model-catalog)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'skill',
+        },
+        {
+          id: 'unrelated-call',
+          role: 'activity',
+          content: 'Read\nREADME.md',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+        },
+        {
+          id: 'child-call',
+          role: 'activity',
+          content: 'MCP · GitHub · Search Repositories',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'skill-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      [...document.querySelectorAll('.activity-message__name')].map(
+        (name) => name.textContent,
+      ),
+    ).toEqual(['skill(tool-model-catalog)', 'Read', 'Search Repositories'])
+    expect(document.querySelectorAll('.activity-group')).toHaveLength(0)
   })
 
   it('keeps sidebar actions outside the independently scrolling navigation', async () => {
@@ -945,27 +1188,69 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
-  it('persists provider default models and applies them to new sessions', async () => {
+  it('falls back to blank runtime defaults when stored settings are null', async () => {
+    localStorage.setItem('agentic-remote:default-models', 'null')
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    expect(
+      await screen.findByLabelText('GitHub Copilot default model'),
+    ).toHaveValue('')
+    expect(screen.getByLabelText('Claude Agent default model')).toHaveValue('')
+  })
+
+  it('persists SDK-backed provider runtime defaults and applies them to new sessions', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-    fireEvent.change(screen.getByLabelText('Copilot default model'), {
+    await screen.findByLabelText('GitHub Copilot default model')
+    expect(getProviderRuntimeOptions).toHaveBeenCalledWith(
+      'computer-1',
+      'copilot',
+    )
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default model'), {
       target: { value: 'gpt-5.6-sol' },
     })
-    fireEvent.change(screen.getByLabelText('Claude default model'), {
-      target: { value: 'claude-sonnet-4-5' },
+    fireEvent.change(screen.getByLabelText('Claude Agent default model'), {
+      target: { value: 'sonnet' },
     })
+    expect(screen.getByText('Efficient').tagName).toBe('STRONG')
+    fireEvent.change(
+      screen.getByLabelText('GitHub Copilot default reasoning effort'),
+      {
+        target: { value: 'xhigh' },
+      },
+    )
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default context size'), {
+      target: { value: 'long_context' },
+    })
+    fireEvent.change(
+      screen.getByLabelText('Claude Agent default reasoning effort'),
+      { target: { value: 'low' } },
+    )
     expect(
       JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
     ).toEqual({
-      copilot: 'gpt-5.6-sol',
-      claude: 'claude-sonnet-4-5',
+      copilot: {
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'xhigh',
+        contextTier: 'long_context',
+      },
+      claude: {
+        model: 'sonnet',
+        reasoningEffort: 'low',
+        contextTier: 'default',
+      },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 
     fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
-    fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+    const createButton = screen.getByRole('button', { name: 'Create session' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith('computer-1', {
         cwd: '~',
@@ -973,6 +1258,8 @@ describe('App', () => {
         terminalBacked: true,
         allowAllPermissions: true,
         model: 'gpt-5.6-sol',
+        reasoningEffort: 'xhigh',
+        contextTier: 'long_context',
       }),
     )
 
@@ -980,6 +1267,11 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Agent provider'), {
       target: { value: 'claude' },
     })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Create session' }),
+      ).toBeEnabled(),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
     await waitFor(() =>
       expect(createSession).toHaveBeenCalledWith('computer-1', {
@@ -987,9 +1279,284 @@ describe('App', () => {
         provider: 'claude',
         terminalBacked: false,
         allowAllPermissions: true,
-        model: 'claude-sonnet-4-5',
+        model: 'sonnet',
+        reasoningEffort: 'low',
+        contextTier: 'default',
       }),
     )
+  })
+
+  it('preserves provider-managed defaults when app settings are opened', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const copilotModel = await screen.findByLabelText(
+      'GitHub Copilot default model',
+    )
+    const claudeModel = screen.getByLabelText('Claude Agent default model')
+
+    expect(copilotModel).toHaveValue('')
+    expect(claudeModel).toHaveValue('')
+    expect(screen.getAllByRole('option', { name: 'Provider default' })).toHaveLength(
+      2,
+    )
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:default-models') || '{}',
+        ),
+      ).toEqual({
+        copilot: {
+          model: '',
+          reasoningEffort: '',
+          contextTier: 'default',
+        },
+        claude: {
+          model: '',
+          reasoningEffort: '',
+          contextTier: 'default',
+        },
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    const createButton = screen.getByRole('button', { name: 'Create session' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+      }),
+    )
+  })
+
+  it('aggregates model catalogs without overwriting a node-specific default', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-models',
+      JSON.stringify({
+        copilot: {
+          model: 'node-model',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
+        claude: {
+          model: '',
+          reasoningEffort: '',
+          contextTier: 'default',
+        },
+      }),
+    )
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (computerId, provider) => ({
+        models:
+          provider === 'claude'
+            ? [
+                {
+                  id: 'sonnet',
+                  name: 'Sonnet',
+                  reasoningEfforts: ['low', 'medium', 'high'],
+                  contextTiers: ['default'],
+                },
+              ]
+            : computerId === secondComputer.id
+              ? [
+                  {
+                    id: 'node-model',
+                    name: 'Node Model',
+                    reasoningEfforts: ['high'],
+                    contextTiers: ['default', 'long_context'],
+                  },
+                ]
+              : [
+                  {
+                    id: 'hub-model',
+                    name: 'Hub Model',
+                    reasoningEfforts: ['medium'],
+                    contextTiers: ['default'],
+                  },
+                ],
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    const model = await screen.findByLabelText(
+      'GitHub Copilot default model',
+    )
+    await waitFor(() => expect(model).toHaveValue('node-model'))
+    expect(screen.getByRole('option', { name: 'Hub Model' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Node Model' })).toBeInTheDocument()
+    expect(getProviderRuntimeOptions).toHaveBeenCalledWith(
+      secondComputer.id,
+      'copilot',
+    )
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+    ).toEqual({
+      copilot: {
+        model: 'node-model',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      },
+      claude: {
+        model: '',
+        reasoningEffort: '',
+        contextTier: 'default',
+      },
+    })
+  })
+
+  it('keeps model catalogs incomplete while a paired computer is offline', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-models',
+      JSON.stringify({
+        copilot: {
+          model: 'node-model',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
+        claude: {
+          model: 'node-claude-model',
+          reasoningEffort: 'high',
+          contextTier: 'default',
+        },
+      }),
+    )
+    vi.mocked(listComputers).mockResolvedValue([
+      computer,
+      { ...secondComputer, online: false },
+    ])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    const model = await screen.findByLabelText(
+      'GitHub Copilot default model',
+    )
+    await waitFor(() => expect(model).toHaveValue('node-model'))
+    expect(
+      screen.getByRole('option', { name: 'node-model (unavailable)' }),
+    ).toBeInTheDocument()
+    const claudeModel = screen.getByLabelText('Claude Agent default model')
+    expect(claudeModel).toHaveValue('node-claude-model')
+    expect(
+      screen.getByRole('option', {
+        name: 'node-claude-model (unavailable)',
+      }),
+    ).toBeInTheDocument()
+    expect(getProviderRuntimeOptions).not.toHaveBeenCalledWith(
+      secondComputer.id,
+      'copilot',
+    )
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+    ).toEqual({
+      copilot: {
+        model: 'node-model',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+      },
+      claude: {
+        model: 'node-claude-model',
+        reasoningEffort: 'high',
+        contextTier: 'default',
+      },
+    })
+  })
+
+  it('keeps model catalogs incomplete while a computer has not reported its providers', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-models',
+      JSON.stringify({
+        claude: {
+          model: 'node-claude-model',
+          reasoningEffort: 'high',
+          contextTier: 'default',
+        },
+      }),
+    )
+    // Online, but its capabilities never arrived, so it is only assumed to
+    // offer Copilot and is never asked about Claude.
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    const claudeModel = await screen.findByLabelText(
+      'Claude Agent default model',
+    )
+    await waitFor(() => expect(claudeModel).toHaveValue('node-claude-model'))
+    // Assuming the provider is absent must not be strong enough to retire the
+    // saved model: the computer was simply never asked.
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}')
+        .claude,
+    ).toEqual({
+      model: 'node-claude-model',
+      reasoningEffort: 'high',
+      contextTier: 'default',
+    })
+  })
+
+  it('uses a computer-specific fallback without replacing the saved default', async () => {
+    localStorage.setItem(
+      'agentic-remote:default-models',
+      JSON.stringify({
+        copilot: {
+          model: 'removed-model',
+          reasoningEffort: 'max',
+          contextTier: 'long_context',
+        },
+        claude: {
+          model: 'sonnet',
+          reasoningEffort: 'max',
+          contextTier: 'long_context',
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+
+    const createButton = screen.getByRole('button', { name: 'Create session' })
+    await waitFor(() => expect(createButton).toBeEnabled())
+    fireEvent.click(createButton)
+    await waitFor(() =>
+      expect(createSession).toHaveBeenCalledWith('computer-1', {
+        cwd: '~',
+        provider: 'copilot',
+        terminalBacked: true,
+        allowAllPermissions: true,
+        model: 'gpt-5.6-sol',
+        reasoningEffort: 'medium',
+        contextTier: 'long_context',
+      }),
+    )
+    expect(
+      JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
+    ).toEqual({
+      copilot: {
+        model: 'removed-model',
+        reasoningEffort: 'max',
+        contextTier: 'long_context',
+      },
+      claude: {
+        model: 'sonnet',
+        reasoningEffort: 'max',
+        contextTier: 'long_context',
+      },
+    })
   })
 
   it('persists a validated default folder per computer and applies it to new sessions', async () => {
@@ -2075,6 +2642,13 @@ describe('App', () => {
       'computer-1',
       'session-1',
       'queue-1',
+    )
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Queued prompts')).queryByText(
+          'First queued prompt',
+        ),
+      ).not.toBeInTheDocument(),
     )
 
     fireEvent.click(

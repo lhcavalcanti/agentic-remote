@@ -13,6 +13,26 @@ import type {
 
 const execFileAsync = promisify(execFile)
 
+/**
+ * One field of the agent's structured form. Fields are tabs: a select is
+ * driven by moving the cursor and committing it, a text field by replacing
+ * its contents. Committing a field advances to the next one, and committing
+ * the last field submits the form.
+ */
+export type TerminalFormStep =
+  | { kind: 'select'; optionCount: number; index: number }
+  | { kind: 'text'; value: string }
+
+/**
+ * What identifies the form a reply is for. Field titles alone are not enough:
+ * two requests can share a schema, so the question the CLI prints above them
+ * is carried too.
+ */
+export interface TerminalFormIdentity {
+  question: string
+  fields: string[]
+}
+
 export interface TerminalSessionController {
   create?(
     sessionId: string,
@@ -49,6 +69,26 @@ export interface TerminalSessionController {
     wasFreeform: boolean,
   ): Promise<boolean>
   updateNotice?(sessionId: string): Promise<string | undefined>
+  /**
+   * Closes a prompt the agent is still showing. A structured form captures
+   * every keystroke, so anything typed while it is open lands in its fields
+   * instead of reaching the agent. When field titles are given, a form that
+   * does not show them belongs to another request and is left alone.
+   */
+  dismissUserInput?(
+    sessionId: string,
+    form?: TerminalFormIdentity,
+  ): Promise<boolean>
+  /**
+   * Fills the structured form the agent is showing and submits it, so the
+   * agent receives a real tool result instead of a follow-up message. The
+   * field titles identify which form may be answered.
+   */
+  fillUserInputForm?(
+    sessionId: string,
+    steps: TerminalFormStep[],
+    form: TerminalFormIdentity,
+  ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
@@ -425,6 +465,174 @@ export class TmuxTerminalSessionController
     } catch {
       return undefined
     }
+  }
+
+  async fillUserInputForm(
+    sessionId: string,
+    steps: TerminalFormStep[],
+    form: TerminalFormIdentity,
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (
+        !owner ||
+        steps.length === 0 ||
+        form.fields.length === 0 ||
+        // Repeated titles make the focused field ambiguous, and the answer is
+        // written per position, so the message path is used instead.
+        new Set(form.fields).size !== form.fields.length
+      ) {
+        return false
+      }
+      const capture = async () =>
+        (
+          await execFileAsync('tmux', [
+            'capture-pane',
+            '-p',
+            '-t',
+            owner.target,
+            '-S',
+            '-40',
+          ])
+        ).stdout
+      let pane = await capture()
+      // A form being open says nothing about which request it belongs to. The
+      // request that was answered may have closed and another opened in its
+      // place, so the fields on screen have to be the ones being answered.
+      if (
+        !parseTerminalFormPrompt(pane) ||
+        !terminalFormShowsFields(pane, form)
+      ) {
+        return false
+      }
+      // The steps are written from the first field onwards, but an attached
+      // client can leave any field focused. Walking focus back with shift+tab
+      // is what stops the answers landing one field over.
+      for (let attempt = 0; attempt < form.fields.length; attempt += 1) {
+        const active = parseTerminalFormActiveField(pane, form)
+        if (active === 0) {
+          break
+        }
+        if (active === undefined) {
+          return false
+        }
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'BTab'])
+        // The CLI repaints on its own schedule, so the move is waited for
+        // rather than assumed: reading too early would see the old field and
+        // send another shift+tab, overshooting the one being aimed at.
+        for (let settle = 0; settle < 20; settle += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          pane = await capture()
+          if (parseTerminalFormActiveField(pane, form) !== active) {
+            break
+          }
+        }
+      }
+      if (parseTerminalFormActiveField(pane, form) !== 0) {
+        return false
+      }
+      for (const step of steps) {
+        if (step.kind === 'select') {
+          // Normalising to the top first makes the move independent of
+          // whichever option the field currently holds.
+          for (let index = 0; index <= step.optionCount; index += 1) {
+            await execFileAsync('tmux', [
+              'send-keys',
+              '-t',
+              owner.target,
+              'Up',
+            ])
+            await new Promise((resolve) => setTimeout(resolve, 25))
+          }
+          for (let index = 0; index < step.index; index += 1) {
+            await execFileAsync('tmux', [
+              'send-keys',
+              '-t',
+              owner.target,
+              'Down',
+            ])
+            await new Promise((resolve) => setTimeout(resolve, 35))
+          }
+        } else {
+          // Ctrl+U clears the default the field was prefilled with, which
+          // would otherwise keep the typed value appended to it.
+          await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'C-u'])
+          await new Promise((resolve) => setTimeout(resolve, 35))
+          if (step.value) {
+            const buffer = `agentic-remote-form-${randomUUID()}`
+            await execFileAsync('tmux', [
+              'set-buffer',
+              '-b',
+              buffer,
+              '--',
+              step.value,
+            ])
+            await execFileAsync('tmux', [
+              'paste-buffer',
+              '-p',
+              '-d',
+              '-b',
+              buffer,
+              '-t',
+              owner.target,
+            ])
+            await new Promise((resolve) => setTimeout(resolve, 45))
+          }
+        }
+        // Committing a field advances to the next; the last one submits.
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
+        await new Promise((resolve) => setTimeout(resolve, 90))
+      }
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const settled = (
+          await execFileAsync('tmux', [
+            'capture-pane',
+            '-p',
+            '-t',
+            owner.target,
+            '-S',
+            '-40',
+          ])
+        ).stdout
+        if (!parseTerminalFormPrompt(settled)) {
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150))
+      }
+      return false
+    })
+  }
+
+  async dismissUserInput(
+    sessionId: string,
+    form?: TerminalFormIdentity,
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        return false
+      }
+      if (form && form.fields.length > 0) {
+        const pane = (
+          await execFileAsync('tmux', [
+            'capture-pane',
+            '-p',
+            '-t',
+            owner.target,
+            '-S',
+            '-40',
+          ])
+        ).stdout
+        // Escape cancels whatever is open, which may be a permission dialog or
+        // another request's prompt rather than this form. Only a positive
+        // match is closed, so unrelated work is never cancelled.
+        if (!terminalFormShowsFields(pane, form)) {
+          return false
+        }
+      }
+      await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Escape'])
+      return true
+    })
   }
 
   async cancel(sessionId: string): Promise<boolean> {
@@ -853,6 +1061,102 @@ export function terminalCommandOutput(
   return added.join('\n')
 }
 
+/**
+ * True while the agent is showing its structured form. The header is what the
+ * CLI prints above the field tabs, and the key hints are what it prints
+ * below them.
+ */
+export function parseTerminalFormPrompt(pane: string): boolean {
+  const lines = pane.split('\n').map(cleanDialogLine)
+  const header = lines.findLastIndex((line) =>
+    /^Copilot needs information\.?$/i.test(line),
+  )
+  if (header < 0) {
+    return false
+  }
+  return lines
+    .slice(header)
+    .some((line) => /enter accept/i.test(line) && /cancel/i.test(line))
+}
+
+/**
+ * Where the CLI prints the row of tabs naming every field, or -1 when the form
+ * on screen is not the one these fields describe. Knowing a form is open says
+ * nothing about which request it belongs to; the tabs are what distinguish one
+ * prompt from the next.
+ */
+function terminalFormTabsIndex(
+  lines: string[],
+  form: TerminalFormIdentity,
+): number {
+  if (form.fields.length === 0) {
+    return -1
+  }
+  const header = lines.findLastIndex((line) =>
+    /^Copilot needs information\.?$/i.test(line),
+  )
+  if (header < 0) {
+    return -1
+  }
+  // The CLI prints the request's own question between the header and the tabs.
+  // Two requests can share a schema, so the question is what separates them.
+  const question = form.question.trim()
+  if (question && !lines.slice(header + 1).includes(question)) {
+    return -1
+  }
+  for (let index = header + 1; index < lines.length; index += 1) {
+    // Tabs sit on one line separated by runs of spaces, so a title containing
+    // a single space stays intact.
+    const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
+    if (
+      tabs.length === form.fields.length &&
+      tabs.every((tab, position) => tab === form.fields[position])
+    ) {
+      return index
+    }
+  }
+  return -1
+}
+
+/**
+ * Whether the form on screen is the one these fields describe.
+ */
+export function terminalFormShowsFields(
+  pane: string,
+  form: TerminalFormIdentity,
+): boolean {
+  return terminalFormTabsIndex(pane.split('\n').map(cleanDialogLine), form) >= 0
+}
+
+/**
+ * The field the form currently has focused. An attached terminal can move it,
+ * and answers are written from the first field onwards, so it has to be read
+ * rather than assumed. The CLI repeats the focused field's title below the
+ * tabs, followed by a colon when that field is a list.
+ */
+export function parseTerminalFormActiveField(
+  pane: string,
+  form: TerminalFormIdentity,
+): number | undefined {
+  // A repeated title would make the focused field ambiguous, and guessing
+  // which one it is would shift every answer, so it is not attempted.
+  if (new Set(form.fields).size !== form.fields.length) {
+    return undefined
+  }
+  const lines = pane.split('\n').map(cleanDialogLine)
+  const tabs = terminalFormTabsIndex(lines, form)
+  if (tabs < 0) {
+    return undefined
+  }
+  for (let index = tabs + 1; index < lines.length; index += 1) {
+    const position = form.fields.indexOf(lines[index].replace(/:$/, ''))
+    if (position >= 0) {
+      return position
+    }
+  }
+  return undefined
+}
+
 export function parseTerminalUserInput(
   pane: string,
 ): PendingUserInput | undefined {
@@ -1100,10 +1404,11 @@ async function copilotCommand(
     result.push(
       '--model',
       runtime.model,
-      '--effort',
-      runtime.reasoningEffort,
       '--context',
       runtime.contextTier,
+      ...(runtime.reasoningEffort
+        ? ['--effort', runtime.reasoningEffort]
+        : []),
       ...(runtime.mode ? ['--mode', runtime.mode] : []),
     )
   }

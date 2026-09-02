@@ -6,6 +6,8 @@ import type {
   BackgroundTaskSnapshot,
   ConfigureRuntimeInput,
   DirectoryListing,
+  ProviderRuntimeOptions,
+  RuntimeReasoningEffort,
   RemovedQueuedPrompt,
   RuntimeOptions,
   ServerEvent,
@@ -97,6 +99,8 @@ export class ProviderSessionService
     allowAllPermissions = true,
     provider: AgentProvider = 'copilot',
     model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
   ): Promise<SessionDetail> {
     const service = provider === 'claude' ? this.claude : this.copilot
     return service.createSession(
@@ -105,6 +109,8 @@ export class ProviderSessionService
       allowAllPermissions,
       provider,
       model,
+      reasoningEffort,
+      contextTier,
     )
   }
 
@@ -118,6 +124,13 @@ export class ProviderSessionService
 
   renameSession(id: string, title: string): Promise<SessionDetail> {
     return this.serviceFor(id).renameSession(id, title)
+  }
+
+  providerRuntimeOptions(
+    provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    const service = provider === 'claude' ? this.claude : this.copilot
+    return service.providerRuntimeOptions(provider)
   }
 
   runtimeOptions(id: string): Promise<RuntimeOptions> {

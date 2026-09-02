@@ -2,6 +2,7 @@ import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import type {
+  AudioTranscription,
   CreateSessionInput,
   ConfigureRuntimeInput,
   BackgroundTaskSnapshot,
@@ -9,6 +10,7 @@ import type {
   ExecuteCommandInput,
   NodeInfo,
   PermissionReplyInput,
+  ProviderRuntimeOptions,
   RenameSessionInput,
   RemovedQueuedPrompt,
   RuntimeOptions,
@@ -23,6 +25,17 @@ import type {
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
+import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
+
+/**
+ * Conversion, whisper, and probing each carry their own timeout on the owning
+ * computer, so the caller waits slightly longer than their sum before giving up.
+ */
+const TRANSCRIPTION_TIMEOUT_MS = 13 * 60_000
+
+function headerSafe(value: string): string {
+  return value.replace(/[^\x20-\x7e]/g, '').slice(0, 200)
+}
 
 interface RemoteNodeClientEvents {
   event: [event: ServerEvent]
@@ -199,6 +212,14 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.session
   }
 
+  async providerRuntimeOptions(
+    provider: 'copilot' | 'claude',
+  ): Promise<ProviderRuntimeOptions> {
+    return this.request<ProviderRuntimeOptions>(
+      `/node-api/providers/${encodeURIComponent(provider)}/runtime`,
+    )
+  }
+
   async uploadFile(
     sessionId: string,
     filename: string,
@@ -217,6 +238,28 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       120_000,
     )
     return response.file
+  }
+
+  async transcribe(
+    filename: string,
+    mimeType: string,
+    data: Buffer,
+    signal?: AbortSignal,
+  ): Promise<AudioTranscription> {
+    return this.request<AudioTranscription>(
+      '/node-api/transcriptions',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/octet-stream',
+          [AUDIO_FILENAME_HEADER]: Buffer.from(filename).toString('base64url'),
+          [AUDIO_TYPE_HEADER]: headerSafe(mimeType),
+        },
+        body: data,
+        signal,
+      },
+      TRANSCRIPTION_TIMEOUT_MS,
+    )
   }
 
   async activateSession(sessionId: string): Promise<SessionDetail> {
@@ -469,10 +512,14 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       response = await fetch(`${this.computer.baseUrl}${path}`, {
         ...init,
         headers,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: init.signal
+          ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+          : AbortSignal.timeout(timeoutMs),
       })
     } catch (error) {
-      if (markOnline) {
+      // A poll that must not flap the online state, and a request the caller
+      // abandoned, are both failures that say nothing about the node.
+      if (markOnline && !init.signal?.aborted) {
         this.setOnline(false)
       }
       throw error

@@ -11,6 +11,7 @@ import type {
   SessionEvent,
   SessionMetadata,
 } from '@github/copilot-sdk'
+import type { UserInputForm } from '../shared/contracts.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentService,
@@ -19,6 +20,8 @@ import {
   messagesFromHistory,
   pendingUserInputFromEvents,
   runtimeInfoFromEvents,
+  statusFromEvents,
+  terminalFormSteps,
 } from './agent-service.js'
 import type {
   CopilotTaskInfo,
@@ -493,6 +496,8 @@ describe('AgentService deletion', () => {
         id: 'tool:task-call',
         role: 'activity',
         activityStatus: 'failed',
+        activityResult: 'Error: tool failed; inspect the session log',
+        activityDurationMs: 1_000,
       }),
     ])
   })
@@ -529,6 +534,236 @@ describe('AgentService deletion', () => {
         role: 'activity',
         content: 'Bash\n$ pnpm test',
         activityStatus: 'completed',
+        activityResult: 'All tests passed',
+        activityDurationMs: 1_000,
+      }),
+    ])
+  })
+
+  it('groups activity beneath a skill and preserves failed results', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"skill-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"skill-call",
+          "toolName":"skill",
+          "arguments":{"skill":"tool-model-catalog"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"mcp-start",
+        "parentId":"skill-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"mcp-call",
+          "parentToolCallId":"skill-call",
+          "toolName":"mcp:ecs-mcp-server-search_config",
+          "mcpServerName":"ecs-mcp-server",
+          "mcpToolName":"search_config",
+          "arguments":{"query":"cache"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"mcp-end",
+        "parentId":"mcp-start",
+        "timestamp":"2026-08-28T00:00:03.500Z",
+        "data":{
+          "toolCallId":"mcp-call",
+          "success":false,
+          "result":{"content":"404 operation not found"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:skill-call',
+        activityKind: 'skill',
+      }),
+      expect.objectContaining({
+        id: 'tool:mcp-call',
+        activityKind: 'tool',
+        activityGroupId: 'tool:skill-call',
+        activityResult: 'Error: 404 operation not found',
+        activityDurationMs: 2_500,
+      }),
+    ])
+  })
+
+  it('includes sub-agent tool calls beneath their agent heading', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"agent-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "toolName":"task",
+          "arguments":{
+            "agent_type":"rubber-duck",
+            "description":"Review the cache path"
+          }
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"child-start",
+        "agentId":"rubber-duck-1",
+        "parentId":"agent-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "parentToolCallId":"agent-call",
+          "toolName":"read",
+          "arguments":{"path":"cache.md"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"child-end",
+        "agentId":"rubber-duck-1",
+        "parentId":"child-start",
+        "timestamp":"2026-08-28T00:00:02.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "success":true,
+          "result":{"content":"12 lines read"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:agent-call',
+        activityKind: 'agent',
+      }),
+      expect.objectContaining({
+        id: 'tool:child-call',
+        activityGroupId: 'tool:agent-call',
+        activityResult: '12 lines read',
+        activityDurationMs: 1_000,
+      }),
+    ])
+  })
+
+  it('uses tool ownership instead of chronological event links for grouping', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"skill-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"skill-call",
+          "toolName":"skill",
+          "arguments":{"skill":"tool-model-catalog"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"unrelated-start",
+        "parentId":"skill-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"unrelated-call",
+          "toolName":"read",
+          "arguments":{"path":"README.md"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"agent-start",
+        "parentId":"unrelated-start",
+        "timestamp":"2026-08-28T00:00:02.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "toolName":"task",
+          "arguments":{"agent_type":"reviewer"}
+        }
+      },
+      {
+        "type":"subagent.started",
+        "id":"subagent-start",
+        "agentId":"reviewer-1",
+        "parentId":"agent-start",
+        "timestamp":"2026-08-28T00:00:03.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "agentName":"reviewer",
+          "agentDisplayName":"Reviewer",
+          "agentDescription":"Review the change"
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"child-start",
+        "agentId":"reviewer-1",
+        "parentId":"subagent-start",
+        "timestamp":"2026-08-28T00:00:04.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "toolName":"read",
+          "arguments":{"path":"src/App.tsx"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"nested-skill-start",
+        "agentId":"reviewer-1",
+        "parentId":"child-start",
+        "timestamp":"2026-08-28T00:00:05.000Z",
+        "data":{
+          "toolCallId":"nested-skill-call",
+          "parentToolCallId":"agent-call",
+          "toolName":"skill",
+          "arguments":{"skill":"agentic-remote-navigation"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"nested-child-start",
+        "agentId":"reviewer-1",
+        "parentId":"nested-skill-start",
+        "timestamp":"2026-08-28T00:00:06.000Z",
+        "data":{
+          "toolCallId":"nested-child-call",
+          "parentToolCallId":"nested-skill-call",
+          "toolName":"read",
+          "arguments":{"path":"docs/app-spec.md"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:skill-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:unrelated-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:agent-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:child-call',
+        activityGroupId: 'tool:agent-call',
+      }),
+      expect.objectContaining({
+        id: 'tool:nested-skill-call',
+        activityGroupId: 'tool:agent-call',
+      }),
+      expect.objectContaining({
+        id: 'tool:nested-child-call',
+        activityGroupId: 'tool:nested-skill-call',
       }),
     ])
   })
@@ -922,8 +1157,12 @@ describe('AgentService deletion', () => {
       { answer: 'Blue', wasFreeform: false },
     )
 
+    // The finished turn is not resumed: no activity is shown and the request
+    // is cleared. The session still reads as running because the background
+    // agent it launched has not finished, which is its own state rather than
+    // a continuation of the answered turn.
     expect(updated).toMatchObject({
-      status: 'idle',
+      status: 'running',
       activity: undefined,
       pendingUserInput: undefined,
     })
@@ -1811,10 +2050,11 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('applies a requested model to new SDK sessions', async () => {
+  it('applies requested runtime defaults to new SDK sessions', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
@@ -1829,12 +2069,78 @@ describe('AgentService deletion', () => {
       true,
       'copilot',
       'gpt-configurable',
+      'high',
+      'long_context',
     )
 
     expect(client.createdConfigs.at(-1)).toMatchObject({
       model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
     })
-    expect(created.runtime?.model).toBe('gpt-configurable')
+    expect(created.runtime).toMatchObject({
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+      contextTokenLimit: 100_000,
+    })
+    await service.stop()
+  })
+
+  it('refreshes SDK models and omits effort for models without effort support', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [
+      {
+        ...configurableModel(),
+        id: 'gpt-no-effort',
+        name: 'GPT No Effort',
+        supportedReasoningEfforts: undefined,
+        defaultReasoningEffort: undefined,
+        capabilities: {
+          ...configurableModel().capabilities,
+          supports: {
+            ...configurableModel().capabilities.supports,
+            reasoningEffort: false,
+          },
+        },
+      },
+    ]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await expect(service.providerRuntimeOptions('copilot')).resolves.toEqual({
+      models: [
+        expect.objectContaining({
+          id: 'gpt-no-effort',
+          reasoningEfforts: [],
+        }),
+      ],
+    })
+    const created = await service.createSession(
+      directory,
+      false,
+      true,
+      'copilot',
+      'gpt-no-effort',
+    )
+    expect(client.createdConfigs.at(-1)).toMatchObject({
+      model: 'gpt-no-effort',
+      contextTier: 'default',
+    })
+    expect(client.createdConfigs.at(-1)).not.toHaveProperty('reasoningEffort')
+    expect(created.runtime).not.toHaveProperty('reasoningEffort')
+
+    client.models = [configurableModel()]
+    await expect(service.providerRuntimeOptions('copilot')).resolves.toEqual({
+      models: [expect.objectContaining({ id: 'gpt-configurable' })],
+    })
     await service.stop()
   })
 
@@ -2053,15 +2359,27 @@ describe('AgentService deletion', () => {
       true,
       'copilot',
       'gpt-configurable',
+      'high',
+      'long_context',
     )
     expect(terminal.create).toHaveBeenLastCalledWith(
       modelSession.id,
       directory,
       path.basename(directory),
       true,
-      { model: 'gpt-configurable' },
+      {
+        model: 'gpt-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        contextTokenLimit: 100_000,
+        contextEstimated: true,
+      },
     )
-    expect(modelSession.runtime?.model).toBe('gpt-configurable')
+    expect(modelSession.runtime).toMatchObject({
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
     const guarded = await service.createSession(directory, true, false)
     expect(terminal.create).toHaveBeenCalledWith(
       guarded.id,
@@ -4797,6 +5115,392 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('fills the agent form instead of typing into it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async () => true),
+    }
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Choose the deployment",
+            "requestedSchema":{
+              "properties":{
+                "deploymentName":{"type":"string","title":"Name","default":"keepme"},
+                "catalogScope":{
+                  "type":"string",
+                  "title":"Scope",
+                  "oneOf":[
+                    {"const":"arm_only","title":"ARM only"},
+                    {"const":"new_dev_model","title":"New dev model"}
+                  ]
+                },
+                "confirmDeployment":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-answer-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+
+    const values = {
+      deploymentName: 'swec-gpt55-chat-cache-engine-treatment',
+      catalogScope: 'new_dev_model',
+      confirmDeployment: true,
+    }
+    const answered = await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // The answer goes into the form the agent is waiting on, so it arrives as
+    // that tool's result instead of being typed into a field.
+    // The field titles travel with the answer so the controller can confirm
+    // the form on screen is still the one being answered.
+    expect(terminal.fillUserInputForm).toHaveBeenCalledWith(
+      sessionId,
+      [
+        { kind: 'text', value: 'swec-gpt55-chat-cache-engine-treatment' },
+        { kind: 'select', optionCount: 3, index: 1 },
+        { kind: 'select', optionCount: 3, index: 0 },
+      ],
+      { question: 'Choose the deployment', fields: ['Name', 'Scope', 'Confirm'] },
+    )
+    expect(terminal.send).not.toHaveBeenCalled()
+    expect(terminal.dismissUserInput).not.toHaveBeenCalled()
+    expect(answered.pendingUserInput).toBeUndefined()
+    await service.stop()
+  })
+
+  it('cancels the form and answers in a message when it cannot be filled', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      // Escape cancels the tool the agent was waiting on, which it records as
+      // complete; that is what makes typing the answer safe afterwards.
+      dismissUserInput: vi.fn(async () => {
+        events.push(
+          JSON.parse(`{
+            "type":"tool.execution_complete",
+            "id":"ask-end",
+            "parentId":null,
+            "timestamp":"2026-09-01T04:30:24.000Z",
+            "data":{"toolCallId":"ask-call"}
+          }`) as SessionEvent,
+        )
+        return true
+      }),
+      fillUserInputForm: vi.fn(async () => false),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-fallback-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+    await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // Closing the prompt first keeps the answer out of the form's fields.
+    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
+      question: 'Confirm the transfer',
+      fields: ['Confirm'],
+    })
+    const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
+    expect(content).toContain('confirmTransfer: true')
+    expect(content).not.toContain('{"confirmTransfer"')
+    await service.stop()
+  })
+
+  it('does not send an answer while the form is still open', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      // Escape never lands, so the tool stays open and the form keeps the
+      // keyboard.
+      dismissUserInput: vi.fn(async () => false),
+      fillUserInputForm: vi.fn(async () => false),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-open-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+
+    await expect(
+      service.replyUserInput(sessionId, 'persisted-user-input:ask-call', {
+        answer: JSON.stringify(values),
+        wasFreeform: false,
+        values,
+      }),
+    ).rejects.toThrow('still showing its prompt')
+
+    // Typing now would land in the open form and submit every other field at
+    // its default, which is the corruption this path exists to avoid.
+    expect(terminal.send).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('drops a reply to a request the agent already finished', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"unrelated-end",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:22.000Z",
+        "data":{"toolCallId":"unrelated-call"}
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-answered-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+    // The prompt is answered in the attached terminal after the app synced it,
+    // so the agent records the tool as finished while the reply is in flight.
+    events.push(
+      JSON.parse(`{
+        "type":"tool.execution_complete",
+        "id":"ask-end",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:23.000Z",
+        "data":{"toolCallId":"ask-call"}
+      }`) as SessionEvent,
+    )
+    await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // Whatever is on screen now belongs to something else, so it must not be
+    // filled or typed into.
+    expect(terminal.fillUserInputForm).not.toHaveBeenCalled()
+    expect(terminal.send).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('maps answered fields onto the agent form, and refuses what it cannot', () => {
+    const form: UserInputForm = {
+      fields: [
+        { name: 'name', title: 'Name', type: 'string', required: false },
+        {
+          name: 'scope',
+          title: 'Scope',
+          type: 'string',
+          required: false,
+          options: [
+            { value: 'arm_only', label: 'ARM only' },
+            { value: 'new_dev_model', label: 'New dev model' },
+          ],
+        },
+        { name: 'confirm', title: 'Confirm', type: 'boolean', required: false },
+      ],
+    }
+    expect(
+      terminalFormSteps(form, {
+        name: 'swec',
+        scope: 'new_dev_model',
+        confirm: false,
+      }),
+    ).toEqual([
+      { kind: 'text', value: 'swec' },
+      { kind: 'select', optionCount: 3, index: 1 },
+      // Yes is first, so a declined confirmation lands on No.
+      { kind: 'select', optionCount: 3, index: 1 },
+    ])
+
+    // An option the agent never offered must not be guessed at.
+    expect(
+      terminalFormSteps(form, { name: 'x', scope: 'other', confirm: true }),
+    ).toBeUndefined()
+    expect(
+      terminalFormSteps(
+        {
+          fields: [
+            { name: 'tags', title: 'Tags', type: 'array', required: false },
+          ],
+        },
+        { tags: ['a'] },
+      ),
+    ).toBeUndefined()
+  })
+
   it('recovers and answers a persisted SDK ask-user request', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
@@ -5060,3 +5764,73 @@ function messagesAsEvents(
     ),
   ) as SessionEvent[]
 }
+
+describe('statusFromEvents', () => {
+  const event = (
+    type: string,
+    agentId?: string,
+  ): SessionEvent =>
+    ({
+      type,
+      ...(agentId ? { agentId } : {}),
+      data: {},
+    }) as unknown as SessionEvent
+
+  it('keeps a session running while a background agent is still working', () => {
+    // The turn ends as soon as the agents are launched: their work carries on
+    // afterwards, and the session is still doing it.
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('subagent.started', 'agent-2'),
+        event('assistant.turn_end'),
+        event('subagent.completed', 'agent-1'),
+      ]),
+    ).toBe('running')
+  })
+
+  it('goes idle when a background agent fails rather than completes', () => {
+    // Failing ends an agent too. Tracking only completions would leave the
+    // session running for good after one failed.
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('subagent.failed', 'agent-1'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('goes idle once every background agent has finished', () => {
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('subagent.completed', 'agent-1'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('does not keep a stopped session running for agents it was waiting on', () => {
+    expect(
+      statusFromEvents([
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('abort'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('still reports a question rather than the agents behind it', () => {
+    expect(
+      statusFromEvents([
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('permission.requested'),
+      ]),
+    ).toBe('waiting')
+  })
+})

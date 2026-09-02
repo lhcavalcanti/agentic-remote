@@ -19,6 +19,7 @@ import {
 import type {
   AgentProvider,
   AgentProviderCapability,
+  ActivityKind,
   BackgroundTask,
   BackgroundTaskSnapshot,
   ChatMessage,
@@ -26,6 +27,7 @@ import type {
   ConfigureRuntimeInput,
   PendingPermission,
   PendingUserInput,
+  ProviderRuntimeOptions,
   QueuedPrompt,
   RemovedQueuedPrompt,
   ServerEvent,
@@ -39,6 +41,7 @@ import type {
   UserInputForm,
   RuntimeModelOption,
   RuntimeOptions,
+  RuntimeReasoningEffort,
   SessionStatus,
   SlashCommand,
   WorkspaceFile,
@@ -83,6 +86,7 @@ import {
   isTerminalOverlay,
   terminalCommandOutput,
   TmuxTerminalSessionController,
+  type TerminalFormStep,
   type TerminalSessionController,
 } from './terminal-session.js'
 
@@ -153,6 +157,26 @@ interface ModelPromptLimits {
   maximum?: number
 }
 
+interface CreationRuntime {
+  model: string
+  reasoningEffort?: RuntimeReasoningEffort
+  contextTier: 'default' | 'long_context'
+  contextTokenLimit?: number
+  contextEstimated: true
+}
+
+function isRuntimeReasoningEffort(
+  value: unknown,
+): value is RuntimeReasoningEffort {
+  return (
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh' ||
+    value === 'max'
+  )
+}
+
 class RuntimeConfigurationError extends Error {
   constructor(
     message: string,
@@ -194,9 +218,115 @@ export interface AgentServiceEvents {
   event: [event: ServerEvent]
 }
 
+function activityKind(data: unknown): ActivityKind {
+  const normalizedToolName = (stringValue(recordValue(data).toolName) || 'tool')
+    .toLowerCase()
+    .replaceAll('-', '_')
+  if (normalizedToolName === 'skill') {
+    return 'skill'
+  }
+  if (normalizedToolName === 'task') {
+    return 'agent'
+  }
+  return 'tool'
+}
+
+function activityDuration(startedAt: string, completedAt: string): number | undefined {
+  const start = Date.parse(startedAt)
+  const end = Date.parse(completedAt)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return undefined
+  }
+  return end - start
+}
+
+function activityResult(data: unknown, success: boolean): string | undefined {
+  const tool = recordValue(data)
+  const result = recordValue(tool.result)
+  const resultContent =
+    previewText(result.detailedContent, true) ||
+    previewText(result.content, true) ||
+    previewText(result.output, true) ||
+    previewText(result.message, true) ||
+    previewText(tool.result, true)
+  const error = previewText(tool.error, true) ||
+    previewText(recordValue(tool.error).message, true)
+  const text = success ? resultContent : error || resultContent
+  if (text) {
+    return success ? text : `Error: ${text}`
+  }
+  return success ? undefined : 'Error: tool failed; inspect the session log'
+}
+
+interface ActivityToolStart {
+  kind: ActivityKind
+  parentToolCallId?: string
+  toolCallId: string
+}
+
+function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
+  return kind === 'skill' || kind === 'agent'
+}
+
+function activityGroupIdFor(
+  parentToolCallId: string | undefined,
+  agentId: string | undefined,
+  toolStartsByCallId: Map<string, ActivityToolStart>,
+  subagentParentsByAgentId: Map<string, string>,
+): string | undefined {
+  const candidateParents = [
+    parentToolCallId,
+    agentId ? subagentParentsByAgentId.get(agentId) : undefined,
+  ].filter((value, index, values): value is string =>
+    Boolean(value) && values.indexOf(value) === index,
+  )
+  for (const candidate of candidateParents) {
+    const visited = new Set<string>()
+    let parentToolCallIdToCheck: string | undefined = candidate
+    while (parentToolCallIdToCheck && !visited.has(parentToolCallIdToCheck)) {
+      visited.add(parentToolCallIdToCheck)
+      const parent = toolStartsByCallId.get(parentToolCallIdToCheck)
+      if (!parent) {
+        break
+      }
+      if (isActivityGroupKind(parent.kind)) {
+        return `tool:${parent.toolCallId}`
+      }
+      parentToolCallIdToCheck = parent.parentToolCallId
+    }
+  }
+  return undefined
+}
+
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
+  const toolStartsByCallId = new Map<
+    string,
+    ActivityToolStart
+  >()
+  const subagentParentsByAgentId = new Map<string, string>()
+  for (const event of events) {
+    if (event.type === 'tool.execution_start') {
+      toolStartsByCallId.set(event.data.toolCallId, {
+        kind: activityKind(event.data),
+        parentToolCallId: stringValue(
+          recordValue(event.data).parentToolCallId,
+        ),
+        toolCallId: event.data.toolCallId,
+      })
+    } else if (event.type === 'subagent.started' && event.agentId) {
+      subagentParentsByAgentId.set(event.agentId, event.data.toolCallId)
+    }
+  }
+  const activityGroupId = (event: SessionEvent): string | undefined => {
+    return activityGroupIdFor(
+      stringValue(recordValue(event.data).parentToolCallId),
+      event.agentId,
+      toolStartsByCallId,
+      subagentParentsByAgentId,
+    )
+  }
   const finishRunningActivities = (
     activityStatus: 'completed' | 'failed' = 'completed',
   ) => {
@@ -240,12 +370,12 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       continue
     }
-    if (event.type === 'tool.execution_start' && !eventAgentId(event)) {
+    if (event.type === 'tool.execution_start') {
       const toolCallId = event.data.toolCallId
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete') {
+      if (toolName === 'task_complete' && !event.agentId) {
         const summary = stringValue(
           recordValue(event.data.arguments).summary,
         )?.trim()
@@ -259,21 +389,31 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
         content: toolActivityContent(event.data),
         createdAt: event.timestamp,
         activityStatus: 'running',
+        activityKind: activityKind(event.data),
+        activityGroupId: activityGroupId(event),
       })
       continue
     }
-    if (event.type === 'tool.execution_complete' && !eventAgentId(event)) {
+    if (event.type === 'tool.execution_complete') {
       const toolCallId = event.data.toolCallId
       const message = messages.find(
         (entry) => entry.id === `tool:${toolCallId}`,
       )
       if (message) {
         message.activityStatus = event.data.success ? 'completed' : 'failed'
-        const resultContent = stringValue(
+        const resultContent = activityResult(event.data, event.data.success)
+        const duration = activityDuration(message.createdAt, event.timestamp)
+        if (resultContent) {
+          message.activityResult = resultContent
+        }
+        if (duration !== undefined) {
+          message.activityDurationMs = duration
+        }
+        const taskResultContent = stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim()
         const taskCompletionSummary = taskCompletionSummaries.has(toolCallId)
-          ? resultContent || taskCompletionSummaries.get(toolCallId)
+          ? taskResultContent || taskCompletionSummaries.get(toolCallId)
           : undefined
         if (event.data.success && taskCompletionSummary) {
           finishRunningActivities()
@@ -693,6 +833,74 @@ export function pendingUserInputFromEvents(
   return pending?.input
 }
 
+/**
+ * Turns an answered form into the moves that fill the agent's own form.
+ * Anything that cannot be mapped confidently returns undefined, so the caller
+ * falls back to cancelling the prompt and answering in a message rather than
+ * submitting a value the user did not choose.
+ */
+export function terminalFormSteps(
+  form: UserInputForm,
+  values: Record<string, UserInputFieldValue>,
+): TerminalFormStep[] | undefined {
+  const steps: TerminalFormStep[] = []
+  for (const field of form.fields) {
+    const value = values[field.name]
+    if (field.type === 'array') {
+      return undefined
+    }
+    if (field.type === 'boolean') {
+      if (typeof value !== 'boolean') {
+        return undefined
+      }
+      // The agent lists Yes, No, then a freeform row.
+      steps.push({ kind: 'select', optionCount: 3, index: value ? 0 : 1 })
+      continue
+    }
+    const options = field.options
+    if (options && options.length > 0) {
+      const index = options.findIndex((option) => option.value === value)
+      if (index < 0) {
+        return undefined
+      }
+      steps.push({
+        kind: 'select',
+        optionCount: options.length + 1,
+        index,
+      })
+      continue
+    }
+    if (value !== undefined && typeof value !== 'string' && typeof value !== 'number') {
+      return undefined
+    }
+    steps.push({ kind: 'text', value: value === undefined ? '' : String(value) })
+  }
+  return steps.length === form.fields.length ? steps : undefined
+}
+
+/**
+ * A cancelled prompt leaves the agent without its answer, so the reply spells
+ * out every field it asked for instead of sending an opaque JSON blob.
+ */
+function persistedFormAnswer(
+  request: PendingUserInput,
+  values: Record<string, UserInputFieldValue>,
+): string {
+  const lines = (request.form?.fields || []).map((field) => {
+    const value = values[field.name]
+    const rendered = Array.isArray(value)
+      ? value.join(', ')
+      : value === undefined
+        ? ''
+        : String(value)
+    return `- ${field.name}: ${rendered}`
+  })
+  return [
+    'Answering the question you just asked, from the Agentic Remote app:',
+    ...lines,
+  ].join('\n')
+}
+
 function visibleUserContent(content: string): string {
   const direct = content.trim()
   if (direct) {
@@ -900,10 +1108,27 @@ function isBackgroundTaskEvent(event: SessionEvent): boolean {
   ].includes(stringValue(kind.type) || '')
 }
 
-function statusFromEvents(events: SessionEvent[]): SessionStatus {
+export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
+  // Work a turn handed to background agents outlives the turn itself, so the
+  // agents still running are tracked separately from it.
+  const workingAgents = new Set<string>()
   for (const event of events) {
     if (!isForegroundLifecycleEvent(event)) {
+      const agentId = eventAgentId(event)
+      if (agentId) {
+        if (event.type === 'subagent.started') {
+          workingAgents.add(agentId)
+        } else if (
+          event.type === 'subagent.completed' ||
+          event.type === 'subagent.failed'
+        ) {
+          // Failing ends an agent just as completing does. Tracking only the
+          // completions would leave a failed agent working for good, and the
+          // session running with it.
+          workingAgents.delete(agentId)
+        }
+      }
       continue
     }
     switch (event.type) {
@@ -921,13 +1146,21 @@ function statusFromEvents(events: SessionEvent[]): SessionStatus {
         break
       case 'assistant.turn_end':
       case 'session.idle':
+        status = 'idle'
+        break
       case 'abort':
       case 'session.shutdown':
+        // Nothing outlives the session ending, so agents it was waiting on
+        // are not still working.
+        workingAgents.clear()
         status = 'idle'
         break
     }
   }
-  return status
+  // A turn that handed its work to background agents and then ended has not
+  // finished it. Reporting the session as idle offers it for the next prompt
+  // and calls the work done while it is still going on.
+  return status === 'idle' && workingAgents.size > 0 ? 'running' : status
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -1261,6 +1494,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly liveTaskCompletionSummaries = new Map<string, string>()
+  private readonly liveActivityEvents = new Map<
+    string,
+    Map<
+      string,
+      {
+        agentId?: string
+        parentToolCallId?: string
+        kind?: ActivityKind
+        toolCallId?: string
+        subagentToolCallId?: string
+      }
+    >
+  >()
   private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
   private readonly runtimeModels = new Map<string, RuntimeModelOption>()
   private runtimeModelLoad?: Promise<void>
@@ -1491,6 +1737,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.runtimeModels.size > 0) {
       return Promise.resolve()
     }
+    return this.refreshRuntimeModels()
+  }
+
+  private refreshRuntimeModels(): Promise<void> {
     if (this.runtimeModelLoad) {
       return this.runtimeModelLoad
     }
@@ -1517,8 +1767,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         503,
       )
     }
-    this.modelPromptLimits.clear()
-    this.runtimeModels.clear()
+    const promptLimits = new Map<string, ModelPromptLimits>()
+    const runtimeModels = new Map<string, RuntimeModelOption>()
     for (const model of models) {
       const value = recordValue(model)
       const capabilities = recordValue(value.capabilities)
@@ -1531,19 +1781,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         long: numberValue(longContext.maxPromptTokens),
         maximum: numberValue(capabilityLimits.max_prompt_tokens),
       }
-      this.modelPromptLimits.set(model.id, limits)
+      promptLimits.set(model.id, limits)
       const supportedEfforts = Array.isArray(value.supportedReasoningEfforts)
         ? value.supportedReasoningEfforts.filter(
-            (effort): effort is string => typeof effort === 'string',
+            isRuntimeReasoningEffort,
           )
         : []
-      this.runtimeModels.set(model.id, {
+      runtimeModels.set(model.id, {
         id: model.id,
         name: stringValue(value.name) || model.id,
-        reasoningEfforts:
-          supportedEfforts.length > 0
-            ? supportedEfforts
-            : [stringValue(value.defaultReasoningEffort) || 'medium'],
+        reasoningEfforts: supportedEfforts,
         contextTiers:
           Object.keys(longContext).length > 0
             ? ['default', 'long_context']
@@ -1553,6 +1800,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           long_context: limits.long || limits.maximum,
         },
       })
+    }
+    this.modelPromptLimits.clear()
+    this.runtimeModels.clear()
+    for (const [id, limits] of promptLimits) {
+      this.modelPromptLimits.set(id, limits)
+    }
+    for (const [id, model] of runtimeModels) {
+      this.runtimeModels.set(id, model)
     }
   }
 
@@ -1606,19 +1861,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     allowAllPermissions = true,
     provider: AgentProvider = 'copilot',
     model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
   ): Promise<SessionDetail> {
     if (provider !== 'copilot') {
       throw new Error(`Provider ${provider} is not handled by Copilot`)
     }
     const cwd = await this.validateDirectory(inputPath)
-    const selectedModel = model?.trim() || undefined
+    const runtime = await this.creationRuntime(
+      model,
+      reasoningEffort,
+      contextTier,
+    )
     if (terminalBacked) {
-      return this.createTerminalSession(cwd, allowAllPermissions, selectedModel)
+      return this.createTerminalSession(cwd, allowAllPermissions, runtime)
     }
     const sdkSession = await this.client.createSession({
       workingDirectory: cwd,
       streaming: true,
-      ...(selectedModel ? { model: selectedModel } : {}),
+      ...runtime,
       onPermissionRequest: allowAllPermissions
         ? async () => ({ kind: 'approve-once' })
         : (request, invocation) =>
@@ -1643,7 +1904,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         messages: [],
         runtime: {
           allowAllPermissions,
-          ...(selectedModel ? { model: selectedModel } : {}),
+          ...runtime,
         },
       },
       { managedOpen: true, backend: 'sdk' },
@@ -1676,14 +1937,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return renamed
   }
 
-  async runtimeOptions(id: string): Promise<RuntimeOptions> {
-    let stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
+  async providerRuntimeOptions(
+    provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    if (provider !== 'copilot') {
+      throw new Error(`Provider ${provider} is not handled by Copilot`)
     }
-    stored = await this.reconcileRuntimeStatus(stored)
     try {
-      await this.ensureRuntimeModels()
+      await this.refreshRuntimeModels()
     } catch (error) {
       throw new RuntimeConfigurationError(
         'Runtime models are temporarily unavailable. Try again.',
@@ -1691,9 +1952,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         { cause: error },
       )
     }
+    return { models: [...this.runtimeModels.values()] }
+  }
+
+  async runtimeOptions(id: string): Promise<RuntimeOptions> {
+    let stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    stored = await this.reconcileRuntimeStatus(stored)
+    const options = await this.providerRuntimeOptions('copilot')
     return {
       current: stored.runtime || {},
-      models: [...this.runtimeModels.values()],
+      models: options.models,
       status: stored.status,
     }
   }
@@ -1714,7 +1985,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     try {
-      await this.ensureRuntimeModels()
+      await this.refreshRuntimeModels()
     } catch (error) {
       throw new RuntimeConfigurationError(
         'Runtime models are temporarily unavailable. Try again.',
@@ -1726,7 +1997,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!model) {
       throw new RuntimeConfigurationError('Selected model is not available', 400)
     }
-    if (!model.reasoningEfforts.includes(input.reasoningEffort)) {
+    if (
+      input.reasoningEffort &&
+      !model.reasoningEfforts.includes(input.reasoningEffort)
+    ) {
       throw new RuntimeConfigurationError(
         'Selected reasoning effort is not supported by this model',
         400,
@@ -1953,12 +2227,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const runtime: ConfigureRuntimeInput | undefined =
       stored.runtime?.model &&
-      stored.runtime.reasoningEffort &&
       (stored.runtime.contextTier === 'default' ||
         stored.runtime.contextTier === 'long_context')
         ? {
             model: stored.runtime.model,
-            reasoningEffort: stored.runtime.reasoningEffort,
+            ...(isRuntimeReasoningEffort(stored.runtime.reasoningEffort)
+              ? { reasoningEffort: stored.runtime.reasoningEffort }
+              : {}),
             contextTier: stored.runtime.contextTier,
             mode: agentMode(stored.runtime.mode) || 'interactive',
           }
@@ -2068,6 +2343,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.backgroundTaskSyncs.delete(id)
       this.backgroundTaskTracker.remove(id)
       this.liveTranscriptWatermarks.delete(id)
+      this.liveActivityEvents.delete(id)
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
       this.terminalUserInputChecks.delete(id)
@@ -2093,7 +2369,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async createTerminalSession(
     cwd: string,
     allowAllPermissions: boolean,
-    model?: string,
+    runtime?: SessionRuntimeInfo,
   ): Promise<SessionDetail> {
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
@@ -2103,13 +2379,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.launchingTerminalSessionIds.add(sessionId)
     this.discoveryGeneration += 1
     try {
-      if (model) {
+      if (runtime) {
         await this.terminalController.create(
           sessionId,
           cwd,
           title,
           allowAllPermissions,
-          { model },
+          runtime,
         )
       } else {
         await this.terminalController.create(
@@ -2131,7 +2407,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           messages: [],
           runtime: {
             allowAllPermissions,
-            ...(model ? { model } : {}),
+            ...runtime,
           },
         },
         { managedOpen: true, backend: 'terminal' },
@@ -2145,6 +2421,53 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       this.launchingTerminalSessionIds.delete(sessionId)
       this.discoveryGeneration += 1
+    }
+  }
+
+  private async creationRuntime(
+    model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
+  ): Promise<CreationRuntime | undefined> {
+    const modelId = model?.trim()
+    if (!modelId) {
+      if (reasoningEffort?.trim() || contextTier) {
+        throw new RuntimeConfigurationError(
+          'A model is required when setting effort or context',
+          400,
+        )
+      }
+      return undefined
+    }
+    const options = await this.providerRuntimeOptions('copilot')
+    const selected = options.models.find((candidate) => candidate.id === modelId)
+    if (!selected) {
+      throw new RuntimeConfigurationError('Selected model is not available', 400)
+    }
+    const effort = reasoningEffort || selected.reasoningEfforts[0]
+    const tier = contextTier || 'default'
+    if (effort && !selected.reasoningEfforts.includes(effort)) {
+      throw new RuntimeConfigurationError(
+        'Selected reasoning effort is not supported by this model',
+        400,
+      )
+    }
+    if (!selected.contextTiers.includes(tier)) {
+      throw new RuntimeConfigurationError(
+        'Selected context tier is not supported by this model',
+        400,
+      )
+    }
+    const limits = this.modelPromptLimits.get(modelId)
+    return {
+      model: modelId,
+      ...(effort ? { reasoningEffort: effort } : {}),
+      contextTier: tier,
+      contextTokenLimit:
+        tier === 'long_context'
+          ? limits?.long || limits?.maximum
+          : limits?.default || limits?.maximum,
+      contextEstimated: true,
     }
   }
 
@@ -2747,6 +3070,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.workspaceVersions.delete(sessionId)
       this.backgroundTaskSyncs.delete(sessionId)
       this.backgroundTaskTracker.remove(sessionId)
+      this.liveActivityEvents.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
       this.terminalUpdateChecks.delete(sessionId)
       this.answeredTerminalPermissions.delete(sessionId)
@@ -2913,6 +3237,93 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         requestId,
         expiresAt: Date.now() + 60_000,
       })
+      // The agent is still showing this prompt in its terminal. Typing the
+      // answer while a structured form is open fills that form's focused
+      // field and submits every other field at its default, which silently
+      // turns confirmations into `false`. Close the prompt first, then answer.
+      const toolCallId = requestId.slice('persisted-user-input:'.length)
+      const terminalBacked = await this.terminalController.has(sessionId)
+      if (
+        terminalBacked &&
+        (await this.isToolCallComplete(sessionId, toolCallId))
+      ) {
+        // The agent already stopped waiting on this request, so it was
+        // answered or cancelled in the terminal. Whatever is on screen now
+        // belongs to something else, and filling it would answer the wrong
+        // prompt; the reply is dropped and the stale request cleared instead.
+        this.answeredPersistedInputs.delete(sessionId)
+        const settled = await this.store.update(sessionId, (session) => {
+          session.pendingUserInput = undefined
+        })
+        this.publish(settled)
+        return settled
+      }
+      if (terminalBacked && request.form) {
+        // Filling the agent's own form answers the tool it is waiting on, so
+        // the values arrive as the result it asked for.
+        const steps = terminalFormSteps(request.form, input.values || {})
+        const identity = {
+          question: request.question,
+          fields: request.form.fields.map((field) => field.title),
+        }
+        const filled =
+          steps &&
+          (await this.terminalController
+            .fillUserInputForm?.(sessionId, steps, identity)
+            .catch(() => false))
+        // Filling reports failure for a capture that timed out as well as for
+        // keys never sent, and the last Enter may already have submitted the
+        // form. Answering again would then submit a second time, so the agent
+        // is asked whether the request it was waiting on has finished.
+        if (
+          !filled &&
+          (await this.isToolCallComplete(sessionId, toolCallId))
+        ) {
+          const submitted = await this.store.update(sessionId, (session) => {
+            session.pendingUserInput = undefined
+            session.status = 'running'
+            session.activity = 'Continuing'
+          })
+          this.publish(submitted)
+          return submitted
+        }
+        if (filled) {
+          const answeredSession = await this.store.update(
+            sessionId,
+            (session) => {
+              session.pendingUserInput = undefined
+              session.status = 'running'
+              session.activity = 'Continuing'
+            },
+          )
+          this.publish(answeredSession)
+          return answeredSession
+        }
+      }
+      if (terminalBacked) {
+        const dismissed =
+          (await this.terminalController
+            .dismissUserInput?.(
+              sessionId,
+              request.form && {
+                question: request.question,
+                fields: request.form.fields.map((field) => field.title),
+              },
+            )
+            .catch(() => false)) ?? false
+        const closed =
+          dismissed && (await this.waitForToolCompletion(sessionId, toolCallId))
+        // The answer is about to be typed at the prompt. A form that is still
+        // open captures those keystrokes into its fields and submits the rest
+        // at their defaults, which is the corruption this path exists to
+        // avoid, so nothing is sent unless the form is known to have closed.
+        if (request.form && !closed) {
+          this.answeredPersistedInputs.delete(sessionId)
+          throw new Error(
+            'The agent is still showing its prompt, so the answer was not sent. Try again.',
+          )
+        }
+      }
       const cleared = await this.store.update(sessionId, (session) => {
         session.pendingUserInput = undefined
         session.status = 'idle'
@@ -2921,7 +3332,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(cleared)
       return this.sendMessage(
         sessionId,
-        request.form ? JSON.stringify(input.values) : answer,
+        request.form
+          ? persistedFormAnswer(request, input.values || {})
+          : answer,
         false,
       )
     } else {
@@ -3337,7 +3750,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.liveTranscriptWatermarks.delete(sessionId)
         this.publish(updated)
         const latestCompletionAt = events.findLast(
-          isForegroundCompletionEvent,
+          (event) =>
+            // A turn that handed its work to background agents ends before
+            // they do, so the last agent finishing is the completion a prompt
+            // queued behind them is waiting on.
+            isForegroundCompletionEvent(event) ||
+            event.type === 'subagent.completed' ||
+            event.type === 'subagent.failed',
         )?.timestamp
         const firstQueuedAt = updated.queuedPrompts?.[0]?.createdAt
         if (
@@ -3472,6 +3891,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return false
   }
 
+  /**
+   * Whether the agent has already recorded this tool call as finished. A
+   * request answered or cancelled in an attached terminal completes there, so
+   * this is what tells a reply that it is answering a prompt the agent has
+   * stopped waiting on.
+   */
+  private async isToolCallComplete(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<boolean> {
+    const events = await this.sessionEventReader(sessionId).catch(() => [])
+    return events.some(
+      (event) =>
+        event.type === 'tool.execution_complete' &&
+        !event.agentId &&
+        stringValue(recordValue(event.data).toolCallId) === toolCallId,
+    )
+  }
+
+  /**
+   * Waits for the agent to record the prompt as finished, so the answer that
+   * follows is typed at the prompt instead of into the closing form.
+   */
+  private async waitForToolCompletion(
+    sessionId: string,
+    toolCallId: string,
+    attempts = 20,
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      if (await this.isToolCallComplete(sessionId, toolCallId)) {
+        return true
+      }
+    }
+    return false
+  }
+
   private async syncTerminalUserInput(sessionId: string): Promise<void> {
     if (
       !this.terminalController.pendingUserInput &&
@@ -3584,10 +4040,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           hasBackgroundTaskActivity &&
           events.some(isForegroundLifecycleEvent)
         ) {
-          const status = statusFromEvents(events)
-          return status === 'running'
-            ? { status, activity: 'Continuing' }
-            : { status }
+          // Background work can keep the session running after the turn that
+          // launched it ended. That is the agents' own state rather than a
+          // continuation of the turn just answered, so no activity is shown.
+          return { status: statusFromEvents(events) }
         }
         return { status: 'running', activity: 'Continuing' }
       }
@@ -3751,6 +4207,75 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return update.snapshot
   }
 
+  private rememberLiveActivityEvent(
+    sessionId: string,
+    event: SessionEvent,
+    kind?: ActivityKind,
+    toolCallId?: string,
+  ): void {
+    const events =
+      this.liveActivityEvents.get(sessionId) ||
+      new Map<
+        string,
+        {
+          agentId?: string
+          parentToolCallId?: string
+          kind?: ActivityKind
+          toolCallId?: string
+          subagentToolCallId?: string
+        }
+      >()
+    const data = recordValue(event.data)
+    events.set(event.id, {
+      agentId: event.agentId,
+      parentToolCallId: stringValue(data.parentToolCallId),
+      kind,
+      toolCallId,
+      subagentToolCallId:
+        event.type === 'subagent.started'
+          ? stringValue(data.toolCallId)
+          : undefined,
+    })
+    while (events.size > 2_000) {
+      const oldest = events.keys().next().value
+      if (!oldest) {
+        break
+      }
+      events.delete(oldest)
+    }
+    this.liveActivityEvents.set(sessionId, events)
+  }
+
+  private liveActivityGroupId(
+    sessionId: string,
+    event: SessionEvent,
+  ): string | undefined {
+    const events = this.liveActivityEvents.get(sessionId)
+    const toolStartsByCallId = new Map<string, ActivityToolStart>()
+    const subagentParentsByAgentId = new Map<string, string>()
+    for (const activity of events?.values() || []) {
+      if (activity.toolCallId && activity.kind) {
+        toolStartsByCallId.set(activity.toolCallId, {
+          kind: activity.kind,
+          parentToolCallId: activity.parentToolCallId,
+          toolCallId: activity.toolCallId,
+        })
+      }
+      if (activity.agentId && activity.subagentToolCallId) {
+        subagentParentsByAgentId.set(
+          activity.agentId,
+          activity.subagentToolCallId,
+        )
+      }
+    }
+    return activityGroupIdFor(
+      stringValue(recordValue(event.data).parentToolCallId),
+      event.agentId,
+      toolStartsByCallId,
+      subagentParentsByAgentId,
+    )
+  }
+
   private attachSession(session: CopilotSessionLike): void {
     session.on((event) => {
       this.handleSessionEvent(session.sessionId, event)
@@ -3760,6 +4285,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
+    this.rememberLiveActivityEvent(sessionId, event)
 
     if (
       (event.type === 'session.background_tasks_changed' ||
@@ -3858,32 +4384,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'tool.execution_start' && !eventAgentId(event)) {
+    if (event.type === 'tool.execution_start') {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete') {
+      if (toolName === 'task_complete' && !event.agentId) {
         this.liveTaskCompletionSummaries.set(
           `${sessionId}:${event.data.toolCallId}`,
           stringValue(recordValue(event.data.arguments).summary)?.trim() || '',
         )
       }
+      this.rememberLiveActivityEvent(
+        sessionId,
+        event,
+        activityKind(event.data),
+        event.data.toolCallId,
+      )
       void this.store
         .startToolActivity(
           sessionId,
           event.data.toolCallId,
           toolActivityContent(event.data),
           event.timestamp,
+          activityKind(event.data),
+          this.liveActivityGroupId(sessionId, event),
         )
         .then((stored) => this.publish(stored))
         .catch((error: unknown) => this.publishError(sessionId, error))
       return
     }
 
-    if (event.type === 'tool.execution_complete' && !eventAgentId(event)) {
+    if (event.type === 'tool.execution_complete') {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
@@ -3897,6 +4431,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim() || fallbackSummary
+      const presentationResult = activityResult(event.data, event.data.success)
       const update =
         isTaskCompletion && event.data.success && resultContent
           ? this.store.finishTaskCompletion(
@@ -3910,6 +4445,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               sessionId,
               event.data.toolCallId,
               event.data.success,
+              event.timestamp,
+              presentationResult,
             )
       void update
         .then((stored) => this.publish(stored))
@@ -3964,6 +4501,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             entry.activityStatus === 'running'
           ) {
             entry.activityStatus = 'failed'
+            entry.activityResult = `Error: ${message}`
           }
         }
         const assistant = session.messages.find(

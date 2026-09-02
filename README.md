@@ -329,6 +329,26 @@ binaries means the digest did not match the table in
 `server/transcription-service.ts` — expected after bumping `ffmpeg-static` or
 `ffprobe-static`, and `pnpm test` reports the replacement digests.
 
+### Transcribing on another computer
+
+By default the hub transcribes audio itself and needs `whisper-cli` and a model.
+Set `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER` to the name or id of a paired
+computer to run transcription there instead:
+
+```bash
+AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER=workstation
+```
+
+The hub streams the recording to that computer's authenticated node API and
+keeps nothing on disk; only the transcript comes back. Sessions, uploads, and
+Knowledge are unaffected, and naming the hub's own computer matches the default.
+
+- Whisper and its model belong on the named computer, not the hub.
+- `setup` reads the assignment back from the environment file it replaces, so it
+  survives updates. Clear it by deleting the line and re-running setup.
+- An unpaired or offline computer fails the recording with a `503`; one on a
+  release without the endpoint reports a `409`.
+
 ## Documentation
 
 - [Application specification](docs/app-spec.md) — normative product behavior

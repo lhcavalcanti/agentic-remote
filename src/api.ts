@@ -11,6 +11,7 @@ import type {
   AddKnowledgeRootInput,
   KnowledgeRoot,
   PushSettings,
+  ProviderRuntimeOptions,
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
   RenameSessionInput,
@@ -240,6 +241,15 @@ export async function createSession(
     },
   )
   return response.session
+}
+
+export async function getProviderRuntimeOptions(
+  computerId: string,
+  provider: 'copilot' | 'claude',
+): Promise<ProviderRuntimeOptions> {
+  return request<ProviderRuntimeOptions>(
+    `/api/computers/${encodeURIComponent(computerId)}/providers/${encodeURIComponent(provider)}/runtime`,
+  )
 }
 
 export async function activateSession(

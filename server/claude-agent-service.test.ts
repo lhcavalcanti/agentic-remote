@@ -386,10 +386,22 @@ describe('ClaudeAgentService', () => {
     const renamed = await service.renameSession(created.id, 'Fresh Claude')
     expect(renamed.title).toBe('Fresh Claude')
 
+    const removals: unknown[] = []
+    service.on('event', (event) => {
+      if (event.type === 'session.removed') {
+        removals.push(event)
+      }
+    })
+
     deleteSession.mockRejectedValueOnce(new Error('Session not found'))
     const cleared = await service.clearConversation(created.id)
     expect(cleared.id).not.toBe(created.id)
     expect(cleared.messages).toEqual([])
+    // Clearing replaces a session here as it does for Copilot, so every
+    // client can move its state across rather than discard it.
+    expect(removals).toEqual([
+      { type: 'session.removed', sessionId: created.id, replacedBy: cleared.id },
+    ])
 
     deleteSession.mockRejectedValueOnce(new Error('Session not found'))
     await service.deleteSession(cleared.id)

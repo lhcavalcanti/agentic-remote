@@ -15,6 +15,7 @@ import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
   ManagedSession,
+  WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
 import App from './App'
@@ -207,6 +208,18 @@ const secondSession: ManagedSession = {
   messages: [],
 }
 
+/**
+ * Knowledge listings have to answer per path. A single fixed listing makes
+ * every folder contain itself, so expanding one recurses until the stack is
+ * exhausted and `<App>` crashes while the assertions still pass.
+ */
+function knowledgeListings(
+  listings: Record<string, WorkspaceListing>,
+): (rootId: string, path?: string) => Promise<WorkspaceListing> {
+  return async (_rootId, path = '.') =>
+    listings[path] || { path, parent: '.', entries: [] }
+}
+
 let restoreScrollTop: (() => void) | undefined
 
 describe('App', () => {
@@ -305,6 +318,9 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    // The address now carries the selected session, so it has to be reset or
+    // one test's deep link selects a session in the next.
+    window.history.replaceState({}, '', '/')
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(listBackgroundTasks).mockResolvedValue({
       tasks: [],
@@ -4399,7 +4415,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
 
     // The first root is selected automatically and listed without any session.
@@ -4433,11 +4449,16 @@ describe('App', () => {
       within(outline).getByRole('button', { name: 'Install' }),
     ).toBeInTheDocument()
 
-    // Switching back leaves the conversation intact.
-    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }))
+    // Closing the panel leaves the conversation and its sessions intact.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
     expect(
       screen.getByRole('navigation', { name: 'Sessions' }),
     ).not.toHaveAttribute('hidden')
+    expect(
+      document.querySelector('.knowledge-panel'),
+    ).toHaveAttribute('hidden')
   })
 
   it('expands knowledge folders in place and remembers them', async () => {
@@ -4480,7 +4501,7 @@ describe('App', () => {
     )
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
 
     const guides = await within(tree).findByRole('treeitem', {
@@ -4562,7 +4583,7 @@ describe('App', () => {
     })
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
 
     fireEvent.click(await within(tree).findByRole('treeitem', { name: /notes/ }))
@@ -4608,7 +4629,7 @@ describe('App', () => {
     )
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
     const guides = await within(tree).findByRole('treeitem', { name: /guides/ })
     guides.focus()
@@ -4648,14 +4669,21 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     fireEvent.click(
       await screen.findByRole('button', { name: 'Add knowledge root' }),
     )
-    fireEvent.click(await screen.findByRole('button', { name: /src/ }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Add this folder' }),
-    )
+    // Sessions stay visible beside the panel, so the folder has to be picked
+    // inside the dialog rather than anywhere on screen.
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(await within(rootDialog).findByRole('button', { name: /src/ }))
+    const addFolder = within(rootDialog).getByRole('button', {
+      name: 'Add this folder',
+    })
+    await waitFor(() => expect(addFolder).toBeEnabled())
+    fireEvent.click(addFolder)
 
     await waitFor(() =>
       expect(addKnowledgeRoot).toHaveBeenCalledWith({
@@ -4772,6 +4800,10 @@ describe('App', () => {
 
   it('reopens the document that was being read', async () => {
     localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
       'agentic-remote:knowledge-position',
       JSON.stringify({
         rootId: 'root-1',
@@ -4823,9 +4855,117 @@ describe('App', () => {
         'guides/setup.md',
       ),
     )
-    fireEvent.click(screen.getByRole('tab', { name: 'Knowledge' }))
     expect(
       await screen.findByRole('heading', { name: 'Setup guide' }),
+    ).toBeInTheDocument()
+    // Adopted by the session that was open, and gone from where an older
+    // build kept it.
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      ),
+    ).toEqual({
+      'computer-1:session-1': {
+        rootId: 'root-1',
+        path: 'guides',
+        file: 'guides/setup.md',
+      },
+    })
+    expect(localStorage.getItem('agentic-remote:knowledge-position')).toBeNull()
+  })
+
+  it('drops an app-wide position rather than filing it under a linked session', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2',
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify({
+        rootId: 'root-1',
+        path: 'guides',
+        file: 'guides/setup.md',
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Second chat')
+    await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
+
+    // The link says which session to open, not where that session was
+    // reading, so the position an older build kept is discarded.
+    await waitFor(() =>
+      expect(
+        localStorage.getItem('agentic-remote:knowledge-position'),
+      ).toBeNull(),
+    )
+    expect(readKnowledgeFile).not.toHaveBeenCalled()
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )['computer-1:session-2'],
+    ).toBeUndefined()
+    window.history.replaceState({}, '', '/')
+  })
+
+  it('keeps a muted session muted when an update lands during a settings read', async () => {
+    let answerSettings: (() => void) | undefined
+    vi.mocked(getPushSettings).mockImplementation(
+      () =>
+        new Promise<{ mutedSessions: string[] }>((resolve) => {
+          answerSettings = () =>
+            resolve({ mutedSessions: ['computer-1:session-1'] })
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(answerSettings).toBeDefined())
+
+    // An ordinary update says nothing about notifications, so it must not
+    // make the answer look stale for the session it mentions.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, activity: 'Thinking' },
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSettings?.()
+    })
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Unmute session notifications',
+      }),
     ).toBeInTheDocument()
   })
 
@@ -4867,11 +5007,1946 @@ describe('App', () => {
     )
   })
 
+  it('keeps knowledge open across sessions and follows the new one', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const panel = document.querySelector('.knowledge-panel')
+    expect(panel).toHaveAttribute('hidden')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--docked',
+    )
+    // Files are navigated from the sidebar, in every mode.
+    const sidebar = document.querySelector('.sidebar')!
+    expect(
+      within(sidebar as HTMLElement).getByRole('navigation', {
+        name: 'Knowledge',
+      }),
+    ).toBeInTheDocument()
+
+    // Reading survives a session switch instead of being dismissed.
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+    )
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /Second chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
+    )
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-mode') || '""',
+      ),
+    ).toBe('docked')
+  })
+
+  it('expands the knowledge panel over the conversation', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    expect(document.querySelector('.conversation')).not.toHaveAttribute(
+      'hidden',
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Expand knowledge panel' }),
+    )
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--expanded',
+    )
+    // Expanded covers the conversation instead of squeezing it.
+    expect(document.querySelector('.conversation')).toHaveAttribute('hidden')
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Minimize knowledge panel' }),
+    )
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--docked',
+    )
+    expect(document.querySelector('.conversation')).not.toHaveAttribute(
+      'hidden',
+    )
+  })
+
+  it('restores the knowledge scroll position when the panel reopens', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: Array.from({ length: 40 }, (_, index) => ({
+        name: `note-${index}.md`,
+        path: `note-${index}.md`,
+        kind: 'markdown' as const,
+        size: 10,
+      })),
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    tree.scrollTop = 180
+    fireEvent.scroll(tree)
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
+    // A hidden panel reports 0; recording that would erase the position.
+    tree.scrollTop = 0
+    fireEvent.scroll(tree)
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+
+    // Reopening resumes where the reader was, instead of jumping to the top.
+    expect(
+      screen.getByRole('navigation', { name: 'Knowledge' }).scrollTop,
+    ).toBe(180)
+  })
+
+  it('drives sessions and the knowledge panel from the keyboard', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    // Shortcuts are bound to the window, so they work with focus anywhere.
+    const shell = window
+    const sessionItem = (title: RegExp) =>
+      screen
+        .getAllByRole('button', { name: title })
+        .find((item) => item.classList.contains('session-item'))!
+    expect(sessionItem(/Project chat/)).toHaveAttribute('aria-current', 'page')
+
+    fireEvent.keyDown(shell, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() =>
+      expect(sessionItem(/Second chat/)).toHaveAttribute('aria-current', 'page'),
+    )
+    fireEvent.keyDown(shell, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
+    await waitFor(() =>
+      expect(sessionItem(/Project chat/)).toHaveAttribute('aria-current', 'page'),
+    )
+
+    fireEvent.keyDown(shell, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+    fireEvent.keyDown(shell, {
+      key: 'K',
+      code: 'KeyK',
+      altKey: true,
+      shiftKey: true,
+    })
+    expect(document.querySelector('.workspace')).toHaveClass(
+      'workspace--expanded',
+    )
+    fireEvent.keyDown(shell, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
+  })
+
+  it('lists the keyboard shortcuts in app settings', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+
+    const shortcuts = await screen.findByRole('heading', {
+      name: 'Keyboard shortcuts',
+    })
+    const list = shortcuts.parentElement?.querySelector('.shortcut-list')
+    expect(list).toHaveTextContent('Next session')
+    expect(list).toHaveTextContent('Open or close knowledge')
+    expect(list).toHaveTextContent('Expand or minimize knowledge')
+  })
+
+  it('keeps the selected session in the URL and follows browser history', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    window.history.replaceState({}, '', '/')
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // Auto-selection corrects the address without adding a history entry.
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1',
+      ),
+    )
+
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+    )
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-2',
+      ),
+    )
+
+    // Going back returns to the session that was open before.
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-1',
+    )
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /Project chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
+    )
+  })
+
+  it('keeps knowledge reachable with no session selected', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
+
+    render(<App />)
+    // Configured roots stay browsable when no session exists at all.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Session knowledge' }),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    expect(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('does not overwrite a session knowledge position before restoring it', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-2': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    // Selecting another session must not stamp the previous session's reader
+    // state over its own remembered one.
+    fireEvent.click(
+      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+    )
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /Second chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )['computer-1:session-2'],
+    ).toEqual({ rootId: 'root-1', path: 'guides' })
+  })
+
+  it('leaves composer text editing to the composer', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    textarea.focus()
+
+    fireEvent.keyDown(textarea, {
+      key: 'ArrowDown',
+      code: 'ArrowDown',
+      altKey: true,
+    })
+    fireEvent.keyDown(textarea, { key: 'k', code: 'KeyK', altKey: true })
+
+    // Alt+Arrow moves the caret by word, so the shortcut must stand down.
+    expect(
+      screen
+        .getAllByRole('button', { name: /Project chat/ })
+        .find((item) => item.classList.contains('session-item')),
+    ).toHaveAttribute('aria-current', 'page')
+    expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
+  })
+
+  it('shows errors in the knowledge panel that covers the conversation', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: '.',
+      entries: [
+        { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 10 },
+      ],
+    })
+    vi.mocked(readKnowledgeFile).mockRejectedValue(new Error('offline'))
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Expand knowledge panel' }),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    )
+
+    // The conversation is covered, so its banner cannot be the only one.
+    const panel = document.querySelector('.knowledge-panel')!
+    await waitFor(() =>
+      expect(panel.querySelector('.knowledge-panel__error')).toHaveTextContent(
+        'offline',
+      ),
+    )
+  })
+
+  it('opens the session a direct link names', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(secondSession)
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2',
+    )
+
+    render(<App />)
+    await screen.findAllByText('Second chat')
+
+    // Synchronising the address must not erase the link before the session
+    // loader has read it.
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /Second chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
+    )
+    expect(window.location.search).toBe(
+      '?computer=computer-1&session=session-2',
+    )
+  })
+
+  it('forgets the knowledge state of a closed session', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(deleteSession).mockResolvedValue()
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+        'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
+      }),
+    )
+    const confirmSpy = vi
+      .spyOn(window, 'confirm')
+      .mockReturnValue(true)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({ 'computer-1:session-2': { rootId: 'root-1', path: 'notes' } }),
+    )
+    confirmSpy.mockRestore()
+  })
+
+  it('leaves the previous folder when the next session sits at the root', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+        'computer-1:session-2': { rootId: 'root-1', path: '.' },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+        guides: {
+          path: 'guides',
+          parent: '.',
+          entries: [
+            { name: 'setup.md', path: 'guides/setup.md', kind: 'markdown' },
+          ],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'guides', current: true }),
+      ).toBeInTheDocument(),
+    )
+
+    // Both sessions share the active root, so nothing has to be reloaded, but
+    // the second session was left at the root and must be taken back there.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'docs', current: true }),
+      ).toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByRole('button', { name: 'guides', current: true }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the migrated mute when the first settings read answers late', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    let answerSettings: (() => void) | undefined
+    vi.mocked(getPushSettings).mockImplementation(
+      () =>
+        new Promise<{ mutedSessions: string[] }>((resolve) => {
+          // The first read goes out before anything is muted, so its answer
+          // describes a world without either the mute or the replacement.
+          answerSettings = () => resolve({ mutedSessions: [] })
+        }),
+    )
+    vi.mocked(clearConversation).mockResolvedValue(replacement)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(answerSettings).toBeDefined())
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Mute session notifications' }),
+    )
+    await screen.findByRole('button', {
+      name: 'Unmute session notifications',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSettings?.()
+    })
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Unmute session notifications',
+      }),
+    ).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('retries a knowledge restore that failed', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) => {
+      if (path === 'guides') {
+        throw new Error('offline')
+      }
+      return {
+        path: '.',
+        entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+      }
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', 'guides'),
+    )
+
+    // A restore that failed is not remembered as done, so closing and
+    // reopening tries the branch again instead of giving up on it.
+    const attempts = vi
+      .mocked(listKnowledgeEntries)
+      .mock.calls.filter(([, path]) => path === 'guides').length
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(listKnowledgeEntries)
+          .mock.calls.filter(([, path]) => path === 'guides').length,
+      ).toBeGreaterThan(attempts),
+    )
+  })
+
+  it('reaches the file tree while the panel covers the conversation', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+
+    // The sidebar slides away on a phone, so the panel offers a way back to
+    // the files it is reading.
+    fireEvent.click(screen.getByRole('button', { name: 'Show files' }))
+    expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open')
+  })
+
+  it('leaves file navigation keys to the file tree', async () => {
+    const historySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'history-user-1',
+          role: 'user',
+          content: 'Earlier prompt',
+          createdAt: '2026-07-22T00:00:00.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+      }),
+    )
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('navigation', { name: 'Knowledge' })
+    // The root selector and breadcrumbs sit outside the tree's own key
+    // handling, so they are where a stray recall would surface.
+    const rootButton = document.querySelector<HTMLButtonElement>(
+      '.knowledge-root > button',
+    )!
+    rootButton.focus()
+
+    fireEvent.keyDown(rootButton, { key: 'ArrowUp' })
+
+    // Working through the file navigation must not recall a message into the
+    // composer or pull focus away from it.
+    expect(textarea).toHaveValue('')
+    expect(rootButton).toHaveFocus()
+  })
+
+  it('carries the reading position to a cleared conversation', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    vi.mocked(clearConversation).mockResolvedValue(replacement)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({
+      path: 'guides',
+      parent: '.',
+      entries: [
+        { name: 'setup.md', path: 'guides/setup.md', kind: 'markdown', size: 8 },
+      ],
+    })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+
+    // Clearing gives the session a new id, so its reading position has to
+    // travel with it rather than being stranded under the old one.
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({
+        'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    confirmSpy.mockRestore()
+  })
+
+  it('drops a file still loading when the folder moves on', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'slow.md', path: 'slow.md', kind: 'markdown', size: 8 },
+            { name: 'guides', path: 'guides', kind: 'directory' },
+          ],
+        },
+      }),
+    )
+    let releaseFile: ((file: WorkspaceFile) => void) | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(
+      () =>
+        new Promise<WorkspaceFile>((resolve) => {
+          releaseFile = resolve
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /slow.md/ }),
+    )
+    // Navigating with the breadcrumb clears the reader, so a late answer for
+    // the file left behind must not repopulate it.
+    const crumbs = within(tree).getByRole('group', { name: 'Knowledge folder' })
+    fireEvent.click(within(crumbs).getByRole('button', { name: 'docs' }))
+
+    releaseFile?.({
+      name: 'slow.md',
+      path: 'slow.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 8,
+      content: '# Stale document',
+    })
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: 'Stale document' }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByRole('heading', { name: 'Stale document' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('lists a knowledge root created as the first one', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockResolvedValue({
+      path: '/srv',
+      parent: '/',
+      directories: [{ name: 'docs', path: '/srv/docs' }],
+    })
+    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+      id: 'root-new',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/srv',
+      name: 'srv',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    })
+    let releaseListing: (() => void) | undefined
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      () =>
+        new Promise<WorkspaceListing>((resolve) => {
+          releaseListing = () =>
+            resolve({
+              path: '.',
+              entries: [
+                { name: 'guides', path: 'guides', kind: 'directory' },
+              ],
+            })
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add knowledge root' }),
+    )
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    const addFolder = within(rootDialog).getByRole('button', {
+      name: 'Add this folder',
+    })
+    await waitFor(() => expect(addFolder).toBeEnabled())
+    fireEvent.click(addFolder)
+
+    // The listing is answered only once the new root has been rendered, which
+    // is exactly when a stray invalidation would discard it and leave the
+    // tree empty until the root is picked again by hand.
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    await waitFor(() => expect(releaseListing).toBeDefined())
+    releaseListing?.()
+    expect(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('falls back when history names a session that is gone', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=deleted-session',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    // Reconciled in the same commit as the history event, rather than left
+    // with nothing selected until some later refresh repairs it.
+    expect(
+      screen
+        .getAllByRole('button', { name: /Project chat/ })
+        .find((item) => item.classList.contains('session-item')),
+    ).toHaveAttribute('aria-current', 'page')
+
+    // Going back to a session that has since been closed must land on one
+    // that still exists rather than on nothing at all.
+    // Checked well inside the transcript poll interval, so the fallback is
+    // the fix rather than the next refresh happening to repair it.
+    await waitFor(
+      () =>
+        expect(
+          screen
+            .getAllByRole('button', { name: /Project chat/ })
+            .find((item) => item.classList.contains('session-item')),
+        ).toHaveAttribute('aria-current', 'page'),
+      { timeout: 250 },
+    )
+    await waitFor(
+      () =>
+        expect(window.location.search).toBe(
+          '?computer=computer-1&session=session-1',
+        ),
+      { timeout: 250 },
+    )
+  })
+
+  it('colours the knowledge toggles while they are on', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // A toggle that is on is accented, the way the mute control already is,
+    // so its state is visible and not only announced.
+    const toggle = screen.getByRole('button', { name: 'Session knowledge' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).not.toHaveClass('icon-button--active')
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle).toHaveClass('icon-button--active')
+
+    const expand = screen.getByRole('button', { name: 'Expand knowledge panel' })
+    expect(expand).toHaveAttribute('aria-pressed', 'false')
+    expect(expand).not.toHaveClass('icon-button--active')
+
+    fireEvent.click(expand)
+    const minimize = screen.getByRole('button', {
+      name: 'Minimize knowledge panel',
+    })
+    expect(minimize).toHaveAttribute('aria-pressed', 'true')
+    expect(minimize).toHaveClass('icon-button--active')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close knowledge panel' }))
+    expect(
+      screen.getByRole('button', { name: 'Session knowledge' }),
+    ).not.toHaveClass('icon-button--active')
+  })
+
+  it('keeps a chosen file when a slow restore finishes late', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': {
+          rootId: 'root-1',
+          path: 'guides',
+          file: 'guides/remembered.md',
+        },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    let releaseGuides: (() => void) | undefined
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (_root, path) =>
+        path === 'guides'
+          ? new Promise<WorkspaceListing>((resolve) => {
+              releaseGuides = () =>
+                resolve({
+                  path: 'guides',
+                  parent: '.',
+                  entries: [
+                    {
+                      name: 'remembered.md',
+                      path: 'guides/remembered.md',
+                      kind: 'markdown' as const,
+                      size: 10,
+                    },
+                  ],
+                })
+            })
+          : {
+              path: '.',
+              entries: [
+                {
+                  name: 'chosen.md',
+                  path: 'chosen.md',
+                  kind: 'markdown' as const,
+                  size: 10,
+                },
+                { name: 'guides', path: 'guides', kind: 'directory' as const },
+              ],
+            },
+    )
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_root, target) => ({
+      name: target.split('/').pop() || target,
+      path: target,
+      kind: 'markdown' as const,
+      mimeType: 'text/plain; charset=utf-8',
+      size: 10,
+      content:
+        target === 'chosen.md' ? '# Chosen document' : '# Remembered document',
+    }))
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    // The restore is parked on the remembered folder.
+    await waitFor(() => expect(releaseGuides).toBeDefined())
+
+    // Meanwhile the reader opens a different document.
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /chosen.md/ }),
+    )
+    await screen.findByRole('heading', { name: 'Chosen document' })
+
+    releaseGuides?.()
+
+    // The late restore must not reopen the remembered document over it.
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', 'guides'),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(
+      screen.getByRole('heading', { name: 'Chosen document' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('heading', { name: 'Remembered document' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('leaves a history entry when a session is created', async () => {
+    const fresh: ManagedSession = {
+      ...session,
+      id: 'session-fresh',
+      title: 'Fresh chat',
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(createSession).mockResolvedValue(fresh)
+    vi.mocked(listDirectories).mockResolvedValue({
+      path: '/home/tester',
+      parent: '/home',
+      directories: [{ name: 'src', path: '/home/tester/src' }],
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1',
+      ),
+    )
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0]!)
+    const dialog = await screen.findByRole('dialog', { name: 'Choose a folder' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Create session/ }))
+
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-fresh',
+      ),
+    )
+
+    // Creating a session is navigation, so Back returns to the one that was
+    // open before it rather than replacing that entry.
+    act(() => {
+      window.history.back()
+    })
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1',
+      ),
+    )
+  })
+
+  it('keeps a chosen root when a slow restore finishes late', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': {
+          rootId: 'root-1',
+          path: 'guides',
+          file: 'guides/remembered.md',
+        },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+      {
+        id: 'root-2',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/other',
+        name: 'other',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    let releaseGuides: (() => void) | undefined
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      async (rootId, path = '.') => {
+        if (rootId === 'root-1' && path === 'guides') {
+          return new Promise<WorkspaceListing>((resolve) => {
+            releaseGuides = () =>
+              resolve({
+                path: 'guides',
+                parent: '.',
+                entries: [
+                  {
+                    name: 'remembered.md',
+                    path: 'guides/remembered.md',
+                    kind: 'markdown',
+                    size: 10,
+                  },
+                ],
+              })
+          })
+        }
+        return rootId === 'root-2'
+          ? {
+              path: '.',
+              entries: [
+                { name: 'only-here.md', path: 'only-here.md', kind: 'markdown', size: 4 },
+              ],
+            }
+          : {
+              path: '.',
+              entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+            }
+      },
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'remembered.md',
+      path: 'guides/remembered.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 10,
+      content: '# Remembered document',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    await waitFor(() => expect(releaseGuides).toBeDefined())
+
+    // The reader switches root while the remembered branch is still loading.
+    fireEvent.click(
+      within(tree)
+        .getAllByRole('button', { name: /other/ })
+        .find((button) => button.closest('.knowledge-root'))!,
+    )
+    await within(tree).findByRole('treeitem', { name: /only-here.md/ })
+
+    releaseGuides?.()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    // The late restore belongs to the root that was left, so it must not
+    // reopen its document over the newly chosen one.
+    expect(
+      screen.queryByRole('heading', { name: 'Remembered document' }),
+    ).not.toBeInTheDocument()
+
+    // Abandoning the restore also has to hand recording back, or the root the
+    // reader chose is never remembered for this session.
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        )['computer-1:session-1'],
+      ).toMatchObject({ rootId: 'root-2' }),
+    )
+  })
+
+  it('does not show one session document while another is selected', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 10 },
+          ],
+        },
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'setup.md',
+      path: 'setup.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 10,
+      content: '# Setup guide',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    )
+    await screen.findByRole('heading', { name: 'Setup guide' })
+
+    // The second session has never opened anything, so the panel must not
+    // leave the first session's document on screen under its name.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: 'Setup guide' }),
+      ).not.toBeInTheDocument(),
+    )
+  })
+
+  it('drops a file read left behind by the session that started it', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'slow.md', path: 'slow.md', kind: 'markdown', size: 10 },
+          ],
+        },
+      }),
+    )
+    let releaseFile: (() => void) | undefined
+    vi.mocked(readKnowledgeFile).mockImplementation(
+      () =>
+        new Promise<WorkspaceFile>((resolve) => {
+          releaseFile = () =>
+            resolve({
+              name: 'slow.md',
+              path: 'slow.md',
+              kind: 'markdown',
+              mimeType: 'text/plain; charset=utf-8',
+              size: 10,
+              content: '# Slow document',
+            })
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+
+    // The first session starts reading a document.
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /slow.md/ }),
+    )
+    await waitFor(() => expect(releaseFile).toBeDefined())
+
+    // Before it lands, the reader moves to a session that has never opened
+    // anything at all.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { name: /Second chat/ })
+          .find((item) => item.classList.contains('session-item')),
+      ).toHaveAttribute('aria-current', 'page'),
+    )
+
+    releaseFile?.()
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    // The read belongs to the session that asked for it, so it must not
+    // surface under the one now selected, nor be saved as its position.
+    expect(
+      screen.queryByRole('heading', { name: 'Slow document' }),
+    ).not.toBeInTheDocument()
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      )['computer-1:session-2']?.file,
+    ).toBeUndefined()
+  })
+
+  it('forgets knowledge state for a session removed elsewhere', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+        'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The removal reaches every connected client, not only the one that
+    // closed the session, so each has to forget what it was reading.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-2',
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1': { rootId: 'root-1', path: 'guides' } }),
+    )
+  })
+
+  it('loads the folders above a remembered document on startup', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify({ rootId: 'root-1', path: 'guides/deep' }),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: 'guides', path: 'guides', kind: 'directory' }],
+        },
+        guides: {
+          path: 'guides',
+          parent: '.',
+          entries: [
+            { name: 'deep', path: 'guides/deep', kind: 'directory' },
+          ],
+        },
+        'guides/deep': {
+          path: 'guides/deep',
+          parent: 'guides',
+          entries: [
+            {
+              name: 'note.md',
+              path: 'guides/deep/note.md',
+              kind: 'markdown',
+              size: 6,
+            },
+          ],
+        },
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The remembered folder sits two levels down, so its ancestors have to
+    // load for the branch to be reachable at all.
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenCalledWith('root-1', 'guides'),
+    )
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    expect(
+      await within(tree).findByRole('treeitem', { name: /note.md/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('carries the position across a clear even as the removal arrives', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    let releaseClear: (() => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(
+      () =>
+        new Promise<ManagedSession>((resolve) => {
+          releaseClear = () => resolve(replacement)
+        }),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(releaseClear).toBeDefined())
+
+    // The server removes the old session and creates a replacement, and the
+    // removal reaches this client first. Pruning then would throw the
+    // position away before it could be moved across.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      releaseClear?.()
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({
+        'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    confirmSpy.mockRestore()
+  })
+
+  it('moves the position on a client that did not issue the clear', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // Another browser cleared the conversation. This client only sees the
+    // removal, so the event has to say the session was replaced rather than
+    // deleted, or the position is thrown away here.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-2',
+          replacedBy: 'session-2-cleared',
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({
+        'computer-1:session-2-cleared': { rootId: 'root-1', path: 'notes' },
+      }),
+    )
+  })
+
+  it('carries the draft across a clear on every client', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Draft worth keeping' } })
+
+    // Another browser cleared this conversation. The replacement is a new
+    // session id, so the draft has to travel with it rather than be dropped.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: 'session-1-cleared',
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, id: 'session-1-cleared', messages: [] },
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue(
+        'Draft worth keeping',
+      ),
+    )
+  })
+
+  it('clears a foreign document after the panel was closed in between', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(
+      knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [
+            { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 10 },
+          ],
+        },
+      }),
+    )
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'setup.md',
+      path: 'setup.md',
+      kind: 'markdown',
+      mimeType: 'text/plain; charset=utf-8',
+      size: 10,
+      content: '# Setup guide',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    )
+    await screen.findByRole('heading', { name: 'Setup guide' })
+
+    // Closing the panel resets the handled marker, so only the view owner
+    // still knows this document belongs to the first session.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close knowledge panel' }),
+    )
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('heading', { name: 'Setup guide' }),
+      ).not.toBeInTheDocument(),
+    )
+  })
+
+  it('keeps a cleared session muted and selected', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(getPushSettings).mockResolvedValue({
+      mutedSessions: ['computer-1:session-1'],
+    })
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Unmute session notifications' }),
+      ).toBeInTheDocument(),
+    )
+
+    // Removal and upsert arrive separately. Following the replacement keeps
+    // the conversation selected and silenced across the gap, instead of
+    // landing on an unrelated session with notifications switched back on.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: 'session-1-cleared',
+        }),
+      } as MessageEvent)
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, id: 'session-1-cleared', messages: [] },
+        }),
+      } as MessageEvent)
+    })
+
+    // The address carries the selection, so it says plainly which session is
+    // open once the replacement arrives.
+    await waitFor(() =>
+      expect(window.location.search).toBe(
+        '?computer=computer-1&session=session-1-cleared',
+      ),
+    )
+    expect(
+      screen.getByRole('button', { name: 'Unmute session notifications' }),
+    ).toBeInTheDocument()
+  })
+
+  it('loads the root listing even if the first attempt was superseded', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-position',
+      JSON.stringify({ rootId: 'root-1', path: '.' }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    const rootListing: WorkspaceListing = {
+      path: '.',
+      entries: [
+        { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 8 },
+      ],
+    }
+    let releaseRoot: (() => void) | undefined
+    let held = false
+    vi.mocked(listKnowledgeEntries).mockImplementation(async () => {
+      if (held) {
+        return rootListing
+      }
+      held = true
+      // Only the startup load is held open; the recovery that follows has to
+      // answer normally or the test could not tell the two apart.
+      return new Promise<WorkspaceListing>((resolve) => {
+        releaseRoot = () => resolve(rootListing)
+      })
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(releaseRoot).toBeDefined())
+
+    // Switching session supersedes the startup load, which then writes
+    // nothing. The panel must still end up with a listing rather than sit
+    // blank until the root is picked again by hand.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    releaseRoot?.()
+
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    expect(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps everything when an older node omits the replacement', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    let releaseClear: (() => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(
+      () =>
+        new Promise<ManagedSession>((resolve) => {
+          releaseClear = () => resolve(replacement)
+        }),
+    )
+    vi.mocked(getPushSettings).mockResolvedValue({
+      mutedSessions: ['computer-1:session-1'],
+    })
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Draft worth keeping' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(releaseClear).toBeDefined())
+
+    // A node on an older build sends no replacement link, so the removal
+    // looks like a deletion. Everything the conversation carries has to
+    // survive until the response names the replacement.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      releaseClear?.()
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+            '{}',
+        ),
+      ).toEqual({
+        'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    expect(screen.getByLabelText('Message')).toHaveValue('Draft worth keeping')
+    expect(
+      screen.getByRole('button', { name: 'Unmute session notifications' }),
+    ).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('keeps the migrated mute when a stale refresh answers late', async () => {
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      messages: [],
+    }
+    vi.mocked(getPushSettings).mockResolvedValue({
+      mutedSessions: ['computer-1:session-1'],
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await screen.findByRole('button', {
+      name: 'Unmute session notifications',
+    })
+
+    let answerSettings: (() => void) | undefined
+    vi.mocked(getPushSettings).mockImplementation(
+      () =>
+        new Promise<{ mutedSessions: string[] }>((resolve) => {
+          // A reconnect asks before the clear happens, so its answer still
+          // names the session that is about to be replaced.
+          answerSettings = () =>
+            resolve({ mutedSessions: ['computer-1:session-1'] })
+        }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+
+    const socket = MockWebSocket.instances[0]!
+    act(() => {
+      socket.onopen?.()
+    })
+    await waitFor(() => expect(answerSettings).toBeDefined())
+
+    act(() => {
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      socket.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSettings?.()
+    })
+
+    // The reply predates the clear, so it must not unmute the replacement the
+    // mute was just moved to.
+    expect(
+      await screen.findByRole('button', {
+        name: 'Unmute session notifications',
+      }),
+    ).toBeInTheDocument()
+  })
+
+  it('recovers a root listing abandoned mid-flight', async () => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify('docked'),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: '.' },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    const rootListing: WorkspaceListing = {
+      path: '.',
+      entries: [
+        { name: 'setup.md', path: 'setup.md', kind: 'markdown', size: 8 },
+      ],
+    }
+    let switched = false
+    const stalled: ((listing: WorkspaceListing) => void)[] = []
+    vi.mocked(listKnowledgeEntries).mockImplementation(async () => {
+      if (switched) {
+        return rootListing
+      }
+      // Every reply is held back until the session has changed, so the
+      // generation check discards them all and the folder is left marked
+      // loading with nothing on the way.
+      return new Promise<WorkspaceListing>((resolve) => {
+        stalled.push(resolve)
+      })
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(stalled.length).toBeGreaterThan(0))
+
+    // Changing session abandons the load. The new session has nothing to
+    // restore, so nothing else asks for the root: the discarded reply would
+    // otherwise leave the folder marked loading for ever.
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    switched = true
+    await act(async () => {
+      for (const resolve of stalled) {
+        resolve(rootListing)
+      }
+    })
+
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    expect(
+      await within(tree).findByRole('treeitem', { name: /setup.md/ }),
+    ).toBeInTheDocument()
+  })
+
   it('no longer offers a separate saved paths panel', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    expect(screen.queryByLabelText('Knowledge')).not.toBeInTheDocument()
+    // Knowledge is a per-session panel now, closed until the session opens it.
+    expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
     expect(
       screen.getByRole('button', { name: 'Add knowledge root' }),
     ).toBeInTheDocument()
@@ -4902,13 +6977,18 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
     await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
 
-    // A failed restore must not erase where the reader was.
+    // A failed restore must not erase where the reader was. The position now
+    // belongs to the session that adopted it, and the app-wide one an older
+    // build left behind is gone for good.
     await waitFor(() =>
       expect(
         JSON.parse(
-          localStorage.getItem('agentic-remote:knowledge-position') || '{}',
+          localStorage.getItem(
+            'agentic-remote:knowledge-session-positions',
+          ) || '{}',
         ),
-      ).toEqual(remembered),
+      ).toEqual({ 'computer-1:session-1': remembered }),
     )
+    expect(localStorage.getItem('agentic-remote:knowledge-position')).toBeNull()
   })
 })

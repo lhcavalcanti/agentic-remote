@@ -723,6 +723,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         type: 'session.removed',
         computerId: computer.id,
         sessionId: event.sessionId,
+        replacedBy: event.replacedBy,
       })
       return
     }

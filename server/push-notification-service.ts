@@ -188,14 +188,19 @@ export class PushNotificationService {
       return
     }
     if (event.type === 'session.removed') {
+      const removedKey = this.sessionKey(event.computerId, event.sessionId)
       this.removeSessionQuestions(event.computerId, event.sessionId)
-      this.sessionStatuses.delete(
-        this.sessionKey(event.computerId, event.sessionId),
-      )
-      this.removeMutedSessions(
-        this.sessionKey(event.computerId, event.sessionId),
-        true,
-      )
+      this.sessionStatuses.delete(removedKey)
+      if (event.replacedBy) {
+        // Clearing replaces a session rather than ending it. The mute belongs
+        // to the conversation, so silencing it must survive being cleared.
+        this.moveMutedSession(
+          removedKey,
+          this.sessionKey(event.computerId, event.replacedBy),
+        )
+      } else {
+        this.removeMutedSessions(removedKey, true)
+      }
       return
     }
     if (event.type !== 'session.upserted') {
@@ -256,6 +261,20 @@ export class PushNotificationService {
 
   private sessionKey(computerId: string, sessionId: string): string {
     return `${computerId}:${sessionId}`
+  }
+
+  private moveMutedSession(fromKey: string, toKey: string): void {
+    const state = this.requireState()
+    if (!state.mutedSessions.includes(fromKey)) {
+      return
+    }
+    state.mutedSessions = [
+      ...state.mutedSessions.filter((session) => session !== fromKey),
+      toKey,
+    ]
+    void this.persist().catch((error: unknown) => {
+      console.warn('Unable to persist notification mute transfer:', error)
+    })
   }
 
   private removeMutedSessions(value: string, exact: boolean): void {

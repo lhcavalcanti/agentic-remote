@@ -9,6 +9,8 @@ import {
   isTerminalAgentWorking,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
+  paneEvidenceCount,
+  paneShowsText,
   parseTerminalFormActiveField,
   parseTerminalPermission,
   parseTerminalUpdateNotice,
@@ -427,6 +429,57 @@ Permission request (1 remaining)
     expect(await readFile(output, 'utf8')).toBe(
       'MESSAGE-AAAA\nMESSAGE-BBBB',
     )
+  })
+})
+
+describe('paneShowsText', () => {
+  it('recognises a long line the pane wrapped inside a word', () => {
+    const message =
+      'Please refactor the deployment-orchestration-controller module today'
+    // The pane wraps at its own width, which lands in the middle of a word.
+    const pane = [
+      '> Please refactor the deployment-orchestrat',
+      'ion-controller module today',
+      '',
+    ].join('\n')
+    expect(paneShowsText(pane, message)).toBe(true)
+  })
+
+  it('recognises a paste Copilot replaced with a placeholder', () => {
+    expect(
+      paneShowsText('> [Pasted text #1 +40 lines]', 'a very long message'),
+    ).toBe(true)
+  })
+
+  it('does not accept the same message sent earlier as this one arriving', () => {
+    const message = 'Retry the deployment'
+    const before = `> ${message}\n  done\n`
+    // The reader sent it once already, so the pane held it before this paste.
+    expect(
+      paneShowsText(before, message, paneEvidenceCount(before, message)),
+    ).toBe(false)
+    expect(
+      paneShowsText(
+        `${before}> ${message}`,
+        message,
+        paneEvidenceCount(before, message),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not accept an earlier large paste as this one arriving', () => {
+    const before = '> [Pasted text #1 +40 lines]\n  done\n'
+    expect(
+      paneShowsText(before, 'a different long message', paneEvidenceCount(before, 'a different long message')),
+    ).toBe(false)
+  })
+
+  it('does not claim an empty prompt is showing the message', () => {
+    expect(paneShowsText('> \n', 'Deploy the treatment engine')).toBe(false)
+  })
+
+  it('treats a message of only whitespace as already shown', () => {
+    expect(paneShowsText('> \n', '   ')).toBe(true)
   })
 })
 

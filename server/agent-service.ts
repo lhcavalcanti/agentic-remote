@@ -2369,7 +2369,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         id,
         replacementId,
       )
-      this.emit('event', { type: 'session.removed', sessionId: id })
+      this.emit('event', {
+        type: 'session.removed',
+        sessionId: id,
+        replacedBy: replacementId,
+      })
       this.publish(cleared)
       return cleared
     } finally {

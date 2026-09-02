@@ -57,8 +57,10 @@ import {
   List,
   LoaderCircle,
   ListPlus,
+  Maximize2,
   Menu,
   MessageSquare,
+  Minimize2,
   Mic,
   MonitorCog,
   Paperclip,
@@ -159,6 +161,7 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import { knowledgeRestoreAction } from './knowledge-restore'
 import {
   collapseKnowledgeFolder,
   expandKnowledgeFolder,
@@ -327,6 +330,49 @@ type ComposerHistoryState = {
   messages: string[]
   index: number
   draft: string
+}
+
+/**
+ * How much room a session's Knowledge panel takes. `expanded` covers the
+ * conversation so a document can be read at full width without losing the
+ * session it belongs to.
+ */
+type KnowledgePanelMode = 'hidden' | 'docked' | 'expanded'
+
+/** Panel state when no session is selected, so roots stay browsable. */
+const sessionlessKnowledgeKey = 'knowledge:no-session'
+
+function readSelectionFromLocation(): string | undefined {
+  if (typeof window === 'undefined') {
+    return undefined
+  }
+  const parameters = new URLSearchParams(window.location.search)
+  const computerId = parameters.get('computer')
+  const sessionId = parameters.get('session')
+  return computerId && sessionId
+    ? sessionKey({ computerId, id: sessionId })
+    : undefined
+}
+
+/**
+ * Text editing owns its keystrokes. Alt+Arrow moves the caret by word in a
+ * composer, so a shortcut must not take it away.
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+  return (
+    target.isContentEditable ||
+    ['input', 'textarea', 'select'].includes(target.tagName.toLowerCase())
+  )
+}
+
+/** Where a session's Knowledge panel was last reading. */
+type KnowledgePosition = {
+  rootId?: string
+  path?: string
+  file?: string
 }
 
 function isRuntimeReasoningEffort(
@@ -2118,6 +2164,7 @@ function AppSettingsDialog({
       onClose={onClose}
       title="App settings"
     >
+      <div className="app-settings-dialog__sections">
       {shellSettingsAvailable() && (
         <section className="app-settings-section">
           <h3>Hub connection</h3>
@@ -2292,6 +2339,28 @@ function AppSettingsDialog({
           settings={statusline}
         />
       </section>
+
+      <section className="app-settings-section">
+        <h3>Keyboard shortcuts</h3>
+        <p className="dialog-message">
+          Available on a keyboard, outside dialogs and the message box.
+        </p>
+        <ul className="shortcut-list">
+          {[
+            ['Next session', 'Alt + \u2193'],
+            ['Previous session', 'Alt + \u2191'],
+            ['Open or close knowledge', 'Alt + K'],
+            ['Expand or minimize knowledge', 'Alt + Shift + K'],
+            ['Recall previous message', '\u2191'],
+          ].map(([label, keys]) => (
+            <li key={label}>
+              <span>{label}</span>
+              <kbd>{keys}</kbd>
+            </li>
+          ))}
+        </ul>
+      </section>
+      </div>
     </DialogFrame>
   )
 }
@@ -5171,9 +5240,17 @@ function App() {
   const [workspaceInitialKind, setWorkspaceInitialKind] = useState<
     'file' | 'folder'
   >()
-  const [sidebarMode, setSidebarMode] = useState<'sessions' | 'knowledge'>(
-    'sessions',
+  // Reading is a workspace mode: it survives a session switch so a document
+  // being read full width is not dismissed by moving to another session.
+  const [knowledgeMode, setKnowledgeModeState] = useState<KnowledgePanelMode>(
+    () => readStoredOrder('agentic-remote:knowledge-mode', 'hidden'),
   )
+  const [knowledgePositions, setKnowledgePositions] = useState<
+    Record<string, KnowledgePosition>
+  >(() => readStoredOrder('agentic-remote:knowledge-session-positions', {}))
+  // Roots are browsable without a session, so reading position is kept under
+  // a reserved key rather than being unreachable.
+  const knowledgePanelKey = selectedKey || sessionlessKnowledgeKey
   const [roots, setRoots] = useState<KnowledgeRoot[]>([])
   const [activeRootId, setActiveRootId] = useState<string | undefined>(() =>
     readStoredOrder<string | undefined>(
@@ -5192,10 +5269,62 @@ function App() {
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
+  // A single generation for every asynchronous knowledge operation. Anything
+  // that changes what the panel should show bumps it once; every loader
+  // captures it and checks it before writing. Three separate counters could
+  // be bumped in different combinations, and each wrong combination was a
+  // race.
   const knowledgeRequest = useRef(0)
-  // Bumped only when the active root changes, so a folder that is still
-  // loading cannot write its entries into a different root's tree.
-  const knowledgeRootGeneration = useRef(0)
+  const knowledgeRestoredKey = useRef<string>(undefined)
+  const knowledgeOwnerKey = useRef<string>(undefined)
+  // The session whose content the panel is actually showing.
+  const knowledgeViewOwnerKey = useRef<string>(undefined)
+  // Sessions being cleared. Clear removes a session and creates a replacement,
+  // and the removal reaches this client before the replacement id does, so
+  // pruning has to wait or the position is lost on the way through.
+  const clearingSessions = useRef(new Set<string>())
+  const forgetKnowledgeSessionRef = useRef<(key: string) => void>(() => {})
+  const moveKnowledgeSessionRef = useRef<(from: string, to: string) => void>(
+    () => {},
+  )
+  const migrateSessionStateRef = useRef<(from: string, to: string) => void>(
+    () => {},
+  )
+  const loadKnowledgeFolderRef = useRef<
+    (rootId: string, path: string) => Promise<unknown>
+  >(async () => undefined)
+  // Replacements announced by a removal but not yet delivered by their upsert.
+  // The fallback below must not treat one as a missing session and select
+  // something unrelated in the gap.
+  const pendingReplacements = useRef(new Set<string>())
+  // The generation a root listing was last requested under, so a load
+  // abandoned by a newer generation is retried instead of waited on.
+  const knowledgeRootLoadGeneration = useRef(-1)
+  // Captured before the first synchronisation, so a direct session link is not
+  // erased by the address being rewritten while sessions are still loading.
+  const initialUrlSelection = useRef(readSelectionFromLocation())
+  const knowledgeRestoreStartedKey = useRef<string>(undefined)
+  const applyKnowledgeScrollRef = useRef<(key: string) => void>(() => {})
+  // Whether the next selection change is the user navigating (a new history
+  // entry) or the app resolving one for them (the same entry, corrected).
+  const historyIntentRef = useRef<'push' | 'replace'>('replace')
+  const appShortcutRef = useRef<(event: globalThis.KeyboardEvent) => void>(
+    () => {},
+  )
+  const syncSelectionAddressRef = useRef<() => void>(() => {})
+  // Restoring a session's panel reads the newest values without re-running
+  // whenever the reader moves, which would fight the user's own navigation.
+  const knowledgePositionsRef = useRef<Record<string, KnowledgePosition>>({})
+  const restoreKnowledgeRef = useRef<
+    (position: KnowledgePosition, key: string) => void
+  >(() => {})
+  // Toggling the panel must not send the tree back to the top, so its scroll
+  // offset is kept across hides and session switches.
+  const knowledgeTreeRef = useRef<HTMLDivElement>(null)
+  const knowledgeScrollTops = useRef<Record<string, number>>({})
+  // Set while a session's tree is still being rebuilt, so the saved offset is
+  // applied to the new content instead of the tree that is going away.
+  const knowledgePendingScrollKey = useRef<string>(undefined)
   // Where the reader was left, so the next visit reopens it instead of asking
   // for the folder again.
   // Persisting is held back until the remembered position has been applied, so
@@ -5207,6 +5336,8 @@ function App() {
       {},
     ),
   )
+  const legacyKnowledgeAdopted = useRef(false)
+  const openedFromLink = useRef(readSelectionFromLocation() !== undefined)
   const restoredKnowledgeExpansion = useRef(
     readStoredOrder<Record<string, string[]>>(
       'agentic-remote:knowledge-expanded',
@@ -5216,6 +5347,10 @@ function App() {
   // The folder the breadcrumb and the remembered position follow. It is only
   // meaningful once that folder actually loaded.
   const knowledgeListing = knowledgeFolders[knowledgePath]?.listing
+  const knowledgeRows = useMemo(
+    () => knowledgeTreeRows(knowledgeFolders, expandedKnowledge),
+    [expandedKnowledge, knowledgeFolders],
+  )
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -5247,6 +5382,7 @@ function App() {
   const [cancellingBackgroundTaskId, setCancellingBackgroundTaskId] =
     useState<string>()
   const [mutedSessions, setMutedSessions] = useState<string[]>([])
+  const mutedSessionsRef = useRef<string[]>([])
   const [mutingSession, setMutingSession] = useState(false)
   const [updateRegistration, setUpdateRegistration] =
     useState<ServiceWorkerRegistration>()
@@ -5308,6 +5444,48 @@ function App() {
   const backgroundTaskEventSequenceRef = useRef(new Map<string, number>())
   const seenBackgroundTaskRefreshRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
+
+  // Silence changes on its own schedule: counting every session event would
+  // treat an ordinary status update as one, and discard the answer's own
+  // sessions for no reason. Only what actually moves a mute is counted.
+  const muteRevisionRef = useRef(0)
+  const muteSessionRevisionRef = useRef(new Map<string, number>())
+  const recordMuteChange = useCallback((...keys: string[]) => {
+    muteRevisionRef.current += 1
+    for (const key of keys) {
+      muteSessionRevisionRef.current.set(key, muteRevisionRef.current)
+    }
+  }, [])
+
+  // A settings answer describes the world as it was when the request went out.
+  // A session whose silence changed in the meantime is described more recently
+  // by that change than by the answer, so the answer does not get to speak for
+  // it: a clear moves the mute to a replacement it has never heard of.
+  useEffect(() => {
+    mutedSessionsRef.current = mutedSessions
+  }, [mutedSessions])
+
+  const applyMutedSessions = useCallback(
+    (incoming: string[], startedAtRevision: number) => {
+      setMutedSessions((current) => {
+        const reconciled = new Set(incoming)
+        for (const key of new Set([...current, ...reconciled])) {
+          if (
+            (muteSessionRevisionRef.current.get(key) || 0) <= startedAtRevision
+          ) {
+            continue
+          }
+          if (current.includes(key)) {
+            reconciled.add(key)
+          } else {
+            reconciled.delete(key)
+          }
+        }
+        return [...reconciled]
+      })
+    },
+    [],
+  )
   const computerEventSequenceRef = useRef(new Map<string, number>())
   const sidebarResizeRef = useRef<
     | { pointerId: number; startX: number; startWidth: number; width: number }
@@ -5456,6 +5634,7 @@ function App() {
   useEffect(
     () =>
       onShellDeepLink((target) => {
+        historyIntentRef.current = 'push'
         setSelectedKey(
           sessionKey({ computerId: target.computerId, id: target.sessionId }),
         )
@@ -5671,10 +5850,14 @@ function App() {
 
   useEffect(() => {
     let active = true
+    const startedAtRevision = muteRevisionRef.current
     void getPushSettings()
       .then((settings) => {
         if (active) {
-          setMutedSessions(settings.mutedSessions)
+          // This answer can be older than a clear that has since moved the
+          // mute to a replacement it has never heard of, exactly as a
+          // reconnect's answer can.
+          applyMutedSessions(settings.mutedSessions, startedAtRevision)
         }
       })
       .catch((caught: unknown) => {
@@ -5696,15 +5879,7 @@ function App() {
       'agentic-remote:knowledge-root',
       JSON.stringify(activeRootId),
     )
-    localStorage.setItem(
-      'agentic-remote:knowledge-position',
-      JSON.stringify({
-        rootId: activeRootId,
-        path: knowledgeListing?.path,
-        file: knowledgeFile?.path,
-      }),
-    )
-  }, [activeRootId, knowledgeFile?.path, knowledgeListing?.path])
+  }, [activeRootId])
 
   useEffect(() => {
     if (!knowledgeHydrated.current || !activeRootId) {
@@ -5729,11 +5904,466 @@ function App() {
   }, [knowledgeRootsOpen])
 
   useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-mode',
+      JSON.stringify(knowledgeMode),
+    )
+  }, [knowledgeMode])
+
+  // The session lives in the URL, so a reload reopens it, a link opens it, and
+  // back and forward move between the sessions that were visited.
+  useEffect(() => {
+    syncSelectionAddressRef.current = () => {
+      // Rewriting while sessions are still loading would drop the deep link
+      // the loader is about to read.
+      if (loading) {
+        return
+      }
+      const selectedSession = sessions.find(
+        (session) => sessionKey(session) === selectedKey,
+      )
+      const next = selectedSession
+        ? `${window.location.pathname}?${new URLSearchParams({
+            computer: selectedSession.computerId,
+            session: selectedSession.id,
+          }).toString()}`
+        : window.location.pathname
+      const intent = historyIntentRef.current
+      historyIntentRef.current = 'replace'
+      if (next === `${window.location.pathname}${window.location.search}`) {
+        return
+      }
+      if (intent === 'push') {
+        window.history.pushState({}, '', next)
+      } else {
+        // Auto-selection and stale links correct the address without leaving
+        // a history entry the user never navigated to.
+        window.history.replaceState({}, '', next)
+      }
+    }
+  })
+
+  useEffect(() => {
+    syncSelectionAddressRef.current()
+  }, [loading, selectedKey, sessions])
+
+  useEffect(() => {
+    const followHistory = () => {
+      const parameters = new URLSearchParams(window.location.search)
+      const computerId = parameters.get('computer')
+      const sessionId = parameters.get('session')
+      historyIntentRef.current = 'replace'
+      if (!computerId || !sessionId) {
+        // An entry that names no session cannot select one, so the address is
+        // brought back in step with what is actually open.
+        syncSelectionAddressRef.current()
+        return
+      }
+      setSelectedKey(sessionKey({ computerId, id: sessionId }))
+    }
+    window.addEventListener('popstate', followHistory)
+    return () => window.removeEventListener('popstate', followHistory)
+  }, [])
+
+  // Refreshed after every render so the shortcut always sees current state.
+  useEffect(() => {
+    // Bound to the window rather than the shell: closing a panel moves focus
+    // back to the body, and the next shortcut must still work from there.
+    appShortcutRef.current = (event: globalThis.KeyboardEvent) => {
+      if (
+        !event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        hasBlockingUi ||
+        isEditableTarget(event.target)
+      ) {
+        return
+      }
+      // Matched on `code`, so a macOS Option key that rewrites the character
+      // still resolves to the same physical key.
+      if (event.code === 'ArrowDown' || event.code === 'ArrowUp') {
+        event.preventDefault()
+        stepSession(event.code === 'ArrowDown' ? 1 : -1)
+        return
+      }
+      if (event.code === 'KeyK') {
+        event.preventDefault()
+        if (event.shiftKey) {
+          toggleKnowledgeExpanded()
+        } else {
+          toggleKnowledgePanel()
+        }
+      }
+    }
+  })
+
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      appShortcutRef.current(event)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify(knowledgePositions),
+    )
+  }, [knowledgePositions])
+
+  // The panel belongs to the session, so what it was reading is recorded
+  // against that session rather than globally.
+  useEffect(() => {
+    // Only the session whose position has already been restored may record
+    // one, or selecting a session would immediately overwrite its saved
+    // location with whatever the previous session was reading.
+    if (
+      !knowledgeHydrated.current ||
+      !selectedKey ||
+      !activeRootId ||
+      knowledgeRestoredKey.current !== selectedKey
+    ) {
+      return
+    }
+    setKnowledgePositions((current) => {
+      const existing = current[selectedKey]
+      const next: KnowledgePosition = {
+        rootId: activeRootId,
+        path: knowledgePath,
+        file: knowledgeFile?.path,
+      }
+      return existing &&
+        existing.rootId === next.rootId &&
+        existing.path === next.path &&
+        existing.file === next.file
+        ? current
+        : { ...current, [selectedKey]: next }
+    })
+  }, [activeRootId, knowledgeFile?.path, knowledgePath, selectedKey])
+
+  // Reopening a session with its panel open restores what that session was
+  // reading, instead of whatever the previously selected session left behind.
+  // Refreshed after every render so the restore below always sees the newest
+  // reader position and loaders without re-running on each of them.
+  useEffect(() => {
+    knowledgePositionsRef.current = knowledgePositions
+    // The offset is applied when the restore that asked for it finishes, so it
+    // lands on the branch it belongs to rather than on a loading placeholder.
+    applyKnowledgeScrollRef.current = (key: string) => {
+      const remembered = knowledgeScrollTops.current[key]
+      if (remembered === undefined) {
+        return
+      }
+      requestAnimationFrame(() => {
+        const node = knowledgeTreeRef.current
+        if (
+          node &&
+          node.isConnected &&
+          !node.closest('[hidden]') &&
+          key === knowledgePanelKey
+        ) {
+          node.scrollTop = remembered
+        }
+      })
+    }
+    forgetKnowledgeSessionRef.current = forgetKnowledgeSession
+    moveKnowledgeSessionRef.current = moveKnowledgePosition
+    migrateSessionStateRef.current = migrateSessionState
+    loadKnowledgeFolderRef.current = loadKnowledgeFolder
+    restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
+      const rootId = position.rootId
+      if (!rootId) {
+        return
+      }
+      const token = ++knowledgeRequest.current
+      const current = () => token === knowledgeRequest.current
+      void (async () => {
+        try {
+          const switchedRoot = rootId !== activeRootId
+          if (switchedRoot) {
+            if (!(await selectRoot(rootId, true))) {
+              return
+            }
+          } else if (
+            // The root is already active, but its listing may be missing or
+            // have failed, and skipping every loader would call that restored.
+            !knowledgeFolders[knowledgeRootPath]?.listing &&
+            !(await loadKnowledgeFolder(rootId, knowledgeRootPath))
+          ) {
+            return
+          }
+          if (!current()) {
+            return
+          }
+          // The remembered position names a folder even when that folder is
+          // the root, and going there is what leaves the previous session's
+          // folder behind. Skipping the navigation because there is nowhere
+          // to descend to would keep that folder on screen, and the reader's
+          // next move would then save it under this session.
+          if (
+            !(await openKnowledgeFolder(
+              position.path || knowledgeRootPath,
+              rootId,
+              true,
+              // After switching root the folder cache in this closure is the
+              // one captured before the switch. Two roots can hold the same
+              // relative path, so consulting it would skip loading the new
+              // root's copy.
+              switchedRoot ? {} : undefined,
+            ))
+          ) {
+            return
+          }
+          if (!current()) {
+            return
+          }
+          if (
+            position.file &&
+            !(await openKnowledgeFile(position.file, rootId, true))
+          ) {
+            return
+          }
+          if (!current()) {
+            return
+          }
+          applyKnowledgeScrollRef.current(key)
+        } finally {
+          if (current()) {
+            // The attempt is over either way: recording is handed back so the
+            // reader's next choice becomes this session's position, and a
+            // failure is retried when the panel is reopened.
+            knowledgeRestoredKey.current = key
+            knowledgeRestoreStartedKey.current = undefined
+          }
+          if (current() && knowledgePendingScrollKey.current === key) {
+            // Released on success, failure, and an empty branch alike, or
+            // recording would stay suppressed for good.
+            knowledgePendingScrollKey.current = undefined
+          }
+        }
+      })()
+    }
+  })
+
+  // An open panel with an active root always ends up with a root listing. The
+  // startup load can be superseded by a session change, and a superseded load
+  // writes nothing, so without this the tree could sit blank until the root
+  // was picked again by hand.
+  useEffect(() => {
+    const root = knowledgeFolders[knowledgeRootPath]
+    if (
+      knowledgeMode === 'hidden' ||
+      !activeRootId ||
+      root?.listing !== undefined ||
+      root?.error !== undefined
+    ) {
+      return
+    }
+    // A superseded load leaves the entry marked loading with nothing on the
+    // way, so waiting for it would wait for ever. Only a listing or a
+    // reported failure counts as settled.
+    if (
+      root?.loading &&
+      knowledgeRootLoadGeneration.current === knowledgeRequest.current
+    ) {
+      return
+    }
+    knowledgeRootLoadGeneration.current = knowledgeRequest.current
+    void loadKnowledgeFolderRef.current(activeRootId, knowledgeRootPath)
+    // `selectedKey` is what supersedes a load: the discarded reply changes no
+    // state, so without it nothing would bring this effect back to notice.
+  }, [activeRootId, knowledgeFolders, knowledgeMode, selectedKey])
+
+  // Knowledge work belongs to the session that asked for it. Changing session
+  // abandons all of it, whatever the decision below then chooses to do: a file
+  // read left in flight would otherwise surface, and be saved, under the
+  // session that replaced its owner.
+  useLayoutEffect(() => {
+    if (knowledgeOwnerKey.current === knowledgePanelKey) {
+      return
+    }
+    if (knowledgeOwnerKey.current !== undefined) {
+      knowledgeRequest.current += 1
+      knowledgePendingScrollKey.current = undefined
+      knowledgeRestoreStartedKey.current = undefined
+      setKnowledgeLoading(false)
+    }
+    knowledgeOwnerKey.current = knowledgePanelKey
+  }, [knowledgePanelKey])
+
+  useEffect(() => {
+    // No early return here: a restore belonging to a session that is no longer
+    // selected has to be abandoned even when the panel is closed or the
+    // session is gone, or it lands on whatever is selected next. The decision
+    // covers those cases, so this only carries it out.
+    // The decision itself lives in `knowledge-restore.ts`, where it can be
+    // tested directly.
+    const action = knowledgeRestoreAction({
+      selectedKey,
+
+      panelOpen: knowledgeMode !== 'hidden',
+      rootsLoaded: roots.length > 0,
+      remembered: selectedKey
+        ? knowledgePositionsRef.current[selectedKey]
+        : undefined,
+      rememberedRootExists: roots.some(
+        (root) =>
+          root.id ===
+          (selectedKey
+            ? knowledgePositionsRef.current[selectedKey]?.rootId
+            : undefined),
+      ),
+      restoredKey: knowledgeRestoredKey.current,
+      runningKey: knowledgeRestoreStartedKey.current,
+      viewOwner: knowledgeViewOwnerKey.current,
+    })
+
+    if (action.kind === 'none') {
+      return
+    }
+    if (action.kind === 'reset') {
+      // The panel closed, ending the episode: abandon anything running and
+      // stop counting the session as handled, so reopening retries.
+      knowledgeRequest.current += 1
+      knowledgePendingScrollKey.current = undefined
+      knowledgeRestoreStartedKey.current = undefined
+      knowledgeRestoredKey.current = undefined
+      setKnowledgeLoading(false)
+      return
+    }
+    if (action.kind === 'cancel' || action.kind === 'cancel-and-settle') {
+      // The abandoned restore's own cleanup can no longer run, so its state is
+      // settled here.
+      knowledgeRequest.current += 1
+      knowledgePendingScrollKey.current = undefined
+      knowledgeRestoreStartedKey.current = undefined
+      setKnowledgeLoading(false)
+      if (action.kind === 'cancel-and-settle' && selectedKey) {
+        knowledgeRestoredKey.current = selectedKey
+      }
+      return
+    }
+    if (action.kind === 'settle') {
+      // A session with nothing to restore must not be left showing the
+      // document belonging to the session that was open before it. Only a
+      // handover clears the reader: on the first load there is no previous
+      // session, and the position restored from storage stands.
+      // The view owner survives closing the panel, while the handled marker
+      // is reset by it. Asking the owner is what still catches a document
+      // left behind by the session that was open before this one.
+      const handover =
+        knowledgeViewOwnerKey.current !== undefined &&
+        knowledgeViewOwnerKey.current !== selectedKey
+      if (selectedKey) {
+        knowledgeRestoredKey.current = selectedKey
+        knowledgeViewOwnerKey.current = selectedKey
+      }
+      if (handover) {
+        setKnowledgeFile(undefined)
+      }
+      return
+    }
+    knowledgeRequest.current += 1
+    knowledgePendingScrollKey.current = action.key
+    knowledgeRestoreStartedKey.current = action.key
+    if (knowledgeViewOwnerKey.current !== action.key) {
+      // Whatever is on screen belongs to another session, so it goes before
+      // this one's content arrives — and stays gone if the remembered
+      // position names no document.
+      setKnowledgeFile(undefined)
+    }
+    knowledgeViewOwnerKey.current = action.key
+    setKnowledgeLoading(false)
+    restoreKnowledgeRef.current(action.position, action.key)
+  }, [knowledgeMode, selectedKey, roots, knowledgePositions])
+
+  // Reopening the panel puts the tree back where it was left, so switching
+  // between a session and its files does not lose the reader's place.
+  useLayoutEffect(() => {
+    const node = knowledgeTreeRef.current
+    const key = knowledgePanelKey
+    if (!node || knowledgeMode === 'hidden') {
+      return
+    }
+    const remembered = knowledgeScrollTops.current[key]
+    if (remembered !== undefined) {
+      node.scrollTop = remembered
+      // The tree grows as folders finish loading, so the offset is applied
+      // again once that layout settles.
+      requestAnimationFrame(() => {
+        if (node.isConnected && !node.closest('[hidden]')) {
+          node.scrollTop = remembered
+        }
+      })
+    }
+    const record = () => {
+      // A hidden or detached tree reports 0, which would erase the position
+      // it is supposed to keep; the cleanup below runs after React has
+      // already removed the node. A tree still waiting for its session's
+      // content would record the outgoing session's offset.
+      if (
+        node.isConnected &&
+        !node.closest('[hidden]') &&
+        !knowledgePendingScrollKey.current
+      ) {
+        knowledgeScrollTops.current[key] = node.scrollTop
+      }
+    }
+    node.addEventListener('scroll', record, { passive: true })
+    return () => {
+      record()
+      node.removeEventListener('scroll', record)
+    }
+  }, [knowledgeMode, knowledgePanelKey])
+
+
+  // An older build remembered one position for the whole app. It becomes the
+  // first session's own position once there is a session to attribute it to,
+  // and is then gone: nothing writes it again, so it can never resurface under
+  // a session it did not belong to.
+  useEffect(() => {
+    if (legacyKnowledgeAdopted.current || !selectedKey) {
+      return
+    }
+    legacyKnowledgeAdopted.current = true
+    const legacy = restoredKnowledge.current
+    restoredKnowledge.current = {}
+    localStorage.removeItem('agentic-remote:knowledge-position')
+    if (
+      !legacy.rootId ||
+      knowledgePositionsRef.current[selectedKey] ||
+      // A link names the session to open, which says nothing about the one
+      // the position was left in. Guessing would show one session's document
+      // under another, so it is dropped rather than misfiled.
+      openedFromLink.current
+    ) {
+      return
+    }
+    // The session was settled as having nothing to restore before this ran,
+    // so that verdict is withdrawn along with the position it was missing.
+    if (knowledgeRestoredKey.current === selectedKey) {
+      knowledgeRestoredKey.current = undefined
+    }
+    setKnowledgePositions((current) => ({
+      ...current,
+      [selectedKey]: {
+        rootId: legacy.rootId,
+        path: legacy.path,
+        file: legacy.file,
+      },
+    }))
+  }, [selectedKey])
+
+  useEffect(() => {
     void listKnowledgeRoots()
       .then(async (loaded) => {
         setRoots(loaded)
-        // Reopen whatever was being read, so returning to Knowledge does not
-        // mean picking the folder and the document again.
+        // Only the root is reopened here. Where a session was reading belongs
+        // to that session, and this runs before one is known, so applying it
+        // would show one session's document under another.
         const remembered = restoredKnowledge.current
         const root =
           loaded.find((entry) => entry.id === remembered.rootId) || loaded[0]
@@ -5743,12 +6373,11 @@ function App() {
           return
         }
         setActiveRootId(root.id)
-        const generation = ++knowledgeRootGeneration.current
+        // One token for the whole restoration: a second increment would make
+        // the first stale, and the ancestor chain would reject its own results.
         const request = ++knowledgeRequest.current
-        const folder =
-          root.id === remembered.rootId && remembered.path
-            ? remembered.path
-            : knowledgeRootPath
+        const generation = request
+        const folder = knowledgeRootPath
         try {
           const listing = await listKnowledgeEntries(root.id, folder).catch(
             () => listKnowledgeEntries(root.id, knowledgeRootPath),
@@ -5766,15 +6395,6 @@ function App() {
           void loadKnowledgeChain(root.id, folder, generation, {
             [folder]: { listing },
           })
-          if (root.id === remembered.rootId && remembered.file) {
-            const opened = await readKnowledgeFile(
-              root.id,
-              remembered.file,
-            ).catch(() => undefined)
-            if (opened && request === knowledgeRequest.current) {
-              setKnowledgeFile(opened)
-            }
-          }
           knowledgeHydrated.current = true
         } catch (caught) {
           // Leave the position unhydrated so a transient failure — an offline
@@ -5935,13 +6555,9 @@ function App() {
           return reconciled
         })
         setComputers(loadedComputers)
-        const parameters = new URLSearchParams(window.location.search)
-        const requestedComputer = parameters.get('computer')
-        const requestedSession = parameters.get('session')
+        const requestedKey = initialUrlSelection.current
         const requested = loadedSessions.find(
-          (session) =>
-            session.computerId === requestedComputer &&
-            session.id === requestedSession,
+          (session) => sessionKey(session) === requestedKey,
         )
         setSelectedKey(
           (current) =>
@@ -5973,13 +6589,17 @@ function App() {
       return
     }
     setSelectedKey((current) =>
-      current && sessions.some((session) => sessionKey(session) === current)
+      current &&
+      (sessions.some((session) => sessionKey(session) === current) ||
+        pendingReplacements.current.has(current))
         ? current
         : sessions[0]
           ? sessionKey(sessions[0])
           : undefined,
     )
-  }, [loading, sessions])
+    // `selectedKey` is a dependency because history can name a session that
+    // has since been deleted, and that has to fall back to a real one.
+  }, [loading, selectedKey, sessions])
 
   useEffect(() => {
     if (loading) {
@@ -6112,6 +6732,7 @@ function App() {
 
     const refreshSnapshot = async () => {
       const startedAtSequence = eventSequenceRef.current
+      const startedAtMuteRevision = muteRevisionRef.current
       const [loadedSessions, loadedComputers, pushSettings] = await Promise.all([
         listSessions(),
         listComputers(),
@@ -6154,16 +6775,28 @@ function App() {
         }
         return reconciled
       })
+      // A session that changed while the refresh was in flight is described
+      // more recently by the event than by the snapshot, exactly as the two
+      // reconciliations above assume. A clear moves the mute to a replacement
+      // the snapshot has never heard of, so the snapshot must not speak for
+      // either session.
+      const changedSinceRefresh = (key: string) =>
+        (sessionEventSequenceRef.current.get(key) || 0) > startedAtSequence
       if (pushSettings) {
-        setMutedSessions(pushSettings.mutedSessions)
+        applyMutedSessions(pushSettings.mutedSessions, startedAtMuteRevision)
       }
       setBackgroundTaskRefreshVersion((current) => current + 1)
       const selectedAtRefresh = selectedRef.current
+      // A replacement selected while the refresh was in flight is missing
+      // from the snapshot by definition, and dropping it would jump the
+      // reader to an unrelated session.
       const selectedStillExists =
         selectedAtRefresh &&
-        snapshotSessions.some(
+        (snapshotSessions.some(
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
-        )
+        ) ||
+          changedSinceRefresh(sessionKey(selectedAtRefresh)) ||
+          pendingReplacements.current.has(sessionKey(selectedAtRefresh)))
       if (selectedAtRefresh && selectedStillExists) {
         const detailStartedAtSequence = eventSequenceRef.current
         const detail = await getSession(
@@ -6202,6 +6835,7 @@ function App() {
             sessionKey(event.session),
             eventSequenceRef.current,
           )
+          pendingReplacements.current.delete(sessionKey(event.session))
           setSessions((current) => upsertSession(current, event.session))
         } else if (event.type === 'session.removed') {
           const removedKey = `${event.computerId}:${event.sessionId}`
@@ -6210,10 +6844,35 @@ function App() {
             removedKey,
             eventSequenceRef.current,
           )
-          setComposerDrafts((current) => {
-            const { [removedKey]: _removed, ...remaining } = current
-            return remaining
-          })
+          // Removal reaches every client. A cleared session was replaced
+          // rather than deleted, so everything it was carrying moves across on
+          // all of them instead of being discarded on any of them.
+          if (event.replacedBy) {
+            const replacementKey = `${event.computerId}:${event.replacedBy}`
+            migrateSessionStateRef.current(removedKey, replacementKey)
+            // Removal and upsert are separate events. Following the
+            // replacement now stops the fallback from selecting an unrelated
+            // session in the gap, which the later upsert would not undo.
+            pendingReplacements.current.add(replacementKey)
+            // The replacement changed here too, so a snapshot taken before
+            // this event cannot speak for it either.
+            sessionEventSequenceRef.current.set(
+              replacementKey,
+              eventSequenceRef.current,
+            )
+            setSelectedKey((current) =>
+              current === removedKey ? replacementKey : current,
+            )
+          } else if (!clearingSessions.current.has(removedKey)) {
+            // A clear issued here has not returned its replacement yet. A node
+            // on an older build sends no link, so everything this session
+            // carries is held until the response names the replacement.
+            setComposerDrafts((current) => {
+              const { [removedKey]: _removed, ...remaining } = current
+              return remaining
+            })
+            forgetKnowledgeSessionRef.current(removedKey)
+          }
           setSessions((current) =>
             current.filter(
               (session) =>
@@ -6501,6 +7160,84 @@ function App() {
     })
   }
 
+  /** A session that is gone leaves nothing of its reading behind. */
+  function forgetKnowledgeSession(key: string) {
+    if (clearingSessions.current.has(key)) {
+      // The removal carries its replacement, so this is normally unnecessary.
+      // A node running an older build sends no link, and hosts update
+      // independently, so the clear this client issued still protects itself.
+      return
+    }
+    delete knowledgeScrollTops.current[key]
+    if (knowledgeViewOwnerKey.current === key) {
+      knowledgeViewOwnerKey.current = undefined
+    }
+    if (knowledgeRestoredKey.current === key) {
+      knowledgeRestoredKey.current = undefined
+    }
+    if (knowledgeRestoreStartedKey.current === key) {
+      knowledgeRestoreStartedKey.current = undefined
+    }
+    setKnowledgePositions((current) => {
+      if (!(key in current)) {
+        return current
+      }
+      const { [key]: _removed, ...remaining } = current
+      return remaining
+    })
+  }
+
+  /** Clearing a conversation gives it a new id; its reading position moves too. */
+  function moveKnowledgePosition(fromKey: string, toKey: string) {
+    if (fromKey === toKey) {
+      return
+    }
+    const offset = knowledgeScrollTops.current[fromKey]
+    delete knowledgeScrollTops.current[fromKey]
+    if (offset !== undefined) {
+      knowledgeScrollTops.current[toKey] = offset
+    }
+    if (knowledgeRestoredKey.current === fromKey) {
+      knowledgeRestoredKey.current = toKey
+    }
+    if (knowledgeViewOwnerKey.current === fromKey) {
+      // Without this the replacement treats the document already on screen as
+      // another session's, clears it, and fetches it again — and loses it
+      // entirely if the root has become unreachable.
+      knowledgeViewOwnerKey.current = toKey
+    }
+    if (knowledgeOwnerKey.current === fromKey) {
+      knowledgeOwnerKey.current = toKey
+    }
+    setKnowledgePositions((current) => {
+      const position = current[fromKey]
+      const { [fromKey]: _removed, ...remaining } = current
+      return position ? { ...remaining, [toKey]: position } : remaining
+    })
+  }
+
+  /**
+   * Everything a session carries, moved in one step. Clearing replaces a
+   * session's id, and each store that gets forgotten here is something the
+   * conversation visibly loses, so they move together rather than one per
+   * bug report.
+   */
+  function migrateSessionState(fromKey: string, toKey: string) {
+    if (fromKey === toKey) {
+      return
+    }
+    moveComposerDraft(fromKey, toKey)
+    moveKnowledgePosition(fromKey, toKey)
+    if (mutedSessionsRef.current.includes(fromKey)) {
+      recordMuteChange(fromKey, toKey)
+    }
+    setMutedSessions((current) =>
+      current.includes(fromKey)
+        ? [...current.filter((key) => key !== fromKey), toKey]
+        : current,
+    )
+  }
+
   function focusComposer(targetKey: string | undefined) {
     window.requestAnimationFrame(() => {
       const current = selectedRef.current
@@ -6516,6 +7253,41 @@ function App() {
 
   const activeRoot = roots.find((root) => root.id === activeRootId)
 
+  function setKnowledgeMode(mode: KnowledgePanelMode) {
+    setKnowledgeModeState(mode)
+  }
+
+  function toggleKnowledgePanel() {
+    setKnowledgeMode(knowledgeMode === 'hidden' ? 'docked' : 'hidden')
+  }
+
+  function toggleKnowledgeExpanded() {
+    // Expanding from a closed panel opens it directly at full width, so one
+    // shortcut is enough to start reading.
+    setKnowledgeMode(knowledgeMode === 'expanded' ? 'docked' : 'expanded')
+  }
+
+  function stepSession(direction: -1 | 1) {
+    const ordered = orderedComputers.flatMap(
+      (computer) => sessionsByComputer.get(computer.id) || [],
+    )
+    if (ordered.length === 0) {
+      return
+    }
+    const index = ordered.findIndex(
+      (session) => sessionKey(session) === selectedKey,
+    )
+    const next =
+      ordered[
+        index < 0
+          ? 0
+          : (index + direction + ordered.length) % ordered.length
+      ]
+    if (next) {
+      selectSession(next)
+    }
+  }
+
   // Stable identity: a new loader each render would remount every image and
   // restart its download.
   const loadKnowledgeAsset = useCallback(
@@ -6526,7 +7298,7 @@ function App() {
   async function loadKnowledgeFolder(
     rootId: string,
     path: string,
-    generation = knowledgeRootGeneration.current,
+    generation = knowledgeRequest.current,
   ): Promise<WorkspaceListing | undefined> {
     setKnowledgeFolders((current) => ({
       ...current,
@@ -6536,7 +7308,7 @@ function App() {
       const listing = await listKnowledgeEntries(rootId, path)
       // Switching roots invalidates every folder in flight, so a late reply
       // cannot graft one root's entries onto another root's tree.
-      if (generation !== knowledgeRootGeneration.current) {
+      if (generation !== knowledgeRequest.current) {
         return undefined
       }
       setKnowledgeFolders((current) => ({
@@ -6545,7 +7317,7 @@ function App() {
       }))
       return listing
     } catch (caught) {
-      if (generation === knowledgeRootGeneration.current) {
+      if (generation === knowledgeRequest.current) {
         // Kept beside the folder that failed: one unreachable branch must not
         // blank the rest of the tree.
         setKnowledgeFolders((current) => ({
@@ -6565,18 +7337,22 @@ function App() {
   async function loadKnowledgeChain(
     rootId: string,
     path: string,
-    generation = knowledgeRootGeneration.current,
+    generation = knowledgeRequest.current,
     loaded: KnowledgeFolders = knowledgeFolders,
-  ) {
+  ): Promise<boolean> {
     for (const folder of [knowledgeRootPath, ...knowledgePathChain(path)]) {
       if (loaded[folder]?.listing) {
         continue
       }
-      await loadKnowledgeFolder(rootId, folder, generation)
-      if (generation !== knowledgeRootGeneration.current) {
-        return
+      const listing = await loadKnowledgeFolder(rootId, folder, generation)
+      if (generation !== knowledgeRequest.current) {
+        return false
+      }
+      if (!listing) {
+        return false
       }
     }
+    return true
   }
 
   async function toggleKnowledgeFolder(path: string) {
@@ -6585,6 +7361,10 @@ function App() {
     if (!rootId) {
       return
     }
+    // Opening or closing a branch is the reader choosing where to be, so a
+    // restore still on its way is abandoned rather than allowed to land on
+    // top of that choice.
+    cancelKnowledgeRestore()
     if (expandedKnowledge.includes(path)) {
       setExpandedKnowledge((current) => collapseKnowledgeFolder(current, path))
       // Following the collapse keeps the breadcrumb pointing at something the
@@ -6606,18 +7386,54 @@ function App() {
   async function openKnowledgeFolder(
     path = knowledgeRootPath,
     rootId = activeRootId,
-  ) {
+    fromRestore = false,
+    loadedOverride?: KnowledgeFolders,
+  ): Promise<boolean> {
     knowledgeHydrated.current = true
     if (!rootId) {
-      return
+      return false
+    }
+    if (!fromRestore) {
+      // A file still being read belongs to where the reader just left, so it
+      // is abandoned rather than allowed to arrive over the new folder. A
+      // restore navigating its own steps must not invalidate itself.
+      cancelKnowledgeRestore()
+      knowledgeRequest.current += 1
+      setKnowledgeLoading(false)
     }
     setExpandedKnowledge((current) => expandKnowledgeFolder(current, path))
     setKnowledgePath(path)
     setKnowledgeFile(undefined)
-    await loadKnowledgeChain(rootId, path)
+    return loadKnowledgeChain(
+      rootId,
+      path,
+      knowledgeRequest.current,
+      loadedOverride,
+    )
+  }
+
+
+  /**
+   * Abandons a restore that is still loading, so the folder or file the reader
+   * just chose is not replaced when the remembered one finally arrives. The
+   * session still counts as restored: its position is now whatever was chosen.
+   */
+  function cancelKnowledgeRestore() {
+    // The reader is choosing what to show, so this session owns the view.
+    // Before there is a session, the panel itself owns it: leaving it unowned
+    // would let the first session inherit a document it never opened.
+    knowledgeViewOwnerKey.current = knowledgePanelKey
+    if (!knowledgeRestoreStartedKey.current) {
+      return
+    }
+    knowledgeRequest.current += 1
+    knowledgePendingScrollKey.current = undefined
+    knowledgeRestoredKey.current = knowledgeRestoreStartedKey.current
+    knowledgeRestoreStartedKey.current = undefined
   }
 
   function collapseKnowledgeTree() {
+    cancelKnowledgeRestore()
     setExpandedKnowledge([])
     setKnowledgePath(knowledgeRootPath)
   }
@@ -6684,28 +7500,43 @@ function App() {
       ?.focus()
   }
 
-  async function openKnowledgeFile(path: string) {
+  async function openKnowledgeFile(
+    path: string,
+    rootOverride?: string,
+    fromRestore = false,
+  ): Promise<boolean> {
     knowledgeHydrated.current = true
-    const rootId = activeRootId
+    const rootId = rootOverride || activeRootId
     if (!rootId) {
-      return
+      return false
     }
-    const request = ++knowledgeRequest.current
+    if (!fromRestore) {
+      cancelKnowledgeRestore()
+    }
+    // A restore reads under the generation it started with, so its own steps
+    // never invalidate it; anything user-driven starts a new one.
+    const request = fromRestore
+      ? knowledgeRequest.current
+      : ++knowledgeRequest.current
     setKnowledgeLoading(true)
     setError(undefined)
     try {
       const opened = await readKnowledgeFile(rootId, path)
+      // Checked before any state write, so a read left over from the previous
+      // session cannot land in the one that replaced it.
       if (request !== knowledgeRequest.current) {
-        return
+        return false
       }
       setKnowledgeFile(opened)
       // Reading is full-screen on a phone, matching how selecting a session
       // hands the view over to the conversation.
       setSidebarOpen(false)
+      return true
     } catch (caught) {
       if (request === knowledgeRequest.current) {
         setError(caught instanceof Error ? caught.message : String(caught))
       }
+      return false
     } finally {
       if (request === knowledgeRequest.current) {
         setKnowledgeLoading(false)
@@ -6713,9 +7544,20 @@ function App() {
     }
   }
 
-  async function selectRoot(rootId: string) {
+  async function selectRoot(
+    rootId: string,
+    fromRestore = false,
+  ): Promise<boolean> {
     knowledgeHydrated.current = true
-    const generation = ++knowledgeRootGeneration.current
+    if (!fromRestore) {
+      // Changing root invalidates the file being read as well as its folders,
+      // or the old document would resolve its assets against the new root.
+      cancelKnowledgeRestore()
+      setKnowledgeLoading(false)
+    }
+    const generation = fromRestore
+      ? knowledgeRequest.current
+      : ++knowledgeRequest.current
     setActiveRootId(rootId)
     setKnowledgeFile(undefined)
     setKnowledgeFolders({})
@@ -6726,13 +7568,18 @@ function App() {
       restoredKnowledgeExpansion.current[rootId] || []
     ).slice(0, 24)
     setExpandedKnowledge(remembered)
-    await loadKnowledgeFolder(rootId, knowledgeRootPath, generation)
+    const opened = await loadKnowledgeFolder(
+      rootId,
+      knowledgeRootPath,
+      generation,
+    )
     for (const folder of remembered) {
-      if (generation !== knowledgeRootGeneration.current) {
-        return
+      if (generation !== knowledgeRequest.current) {
+        return false
       }
       await loadKnowledgeFolder(rootId, folder, generation)
     }
+    return Boolean(opened) && generation === knowledgeRequest.current
   }
 
   async function removeRoot(rootId: string) {
@@ -6741,7 +7588,6 @@ function App() {
       setRoots((current) => current.filter((root) => root.id !== rootId))
       if (rootId === activeRootId) {
         knowledgeRequest.current += 1
-        knowledgeRootGeneration.current += 1
         setActiveRootId(undefined)
         setKnowledgeFolders({})
         setExpandedKnowledge([])
@@ -6765,6 +7611,7 @@ function App() {
   }
 
   function selectSession(session: ManagedSession) {
+    historyIntentRef.current = 'push'
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
     setError(undefined)
@@ -6851,6 +7698,7 @@ function App() {
 
   function created(session: ManagedSession) {
     setSessions((current) => upsertSession(current, session))
+    historyIntentRef.current = 'push'
     setSelectedKey(sessionKey(session))
     setNewSessionOpen(false)
     setSidebarOpen(false)
@@ -7194,6 +8042,8 @@ function App() {
     }
 
     const target = selected
+    const targetKey = sessionKey(target)
+    clearingSessions.current.add(targetKey)
     setClearing(true)
     setError(undefined)
     try {
@@ -7208,13 +8058,16 @@ function App() {
           cleared,
         ),
       )
-      moveComposerDraft(sessionKey(target), sessionKey(cleared))
+      migrateSessionState(targetKey, sessionKey(cleared))
       setSelectedKey(sessionKey(cleared))
       return sessionKey(cleared)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
       return sessionKey(target)
     } finally {
+      // Released only once the replacement is known, so a removal arriving
+      // first cannot discard the position on its way across.
+      clearingSessions.current.delete(targetKey)
       setClearing(false)
     }
   }
@@ -7370,7 +8223,6 @@ function App() {
       event.ctrlKey ||
       event.metaKey ||
       event.shiftKey ||
-      sidebarMode !== 'sessions' ||
       hasBlockingUi ||
       sortableDragActiveRef.current
     ) {
@@ -7380,7 +8232,7 @@ function App() {
     if (
       target instanceof Element &&
       target.closest(
-        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle',
+        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle, .knowledge-panel, .sidebar-knowledge',
       )
     ) {
       return
@@ -7465,7 +8317,11 @@ function App() {
     setError(undefined)
     try {
       await deleteSession(selected.computerId, selected.id)
-      setComposerForKey(sessionKey(selected), '')
+      const closedKey = sessionKey(selected)
+      setComposerForKey(closedKey, '')
+      // Drafts are cleared for a closed session, and so is everything the
+      // knowledge panel remembered about it.
+      forgetKnowledgeSession(closedKey)
       const remaining = sessions.filter(
         (session) => sessionKey(session) !== sessionKey(selected),
       )
@@ -7505,6 +8361,7 @@ function App() {
         selected.id,
         !selectedNotificationsMuted,
       )
+      recordMuteChange(sessionKey(selected))
       setMutedSessions(settings.mutedSessions)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -7616,248 +8473,28 @@ function App() {
           </button>
         </div>
 
-        <div aria-label="Sidebar section" className="sidebar-switch" role="tablist">
+        <div className="sidebar-actions">
           <button
-            aria-selected={sidebarMode === 'sessions'}
-            className={sidebarMode === 'sessions' ? 'is-active' : ''}
-            onClick={() => setSidebarMode('sessions')}
-            role="tab"
+            className="new-session-button"
+            onClick={() => setNewSessionOpen(true)}
             type="button"
           >
-            Sessions
+            <Plus size={18} />
+            New session
           </button>
           <button
-            aria-selected={sidebarMode === 'knowledge'}
-            className={sidebarMode === 'knowledge' ? 'is-active' : ''}
-            onClick={() => setSidebarMode('knowledge')}
-            role="tab"
+            aria-label="Manage computers"
+            className="manage-computers-button"
+            onClick={() => setComputersOpen(true)}
             type="button"
           >
-            Knowledge
+            <MonitorCog size={18} />
           </button>
         </div>
 
-        {sidebarMode === 'sessions' ? (
-          <div className="sidebar-actions">
-            <button
-              className="new-session-button"
-              onClick={() => setNewSessionOpen(true)}
-              type="button"
-            >
-              <Plus size={18} />
-              New session
-            </button>
-            <button
-              aria-label="Manage computers"
-              className="manage-computers-button"
-              onClick={() => setComputersOpen(true)}
-              type="button"
-            >
-              <MonitorCog size={18} />
-            </button>
-          </div>
-        ) : null}
-
         <div className="sidebar__body">
-          {sidebarMode === 'knowledge' ? (
-            <nav aria-label="Knowledge" className="session-list knowledge-tree">
-              {roots.length === 0 ? (
-                <p className="sidebar-message">
-                  Add a knowledge root to browse a folder on any computer.
-                </p>
-              ) : null}
-              {roots.length > 0 ? (
-                <div className="knowledge-roots">
-                  <button
-                    aria-expanded={knowledgeRootsOpen}
-                    className="knowledge-roots__summary"
-                    onClick={() => setKnowledgeRootsOpen(!knowledgeRootsOpen)}
-                    type="button"
-                  >
-                    <ChevronRight
-                      aria-hidden="true"
-                      className={`knowledge-chevron${
-                        knowledgeRootsOpen ? ' knowledge-chevron--open' : ''
-                      }`}
-                      size={13}
-                    />
-                    <span className="sidebar-label">Roots</span>
-                    <em>{roots.length}</em>
-                  </button>
-                  {knowledgeRootsOpen
-                    ? roots.map((root) => (
-                        <div className="knowledge-root" key={root.id}>
-                          <button
-                            aria-current={
-                              root.id === activeRootId ? 'true' : undefined
-                            }
-                            className={root.id === activeRootId ? 'is-active' : ''}
-                            onClick={() => void selectRoot(root.id)}
-                            type="button"
-                          >
-                            <FolderOpen size={15} />
-                            <span>
-                              <strong>{root.name}</strong>
-                              <small>
-                                {root.computerName} · {root.path}
-                              </small>
-                            </span>
-                          </button>
-                          <button
-                            aria-label={`Remove ${root.name} root`}
-                            className="icon-button icon-button--danger knowledge-root__remove"
-                            onClick={() => void removeRoot(root.id)}
-                            type="button"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      ))
-                    : null}
-                </div>
-              ) : null}
-              {activeRoot ? (
-                <>
-                  <div className="knowledge-toolbar">
-                    <div
-                      aria-label="Knowledge folder"
-                      className="knowledge-crumbs"
-                      role="group"
-                    >
-                      {knowledgeCrumbs(knowledgePath, activeRoot.name).map(
-                        (crumb, index, all) => (
-                          <span key={crumb.path}>
-                            {index > 0 ? (
-                              <span
-                                aria-hidden="true"
-                                className="knowledge-crumbs__sep"
-                              >
-                                /
-                              </span>
-                            ) : null}
-                            <button
-                              aria-current={
-                                index === all.length - 1 ? 'true' : undefined
-                              }
-                              onClick={() =>
-                                void openKnowledgeFolder(crumb.path)
-                              }
-                              type="button"
-                            >
-                              {crumb.name}
-                            </button>
-                          </span>
-                        ),
-                      )}
-                    </div>
-                    <button
-                      aria-label="Collapse all folders"
-                      className="icon-button"
-                      disabled={expandedKnowledge.length === 0}
-                      onClick={collapseKnowledgeTree}
-                      type="button"
-                    >
-                      <ChevronsDownUp size={14} />
-                    </button>
-                  </div>
-                  <div
-                    className="knowledge-nodes"
-                    onKeyDown={knowledgeTreeKeyDown}
-                    role="tree"
-                  >
-                    {knowledgeTreeRows(knowledgeFolders, expandedKnowledge).map(
-                      (row) =>
-                        row.type === 'status' ? (
-                          <p
-                            className={`knowledge-node__status${
-                              row.variant === 'error'
-                                ? ' knowledge-node__status--error'
-                                : ''
-                            }`}
-                            key={`${row.variant}:${row.path}`}
-                            style={
-                              {
-                                '--knowledge-depth': row.depth,
-                              } as CSSProperties
-                            }
-                          >
-                            {row.variant === 'loading'
-                              ? 'Loading…'
-                              : row.variant === 'empty'
-                                ? 'Empty folder'
-                                : row.message}
-                          </p>
-                        ) : (
-                          <button
-                            aria-current={
-                              knowledgeFile?.path === row.path
-                                ? 'page'
-                                : undefined
-                            }
-                            aria-expanded={
-                              row.expandable ? row.expanded : undefined
-                            }
-                            aria-level={row.depth + 1}
-                            className={`knowledge-node${
-                              knowledgeFile?.path === row.path
-                                ? ' knowledge-node--active'
-                                : ''
-                            }`}
-                            data-knowledge-path={row.path}
-                            key={row.path}
-                            onClick={() =>
-                              row.expandable
-                                ? void toggleKnowledgeFolder(row.path)
-                                : void openKnowledgeFile(row.path)
-                            }
-                            role="treeitem"
-                            style={
-                              {
-                                '--knowledge-depth': row.depth,
-                              } as CSSProperties
-                            }
-                            type="button"
-                          >
-                            {row.expandable ? (
-                              <ChevronRight
-                                aria-hidden="true"
-                                className={`knowledge-chevron${
-                                  row.expanded ? ' knowledge-chevron--open' : ''
-                                }`}
-                                size={13}
-                              />
-                            ) : (
-                              <span
-                                aria-hidden="true"
-                                className="knowledge-chevron knowledge-chevron--leaf"
-                              />
-                            )}
-                            {row.expandable ? (
-                              row.expanded ? (
-                                <FolderOpen size={14} />
-                              ) : (
-                                <Folder size={14} />
-                              )
-                            ) : (
-                              <FileText size={14} />
-                            )}
-                            <span className="knowledge-node__name">
-                              {row.entry.name}
-                            </span>
-                          </button>
-                        ),
-                    )}
-                  </div>
-                </>
-              ) : null}
-            </nav>
-          ) : null}
 
-          <nav
-            aria-label="Sessions"
-            className="session-list"
-            hidden={sidebarMode !== 'sessions'}
-          >
+          <nav aria-label="Sessions" className="session-list">
             <p className="sidebar-label">Recent</p>
             {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
             {!loading && sessions.length === 0 ? (
@@ -7900,12 +8537,209 @@ function App() {
             </DndContext>
           </nav>
         </div>
+        {knowledgeMode !== 'hidden' ? (
+          <div className="sidebar-knowledge">
+          <nav aria-label="Knowledge" className="knowledge-tree" ref={knowledgeTreeRef}>
+            {roots.length === 0 ? (
+              <p className="sidebar-message">
+                Add a knowledge root to browse a folder on any computer.
+              </p>
+            ) : null}
+            {roots.length > 0 ? (
+              <div className="knowledge-roots">
+                <button
+                  aria-expanded={knowledgeRootsOpen}
+                  className="knowledge-roots__summary"
+                  onClick={() => setKnowledgeRootsOpen(!knowledgeRootsOpen)}
+                  type="button"
+                >
+                  <ChevronRight
+                    aria-hidden="true"
+                    className={`knowledge-chevron${
+                      knowledgeRootsOpen ? ' knowledge-chevron--open' : ''
+                    }`}
+                    size={13}
+                  />
+                  <span className="sidebar-label">Roots</span>
+                  <em>{roots.length}</em>
+                </button>
+                {knowledgeRootsOpen
+                  ? roots.map((root) => (
+                      <div className="knowledge-root" key={root.id}>
+                        <button
+                          aria-current={
+                            root.id === activeRootId ? 'true' : undefined
+                          }
+                          className={root.id === activeRootId ? 'is-active' : ''}
+                          onClick={() => void selectRoot(root.id)}
+                          type="button"
+                        >
+                          <FolderOpen size={15} />
+                          <span>
+                            <strong>{root.name}</strong>
+                            <small>
+                              {root.computerName} · {root.path}
+                            </small>
+                          </span>
+                        </button>
+                        <button
+                          aria-label={`Remove ${root.name} root`}
+                          className="icon-button icon-button--danger knowledge-root__remove"
+                          onClick={() => void removeRoot(root.id)}
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))
+                  : null}
+              </div>
+            ) : null}
+            {activeRoot ? (
+              <>
+                <div className="knowledge-toolbar">
+                  <div
+                    aria-label="Knowledge folder"
+                    className="knowledge-crumbs"
+                    role="group"
+                  >
+                    {knowledgeCrumbs(knowledgePath, activeRoot.name).map(
+                      (crumb, index, all) => (
+                        <span key={crumb.path}>
+                          {index > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className="knowledge-crumbs__sep"
+                            >
+                              /
+                            </span>
+                          ) : null}
+                          <button
+                            aria-current={
+                              index === all.length - 1 ? 'true' : undefined
+                            }
+                            onClick={() =>
+                              void openKnowledgeFolder(crumb.path)
+                            }
+                            type="button"
+                          >
+                            {crumb.name}
+                          </button>
+                        </span>
+                      ),
+                    )}
+                  </div>
+                  <button
+                    aria-label="Collapse all folders"
+                    className="icon-button"
+                    disabled={expandedKnowledge.length === 0}
+                    onClick={collapseKnowledgeTree}
+                    type="button"
+                  >
+                    <ChevronsDownUp size={14} />
+                  </button>
+                </div>
+                <div
+                  className="knowledge-nodes"
+                  onKeyDown={knowledgeTreeKeyDown}
+                  role="tree"
+                >
+                  {knowledgeRows.map(
+                    (row) =>
+                      row.type === 'status' ? (
+                        <p
+                          className={`knowledge-node__status${
+                            row.variant === 'error'
+                              ? ' knowledge-node__status--error'
+                              : ''
+                          }`}
+                          key={`${row.variant}:${row.path}`}
+                          style={
+                            {
+                              '--knowledge-depth': row.depth,
+                            } as CSSProperties
+                          }
+                        >
+                          {row.variant === 'loading'
+                            ? 'Loading…'
+                            : row.variant === 'empty'
+                              ? 'Empty folder'
+                              : row.message}
+                        </p>
+                      ) : (
+                        <button
+                          aria-current={
+                            knowledgeFile?.path === row.path
+                              ? 'page'
+                              : undefined
+                          }
+                          aria-expanded={
+                            row.expandable ? row.expanded : undefined
+                          }
+                          aria-level={row.depth + 1}
+                          className={`knowledge-node${
+                            knowledgeFile?.path === row.path
+                              ? ' knowledge-node--active'
+                              : ''
+                          }`}
+                          data-knowledge-path={row.path}
+                          key={row.path}
+                          onClick={() =>
+                            row.expandable
+                              ? void toggleKnowledgeFolder(row.path)
+                              : void openKnowledgeFile(row.path)
+                          }
+                          role="treeitem"
+                          style={
+                            {
+                              '--knowledge-depth': row.depth,
+                            } as CSSProperties
+                          }
+                          type="button"
+                        >
+                          {row.expandable ? (
+                            <ChevronRight
+                              aria-hidden="true"
+                              className={`knowledge-chevron${
+                                row.expanded ? ' knowledge-chevron--open' : ''
+                              }`}
+                              size={13}
+                            />
+                          ) : (
+                            <span
+                              aria-hidden="true"
+                              className="knowledge-chevron knowledge-chevron--leaf"
+                            />
+                          )}
+                          {row.expandable ? (
+                            row.expanded ? (
+                              <FolderOpen size={14} />
+                            ) : (
+                              <Folder size={14} />
+                            )
+                          ) : (
+                            <FileText size={14} />
+                          )}
+                          <span className="knowledge-node__name">
+                            {row.entry.name}
+                          </span>
+                        </button>
+                      ),
+                  )}
+                </div>
+              </>
+            ) : null}
+          </nav>
+          </div>
+        ) : null}
         <div className="sidebar-settings">
           <button
             aria-label="Add knowledge root"
             className="sidebar-settings__button"
             onClick={() => {
-              setSidebarMode('knowledge')
+              if (knowledgeMode === 'hidden') {
+                setKnowledgeMode('docked')
+              }
               setAddRootOpen(true)
             }}
             type="button"
@@ -7943,60 +8777,9 @@ function App() {
         />
       ) : null}
 
-      {sidebarMode === 'knowledge' ? (
-        <main className="conversation conversation--knowledge">
-          <header className="conversation-header">
-            <button
-              aria-label="Open sessions"
-              className="icon-button mobile-menu"
-              onClick={() => setSidebarOpen(true)}
-              type="button"
-            >
-              <Menu size={21} />
-            </button>
-            <div className="conversation-header__title">
-              <strong>{activeRoot?.name || 'Knowledge'}</strong>
-              <span>
-                {activeRoot
-                  ? `${activeRoot.computerName} · ${activeRoot.path}`
-                  : 'Browse folders on any computer'}
-              </span>
-            </div>
-          </header>
-          {error ? (
-            <div className="error-banner">
-              <span>{error}</span>
-              <button
-                aria-label="Dismiss error"
-                onClick={() => setError(undefined)}
-              >
-                <X size={16} />
-              </button>
-            </div>
-          ) : null}
-          {activeRoot ? (
-            <KnowledgeReader
-              file={knowledgeFile}
-              key={knowledgeFile?.path || activeRoot.id}
-              listing={knowledgeListing}
-              loading={knowledgeLoading}
-              onLoadAsset={loadKnowledgeAsset}
-              onOpenFolder={(path) => void openKnowledgeFolder(path)}
-              root={activeRoot}
-            />
-          ) : (
-            <div className="knowledge-reader knowledge-reader--empty">
-              <BookOpen size={26} />
-              <p>
-                Add a knowledge root to read Markdown from any computer without
-                opening a session.
-              </p>
-            </div>
-          )}
-        </main>
-      ) : null}
 
-      <main className="conversation" hidden={sidebarMode === 'knowledge'}>
+      <div className={`workspace workspace--${knowledgeMode}`}>
+      <main className="conversation" hidden={knowledgeMode === 'expanded'}>
         <header className="conversation-header">
           <button
             aria-label="Open sessions"
@@ -8018,6 +8801,22 @@ function App() {
                 : 'Ready when you are'}
             </span>
           </div>
+          <button
+            aria-label="Session knowledge"
+            aria-pressed={knowledgeMode !== 'hidden'}
+            className={`icon-button ${
+              knowledgeMode !== 'hidden' ? 'icon-button--active' : ''
+            }`}
+            onClick={toggleKnowledgePanel}
+            title={
+              selected
+                ? 'Knowledge for this session (Alt+K)'
+                : 'Knowledge (Alt+K)'
+            }
+            type="button"
+          >
+            <BookOpen size={18} />
+          </button>
           {selected ? (
             <button
               aria-label="Browse current session folder"
@@ -8532,6 +9331,101 @@ function App() {
           </footer>
         ) : null}
       </main>
+
+      <aside
+        aria-label="Session knowledge"
+        className="knowledge-panel"
+        hidden={knowledgeMode === 'hidden'}
+      >
+        <header className="knowledge-panel__header">
+          <BookOpen aria-hidden="true" size={16} />
+          <div className="knowledge-panel__title">
+            <strong>{activeRoot?.name || 'Knowledge'}</strong>
+            <small>
+              {activeRoot
+                ? `${activeRoot.computerName} · ${activeRoot.path}`
+                : 'Add a root to read files beside this session'}
+            </small>
+          </div>
+          <button
+            aria-label="Show files"
+            className="icon-button knowledge-panel__files"
+            onClick={() => setSidebarOpen(true)}
+            type="button"
+          >
+            <FolderOpen size={16} />
+          </button>
+          <button
+            aria-label="New knowledge root"
+            className="icon-button"
+            onClick={() => setAddRootOpen(true)}
+            type="button"
+          >
+            <Plus size={16} />
+          </button>
+          <button
+            aria-label={
+              knowledgeMode === 'expanded'
+                ? 'Minimize knowledge panel'
+                : 'Expand knowledge panel'
+            }
+            aria-pressed={knowledgeMode === 'expanded'}
+            className={`icon-button ${
+              knowledgeMode === 'expanded' ? 'icon-button--active' : ''
+            }`}
+            onClick={toggleKnowledgeExpanded}
+            title="Alt+Shift+K"
+            type="button"
+          >
+            {knowledgeMode === 'expanded' ? (
+              <Minimize2 size={16} />
+            ) : (
+              <Maximize2 size={16} />
+            )}
+          </button>
+          <button
+            aria-label="Close knowledge panel"
+            className="icon-button"
+            onClick={() => setKnowledgeMode('hidden')}
+            title="Alt+K"
+            type="button"
+          >
+            <X size={16} />
+          </button>
+        </header>
+        {error ? (
+          <div className="error-banner knowledge-panel__error">
+            <span>{error}</span>
+            <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
+              <X size={16} />
+            </button>
+          </div>
+        ) : null}
+        <div className="knowledge-panel__body">
+          <div className="knowledge-panel__reader">
+            {activeRoot ? (
+              <KnowledgeReader
+                file={knowledgeFile}
+                key={knowledgeFile?.path || activeRoot.id}
+                listing={knowledgeListing}
+                loading={knowledgeLoading}
+                onLoadAsset={loadKnowledgeAsset}
+                onOpenFolder={(path) => void openKnowledgeFolder(path)}
+                root={activeRoot}
+              />
+            ) : (
+              <div className="knowledge-reader knowledge-reader--empty">
+                <BookOpen size={26} />
+                <p>
+                  Add a knowledge root to read files from any computer beside
+                  this session.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </aside>
+      </div>
 
       <NewSessionDialog
         computers={computers}

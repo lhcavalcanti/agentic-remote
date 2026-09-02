@@ -1746,6 +1746,13 @@ describe('AgentService deletion', () => {
       createdAt: new Date().toISOString(),
     })
 
+    const removals: unknown[] = []
+    service.on('event', (event) => {
+      if (event.type === 'session.removed') {
+        removals.push(event)
+      }
+    })
+
     const cleared = await service.clearConversation(created.id)
 
     expect(cleared).toMatchObject({
@@ -1754,6 +1761,11 @@ describe('AgentService deletion', () => {
       status: 'idle',
     })
     expect(cleared.id).not.toBe(created.id)
+    // Clearing replaces a session rather than deleting it. Saying so is what
+    // lets every client move its state across instead of discarding it.
+    expect(removals).toEqual([
+      { type: 'session.removed', sessionId: created.id, replacedBy: cleared.id },
+    ])
     expect(service.store.get(created.id)).toBeUndefined()
     expect(client.deletedSessionIds).toContain(created.id)
     expect(client.createdConfigs.at(-1)).toMatchObject({

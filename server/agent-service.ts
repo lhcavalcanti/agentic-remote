@@ -2167,6 +2167,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error('Session can only move to tmux while idle')
     }
+    // A detached shell keeps running without holding the foreground, so an
+    // idle session can still own live work. Migrating disconnects the SDK
+    // owner and drops the tracking, which would abandon it silently.
+    const tasks = await this.syncBackgroundTasks(id).catch(() =>
+      this.backgroundTaskTracker.get(id),
+    )
+    if (
+      tasks.tasks.some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      throw new Error(
+        'Session can only move to tmux once its background tasks finish',
+      )
+    }
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
     }

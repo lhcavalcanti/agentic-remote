@@ -656,7 +656,11 @@ function taskInvocation(
       boundedText(args.description) ||
       boundedText(args.name) ||
       'Background agent',
-    executionMode: 'background',
+    // A task asked to run synchronously holds the turn open rather than going
+    // to the background, and counting it as background inflates the running
+    // count and colours the session for work the user is already waiting on.
+    executionMode:
+      stringValue(args.mode) === 'sync' ? 'sync' : 'background',
   }
 }
 
@@ -777,10 +781,12 @@ function backgroundHandoff(
     textFromValue(result) ||
     textFromValue(recordValue(result.structuredContent)) ||
     textFromValue(data)
+  // Ordinary output can mention a background command without one existing, so
+  // the handoff has to name the shell it created before it is believed.
   if (
     message &&
-    /(?:background|detached|async|still running|moved)/i.test(message) &&
-    /(?:shell|task|command|process)/i.test(message)
+    /shell\s*id\s*[:=]/i.test(message) &&
+    /(?:background|detached|async|still running|moved)/i.test(message)
   ) {
     return {
       executionMode: 'background',

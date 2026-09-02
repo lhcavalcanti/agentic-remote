@@ -663,6 +663,19 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         (provider) => provider.supportsBackgroundTasks === true,
       )
     ) {
+      // A node that came back without task support may have been rolled back
+      // while clients still show what it last reported. Saying so explicitly
+      // clears those counts and controls instead of leaving them frozen.
+      for (const session of sessions) {
+        this.emit('event', {
+          type: 'session.tasks.updated',
+          computerId: computer.id,
+          sessionId: session.id,
+          tasks: [],
+          runningCount: 0,
+          supported: false,
+        })
+      }
       return
     }
     await Promise.all(

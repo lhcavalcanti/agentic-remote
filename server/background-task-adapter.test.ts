@@ -602,6 +602,71 @@ describe('background task adapter', () => {
     ])
   })
 
+  it('keeps a task asked to run synchronously out of the background', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "task-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:07:00.000Z",
+          "data": {
+            "toolCallId": "task-call",
+            "toolName": "task",
+            "arguments": {
+              "agent_type": "explore",
+              "description": "Trace the cache",
+              "mode": "sync"
+            }
+          }
+        }
+      ]`) as SessionEvent[],
+    )
+
+    // A synchronous task holds the turn open, so counting it as background
+    // would colour the session for work the user is already waiting on.
+    expect(tasks).toEqual([
+      expect.objectContaining({ id: 'task-call', executionMode: 'sync' }),
+    ])
+  })
+
+  it('does not read a background handoff out of ordinary output', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "shell-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:08:00.000Z",
+          "data": {
+            "toolCallId": "shell-call",
+            "toolName": "bash",
+            "arguments": { "command": "cat notes.md" }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "shell-finish",
+          "parentId": "shell-start",
+          "timestamp": "2026-08-31T18:08:01.000Z",
+          "data": {
+            "toolCallId": "shell-call",
+            "success": true,
+            "result": {
+              "content": "this command starts a background process for the task"
+            }
+          }
+        }
+      ]`) as SessionEvent[],
+    )
+
+    // The words alone are not a handoff: without a shell to point at, the
+    // command simply finished.
+    expect(
+      tasks.filter((task) => task.status === 'running'),
+    ).toEqual([])
+  })
+
   it('projects tmux shell tasks when the CLI omits the execution mode', () => {
     const events = [
       {

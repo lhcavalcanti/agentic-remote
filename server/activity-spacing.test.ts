@@ -82,3 +82,38 @@ describe('layout width variables', () => {
     expect(declaration(css, '.sidebar-resizer', 'position')).toBe('absolute')
   })
 })
+
+// A session can be idle in the foreground while background work continues, so
+// the background colour must not depend on the foreground status class.
+describe('background-active session styling', () => {
+  it('colours the dot for any status, not only running', async () => {
+    const css = await stylesheet()
+
+    expect(
+      declaration(css, '.session-item--background-running .status-dot', 'background'),
+    ).toBe('#6ea8fe')
+    // Would leave an idle session grey.
+    expect(css).not.toContain(
+      '.session-item--background-running .status-dot.status-dot--running',
+    )
+  })
+
+  it('still lets waiting and error take precedence', async () => {
+    const css = await stylesheet()
+
+    expect(
+      declaration(
+        css,
+        '.session-item--background-running .status-dot.status-dot--waiting',
+        'background',
+      ),
+    ).toBe('#f2c96d')
+    expect(
+      declaration(
+        css,
+        '.session-item--background-running .status-dot.status-dot--error',
+        'background',
+      ),
+    ).toBe('var(--danger)')
+  })
+})

@@ -56,6 +56,12 @@ Each node advertises provider capabilities. Legacy nodes advertise Copilot only,
 so a hub cannot accidentally create a Claude session on a node that has not
 been upgraded and authenticated.
 
+Copilot background tasks remain on the owning node. SDK-backed snapshots use
+the session-scoped task RPC; tmux-backed snapshots use the persisted `/tasks`
+event projection for agent and detached-shell lifecycle records. Both are
+forwarded as separate task events; the hub never copies task output into
+another session or into the conversation store.
+
 The provider router keeps Copilot and Claude Agent state separate while
 presenting one `SessionService` contract. Existing sessions without an explicit
 provider are treated as Copilot sessions. Claude Agent uses the official

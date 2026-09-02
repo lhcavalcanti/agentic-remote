@@ -82,6 +82,16 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - A late or ambiguous lock MAY be accepted only when `/proc/<pid>/fd` proves
   that the process has the corresponding `session.db` open.
 - Historical sessions MAY be opened from the new-session flow.
+- Copilot sessions MUST expose tracked background tasks when the owning
+  runtime advertises task support. The UI MUST show queued, running,
+  completed, failed, and cancelled task states, including task progress and
+  timestamps where available.
+- A session MUST use the blue active-task treatment while at least one
+  background task is running. With no running background task, the existing
+  green and gray session treatments MUST remain unchanged.
+- Background task reads and cancellation MUST remain scoped to the owning
+  computer and session. Task state MUST resynchronize after a reconnect
+  instead of relying on a transient event count.
 
 ### 3.2 Creation
 

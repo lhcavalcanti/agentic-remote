@@ -20,6 +20,8 @@ import type {
   AgentProvider,
   AgentProviderCapability,
   ActivityKind,
+  BackgroundTask,
+  BackgroundTaskSnapshot,
   ChatMessage,
   AgentMode,
   ConfigureRuntimeInput,
@@ -46,6 +48,15 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
+import {
+  backgroundTasksFromEvents,
+  MAX_BACKGROUND_TASKS,
+  normalizeBackgroundTask,
+  type CopilotTaskInfo,
+  type CopilotTaskProgress,
+  type CopilotTasksApi,
+} from './background-task-adapter.js'
+import { BackgroundTaskTracker } from './background-task-tracker.js'
 import { SessionStore, type DiscoveredSession } from './session-store.js'
 import {
   findActiveCopilotSessions,
@@ -119,6 +130,7 @@ export interface CopilotSessionLike {
       CopilotSession['rpc']['commands'],
       'list' | 'invoke' | 'enqueue'
     >
+    tasks?: CopilotTasksApi
     name: Pick<CopilotSession['rpc']['name'], 'set'>
     model: Pick<CopilotSession['rpc']['model'], 'getCurrent' | 'switchTo'>
     mode: Pick<CopilotSession['rpc']['mode'], 'set'>
@@ -345,7 +357,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       continue
     }
-    if (event.type === 'assistant.message' && !event.agentId) {
+    if (event.type === 'assistant.message' && !eventAgentId(event)) {
       const content = event.data.content.trim()
       if (content) {
         finishRunningActivities()
@@ -769,7 +781,7 @@ export function pendingUserInputFromEvents(
       }
     | undefined
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     if (event.type === 'user.message') {
@@ -1040,23 +1052,82 @@ function stripAnsi(value: string): string {
   return value.replace(ansiSequence, '')
 }
 
+const foregroundLifecycleEvents = new Set<SessionEvent['type']>([
+  'assistant.turn_start',
+  'permission.requested',
+  'permission.completed',
+  'session.error',
+  'assistant.turn_end',
+  'session.idle',
+  'abort',
+  'session.shutdown',
+])
+
+function eventAgentId(event: SessionEvent): string | undefined {
+  return (
+    stringValue(event.agentId) ||
+    stringValue(recordValue(event.data).agentId)
+  )
+}
+
+function isForegroundLifecycleEvent(event: SessionEvent): boolean {
+  return !eventAgentId(event) && foregroundLifecycleEvents.has(event.type)
+}
+
+function isForegroundCompletionEvent(event: SessionEvent): boolean {
+  return (
+    isForegroundLifecycleEvent(event) &&
+    (event.type === 'assistant.turn_end' ||
+      event.type === 'session.idle' ||
+      event.type === 'session.error' ||
+      event.type === 'abort' ||
+      event.type === 'session.shutdown')
+  )
+}
+
+function isBackgroundTaskEvent(event: SessionEvent): boolean {
+  if (
+    eventAgentId(event) ||
+    event.type === 'session.background_tasks_changed' ||
+    event.type === 'subagent.started' ||
+    event.type === 'subagent.completed' ||
+    event.type === 'subagent.failed'
+  ) {
+    return true
+  }
+  if (event.type !== 'system.notification') {
+    return false
+  }
+  const data = recordValue(event.data)
+  const kind = recordValue(data.kind)
+  return [
+    'agent_idle',
+    'agent_completed',
+    'shell_completed',
+    'shell_detached_completed',
+  ].includes(stringValue(kind.type) || '')
+}
+
 export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
   // Work a turn handed to background agents outlives the turn itself, so the
   // agents still running are tracked separately from it.
   const workingAgents = new Set<string>()
   for (const event of events) {
-    if (event.agentId) {
-      if (event.type === 'subagent.started') {
-        workingAgents.add(event.agentId)
-      } else if (
-        event.type === 'subagent.completed' ||
-        event.type === 'subagent.failed'
-      ) {
-        // Failing ends an agent just as completing does. Tracking only the
-        // completions would leave a failed agent working for good, and the
-        // session running with it.
-        workingAgents.delete(event.agentId)
+    if (!isForegroundLifecycleEvent(event)) {
+      const agentId = eventAgentId(event)
+      if (agentId) {
+        if (event.type === 'subagent.started') {
+          workingAgents.add(agentId)
+        } else if (
+          event.type === 'subagent.completed' ||
+          event.type === 'subagent.failed'
+        ) {
+          // Failing ends an agent just as completing does. Tracking only the
+          // completions would leave a failed agent working for good, and the
+          // session running with it.
+          workingAgents.delete(agentId)
+        }
       }
       continue
     }
@@ -1136,10 +1207,10 @@ function eventContextLength(event: SessionEvent): number {
   }
 
   if (event.type === 'assistant.message') {
-    return event.agentId ? 0 : contextTextLength(data.content)
+    return eventAgentId(event) ? 0 : contextTextLength(data.content)
   }
   if (event.type === 'tool.execution_complete') {
-    return event.agentId ? 0 : contextTextLength(data.result)
+    return eventAgentId(event) ? 0 : contextTextLength(data.result)
   }
   return 0
 }
@@ -1150,7 +1221,7 @@ function workingDirectoryFromEvents(
 ): string | undefined {
   let cwd = fallback
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     const data = recordValue(event.data)
@@ -1211,7 +1282,7 @@ export function runtimeInfoFromEvents(
   const runtime: SessionRuntimeInfo = { ...previous }
   let exactContext = false
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     const data = recordValue(event.data)
@@ -1309,6 +1380,35 @@ function isMissingSessionError(error: unknown): boolean {
   )
 }
 
+function isUnsupportedBackgroundTaskError(error: unknown): boolean {
+  const details = recordValue(error)
+  const nestedDetails = recordValue(details.error)
+  const code = details.code ?? nestedDetails.code
+  if (
+    code === -32601 ||
+    code === '-32601' ||
+    (typeof code === 'string' &&
+      code.toLowerCase().replaceAll(/[\s_-]+/g, '') === 'methodnotfound')
+  ) {
+    return true
+  }
+  const message =
+    error instanceof Error
+      ? error.message
+      : stringValue(details.message) || stringValue(nestedDetails.message)
+  if (!message) {
+    return false
+  }
+  const normalizedMessage = message.toLowerCase()
+  return (
+    normalizedMessage.includes('method not found') ||
+    normalizedMessage.includes('methodnotfound') ||
+    normalizedMessage.includes('unknown method') ||
+    normalizedMessage.includes('unhandled method') ||
+    normalizedMessage.includes('not supported')
+  )
+}
+
 function normalizedTitle(value: string | undefined, fallback: string): string {
   const firstLine = value?.trim().split(/\r?\n/, 1)[0]?.trim() || fallback
   return firstLine.length > 72 ? `${firstLine.slice(0, 72)}…` : firstLine
@@ -1356,6 +1456,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
+  private readonly backgroundTaskTracker = new BackgroundTaskTracker()
+  private readonly backgroundTaskSyncs = new Map<
+    string,
+    Promise<BackgroundTaskSnapshot>
+  >()
+  private readonly backgroundTaskResyncNeeded = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
   private readonly terminalUserInputChecks = new Map<string, number>()
@@ -1444,6 +1550,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         available: true,
         terminalBacked: true,
         supportsTmuxMigration: true,
+        supportsBackgroundTasks: true,
       },
     ]
   }
@@ -1508,6 +1615,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.terminalUpdateChecks.clear()
     this.answeredTerminalPermissions.clear()
     this.answeredTerminalInputs.clear()
+    this.backgroundTaskSyncs.clear()
+    this.backgroundTaskResyncNeeded.clear()
+    for (const session of this.store.list()) {
+      this.backgroundTaskTracker.remove(session.id)
+    }
     const disconnected = await Promise.allSettled(
       [...this.sessions.values()].map((session) => session.disconnect()),
     )
@@ -1976,7 +2088,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const events = await this.sessionEventReader(stored.id)
     const latestLifecycle = events.findLast(
       (event) =>
-        !event.agentId &&
+        isForegroundLifecycleEvent(event) &&
         (event.type === 'assistant.turn_start' ||
           event.type === 'assistant.turn_end' ||
           event.type === 'session.idle' ||
@@ -2055,6 +2167,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error('Session can only move to tmux while idle')
     }
+    // A detached shell keeps running without holding the foreground, so an
+    // idle session can still own live work. Migrating disconnects the SDK
+    // owner and drops the tracking, which would abandon it silently.
+    const tasks = await this.syncBackgroundTasks(id).catch(() =>
+      this.backgroundTaskTracker.get(id),
+    )
+    if (
+      tasks.tasks.some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      throw new Error(
+        'Session can only move to tmux once its background tasks finish',
+      )
+    }
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
     }
@@ -2068,6 +2195,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.sessions.delete(id)
     }
     this.hydratedSessions.delete(id)
+    this.backgroundTaskTracker.remove(id)
+    this.backgroundTaskSyncs.delete(id)
     this.launchingTerminalSessionIds.add(id)
     this.discoveryGeneration += 1
     try {
@@ -2226,6 +2355,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.eventLogFingerprints.delete(id)
       this.eventLogVersions.delete(id)
       this.workspaceVersions.delete(id)
+      this.backgroundTaskSyncs.delete(id)
+      this.backgroundTaskTracker.remove(id)
       this.liveTranscriptWatermarks.delete(id)
       this.liveActivityEvents.delete(id)
       this.activePrompts.delete(id)
@@ -2843,6 +2974,55 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await session.abort()
   }
 
+  async listBackgroundTasks(
+    sessionId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    const stored = this.store.get(sessionId)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (this.externalSessionIds.has(sessionId)) {
+      // Projected from an event log rather than owned over RPC, so there is no
+      // channel to cancel through and loading one would attach an SDK owner to
+      // a session the live CLI already owns.
+      const projected = backgroundTasksFromEvents(
+        await this.sessionEventReader(sessionId),
+        { assumeBackground: true },
+      )
+      return this.replaceBackgroundTasks(sessionId, projected, true)
+    }
+    return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
+  }
+
+  async cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    const current = await this.listBackgroundTasks(sessionId)
+    const task = current.tasks.find((candidate) => candidate.id === taskId)
+    if (!task) {
+      throw new Error('Background task not found')
+    }
+    if (!task.canCancel) {
+      throw new Error('Background task cannot be cancelled')
+    }
+    // Checked again before loading: ensureLoaded would attach an SDK owner to a
+    // session the live CLI owns.
+    if (this.externalSessionIds.has(sessionId)) {
+      throw new Error('Background task cannot be cancelled')
+    }
+    const session = await this.ensureLoaded(sessionId)
+    const cancel = session.rpc.tasks?.cancel
+    if (!cancel) {
+      throw new Error('Background task cancellation is not supported')
+    }
+    const result = await cancel({ id: taskId })
+    if (!result.cancelled) {
+      throw new Error('Background task could not be cancelled')
+    }
+    return this.listBackgroundTasks(sessionId)
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     const stored = this.store.get(sessionId)
     if (!stored) {
@@ -2903,6 +3083,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.drainingSessions.delete(sessionId)
       this.queueOperations.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
+      this.backgroundTaskSyncs.delete(sessionId)
+      this.backgroundTaskTracker.remove(sessionId)
       this.liveActivityEvents.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
       this.terminalUpdateChecks.delete(sessionId)
@@ -3486,6 +3668,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return
         }
         const events = await this.sessionEventReader(sessionId)
+        const terminalTasks = this.externalSessionIds.has(sessionId)
+          ? backgroundTasksFromEvents(events, { assumeBackground: true })
+          : []
+        if (this.externalSessionIds.has(sessionId)) {
+          this.replaceBackgroundTasks(
+            sessionId,
+            terminalTasks,
+            true,
+          )
+        }
         const fingerprint = `${events.length}:${events.at(-1)?.id || ''}`
         if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
           await this.recoverHiddenUserInput(sessionId, events)
@@ -3523,12 +3715,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           const dispatchTime = Date.parse(queueDispatchAt)
           const completion = events.some(
             (event) =>
-              Date.parse(event.timestamp) > dispatchTime &&
-              (event.type === 'assistant.turn_end' ||
-                event.type === 'session.idle' ||
-                event.type === 'session.error' ||
-                event.type === 'abort' ||
-                event.type === 'session.shutdown'),
+              Date.parse(event.timestamp) >= dispatchTime &&
+              isForegroundCompletionEvent(event),
           )
           if (completion) {
             await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
@@ -3551,7 +3739,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const cwd = workingDirectoryFromEvents(events, stored?.cwd)
         const contextCwd = events.some(
           (event) =>
-            event.type === 'session.context_changed' && !event.agentId,
+            event.type === 'session.context_changed' &&
+            !eventAgentId(event),
         )
         if (
           this.activePrompts.has(sessionId) ||
@@ -3577,16 +3766,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publish(updated)
         const latestCompletionAt = events.findLast(
           (event) =>
-            event.type === 'assistant.turn_end' ||
-            event.type === 'session.idle' ||
             // A turn that handed its work to background agents ends before
             // they do, so the last agent finishing is the completion a prompt
             // queued behind them is waiting on.
+            isForegroundCompletionEvent(event) ||
             event.type === 'subagent.completed' ||
-            event.type === 'subagent.failed' ||
-            event.type === 'session.error' ||
-            event.type === 'abort' ||
-            event.type === 'session.shutdown',
+            event.type === 'subagent.failed',
         )?.timestamp
         const firstQueuedAt = updated.queuedPrompts?.[0]?.createdAt
         if (
@@ -3856,23 +4041,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const relevant = since
         ? events.filter(
             (event) =>
-              !event.agentId &&
               Date.parse(event.timestamp) >= Date.parse(since),
           )
         : events
-      const hasLifecycleEvent = relevant.some((event) =>
-        [
-          'assistant.turn_start',
-          'permission.requested',
-          'permission.completed',
-          'session.error',
-          'assistant.turn_end',
-          'session.idle',
-          'abort',
-          'session.shutdown',
-        ].includes(event.type),
-      )
+      const hasLifecycleEvent = relevant.some(isForegroundLifecycleEvent)
       if (!hasLifecycleEvent) {
+        const hasBackgroundTaskActivity =
+          relevant.some(isBackgroundTaskEvent) ||
+          backgroundTasksFromEvents(relevant, { assumeBackground: true }).some(
+            (task) => task.executionMode === 'background',
+          )
+        if (
+          hasBackgroundTaskActivity &&
+          events.some(isForegroundLifecycleEvent)
+        ) {
+          // Background work can keep the session running after the turn that
+          // launched it ended. That is the agents' own state rather than a
+          // continuation of the turn just answered, so no activity is shown.
+          return { status: statusFromEvents(events) }
+        }
         return { status: 'running', activity: 'Continuing' }
       }
       const status = statusFromEvents(relevant)
@@ -3911,6 +4098,128 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .rename(sessionId, updated.title)
         .catch((error: unknown) => this.publishError(sessionId, error))
     }
+  }
+
+  private syncBackgroundTasks(
+    sessionId: string,
+    sdkSession = this.sessions.get(sessionId),
+  ): Promise<BackgroundTaskSnapshot> {
+    const existing = this.backgroundTaskSyncs.get(sessionId)
+    if (existing) {
+      this.backgroundTaskResyncNeeded.add(sessionId)
+      return existing
+    }
+    let sync: Promise<BackgroundTaskSnapshot>
+    sync = (async () => {
+      let snapshot: BackgroundTaskSnapshot
+      do {
+        this.backgroundTaskResyncNeeded.delete(sessionId)
+        snapshot = await this.readBackgroundTasks(sessionId, sdkSession)
+      } while (this.backgroundTaskResyncNeeded.has(sessionId))
+      return snapshot
+    })().finally(() => {
+      if (this.backgroundTaskSyncs.get(sessionId) === sync) {
+        this.backgroundTaskSyncs.delete(sessionId)
+      }
+      this.backgroundTaskResyncNeeded.delete(sessionId)
+    })
+    this.backgroundTaskSyncs.set(sessionId, sync)
+    return sync
+  }
+
+  private async readBackgroundTasks(
+    sessionId: string,
+    sdkSession = this.sessions.get(sessionId),
+  ): Promise<BackgroundTaskSnapshot> {
+    const tasks = sdkSession?.rpc.tasks
+    if (!tasks?.list) {
+      return this.replaceBackgroundTasks(sessionId, [], false)
+    }
+
+    try {
+      await tasks.refresh?.()
+    } catch (error) {
+      if (!isUnsupportedBackgroundTaskError(error)) {
+        throw error
+      }
+    }
+
+    let listed: { tasks: CopilotTaskInfo[] }
+    try {
+      listed = await tasks.list()
+    } catch (error) {
+      if (isUnsupportedBackgroundTaskError(error)) {
+        return this.replaceBackgroundTasks(sessionId, [], false)
+      }
+      throw error
+    }
+
+    const entries = [...listed.tasks]
+      .sort(
+        (left, right) =>
+          Number(
+            right.status === 'running' ||
+              right.status === 'idle' ||
+              right.status === 'queued',
+          ) -
+            Number(
+              left.status === 'running' ||
+                left.status === 'idle' ||
+                left.status === 'queued',
+            ) ||
+          right.startedAt.localeCompare(left.startedAt),
+      )
+      .slice(0, MAX_BACKGROUND_TASKS)
+    const normalized = await Promise.all(
+      entries.map(async (task) => {
+        let progress: CopilotTaskProgress | null | undefined
+        if (tasks.getProgress) {
+          try {
+            progress = (await tasks.getProgress({ id: task.id })).progress
+          } catch (error) {
+            if (!isUnsupportedBackgroundTaskError(error)) {
+              throw error
+            }
+          }
+        }
+        return normalizeBackgroundTask(
+          task,
+          progress,
+          typeof tasks.cancel === 'function',
+        )
+      }),
+    )
+    return this.replaceBackgroundTasks(sessionId, normalized, true)
+  }
+
+  private replaceBackgroundTasks(
+    sessionId: string,
+    tasks: BackgroundTask[],
+    supported: boolean,
+  ): BackgroundTaskSnapshot {
+    // An externally owned session is projected from its event log, so there is
+    // no channel to cancel a task through however that projection was
+    // produced. Enforcing it here rather than at each call site keeps a path
+    // that publishes a raw projection from re-enabling the control.
+    const owned = this.externalSessionIds.has(sessionId)
+      ? tasks.map((task) =>
+          task.canCancel ? { ...task, canCancel: false } : task,
+        )
+      : tasks
+    const update = this.backgroundTaskTracker.replace(
+      sessionId,
+      owned,
+      supported,
+    )
+    if (update.changed) {
+      const snapshot = update.snapshot
+      this.emit('event', {
+        type: 'session.tasks.updated',
+        sessionId,
+        ...snapshot,
+      })
+    }
+    return update.snapshot
   }
 
   private rememberLiveActivityEvent(
@@ -3994,8 +4303,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.rememberLiveActivityEvent(sessionId, event)
 
     if (
+      (event.type === 'session.background_tasks_changed' ||
+        event.type === 'subagent.started' ||
+        event.type === 'subagent.completed' ||
+        event.type === 'subagent.failed') &&
+      stored &&
+      !this.deletingSessions.has(sessionId)
+    ) {
+      void this.syncBackgroundTasks(sessionId).catch((error: unknown) =>
+        this.publishError(sessionId, error),
+      )
+    }
+
+    if (
       event.type === 'session.context_changed' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       stored &&
       !this.deletingSessions.has(sessionId)
     ) {
@@ -4011,7 +4333,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (
       event.type === 'session.title_changed' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       stored &&
       !this.deletingSessions.has(sessionId)
     ) {
@@ -4048,7 +4370,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (
       event.type === 'assistant.message_delta' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       activePrompt
     ) {
       this.publish(
@@ -4061,7 +4383,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'assistant.message' && !event.agentId && activePrompt) {
+    if (
+      event.type === 'assistant.message' &&
+      !eventAgentId(event) &&
+      activePrompt
+    ) {
       this.liveTranscriptWatermarks.set(sessionId, event.timestamp)
       this.publish(
         this.store.setMessageContent(

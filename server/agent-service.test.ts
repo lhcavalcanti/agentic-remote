@@ -23,10 +23,16 @@ import {
   statusFromEvents,
   terminalFormSteps,
 } from './agent-service.js'
+import type {
+  CopilotTaskInfo,
+  CopilotTaskProgress,
+} from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId = 'active-session'
+  readonly backgroundTasks: CopilotTaskInfo[] = []
+  readonly taskProgress = new Map<string, CopilotTaskProgress>()
   readonly sentPrompts: string[] = []
   disconnectCount = 0
   readonly invokedCommands: string[] = []
@@ -129,6 +135,21 @@ class DeferredSession implements CopilotSessionLike {
         }
       },
       enqueue: async () => ({ queued: true }),
+    },
+    tasks: {
+      list: async () => ({ tasks: this.backgroundTasks }),
+      getProgress: async ({ id }: { id: string }) => ({
+        progress: this.taskProgress.get(id),
+      }),
+      cancel: async ({ id }: { id: string }) => {
+        const task = this.backgroundTasks.find((entry) => entry.id === id)
+        if (!task) {
+          return { cancelled: false }
+        }
+        task.status = 'cancelled'
+        task.completedAt = new Date().toISOString()
+        return { cancelled: true }
+      },
     },
   }
 
@@ -824,6 +845,328 @@ describe('AgentService deletion', () => {
         activityStatus: 'running',
       }),
     ])
+  })
+
+  it('lists, updates, and cancels SDK background tasks independently of session status', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    let taskEventCount = 0
+    service.on('event', (event) => {
+      if (event.type === 'session.tasks.updated') {
+        taskEventCount += 1
+      }
+    })
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'task-1',
+      description: 'Inspect the repository',
+      status: 'running',
+      startedAt: '2026-08-31T18:00:00.000Z',
+      agentType: 'explore',
+      executionMode: 'background',
+    })
+    client.session.taskProgress.set('task-1', {
+      type: 'agent',
+      latestIntent: 'Reading source files',
+      recentActivity: [
+        {
+          message: '▸ view',
+          timestamp: '2026-08-31T18:00:01.000Z',
+        },
+      ],
+    })
+
+    await expect(service.listBackgroundTasks(created.id)).resolves.toMatchObject({
+      runningCount: 1,
+      supported: true,
+      tasks: [
+        {
+          id: 'task-1',
+          status: 'running',
+          progress: { latestIntent: 'Reading source files' },
+        },
+      ],
+    })
+    expect(taskEventCount).toBeGreaterThan(0)
+
+    await expect(
+      service.cancelBackgroundTask(created.id, 'task-1'),
+    ).resolves.toMatchObject({
+      runningCount: 0,
+      tasks: [{ id: 'task-1', status: 'cancelled', canCancel: false }],
+    })
+    await service.stop()
+  })
+
+  it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    let taskListError: unknown = new Error(
+      'Unhandled method session.tasks.list',
+    )
+    client.session.rpc.tasks!.list = async () => {
+      throw taskListError
+    }
+
+    await expect(service.listBackgroundTasks(created.id)).resolves.toEqual({
+      tasks: [],
+      runningCount: 0,
+      supported: false,
+    })
+
+    taskListError = Object.assign(new Error('Request failed'), { code: -32601 })
+    await expect(service.listBackgroundTasks(created.id)).resolves.toEqual({
+      tasks: [],
+      runningCount: 0,
+      supported: false,
+    })
+    await service.stop()
+  })
+
+  it('keeps terminal foreground status idle while a background task runs', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-terminal-task-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const completedAt = new Date(Date.now() + 1_000).toISOString()
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'task-start',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {
+          toolCallId: 'task-call',
+          toolName: 'task',
+          arguments: {
+            agent_type: 'explore',
+            description: 'Inspect the repository',
+            prompt: 'Find the relevant files',
+          },
+        },
+      },
+      {
+        type: 'assistant.turn_end',
+        id: 'turn-end',
+        parentId: 'task-start',
+        timestamp: completedAt,
+        data: {},
+      },
+      {
+        type: 'assistant.turn_start',
+        id: 'background-turn',
+        parentId: 'turn-end',
+        timestamp: new Date(Date.parse(completedAt) + 1_000).toISOString(),
+        data: {
+          agentId: 'agent-1',
+        },
+      },
+    ] as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-task-events',
+      terminal,
+    )
+
+    await service.start()
+    await service.store.updateStatus(client.session.sessionId, 'running')
+
+    const options = await service.runtimeOptions(client.session.sessionId)
+
+    expect(options.status).toBe('idle')
+    await expect(
+      service.listBackgroundTasks(client.session.sessionId),
+    ).resolves.toMatchObject({
+      runningCount: 1,
+      tasks: [
+        expect.objectContaining({
+          id: 'task-call',
+          executionMode: 'background',
+          status: 'running',
+        }),
+      ],
+    })
+    expect(service.store.get(client.session.sessionId)?.status).toBe('idle')
+    await service.stop()
+  })
+
+  it('refuses to cancel a task projected from a terminal session', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-terminal-cancel-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    // agent_idle is the projection path that marks a task cancellable.
+    const events = [
+      {
+        type: 'system.notification',
+        id: 'agent-idle',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {
+          kind: {
+            type: 'agent_idle',
+            agentId: 'agent-1',
+            description: 'Inspect the repository',
+          },
+        },
+      },
+    ] as unknown as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-cancel-events',
+      terminal,
+    )
+    await service.start()
+
+    const snapshot = await service.listBackgroundTasks(client.session.sessionId)
+
+    // Projected from an event log, so there is no channel to cancel through.
+    expect(snapshot.tasks.length).toBeGreaterThan(0)
+    for (const task of snapshot.tasks) {
+      expect(task.canCancel).toBe(false)
+    }
+
+    await expect(
+      service.cancelBackgroundTask(client.session.sessionId, 'agent-1'),
+    ).rejects.toThrow('cannot be cancelled')
+
+    // The live CLI still owns the session: cancelling must not have attached
+    // an SDK owner by resuming or creating one.
+    expect(client.resumedSessionIds).not.toContain(client.session.sessionId)
+    expect(client.createdConfigs).toHaveLength(0)
+    await service.stop()
+  })
+
+  it('does not resume a finished terminal turn for background task activity', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-terminal-continuation-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const request = {
+      requestId: 'terminal:question',
+      question: 'Choose a color',
+      choices: ['Red', 'Blue'],
+      allowFreeform: false,
+    }
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingUserInput: vi.fn(
+        async (): Promise<typeof request | undefined> => request,
+      ),
+      replyUserInput: vi.fn(async () => true),
+    }
+    const events = [
+      {
+        type: 'assistant.turn_end',
+        id: 'completed-turn',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {},
+      },
+      {
+        type: 'subagent.started',
+        id: 'background-start',
+        parentId: 'completed-turn',
+        timestamp: new Date(Date.now() + 60_000).toISOString(),
+        agentId: 'agent-1',
+        data: {
+          agentType: 'explore',
+          agentName: 'explore',
+          agentDescription: 'Inspect the repository',
+          toolCallId: 'task-call',
+        },
+      },
+    ] as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-continuation-events',
+      terminal,
+    )
+
+    await service.start()
+    const updated = await service.replyUserInput(
+      client.session.sessionId,
+      request.requestId,
+      { answer: 'Blue', wasFreeform: false },
+    )
+
+    // The finished turn is not resumed: no activity is shown and the request
+    // is cleared. The session still reads as running because the background
+    // agent it launched has not finished, which is its own state rather than
+    // a continuation of the answered turn.
+    expect(updated).toMatchObject({
+      status: 'running',
+      activity: undefined,
+      pendingUserInput: undefined,
+    })
+    await service.stop()
   })
 
   it('reconstructs only unresolved root ask-user requests', () => {

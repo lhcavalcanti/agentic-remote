@@ -41,6 +41,7 @@ import {
   BellOff,
   BookOpen,
   Bot,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -73,6 +74,7 @@ import {
   Wifi,
   WifiOff,
   X,
+  XCircle,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import {
@@ -93,6 +95,8 @@ import type {
   AgentProviderCapability,
   ActivityKind,
   ActivityStatus,
+  BackgroundTask,
+  BackgroundTaskSnapshot,
   ChatMessage,
   ComputerSummary,
   ConfigureRuntimeInput,
@@ -116,6 +120,7 @@ import type {
 import {
   activateSession,
   addComputer,
+  cancelBackgroundTask,
   cancelSession,
   clearConversation,
   configureRuntime,
@@ -128,6 +133,7 @@ import {
   getRuntimeOptions,
   listComputers,
   listCommands,
+  listBackgroundTasks,
   listHistory,
   listKnowledgeEntries,
   listKnowledgeRoots,
@@ -282,6 +288,7 @@ type StatuslineSettings = {
   path: boolean
   status: boolean
   queue: boolean
+  backgroundTasks: boolean
   sessionId: boolean
   model: boolean
   effort: boolean
@@ -398,6 +405,7 @@ const defaultStatusline: StatuslineSettings = {
   path: true,
   status: true,
   queue: true,
+  backgroundTasks: true,
   sessionId: false,
   model: true,
   effort: true,
@@ -419,6 +427,7 @@ const statuslineOptions: Array<{
   { key: 'path', label: 'Working directory' },
   { key: 'status', label: 'Agent status' },
   { key: 'queue', label: 'Queued prompts' },
+  { key: 'backgroundTasks', label: 'Running background tasks' },
   { key: 'sessionId', label: 'Session ID' },
   { key: 'model', label: 'Model' },
   { key: 'effort', label: 'Reasoning effort' },
@@ -510,6 +519,47 @@ function executionModeName(
     : executionMode === 'sdk'
       ? 'SDK'
       : undefined
+}
+
+function supportsBackgroundTasks(
+  computer: ComputerSummary | undefined,
+  provider: AgentProvider | undefined,
+): boolean {
+  if (provider === 'claude' || !computer) {
+    return false
+  }
+  const capability = computer.providers?.find(
+    (candidate) => candidate.id === (provider || 'copilot'),
+  )
+  return capability?.supportsBackgroundTasks === true
+}
+
+function taskSnapshot(
+  snapshots: Record<string, BackgroundTaskSnapshot>,
+  session: Pick<ManagedSession, 'computerId' | 'id'>,
+): BackgroundTaskSnapshot | undefined {
+  return snapshots[sessionKey(session)]
+}
+
+function taskStatusLabel(status: BackgroundTask['status']): string {
+  return status === 'queued'
+    ? 'Queued'
+    : status === 'running'
+      ? 'Running'
+      : status === 'completed'
+        ? 'Completed'
+        : status === 'failed'
+          ? 'Failed'
+          : 'Cancelled'
+}
+
+function taskDurationLabel(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1_000))
+  if (seconds < 60) {
+    return `${seconds}s`
+  }
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${seconds % 60}s`
 }
 
 function computerProviders(
@@ -3273,10 +3323,12 @@ function EmptyConversation({ onCreate }: { onCreate: () => void }) {
 function SortableSessionItem({
   session,
   selected,
+  backgroundTasks,
   onSelect,
 }: {
   session: ManagedSession
   selected: boolean
+  backgroundTasks?: BackgroundTaskSnapshot
   onSelect: () => void
 }) {
   const sortableId = `session:${sessionKey(session)}`
@@ -3288,12 +3340,21 @@ function SortableSessionItem({
     transition,
     isDragging,
   } = useSortable({ id: sortableId })
+  const runningBackgroundTasks = backgroundTasks?.runningCount || 0
+  const taskCount = backgroundTasks?.tasks.length || 0
+  const foregroundStatusAllowsTaskTreatment =
+    session.status === 'idle' || session.status === 'running'
+  const backgroundTaskActive =
+    runningBackgroundTasks > 0 &&
+    foregroundStatusAllowsTaskTreatment
   return (
     <button
       aria-current={selected ? 'page' : undefined}
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
-      )} ${selected ? 'session-item--active' : ''} ${
+      )} ${backgroundTaskActive ? 'session-item--background-running' : ''} ${
+        selected ? 'session-item--active' : ''
+      } ${
         isDragging ? 'sortable-dragging' : ''
       }`}
       onClick={onSelect}
@@ -3329,6 +3390,15 @@ function SortableSessionItem({
           {session.title}
         </strong>
         <small>{shortPath(session.cwd)}</small>
+        {taskCount > 0 ? (
+          <span className="session-item__tasks">
+            {runningBackgroundTasks > 0
+              ? `${runningBackgroundTasks} running task${
+                  runningBackgroundTasks === 1 ? '' : 's'
+                }`
+              : `${taskCount} task${taskCount === 1 ? '' : 's'}`}
+          </span>
+        ) : null}
       </span>
     </button>
   )
@@ -3337,12 +3407,14 @@ function SortableSessionItem({
 function SortableComputerGroup({
   computer,
   sessions,
+  backgroundTasks,
   selectedKey,
   showComputerHandle,
   onSelectSession,
 }: {
   computer: ComputerSummary
   sessions: ManagedSession[]
+  backgroundTasks: Record<string, BackgroundTaskSnapshot>
   selectedKey?: string
   showComputerHandle: boolean
   onSelectSession: (session: ManagedSession) => void
@@ -3393,6 +3465,7 @@ function SortableComputerGroup({
           {sessions.map((session) => (
             <SortableSessionItem
               key={sessionKey(session)}
+              backgroundTasks={taskSnapshot(backgroundTasks, session)}
               onSelect={() => onSelectSession(session)}
               selected={sessionKey(session) === selectedKey}
               session={session}
@@ -3425,6 +3498,205 @@ function StatuslineDialog({
       title="Status line"
     >
       <StatuslineControls onChange={onChange} settings={settings} />
+    </DialogFrame>
+  )
+}
+
+function BackgroundTaskCard({
+  task,
+  cancelling,
+  onCancel,
+}: {
+  task: BackgroundTask
+  cancelling: boolean
+  onCancel: () => void
+}) {
+  const statusIcon =
+    task.status === 'failed' ? (
+      <XCircle size={14} />
+    ) : task.status === 'completed' ? (
+      <CheckCircle2 size={14} />
+    ) : task.status === 'running' ? (
+      <LoaderCircle className="activity-message__spinner" size={14} />
+    ) : (
+      <List size={14} />
+    )
+  const progress = task.progress
+  return (
+    <article className={`background-task background-task--${task.status}`}>
+      <header className="background-task__header">
+        <div className="background-task__title">
+          <span className="background-task__status-icon">{statusIcon}</span>
+          <span>
+            <strong>{task.description}</strong>
+            <small>
+              {task.type === 'agent'
+                ? task.agentType || 'Background agent'
+                : task.command || 'Background shell'}
+            </small>
+          </span>
+        </div>
+        <span className="background-task__status">
+          {taskStatusLabel(task.status)}
+        </span>
+      </header>
+      <dl className="background-task__metadata">
+        <div>
+          <dt>Started</dt>
+          <dd>
+            <time dateTime={task.startedAt}>
+              {messageDateTimeFormatter.format(new Date(task.startedAt))}
+            </time>
+          </dd>
+        </div>
+        {task.completedAt ? (
+          <div>
+            <dt>Finished</dt>
+            <dd>
+              <time dateTime={task.completedAt}>
+                {messageDateTimeFormatter.format(new Date(task.completedAt))}
+              </time>
+            </dd>
+          </div>
+        ) : null}
+        {task.activeTimeMs !== undefined ? (
+          <div>
+            <dt>Active time</dt>
+            <dd>{taskDurationLabel(task.activeTimeMs)}</dd>
+          </div>
+        ) : null}
+        {task.pid !== undefined || progress?.pid !== undefined ? (
+          <div>
+            <dt>PID</dt>
+            <dd>{task.pid || progress?.pid}</dd>
+          </div>
+        ) : null}
+      </dl>
+      {task.prompt ? (
+        <details className="background-task__details">
+          <summary>Prompt</summary>
+          <pre>{task.prompt}</pre>
+        </details>
+      ) : null}
+      {progress?.latestIntent ? (
+        <p className="background-task__intent">{progress.latestIntent}</p>
+      ) : null}
+      {progress?.recentActivity?.length ? (
+        <div className="background-task__progress">
+          <strong>Recent activity</strong>
+          <ul>
+            {progress.recentActivity.map((line, index) => (
+              <li key={`${line.timestamp}-${index}`}>
+                <time dateTime={line.timestamp}>
+                  {messageTimeFormatter.format(new Date(line.timestamp))}
+                </time>
+                <span>{line.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {progress?.recentOutput ? (
+        <div className="background-task__output">
+          <strong>Output</strong>
+          <pre>{progress.recentOutput}</pre>
+        </div>
+      ) : null}
+      {task.result || task.latestResponse ? (
+        <div className="background-task__output">
+          <strong>Result</strong>
+          <pre>{task.result || task.latestResponse}</pre>
+        </div>
+      ) : null}
+      {task.error ? (
+        <div className="background-task__error" role="alert">
+          <strong>Error</strong>
+          <pre>{task.error}</pre>
+        </div>
+      ) : null}
+      {task.canCancel ? (
+        <button
+          className="secondary-button background-task__cancel"
+          disabled={cancelling}
+          onClick={onCancel}
+          type="button"
+        >
+          {cancelling ? 'Cancelling…' : 'Cancel task'}
+        </button>
+      ) : null}
+    </article>
+  )
+}
+
+function BackgroundTasksDialog({
+  open,
+  sessionTitle,
+  snapshot,
+  loading,
+  cancellingTaskId,
+  onClose,
+  onRefresh,
+  onCancel,
+}: {
+  open: boolean
+  sessionTitle: string
+  snapshot: BackgroundTaskSnapshot
+  loading: boolean
+  cancellingTaskId?: string
+  onClose: () => void
+  onRefresh: () => void
+  onCancel: (taskId: string) => void
+}) {
+  if (!open) {
+    return null
+  }
+  return (
+    <DialogFrame
+      className="background-tasks-dialog"
+      eyebrow="Tasks"
+      onClose={onClose}
+      title={`Background tasks · ${sessionTitle}`}
+    >
+      <div className="background-tasks-dialog__toolbar">
+        <p>
+          <strong>{snapshot.runningCount}</strong>{' '}
+          {snapshot.runningCount === 1
+            ? 'background task is running'
+            : 'background tasks are running'}
+        </p>
+        <button
+          aria-label="Refresh background tasks"
+          className="icon-button"
+          disabled={loading}
+          onClick={onRefresh}
+          type="button"
+        >
+          <RefreshCw
+            className={loading ? 'activity-message__spinner' : ''}
+            size={16}
+          />
+        </button>
+      </div>
+      {!snapshot.supported ? (
+        <p className="dialog-message">
+          This Copilot runtime does not expose background task monitoring.
+        </p>
+      ) : snapshot.tasks.length === 0 ? (
+        <p className="background-tasks-dialog__empty">
+          No background tasks are currently tracked.
+        </p>
+      ) : (
+        <div aria-label="Background task list" className="background-task-list">
+          {snapshot.tasks.map((task) => (
+            <BackgroundTaskCard
+              cancelling={cancellingTaskId === task.id}
+              key={task.id}
+              onCancel={() => onCancel(task.id)}
+              task={task}
+            />
+          ))}
+        </div>
+      )}
     </DialogFrame>
   )
 }
@@ -4883,6 +5155,9 @@ function WorkspaceDialog({
 function App() {
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
+  const [backgroundTaskSnapshots, setBackgroundTaskSnapshots] = useState<
+    Record<string, BackgroundTaskSnapshot>
+  >({})
   const [selectedKey, setSelectedKey] = useState<string>()
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
@@ -4965,6 +5240,12 @@ function App() {
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [statuslineOpen, setStatuslineOpen] = useState(false)
+  const [backgroundTasksOpen, setBackgroundTasksOpen] = useState(false)
+  const [backgroundTaskRefreshVersion, setBackgroundTaskRefreshVersion] =
+    useState(0)
+  const [loadingBackgroundTasks, setLoadingBackgroundTasks] = useState(false)
+  const [cancellingBackgroundTaskId, setCancellingBackgroundTaskId] =
+    useState<string>()
   const [mutedSessions, setMutedSessions] = useState<string[]>([])
   const [mutingSession, setMutingSession] = useState(false)
   const [updateRegistration, setUpdateRegistration] =
@@ -5018,6 +5299,14 @@ function App() {
   const discardRecordingRef = useRef(false)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
   const eventSequenceRef = useRef(0)
+  const backgroundTaskSnapshotsRef = useRef(backgroundTaskSnapshots)
+  const computersRef = useRef(computers)
+  const backgroundTasksOpenRef = useRef(backgroundTasksOpen)
+  const selectedKeyStateRef = useRef(selectedKey)
+  const backgroundTaskRequestsRef = useRef(new Set<string>())
+  const queuedBackgroundTaskRefreshesRef = useRef(new Set<string>())
+  const backgroundTaskEventSequenceRef = useRef(new Map<string, number>())
+  const seenBackgroundTaskRefreshRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
   const computerEventSequenceRef = useRef(new Map<string, number>())
   const sidebarResizeRef = useRef<
@@ -5174,6 +5463,11 @@ function App() {
       }),
     [],
   )
+  const selectedBackgroundTasks = selected
+    ? taskSnapshot(backgroundTaskSnapshots, selected)
+    : undefined
+  const selectedRunningBackgroundTasks =
+    selectedBackgroundTasks?.runningCount || 0
   const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
   const hasBlockingUi =
     newSessionOpen ||
@@ -5205,6 +5499,12 @@ function App() {
         computers.find((computer) => computer.id === selected.computerId),
       ).find((provider) => provider.id === (selected.provider || 'copilot'))
     : undefined
+  const selectedSupportsBackgroundTasks = selected
+    ? supportsBackgroundTasks(
+        computers.find((computer) => computer.id === selected.computerId),
+        selected.provider,
+      ) || selectedBackgroundTasks?.supported === true
+    : false
   const commandQuery = composer.startsWith('/')
     ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
     : ''
@@ -5234,6 +5534,96 @@ function App() {
       ? selectedComputerId
       : computers.find((computer) => computer.isLocal)?.id) ||
     computers.find((computer) => computer.online)?.id
+
+  const applyBackgroundTaskSnapshot = useCallback(
+    (
+      session: ManagedSession,
+      snapshot: BackgroundTaskSnapshot,
+      startedAtSequence: number,
+    ) => {
+      const key = sessionKey(session)
+      if (
+        (backgroundTaskEventSequenceRef.current.get(key) || 0) >
+        startedAtSequence
+      ) {
+        return
+      }
+      setBackgroundTaskSnapshots((current) => ({
+        ...current,
+        [key]: snapshot,
+      }))
+    },
+    [],
+  )
+
+  const loadBackgroundTasks = useCallback(
+    async (session: ManagedSession, force = false): Promise<void> => {
+      const key = sessionKey(session)
+      if (
+        !supportsBackgroundTasks(
+          computersRef.current.find(
+            (computer) => computer.id === session.computerId,
+          ),
+          session.provider,
+        )
+      ) {
+        return
+      }
+      if (backgroundTaskRequestsRef.current.has(key)) {
+        if (force) {
+          queuedBackgroundTaskRefreshesRef.current.add(key)
+        }
+        return
+      }
+      if (!force && backgroundTaskSnapshotsRef.current[key]) {
+        return
+      }
+      backgroundTaskRequestsRef.current.add(key)
+      const startedAtSequence = eventSequenceRef.current
+      if (
+        backgroundTasksOpenRef.current &&
+        selectedKeyStateRef.current === key
+      ) {
+        setLoadingBackgroundTasks(true)
+      }
+      try {
+        const snapshot = await listBackgroundTasks(
+          session.computerId,
+          session.id,
+        )
+        if (snapshot) {
+          applyBackgroundTaskSnapshot(session, snapshot, startedAtSequence)
+        }
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      } finally {
+        backgroundTaskRequestsRef.current.delete(key)
+        if (
+          backgroundTasksOpenRef.current &&
+          selectedKeyStateRef.current === key
+        ) {
+          setLoadingBackgroundTasks(false)
+        }
+        if (queuedBackgroundTaskRefreshesRef.current.delete(key)) {
+          void loadBackgroundTasks(session, true)
+        }
+      }
+    },
+    [applyBackgroundTaskSnapshot],
+  )
+
+  useEffect(() => {
+    backgroundTaskSnapshotsRef.current = backgroundTaskSnapshots
+    computersRef.current = computers
+    backgroundTasksOpenRef.current = backgroundTasksOpen
+    selectedKeyStateRef.current = selectedKey
+  }, [
+    backgroundTaskSnapshots,
+    backgroundTasksOpen,
+    computers,
+    selectedKey,
+    sessions,
+  ])
 
   useEffect(() => {
     const updateViewport = () => {
@@ -5592,6 +5982,26 @@ function App() {
   }, [loading, sessions])
 
   useEffect(() => {
+    if (loading) {
+      return
+    }
+    const force = backgroundTaskRefreshVersion !==
+      seenBackgroundTaskRefreshRef.current
+    if (force) {
+      seenBackgroundTaskRefreshRef.current = backgroundTaskRefreshVersion
+    }
+    for (const session of sessions) {
+      void loadBackgroundTasks(session, force)
+    }
+  }, [
+    backgroundTaskRefreshVersion,
+    computers,
+    loading,
+    loadBackgroundTasks,
+    sessions,
+  ])
+
+  useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
       setCommands([])
       return
@@ -5747,6 +6157,7 @@ function App() {
       if (pushSettings) {
         setMutedSessions(pushSettings.mutedSessions)
       }
+      setBackgroundTaskRefreshVersion((current) => current + 1)
       const selectedAtRefresh = selectedRef.current
       const selectedStillExists =
         selectedAtRefresh &&
@@ -5810,6 +6221,25 @@ function App() {
                 session.computerId !== event.computerId,
             ),
           )
+          setBackgroundTaskSnapshots((current) => {
+          const { [removedKey]: _removed, ...remaining } = current
+          return remaining
+          })
+        } else if (event.type === 'session.tasks.updated') {
+          const key = `${event.computerId}:${event.sessionId}`
+          eventSequenceRef.current += 1
+          backgroundTaskEventSequenceRef.current.set(
+          key,
+          eventSequenceRef.current,
+          )
+          setBackgroundTaskSnapshots((current) => ({
+          ...current,
+          [key]: {
+            tasks: event.tasks,
+            runningCount: event.runningCount,
+            supported: event.supported,
+          },
+          }))
         } else if (event.type === 'computer.updated') {
           eventSequenceRef.current += 1
           computerEventSequenceRef.current.set(
@@ -5828,6 +6258,13 @@ function App() {
           )
           setSessions((current) =>
             current.filter((session) => session.computerId !== event.computerId),
+          )
+          setBackgroundTaskSnapshots((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(
+                ([key]) => !key.startsWith(`${event.computerId}:`),
+              ),
+            ),
           )
           setComposerDrafts((current) =>
             Object.fromEntries(
@@ -6331,6 +6768,38 @@ function App() {
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
     setError(undefined)
+  }
+
+  function openBackgroundTasks() {
+    if (!selected || !selectedSupportsBackgroundTasks) {
+      return
+    }
+    setBackgroundTasksOpen(true)
+    void loadBackgroundTasks(selected, true)
+  }
+
+  async function cancelSelectedBackgroundTask(taskId: string) {
+    if (!selected || cancellingBackgroundTaskId) {
+      return
+    }
+    const target = selected
+    setCancellingBackgroundTaskId(taskId)
+    setError(undefined)
+    const startedAtSequence = eventSequenceRef.current
+    try {
+      const snapshot = await cancelBackgroundTask(
+        target.computerId,
+        target.id,
+        taskId,
+      )
+      if (snapshot) {
+        applyBackgroundTaskSnapshot(target, snapshot, startedAtSequence)
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setCancellingBackgroundTaskId(undefined)
+    }
   }
 
   function sidebarTouchStart(event: ReactTouchEvent<HTMLDivElement>) {
@@ -7418,6 +7887,7 @@ function App() {
                   {orderedComputers.map((computer) => (
                     <SortableComputerGroup
                       computer={computer}
+                      backgroundTasks={backgroundTaskSnapshots}
                       key={computer.id}
                       onSelectSession={selectSession}
                       selectedKey={selectedKey}
@@ -7560,6 +8030,26 @@ function App() {
               type="button"
             >
               <FolderOpen size={18} />
+            </button>
+          ) : null}
+          {selected && selectedSupportsBackgroundTasks ? (
+            <button
+              aria-label="View background tasks"
+              className={`icon-button ${
+                selectedRunningBackgroundTasks > 0
+                  ? 'icon-button--task-running'
+                  : ''
+              }`}
+              onClick={openBackgroundTasks}
+              title="View background tasks"
+              type="button"
+            >
+              <List size={18} />
+              {selectedRunningBackgroundTasks > 0 ? (
+                <span className="background-task-button__count">
+                  {selectedRunningBackgroundTasks}
+                </span>
+              ) : null}
             </button>
           ) : null}
           {selected?.provider !== 'claude' &&
@@ -7742,6 +8232,12 @@ function App() {
             ) : null}
             {statusline.queue ? (
               <span>{selected.queuedCount || 0} queued</span>
+            ) : null}
+            {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
+              <span className="web-statusline__tasks">
+                {selectedRunningBackgroundTasks} background task
+                {selectedRunningBackgroundTasks === 1 ? '' : 's'} running
+              </span>
             ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
@@ -8059,6 +8555,13 @@ function App() {
           setSessions((current) =>
             current.filter((session) => session.computerId !== computerId),
           )
+          setBackgroundTaskSnapshots((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(
+                ([key]) => !key.startsWith(`${computerId}:`),
+              ),
+            ),
+          )
         }}
         open={computersOpen}
       />
@@ -8068,6 +8571,24 @@ function App() {
         open={statuslineOpen}
         settings={statusline}
       />
+      {selected ? (
+        <BackgroundTasksDialog
+          cancellingTaskId={cancellingBackgroundTaskId}
+          loading={loadingBackgroundTasks}
+          onCancel={(taskId) => void cancelSelectedBackgroundTask(taskId)}
+          onClose={() => setBackgroundTasksOpen(false)}
+          onRefresh={() => void loadBackgroundTasks(selected, true)}
+          open={backgroundTasksOpen}
+          sessionTitle={selected.title}
+          snapshot={
+            selectedBackgroundTasks || {
+              tasks: [],
+              runningCount: 0,
+              supported: selectedSupportsBackgroundTasks,
+            }
+          }
+        />
+      ) : null}
       <AppSettingsDialog
         onApplyUpdate={() => void applyPwaUpdate()}
         onClose={() => setSettingsOpen(false)}

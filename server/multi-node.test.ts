@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import type {
   AgentProvider,
+  BackgroundTask,
   ConfigureRuntimeInput,
+  BackgroundTaskSnapshot,
   DirectoryListing,
   HubEvent,
   ServerEvent,
@@ -24,6 +26,9 @@ import type {
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
+import { ComputerManager } from './computer-manager.js'
+import type { ComputerRegistry } from './computer-registry.js'
+import type { NodeIdentityStore } from './node-identity.js'
 import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
 import type {
@@ -39,6 +44,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
   lastCreateReasoningEffort?: RuntimeReasoningEffort
   lastCreateContextTier?: 'default' | 'long_context'
   lastUpload?: { sessionId: string; filename: string; data: Buffer }
+  readonly backgroundTaskSnapshots = new Map<string, BackgroundTaskSnapshot>()
 
   constructor(...sessions: SessionDetail[]) {
     super()
@@ -54,6 +60,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
         name: 'GitHub Copilot',
         available: true,
         terminalBacked: true,
+        supportsBackgroundTasks: true,
       },
     ]
   }
@@ -374,6 +381,46 @@ class FakeSessionService extends EventEmitter implements SessionService {
   }
 
   async cancel() {}
+
+  async listBackgroundTasks(
+    sessionId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    if (!this.sessions.has(sessionId)) {
+      throw new Error('Session not found')
+    }
+    return (
+      this.backgroundTaskSnapshots.get(sessionId) || {
+        tasks: [],
+        runningCount: 0,
+        supported: true,
+      }
+    )
+  }
+
+  async cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    if (!this.sessions.has(sessionId)) {
+      throw new Error('Session not found')
+    }
+    const snapshot = this.backgroundTaskSnapshots.get(sessionId)
+    if (!snapshot?.tasks.some((task) => task.id === taskId)) {
+      throw new Error('Background task not found')
+    }
+    const tasks = snapshot.tasks.map((task) =>
+      task.id === taskId
+        ? { ...task, status: 'cancelled' as const, canCancel: false }
+        : task,
+    )
+    const updated = {
+      tasks,
+      runningCount: tasks.filter((task) => task.status === 'running').length,
+      supported: snapshot.supported,
+    }
+    this.backgroundTaskSnapshots.set(sessionId, updated)
+    return updated
+  }
 
   async deleteSession(sessionId: string): Promise<void> {
     if (!this.sessions.delete(sessionId)) {
@@ -710,6 +757,20 @@ describe('multi-node hub', () => {
       remoteSession,
       session('historical-session', 'Historical', false),
     )
+    remoteService.backgroundTaskSnapshots.set('remote-session', {
+      tasks: [
+        {
+          id: 'remote-task',
+          type: 'agent',
+          description: 'Inspect remote files',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          canCancel: true,
+        } satisfies BackgroundTask,
+      ],
+      runningCount: 1,
+      supported: true,
+    })
     const remote = await buildApp({
       dataDirectory: await temporaryDirectory('agentic-remote-node'),
       logger: false,
@@ -788,6 +849,34 @@ describe('multi-node hub', () => {
         url: '/api/computers',
       })
       expect(computers.json().computers).toHaveLength(2)
+
+      const remoteTasks = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/tasks`,
+      })
+      expect(remoteTasks.statusCode, remoteTasks.body).toBe(200)
+      expect(remoteTasks.json()).toMatchObject({
+        runningCount: 1,
+        tasks: [{ id: 'remote-task', status: 'running' }],
+      })
+      const isolatedTasks = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/historical-session/tasks`,
+      })
+      expect(isolatedTasks.json()).toMatchObject({
+        runningCount: 0,
+        tasks: [],
+      })
+      const cancelledTask = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/tasks/remote-task/cancel`,
+        payload: {},
+      })
+      expect(cancelledTask.statusCode, cancelledTask.body).toBe(200)
+      expect(cancelledTask.json()).toMatchObject({
+        runningCount: 0,
+        tasks: [{ id: 'remote-task', status: 'cancelled' }],
+      })
 
       const directories = await hub.app.inject({
         method: 'GET',
@@ -1449,6 +1538,51 @@ describe('multi-node hub', () => {
 })
 
 describe('readiness endpoints by role', () => {
+  it('removes sessions deleted while a node was disconnected', async () => {
+    const computer = {
+      id: 'node-1',
+      name: 'Workshop',
+      baseUrl: 'http://node-1.local:4319',
+      token: 'node-token',
+    }
+    const manager = new ComputerManager(
+      new FakeSessionService(),
+      { info: { id: 'hub' } } as unknown as NodeIdentityStore,
+      { list: () => [computer] } as unknown as ComputerRegistry,
+    )
+    // The node held two sessions when the connection dropped.
+    manager['sessionCache'].set('node-1', [
+      { ...session('kept-session', 'Kept'), computerId: 'node-1' },
+      { ...session('deleted-session', 'Deleted'), computerId: 'node-1' },
+    ] as never)
+    const events: ServerEvent[] = []
+    manager.on('event', (event) => events.push(event as ServerEvent))
+
+    // One of them was deleted before it came back, so it is simply absent.
+    await manager['resyncRemoteComputer'](computer, {
+      listSessions: async () => [session('kept-session', 'Kept')],
+      providers: [],
+    } as never)
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'session.removed',
+        computerId: 'node-1',
+        sessionId: 'deleted-session',
+      }),
+    )
+    // The surviving session is refreshed rather than removed.
+    expect(
+      events.filter((event) => event.type === 'session.removed'),
+    ).toHaveLength(1)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'session.upserted',
+        session: expect.objectContaining({ id: 'kept-session' }),
+      }),
+    )
+  })
+
   it('serves /health on a node while /api/health stays hub-only', async () => {
     const node = await buildApp({
       dataDirectory: await temporaryDirectory('agentic-remote-node-health'),

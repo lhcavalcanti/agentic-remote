@@ -12,6 +12,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  BackgroundTaskSnapshot,
   ComputerSummary,
   ManagedSession,
   WorkspaceListing,
@@ -19,6 +20,7 @@ import type {
 import App from './App'
 import {
   activateSession,
+  cancelBackgroundTask,
   cancelSession,
   clearConversation,
   createSession,
@@ -29,6 +31,7 @@ import {
   getProviderRuntimeOptions,
   getSession,
   getRuntimeOptions,
+  listBackgroundTasks,
   listCommands,
   listComputers,
   listDirectories,
@@ -58,6 +61,7 @@ import { PWA_UPDATE_EVENT } from './pwa'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
+  listBackgroundTasks: vi.fn(),
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
@@ -88,6 +92,7 @@ vi.mock('./api', () => ({
   executeCommand: vi.fn(),
   getPushSettings: vi.fn(),
   cancelSession: vi.fn(),
+  cancelBackgroundTask: vi.fn(),
   deleteSession: vi.fn(),
   replyPermission: vi.fn(),
   replyUserInput: vi.fn(),
@@ -143,6 +148,14 @@ const secondComputer: ComputerSummary = {
   isLocal: false,
   online: true,
   baseUrl: 'http://192.0.2.20:4317',
+}
+
+const taskComputer: ComputerSummary = {
+  ...computer,
+  providers: computer.providers?.map((provider) => ({
+    ...provider,
+    supportsBackgroundTasks: provider.id === 'copilot',
+  })),
 }
 
 const session: ManagedSession = {
@@ -293,6 +306,11 @@ describe('App', () => {
     vi.clearAllMocks()
     localStorage.clear()
     vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [],
+      runningCount: 0,
+      supported: true,
+    })
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
     vi.mocked(listKnowledgeRoots).mockResolvedValue([])
@@ -3224,6 +3242,58 @@ describe('App', () => {
     })
   })
 
+  it('retries a forced background-task refresh after an in-flight request settles', async () => {
+    let resolveInitial!: (snapshot: BackgroundTaskSnapshot) => void
+    const refreshedSnapshot: BackgroundTaskSnapshot = {
+      tasks: [
+        {
+          id: 'task-1',
+          type: 'agent',
+          description: 'Review the implementation',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          canCancel: true,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    }
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveInitial = resolve
+        }),
+      )
+      .mockResolvedValueOnce(refreshedSnapshot)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() =>
+      expect(listBackgroundTasks).toHaveBeenCalledTimes(1),
+    )
+
+    MockWebSocket.instances[0]?.onopen?.()
+    await waitFor(() => expect(listSessions).toHaveBeenCalledTimes(2))
+    expect(listBackgroundTasks).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveInitial({
+        tasks: [],
+        runningCount: 0,
+        supported: true,
+      })
+    })
+    await waitFor(() =>
+      expect(listBackgroundTasks).toHaveBeenCalledTimes(2),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+  })
+
   it('does not let a delayed detail response overwrite a newer event', async () => {
     let resolveDetail!: (value: ManagedSession) => void
     vi.mocked(listSessions).mockResolvedValue([{ ...session, revision: 1 }])
@@ -3866,6 +3936,234 @@ describe('App', () => {
         'Finish or stop the current response before changing runtime settings.',
       ),
     ).toBeInTheDocument()
+  })
+
+  it('shows running background tasks, blue session styling, and cancellation', async () => {
+    const runningTask = {
+      id: 'task-1',
+      type: 'agent' as const,
+      description: 'Review the implementation',
+      status: 'running' as const,
+      startedAt: '2026-08-31T18:00:00.000Z',
+      agentType: 'code-review',
+      prompt: 'Review the implementation',
+      canCancel: true,
+      progress: {
+        type: 'agent' as const,
+        latestIntent: 'Inspecting changed files',
+        recentActivity: [
+          {
+            message: '▸ bash',
+            timestamp: '2026-08-31T18:01:00.000Z',
+          },
+        ],
+      },
+    }
+    const runningSnapshot: BackgroundTaskSnapshot = {
+      tasks: [runningTask],
+      runningCount: 1,
+      supported: true,
+    }
+    const cancelledSnapshot: BackgroundTaskSnapshot = {
+      tasks: [{ ...runningTask, status: 'cancelled', canCancel: false }],
+      runningCount: 0,
+      supported: true,
+    }
+    vi.mocked(listBackgroundTasks).mockResolvedValue(runningSnapshot)
+    vi.mocked(cancelBackgroundTask).mockResolvedValue(cancelledSnapshot)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({
+      ...session,
+      executionMode: 'sdk',
+    })
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    expect(document.querySelector('.session-item')).toHaveClass(
+      'session-item--background-running',
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View background tasks' }),
+    )
+    expect(
+      await screen.findByRole('dialog', {
+        name: 'Background tasks · Project chat',
+      }),
+    ).toHaveTextContent('Review the implementation')
+    expect(screen.getByText('Inspecting changed files')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }))
+    await waitFor(() =>
+      expect(cancelBackgroundTask).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'task-1',
+      ),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '0 background tasks running',
+      ),
+    )
+    expect(document.querySelector('.session-item')).not.toHaveClass(
+      'session-item--background-running',
+    )
+  })
+
+  it('updates failed background task details from a live event', async () => {
+    const failedTask = {
+      id: 'task-failed',
+      type: 'shell' as const,
+      description: 'Run checks',
+      status: 'failed' as const,
+      startedAt: '2026-08-31T18:00:00.000Z',
+      completedAt: '2026-08-31T18:02:00.000Z',
+      command: 'pnpm check',
+      canCancel: false,
+      error: 'The command exited with status 1',
+      progress: {
+        type: 'shell' as const,
+        recentOutput: 'FAIL tests',
+      },
+    }
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [failedTask],
+      runningCount: 0,
+      supported: true,
+    })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({
+      ...session,
+      executionMode: 'sdk',
+    })
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '0 background tasks running',
+      ),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View background tasks' }),
+    )
+    expect(await screen.findByText('The command exited with status 1')).toBeInTheDocument()
+
+    const nextTask = {
+      ...failedTask,
+      status: 'running' as const,
+      completedAt: undefined,
+      canCancel: true,
+      error: undefined,
+    }
+    MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.tasks.updated',
+        computerId: 'computer-1',
+        sessionId: 'session-1',
+        tasks: [nextTask],
+        runningCount: 1,
+        supported: true,
+      }),
+    } as MessageEvent)
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    expect(document.querySelector('.session-item')).toHaveClass(
+      'session-item--background-running',
+    )
+  })
+
+  it('keeps idle controls available while a background task runs', async () => {
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'task-idle',
+          type: 'agent',
+          description: 'Inspect the repository',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          executionMode: 'background',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Stop response' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Queue message' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Send message' }),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps waiting and error status dots above blue task styling', async () => {
+    const waitingSession = {
+      ...session,
+      status: 'waiting' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([waitingSession])
+    vi.mocked(getSession).mockResolvedValue(waitingSession)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'task-waiting',
+          type: 'shell',
+          description: 'Run checks',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          command: 'pnpm check',
+          canCancel: false,
+          executionMode: 'background',
+          attachmentMode: 'detached',
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+
+    render(<App />)
+    await waitFor(() => {
+      const item = document.querySelector('.session-item')
+      expect(item).not.toHaveClass('session-item--background-running')
+      expect(item?.querySelector('.status-dot')).toHaveClass(
+        'status-dot--waiting',
+      )
+    })
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...waitingSession, status: 'error' },
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() => {
+      const item = document.querySelector('.session-item')
+      expect(item).not.toHaveClass('session-item--background-running')
+      expect(item?.querySelector('.status-dot')).toHaveClass('status-dot--error')
+    })
   })
 
   it('uses reconciled runtime status when the session summary is stale', async () => {

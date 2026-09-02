@@ -351,7 +351,9 @@ computer.
 
 The named computer needs `whisper-cli` and its model; the hub does not. If the
 assignment names a computer that is not paired or is offline, recordings fail
-with a `503` that says so rather than quietly transcribing somewhere else.
+with a `503` that says so rather than quietly transcribing somewhere else. A
+computer still running a release without this endpoint reports a `409` asking
+you to update it.
 
 ## Documentation
 

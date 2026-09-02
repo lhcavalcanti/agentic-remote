@@ -91,6 +91,14 @@ export class DelegatedTranscriptionService implements TranscriptionService {
       if (controller.signal.aborted) {
         throw new TranscriptionError('Audio transcription was cancelled', 499)
       }
+      // A computer released before this route has no such endpoint, which would
+      // otherwise surface as a bare "Not found" against a healthy computer.
+      if (statusCodeOf(error) === 404) {
+        throw new TranscriptionError(
+          `${computer.name} does not transcribe audio yet. Update it to the latest release.`,
+          409,
+        )
+      }
       throw new TranscriptionError(
         `${computer.name} could not transcribe the audio: ${
           error instanceof Error ? error.message : 'request failed'

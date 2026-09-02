@@ -5509,6 +5509,9 @@ function App() {
   // The fallback below must not treat one as a missing session and select
   // something unrelated in the gap.
   const pendingReplacements = useRef(new Set<string>())
+  // Lineage is carried in every snapshot, so a replacement is claimed once
+  // rather than again on each refresh.
+  const adoptedReplacements = useRef(new Set<string>())
   // The generation a root listing was last requested under, so a load
   // abandoned by a newer generation is retried instead of waited on.
   const knowledgeRootLoadGeneration = useRef(-1)
@@ -5678,6 +5681,35 @@ function App() {
   useEffect(() => {
     mutedSessionsRef.current = mutedSessions
   }, [mutedSessions])
+
+  /**
+   * Follows a clear this client never saw announced.
+   *
+   * Clearing is announced as a removal and an arrival, and a client that is
+   * asleep or offline receives neither: it simply comes back to a session it
+   * does not recognise. The replacement carries what it replaced, so what the
+   * old session was holding is claimed from the snapshot alone instead of
+   * being stranded under an id that is gone.
+   */
+  const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {
+    for (const session of loaded) {
+      if (!session.replacedSessionId) {
+        continue
+      }
+      const predecessor = sessionKey({
+        computerId: session.computerId,
+        id: session.replacedSessionId,
+      })
+      if (adoptedReplacements.current.has(predecessor)) {
+        continue
+      }
+      adoptedReplacements.current.add(predecessor)
+      migrateSessionStateRef.current(predecessor, sessionKey(session))
+      setSelectedKey((current) =>
+        current === predecessor ? sessionKey(session) : current,
+      )
+    }
+  }, [])
 
   const applyMutedSessions = useCallback(
     (incoming: string[], startedAtRevision: number) => {
@@ -6769,6 +6801,7 @@ function App() {
         if (!active) {
           return
         }
+        claimReplacedSessions(loadedSessions)
         setSessions((current) => {
           let reconciled = sortSessions(loadedSessions)
           for (const existing of current) {
@@ -6970,6 +7003,7 @@ function App() {
           (computerEventSequenceRef.current.get(session.computerId) || 0) <=
             startedAtSequence,
       )
+      claimReplacedSessions(loadedSessions)
       const snapshotComputers = loadedComputers.filter(
         (computer) =>
           (computerEventSequenceRef.current.get(computer.id) || 0) <=
@@ -7076,6 +7110,8 @@ function App() {
             // replacement now stops the fallback from selecting an unrelated
             // session in the gap, which the later upsert would not undo.
             pendingReplacements.current.add(replacementKey)
+            // Seen live, so the snapshot's lineage has nothing left to claim.
+            adoptedReplacements.current.add(removedKey)
             // The replacement changed here too, so a snapshot taken before
             // this event cannot speak for it either.
             sessionEventSequenceRef.current.set(

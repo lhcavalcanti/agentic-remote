@@ -199,6 +199,15 @@ export interface SessionSummary {
   queuedPrompts?: QueuedPrompt[]
   activity?: string
   runtime?: SessionRuntimeInfo
+  /**
+   * The session this one replaced when its conversation was cleared.
+   *
+   * Clearing is announced as a removal and an arrival, which a client that is
+   * asleep or offline never sees. Carrying the lineage in the session itself
+   * means a client can still tell, from a snapshot alone, that what it is
+   * holding for the old session belongs to this one.
+   */
+  replacedSessionId?: string
 }
 
 export interface SessionDetail extends SessionSummary {

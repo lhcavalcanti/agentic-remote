@@ -6101,6 +6101,50 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('claims state from a clear that happened while it was away', async () => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'Half-written thought' }),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    // Another client cleared the session while this one was asleep, so the
+    // removal was announced to nobody here: only the replacement is left, and
+    // it is the one thing that says what it replaced.
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      replacedSessionId: 'session-1',
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1-cleared': 'Half-written thought' }),
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      ),
+    ).toEqual({
+      'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
+    })
+    expect(screen.getByLabelText('Message')).toHaveValue('Half-written thought')
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',

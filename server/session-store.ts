@@ -381,6 +381,7 @@ export class SessionStore {
     const replacement: StoredSession = {
       ...existing,
       id: replacementId,
+      replacedSessionId: sessionId,
       revision: (existing.revision ?? 0) + 1,
       messages: [],
       status: 'idle',

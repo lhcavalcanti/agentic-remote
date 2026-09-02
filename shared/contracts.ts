@@ -13,6 +13,8 @@ export interface AgentProviderCapability {
 }
 
 export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
+export type ActivityStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type ActivityKind = 'tool' | 'skill' | 'agent'
 
 export interface ChatMessage {
   id: string
@@ -20,7 +22,11 @@ export interface ChatMessage {
   content: string
   createdAt: string
   streaming?: boolean
-  activityStatus?: 'running' | 'completed' | 'failed'
+  activityStatus?: ActivityStatus
+  activityKind?: ActivityKind
+  activityGroupId?: string
+  activityResult?: string
+  activityDurationMs?: number
 }
 
 export interface PermissionOption {
@@ -316,4 +322,3 @@ export interface AddKnowledgeRootInput {
   path: string
   name?: string
 }
-

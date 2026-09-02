@@ -541,6 +541,70 @@ describe('App', () => {
     )
   })
 
+  it('renders transcript headings, statuses, results, and optional durations', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:skill-call',
+          role: 'activity',
+          content: 'Skill (tool-model-catalog)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+        },
+        {
+          id: 'mcp-call',
+          role: 'activity',
+          content: 'MCP · ecs-mcp-server · search_config',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityResult: '48 lines read',
+          activityDurationMs: 1_250,
+          activityGroupId: 'tool:skill-call',
+        },
+        {
+          id: 'failed-call',
+          role: 'activity',
+          content: 'Read\nmissing.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'failed',
+          activityResult: 'Error: file not found',
+        },
+        {
+          id: 'pending-call',
+          role: 'activity',
+          content: 'Search\ncache',
+          createdAt: '2026-07-22T00:00:01.500Z',
+          activityStatus: 'pending',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(screen.getByText('skill(tool-model-catalog)')).toBeInTheDocument()
+    expect(screen.getByText('search_config')).toBeInTheDocument()
+    expect(screen.getByText('(MCP: ecs-mcp-server)')).toBeInTheDocument()
+    expect(screen.getByText('48 lines read')).toBeInTheDocument()
+    expect(screen.getByText('1.3s')).toBeInTheDocument()
+    expect(screen.getByText('Error: file not found')).toBeInTheDocument()
+    expect(screen.getByText('cache')).toBeInTheDocument()
+    expect(document.querySelectorAll('.activity-message')).toHaveLength(4)
+    expect(document.querySelector('.activity-group__children')).toHaveTextContent(
+      'search_config',
+    )
+    expect(
+      document.querySelector('.activity-message--pending'),
+    ).toHaveTextContent('—')
+    expect(
+      document.querySelectorAll('.activity-message__glyph'),
+    ).toHaveLength(4)
+  })
+
   it('keeps sidebar actions outside the independently scrolling navigation', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

@@ -19,6 +19,7 @@ import {
 import type {
   AgentProvider,
   AgentProviderCapability,
+  ActivityKind,
   ChatMessage,
   AgentMode,
   ConfigureRuntimeInput,
@@ -183,9 +184,105 @@ export interface AgentServiceEvents {
   event: [event: ServerEvent]
 }
 
+function activityKind(data: unknown): ActivityKind {
+  const normalizedToolName = (stringValue(recordValue(data).toolName) || 'tool')
+    .toLowerCase()
+    .replaceAll('-', '_')
+  if (normalizedToolName === 'skill') {
+    return 'skill'
+  }
+  if (normalizedToolName === 'task') {
+    return 'agent'
+  }
+  return 'tool'
+}
+
+function activityDuration(startedAt: string, completedAt: string): number | undefined {
+  const start = Date.parse(startedAt)
+  const end = Date.parse(completedAt)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return undefined
+  }
+  return end - start
+}
+
+function activityResult(data: unknown, success: boolean): string | undefined {
+  const tool = recordValue(data)
+  const result = recordValue(tool.result)
+  const resultContent =
+    previewText(result.detailedContent, true) ||
+    previewText(result.content, true) ||
+    previewText(result.output, true) ||
+    previewText(result.message, true) ||
+    previewText(tool.result, true)
+  const error = previewText(tool.error, true) ||
+    previewText(recordValue(tool.error).message, true)
+  const text = success ? resultContent : error || resultContent
+  if (text) {
+    return success ? text : `Error: ${text}`
+  }
+  return success ? undefined : 'Error: tool failed; inspect the session log'
+}
+
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
+  const eventsById = new Map(events.map((event) => [event.id, event]))
+  const toolStartsByEventId = new Map<
+    string,
+    {
+      kind: ActivityKind
+      parentId: string | null
+      parentToolCallId?: string
+      toolCallId: string
+    }
+  >()
+  const toolStartsByCallId = new Map<
+    string,
+    {
+      kind: ActivityKind
+      parentId: string | null
+      parentToolCallId?: string
+      toolCallId: string
+    }
+  >()
+  for (const event of events) {
+    if (event.type !== 'tool.execution_start') {
+      continue
+    }
+    const start = {
+      kind: activityKind(event.data),
+      parentId: event.parentId,
+      parentToolCallId: stringValue(
+        recordValue(event.data).parentToolCallId,
+      ),
+      toolCallId: event.data.toolCallId,
+    }
+    toolStartsByEventId.set(event.id, start)
+    toolStartsByCallId.set(event.data.toolCallId, start)
+  }
+  const activityGroupId = (event: SessionEvent): string | undefined => {
+    let parentId = event.parentId
+    const visited = new Set<string>()
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId)
+      const parentTool = toolStartsByEventId.get(parentId)
+      if (parentTool && (parentTool.kind === 'skill' || parentTool.kind === 'agent')) {
+        return `tool:${parentTool.toolCallId}`
+      }
+      parentId = eventsById.get(parentId)?.parentId || null
+    }
+    const parentToolCallId = stringValue(
+      recordValue(event.data).parentToolCallId,
+    )
+    const parentTool = parentToolCallId
+      ? toolStartsByCallId.get(parentToolCallId)
+      : undefined
+    if (parentTool && (parentTool.kind === 'skill' || parentTool.kind === 'agent')) {
+      return `tool:${parentTool.toolCallId}`
+    }
+    return undefined
+  }
   const finishRunningActivities = (
     activityStatus: 'completed' | 'failed' = 'completed',
   ) => {
@@ -229,12 +326,12 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       continue
     }
-    if (event.type === 'tool.execution_start' && !event.agentId) {
+    if (event.type === 'tool.execution_start') {
       const toolCallId = event.data.toolCallId
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete') {
+      if (toolName === 'task_complete' && !event.agentId) {
         const summary = stringValue(
           recordValue(event.data.arguments).summary,
         )?.trim()
@@ -248,21 +345,31 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
         content: toolActivityContent(event.data),
         createdAt: event.timestamp,
         activityStatus: 'running',
+        activityKind: activityKind(event.data),
+        activityGroupId: activityGroupId(event),
       })
       continue
     }
-    if (event.type === 'tool.execution_complete' && !event.agentId) {
+    if (event.type === 'tool.execution_complete') {
       const toolCallId = event.data.toolCallId
       const message = messages.find(
         (entry) => entry.id === `tool:${toolCallId}`,
       )
       if (message) {
         message.activityStatus = event.data.success ? 'completed' : 'failed'
-        const resultContent = stringValue(
+        const resultContent = activityResult(event.data, event.data.success)
+        const duration = activityDuration(message.createdAt, event.timestamp)
+        if (resultContent) {
+          message.activityResult = resultContent
+        }
+        if (duration !== undefined) {
+          message.activityDurationMs = duration
+        }
+        const taskResultContent = stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim()
         const taskCompletionSummary = taskCompletionSummaries.has(toolCallId)
-          ? resultContent || taskCompletionSummaries.get(toolCallId)
+          ? taskResultContent || taskCompletionSummaries.get(toolCallId)
           : undefined
         if (event.data.success && taskCompletionSummary) {
           finishRunningActivities()
@@ -1249,6 +1356,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly liveTaskCompletionSummaries = new Map<string, string>()
+  private readonly liveActivityEvents = new Map<
+    string,
+    Map<
+      string,
+      {
+        parentId: string | null
+        parentToolCallId?: string
+        kind?: ActivityKind
+        toolCallId?: string
+      }
+    >
+  >()
   private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
   private readonly runtimeModels = new Map<string, RuntimeModelOption>()
   private runtimeModelLoad?: Promise<void>
@@ -2046,6 +2165,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.eventLogVersions.delete(id)
       this.workspaceVersions.delete(id)
       this.liveTranscriptWatermarks.delete(id)
+      this.liveActivityEvents.delete(id)
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
       this.terminalUserInputChecks.delete(id)
@@ -2674,6 +2794,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.drainingSessions.delete(sessionId)
       this.queueOperations.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
+      this.liveActivityEvents.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
       this.terminalUpdateChecks.delete(sessionId)
       this.answeredTerminalPermissions.delete(sessionId)
@@ -3683,6 +3804,70 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private rememberLiveActivityEvent(
+    sessionId: string,
+    event: SessionEvent,
+    kind?: ActivityKind,
+    toolCallId?: string,
+  ): void {
+    const events =
+      this.liveActivityEvents.get(sessionId) ||
+      new Map<
+        string,
+        {
+          parentId: string | null
+          parentToolCallId?: string
+          kind?: ActivityKind
+          toolCallId?: string
+        }
+      >()
+    events.set(event.id, {
+      parentId: event.parentId,
+      parentToolCallId: stringValue(
+        recordValue(event.data).parentToolCallId,
+      ),
+      kind,
+      toolCallId,
+    })
+    while (events.size > 2_000) {
+      const oldest = events.keys().next().value
+      if (!oldest) {
+        break
+      }
+      events.delete(oldest)
+    }
+    this.liveActivityEvents.set(sessionId, events)
+  }
+
+  private liveActivityGroupId(
+    sessionId: string,
+    event: SessionEvent,
+  ): string | undefined {
+    const events = this.liveActivityEvents.get(sessionId)
+    let parentId = event.parentId
+    const visited = new Set<string>()
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId)
+      const parent = events?.get(parentId)
+      if (parent && (parent.kind === 'skill' || parent.kind === 'agent')) {
+        return parent.toolCallId ? `tool:${parent.toolCallId}` : undefined
+      }
+      parentId = parent?.parentId || null
+    }
+    const parentToolCallId = stringValue(
+      recordValue(event.data).parentToolCallId,
+    )
+    if (parentToolCallId) {
+      const parent = [...(events?.values() || [])].find(
+        (candidate) => candidate.toolCallId === parentToolCallId,
+      )
+      if (parent && (parent.kind === 'skill' || parent.kind === 'agent')) {
+        return `tool:${parent.toolCallId}`
+      }
+    }
+    return undefined
+  }
+
   private attachSession(session: CopilotSessionLike): void {
     session.on((event) => {
       this.handleSessionEvent(session.sessionId, event)
@@ -3692,6 +3877,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
+    this.rememberLiveActivityEvent(sessionId, event)
 
     if (
       event.type === 'session.context_changed' &&
@@ -3773,32 +3959,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'tool.execution_start' && !event.agentId) {
+    if (event.type === 'tool.execution_start') {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete') {
+      if (toolName === 'task_complete' && !event.agentId) {
         this.liveTaskCompletionSummaries.set(
           `${sessionId}:${event.data.toolCallId}`,
           stringValue(recordValue(event.data.arguments).summary)?.trim() || '',
         )
       }
+      this.rememberLiveActivityEvent(
+        sessionId,
+        event,
+        activityKind(event.data),
+        event.data.toolCallId,
+      )
       void this.store
         .startToolActivity(
           sessionId,
           event.data.toolCallId,
           toolActivityContent(event.data),
           event.timestamp,
+          activityKind(event.data),
+          this.liveActivityGroupId(sessionId, event),
         )
         .then((stored) => this.publish(stored))
         .catch((error: unknown) => this.publishError(sessionId, error))
       return
     }
 
-    if (event.type === 'tool.execution_complete' && !event.agentId) {
+    if (event.type === 'tool.execution_complete') {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
@@ -3812,6 +4006,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim() || fallbackSummary
+      const presentationResult = activityResult(event.data, event.data.success)
       const update =
         isTaskCompletion && event.data.success && resultContent
           ? this.store.finishTaskCompletion(
@@ -3825,6 +4020,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               sessionId,
               event.data.toolCallId,
               event.data.success,
+              event.timestamp,
+              presentationResult,
             )
       void update
         .then((stored) => this.publish(stored))
@@ -3879,6 +4076,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             entry.activityStatus === 'running'
           ) {
             entry.activityStatus = 'failed'
+            entry.activityResult = `Error: ${message}`
           }
         }
         const assistant = session.messages.find(

@@ -71,6 +71,34 @@ function isClaudeAuthenticationError(error: unknown): boolean {
   )
 }
 
+function toolResultText(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
+  if (Array.isArray(value)) {
+    const text = value
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          return entry
+        }
+        if (entry && typeof entry === 'object') {
+          const block = entry as Record<string, unknown>
+          return typeof block.text === 'string' ? block.text : ''
+        }
+        return ''
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    return text || undefined
+  }
+  if (value && typeof value === 'object') {
+    const text = Reflect.get(value, 'text')
+    return typeof text === 'string' && text.trim() ? text.trim() : undefined
+  }
+  return undefined
+}
+
 export interface ClaudeSdk {
   query: typeof query
   deleteSession: typeof deleteClaudeSession
@@ -710,6 +738,19 @@ export class ClaudeAgentService
         stored.activity = undefined
         stored.pendingPermission = undefined
         stored.pendingUserInput = undefined
+        if (!aborted) {
+          for (const entry of stored.messages) {
+            if (
+              entry.role === 'activity' &&
+              entry.activityStatus === 'running'
+            ) {
+              entry.activityStatus = 'failed'
+              entry.activityResult = `Error: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            }
+          }
+        }
       })
       this.publish(failed)
       if (!aborted) {
@@ -780,10 +821,13 @@ export class ClaudeAgentService
         ) {
           const toolUseId = Reflect.get(block, 'tool_use_id')
           if (typeof toolUseId === 'string' && toolIds.has(toolUseId)) {
+            const result = toolResultText(Reflect.get(block, 'content'))
             const finished = await this.store.finishToolActivity(
               sessionId,
               toolUseId,
               Reflect.get(block, 'is_error') !== true,
+              new Date().toISOString(),
+              result,
             )
             this.publish(finished)
           }

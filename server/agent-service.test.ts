@@ -475,6 +475,8 @@ describe('AgentService deletion', () => {
         id: 'tool:task-call',
         role: 'activity',
         activityStatus: 'failed',
+        activityResult: 'Error: tool failed; inspect the session log',
+        activityDurationMs: 1_000,
       }),
     ])
   })
@@ -511,6 +513,119 @@ describe('AgentService deletion', () => {
         role: 'activity',
         content: 'Bash\n$ pnpm test',
         activityStatus: 'completed',
+        activityResult: 'All tests passed',
+        activityDurationMs: 1_000,
+      }),
+    ])
+  })
+
+  it('groups activity beneath a skill and preserves failed results', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"skill-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"skill-call",
+          "toolName":"skill",
+          "arguments":{"skill":"tool-model-catalog"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"mcp-start",
+        "parentId":"skill-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"mcp-call",
+          "toolName":"mcp:ecs-mcp-server-search_config",
+          "mcpServerName":"ecs-mcp-server",
+          "mcpToolName":"search_config",
+          "arguments":{"query":"cache"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"mcp-end",
+        "parentId":"mcp-start",
+        "timestamp":"2026-08-28T00:00:03.500Z",
+        "data":{
+          "toolCallId":"mcp-call",
+          "success":false,
+          "result":{"content":"404 operation not found"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:skill-call',
+        activityKind: 'skill',
+      }),
+      expect.objectContaining({
+        id: 'tool:mcp-call',
+        activityKind: 'tool',
+        activityGroupId: 'tool:skill-call',
+        activityResult: 'Error: 404 operation not found',
+        activityDurationMs: 2_500,
+      }),
+    ])
+  })
+
+  it('includes sub-agent tool calls beneath their agent heading', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"agent-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "toolName":"task",
+          "arguments":{
+            "agent_type":"rubber-duck",
+            "description":"Review the cache path"
+          }
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"child-start",
+        "agentId":"rubber-duck-1",
+        "parentId":"agent-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "parentToolCallId":"agent-call",
+          "toolName":"read",
+          "arguments":{"path":"cache.md"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"child-end",
+        "agentId":"rubber-duck-1",
+        "parentId":"child-start",
+        "timestamp":"2026-08-28T00:00:02.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "success":true,
+          "result":{"content":"12 lines read"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:agent-call',
+        activityKind: 'agent',
+      }),
+      expect.objectContaining({
+        id: 'tool:child-call',
+        activityGroupId: 'tool:agent-call',
+        activityResult: '12 lines read',
+        activityDurationMs: 1_000,
       }),
     ])
   })

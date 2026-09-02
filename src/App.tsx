@@ -41,7 +41,6 @@ import {
   BellOff,
   BookOpen,
   Bot,
-  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -73,7 +72,6 @@ import {
   Trash2,
   Wifi,
   WifiOff,
-  XCircle,
   X,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -93,6 +91,9 @@ import remarkGfm from 'remark-gfm'
 import type {
   AgentProvider,
   AgentProviderCapability,
+  ActivityKind,
+  ActivityStatus,
+  ChatMessage,
   ComputerSummary,
   ConfigureRuntimeInput,
   DirectoryListing,
@@ -2880,43 +2881,372 @@ function UserInputCard({
   )
 }
 
-function ActivityMessage({
-  content,
-  status,
-}: {
-  content: string
-  status?: 'running' | 'completed' | 'failed'
-}) {
-  const [title, ...detailLines] = content.split('\n')
-  const detail = detailLines.join('\n').trim()
-  const isMcp = title.startsWith('MCP ·')
-  // A background agent is the one tool that routinely outlives the parent's
-  // last message, so a running one says so instead of looking finished.
-  const isAgent = title.startsWith('Agent (')
-  const icon =
-    status === 'failed' ? (
-      <XCircle size={14} />
-    ) : status === 'completed' ? (
-      <CheckCircle2 size={14} />
-    ) : (
-      <LoaderCircle className="activity-message__spinner" size={14} />
-    )
+function activityKindFromMessage(message: ChatMessage): ActivityKind {
+  if (message.activityKind) {
+    return message.activityKind
+  }
+  const title = message.content.split('\n', 1)[0] || ''
+  if (/^Skill \(/.test(title)) {
+    return 'skill'
+  }
+  if (/^Agent \(/.test(title)) {
+    return 'agent'
+  }
+  return 'tool'
+}
+
+function activityStatusFromMessage(message: ChatMessage): ActivityStatus {
+  return message.activityStatus || 'running'
+}
+
+function compactActivityText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function activityPresentation(message: ChatMessage): {
+  title: string
+  kind: ActivityKind
+  name: string
+  origin?: string
+  summary?: string
+  arguments?: string
+} {
+  const [title = '', ...detailLines] = message.content.split('\n')
+  const detail = compactActivityText(detailLines.join('\n'))
+  const kind = activityKindFromMessage(message)
+  if (kind === 'skill') {
+    const match = title.match(/^Skill \((.+)\)$/)
+    return {
+      title,
+      kind,
+      name: match ? `skill(${match[1]})` : 'skill',
+      arguments: detail || undefined,
+    }
+  }
+  if (kind === 'agent') {
+    const match = title.match(/^Agent \(([^)]+)\)(?: · (.*))?$/)
+    return {
+      title,
+      kind,
+      name: match ? `agent(${match[1]})` : 'agent',
+      summary: match?.[2],
+      arguments: detail || undefined,
+    }
+  }
+  if (title.startsWith('MCP ·')) {
+    const parts = title.split(' · ')
+    const hasServer = parts.length > 2
+    const server = hasServer ? parts[1] || '' : ''
+    const operation = hasServer ? parts[2] || 'tool' : parts[1] || 'tool'
+    return {
+      title,
+      kind,
+      name: operation,
+      origin: server ? `(MCP: ${server})` : '(MCP)',
+      summary: parts.slice(3).join(' · ') || undefined,
+      arguments: detail || undefined,
+    }
+  }
+  const [name = 'tool', ...summaryParts] = title.split(' · ')
+  return {
+    title,
+    kind,
+    name,
+    summary: summaryParts.join(' · ') || undefined,
+    arguments: detail || undefined,
+  }
+}
+
+function formatActivityDuration(durationMs?: number): string {
+  if (
+    durationMs === undefined ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 0
+  ) {
+    return '—'
+  }
+  const seconds = durationMs / 1_000
+  if (seconds < 1) {
+    return `${Math.round(durationMs)}ms`
+  }
+  if (seconds < 10) {
+    return `${seconds.toFixed(1)}s`
+  }
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`
+  }
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = Math.round(seconds % 60)
+  return `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s`
+}
+
+function activityStatusGlyph(status: ActivityStatus): string {
+  switch (status) {
+    case 'completed':
+      return '●'
+    case 'failed':
+      return '×'
+    case 'pending':
+      return '·'
+    case 'running':
+      return '○'
+  }
+}
+
+function activityStatusLabel(status: ActivityStatus): string {
+  switch (status) {
+    case 'completed':
+      return 'Completed'
+    case 'failed':
+      return 'Failed'
+    case 'pending':
+      return 'Pending'
+    case 'running':
+      return 'Running'
+  }
+}
+
+function ActivityMessage({ message }: { message: ChatMessage }) {
+  const presentation = activityPresentation(message)
+  const status = activityStatusFromMessage(message)
+  const isMcp = message.content.startsWith('MCP ·')
+  const isAgent = presentation.kind === 'agent'
+  const isHeading =
+    presentation.kind === 'skill' || presentation.kind === 'agent'
+  const result =
+    message.activityResult ||
+    (status === 'failed'
+      ? 'Error: tool failed; inspect the session log'
+      : isAgent && status !== 'completed'
+        ? 'still working'
+        : undefined)
+  const legacyTitle = presentation.title
+  const duration = formatActivityDuration(message.activityDurationMs)
+  const accessibleDetails = [
+    `${activityStatusLabel(status)}: ${legacyTitle}`,
+    result,
+    message.activityDurationMs === undefined ? undefined : `${duration} duration`,
+  ]
+    .filter(Boolean)
+    .join('; ')
   return (
     <div
-      className={`activity-message activity-message--${status || 'running'}${
+      aria-label={accessibleDetails}
+      className={`activity-message activity-message--${status}${
         isMcp ? ' activity-message--mcp' : ''
-      }${isAgent ? ' activity-message--agent' : ''}`}
+      }${isAgent ? ' activity-message--agent' : ''}${
+        isHeading ? ' activity-message--heading' : ''
+      }`}
+      aria-level={isHeading ? 3 : undefined}
+      role={isHeading ? 'heading' : undefined}
+      title={legacyTitle}
     >
-      {icon}
-      <span>
-        <strong>{title}</strong>
-        {isAgent && status !== 'completed' && status !== 'failed' ? (
-          <em className="activity-message__note">still working</em>
-        ) : null}
-        {detail ? <code>{detail}</code> : null}
+      <span
+        aria-hidden="true"
+        className="activity-message__glyph"
+      >
+        {activityStatusGlyph(status)}
       </span>
+      <span className="activity-message__body">
+        <strong className="activity-message__name">{presentation.name}</strong>
+        {presentation.origin ? (
+          <span className="activity-message__origin">
+            {' '}
+            {presentation.origin}
+          </span>
+        ) : null}
+        {presentation.summary ? (
+          <>
+            <span className="activity-message__separator"> · </span>
+            <span className="activity-message__summary">
+              {compactActivityText(presentation.summary)}
+            </span>
+          </>
+        ) : null}
+        {presentation.arguments ? (
+          <>
+            <span className="activity-message__separator"> · </span>
+            <span className="activity-message__arguments">
+              {presentation.arguments}
+            </span>
+          </>
+        ) : null}
+        {result ? (
+          <>
+            <span className="activity-message__separator"> · </span>
+            <span
+              className="activity-message__result"
+              title={result}
+            >
+              {compactActivityText(result)}
+            </span>
+          </>
+        ) : null}
+      </span>
+      <span
+        aria-label={
+          message.activityDurationMs === undefined
+            ? 'No duration recorded'
+            : `${duration} duration`
+        }
+        className="activity-message__duration"
+      >
+        {duration}
+      </span>
+      {legacyTitle !== presentation.name ? (
+        <span
+          aria-hidden="true"
+          className="activity-message__legacy-title"
+        >
+          {legacyTitle}
+        </span>
+      ) : null}
     </div>
   )
+}
+
+function ActivityArticle({
+  message,
+  currentToolId,
+}: {
+  message: ChatMessage
+  currentToolId?: string
+}) {
+  return (
+    <article
+      className={`message message--activity ${
+        message.id === currentToolId
+          ? 'tool-activity-slot'
+          : 'tool-activity-history'
+      }`}
+      key={message.id}
+    >
+      <ActivityMessage message={message} />
+    </article>
+  )
+}
+
+function ConversationMessages({
+  messages,
+  currentToolId,
+}: {
+  messages: ChatMessage[]
+  currentToolId?: string
+}) {
+  const activityMessages = new Map(
+    messages
+      .filter((message) => message.role === 'activity')
+      .map((message) => [message.id, message]),
+  )
+  const activityIndexes = new Map(
+    messages
+      .map((message, index) => [message.id, index] as const)
+      .filter(([id]) => activityMessages.has(id)),
+  )
+  const activityChildren = new Map<string, ChatMessage[]>()
+  const groupedActivityIds = new Set<string>()
+  for (const [parentId, parentIndex] of activityIndexes) {
+    // A child can own activity of its own, and those entries are grouped under
+    // it rather than this parent. Walking over them keeps the parent's later
+    // tools in its group instead of stopping at the first nested one and
+    // leaving them at the top level.
+    const owned = new Set<string>([parentId])
+    for (let index = parentIndex + 1; index < messages.length; index += 1) {
+      const message = messages[index]
+      if (
+        !message ||
+        message.role !== 'activity' ||
+        !message.activityGroupId ||
+        !owned.has(message.activityGroupId)
+      ) {
+        break
+      }
+      owned.add(message.id)
+      if (message.activityGroupId !== parentId) {
+        continue
+      }
+      const children = activityChildren.get(parentId) || []
+      children.push(message)
+      activityChildren.set(parentId, children)
+      groupedActivityIds.add(message.id)
+    }
+  }
+  const renderActivity = (message: ChatMessage): ReactNode => {
+    const children = activityChildren.get(message.id) || []
+    if (children.length === 0) {
+      return (
+        <ActivityArticle
+          currentToolId={currentToolId}
+          key={message.id}
+          message={message}
+        />
+      )
+    }
+    const kind = activityKindFromMessage(message)
+    const groupLabel =
+      kind === 'skill' ? 'Skill' : kind === 'agent' ? 'Agent' : 'Activity'
+    return (
+      <div
+        aria-label={`${groupLabel} ${
+          activityPresentation(message).name
+        } activity group`}
+        className="activity-group"
+        key={message.id}
+      >
+        <ActivityArticle
+          currentToolId={currentToolId}
+          message={message}
+        />
+        <div className="activity-group__children">
+          {children.map((child) => renderActivity(child))}
+        </div>
+      </div>
+    )
+  }
+  const rendered: ReactNode[] = []
+  for (const message of messages) {
+    if (message.role === 'activity') {
+      if (groupedActivityIds.has(message.id)) {
+        continue
+      }
+      rendered.push(renderActivity(message))
+      continue
+    }
+    rendered.push(
+      <article className={`message message--${message.role}`} key={message.id}>
+        <div className="message__metadata">
+          <span className="message__label">
+            {message.role === 'user'
+              ? 'You'
+              : message.role === 'notice'
+                ? 'Command'
+                : 'Agent'}
+          </span>
+          <time
+            className="message__timestamp"
+            dateTime={message.createdAt}
+            title={messageDateTimeFormatter.format(new Date(message.createdAt))}
+          >
+            {messageTimeFormatter.format(new Date(message.createdAt))}
+          </time>
+        </div>
+        <div className="message__content">
+          {message.content ? (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {message.content}
+            </ReactMarkdown>
+          ) : (
+            <span className="typing-indicator">
+              <i />
+              <i />
+              <i />
+            </span>
+          )}
+        </div>
+      </article>,
+    )
+  }
+  return <div className="message-stack">{rendered}</div>
 }
 
 function EmptyConversation({ onCreate }: { onCreate: () => void }) {
@@ -7349,65 +7679,10 @@ function App() {
               </p>
             </div>
           ) : (
-            <div className="message-stack">
-              {selected.messages
-                .map((message) => (
-                  message.role === 'activity' ? (
-                    <article
-                      className={`message message--activity ${
-                        message.id === currentTool?.id
-                          ? 'tool-activity-slot'
-                          : 'tool-activity-history'
-                      }`}
-                      key={message.id}
-                    >
-                      <ActivityMessage
-                        content={message.content}
-                        status={message.activityStatus}
-                      />
-                    </article>
-                  ) : (
-                    <article
-                      className={`message message--${message.role}`}
-                      key={message.id}
-                    >
-                      <div className="message__metadata">
-                        <span className="message__label">
-                          {message.role === 'user'
-                            ? 'You'
-                            : message.role === 'notice'
-                              ? 'Command'
-                              : 'Agent'}
-                        </span>
-                        <time
-                          className="message__timestamp"
-                          dateTime={message.createdAt}
-                          title={messageDateTimeFormatter.format(
-                            new Date(message.createdAt),
-                          )}
-                        >
-                          {messageTimeFormatter.format(
-                            new Date(message.createdAt),
-                          )}
-                        </time>
-                      </div>
-                      <div className="message__content">
-                        {message.content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {message.content}
-                          </ReactMarkdown>
-                        ) : (
-                          <span className="typing-indicator">
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                        )}
-                      </div>
-                    </article>
-                  )
-                ))}
-            </div>
+            <ConversationMessages
+              currentToolId={currentTool?.id}
+              messages={selected.messages}
+            />
           )}
           {selected?.pendingPermission ? (
             <PermissionCard

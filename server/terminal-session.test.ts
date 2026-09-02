@@ -6,10 +6,15 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  isTerminalAgentWorking,
+  isTerminalOverlay,
   isTerminalSessionInUsePrompt,
+  parseTerminalFormActiveField,
   parseTerminalPermission,
   parseTerminalUpdateNotice,
   parseTerminalUserInput,
+  terminalCommandOutput,
+  terminalFormShowsFields,
   TmuxTerminalSessionController,
 } from './terminal-session.js'
 
@@ -524,5 +529,279 @@ describe('terminal update notice', () => {
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBe('1.2.3')
+  })
+})
+
+// Panes below are trimmed captures from a real Copilot CLI session.
+describe('terminal slash command output', () => {
+  const composer = [
+    '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+    '┃',
+    '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+    ' ← open sidebar · / commands · ? help · tab next tab',
+    ' GPT-5.6 Sol · High · 1.1M context (0%)',
+  ].join('\n')
+
+  it('reports the response a command printed', () => {
+    const before = [' ● Tip: /plugin', '   └ Manage plugins', composer].join('\n')
+    const after = [
+      ' ● Tip: /plugin',
+      '   └ Manage plugins',
+      ' ● Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/cwd')).toBe(
+      'Current working directory: /home/user/project',
+    )
+  })
+
+  it('ignores a redraw that added nothing', () => {
+    const pane = [' ● Tip: /plugin', composer].join('\n')
+
+    expect(terminalCommandOutput(pane, pane, '/cwd')).toBeUndefined()
+  })
+
+  it('does not report the echoed command as its own output', () => {
+    const before = [' ● Tip: /plugin', composer].join('\n')
+    const after = [' ● Tip: /plugin', ' /cwd', composer].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/cwd')).toBeUndefined()
+  })
+
+  // The footer carries live counters, so it differs on every frame and a plain
+  // diff mistakes it for a response the command printed.
+  it('ignores a status footer that changed between frames', () => {
+    const before = [
+      ' ● Tip: /plugin',
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' Changes    +0 -0',
+      ' GPT-5.6 Sol · High · 1.1M context (0%)',
+    ].join('\n')
+    const after = [
+      ' ● Tip: /plugin',
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' Changes    +12 -3',
+      ' GPT-5.6 Sol · High · 1.1M context (7%)',
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/config')).toBeUndefined()
+  })
+
+  // The banner and tip paint after the pane is first captured, so the first
+  // command in a session would otherwise report them as its own output.
+  it('ignores the startup banner and tip', () => {
+    const before = [' ● Ready', composer].join('\n')
+    const after = [
+      ' ● Ready',
+      '  ╭─╮╭─╮',
+      '  ╰─╯╰─╯  Copilot v1.0.82 uses AI.',
+      '  █ ▘▝ █  Check for mistakes.',
+      '   ▔▔▔▔',
+      ' ● Tip: /plugin',
+      '   └ Manage plugins and plugin marketplaces',
+      ' ● Allowed directories for file access:',
+      composer,
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/list-dirs')).toBe(
+      'Allowed directories for file access:',
+    )
+  })
+
+  // Earlier output is redrawn with different padding and panel borders, so
+  // comparing the captured text verbatim reports it again as a new response.
+  it('ignores earlier output that was redrawn with different borders', () => {
+    const before = [
+      ' ● Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+    const after = [
+      '   Current working directory: /home/user/project              ┃',
+      ' ● Allowed directories for file access:',
+      composer,
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/list-dirs')).toBe(
+      'Allowed directories for file access:',
+    )
+  })
+
+  // Running a command twice prints the same text again. Treating prior output
+  // as a set would discard the second response and report only the command.
+  it('reports a repeated response the command printed again', () => {
+    const before = [
+      ' \u25cf Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+    const after = [
+      ' \u25cf Current working directory: /home/user/project',
+      ' \u25cf Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+
+    expect(terminalCommandOutput(before, after, '/cwd')).toBe(
+      'Current working directory: /home/user/project',
+    )
+  })
+
+  it('recognises a full-screen view', () => {
+    const settings = [
+      ' Settings',
+      '  User   Repo   Repo (local)   Problems',
+      ' ❯ allowedUrls                          (default)',
+      ' 1 of 156',
+      ' / search · ↑/↓ navigate · tab switch scope · enter edit · ctrl+r reset ·',
+      ' ctrl+e editor · esc close',
+    ].join('\n')
+
+    expect(isTerminalOverlay(settings)).toBe(true)
+  })
+
+  it('recognises a picker whose footer spells out the keys', () => {
+    // The model picker phrases every hint with a connecting word.
+    const picker = [
+      ' \u276f Auto                       \u2014          \u2014',
+      ' \u276f  Search models\u2026',
+      ' \u2191/\u2193 to navigate \u00b7 \u2190/\u2192 reasoning effort \u00b7 tab context window \u00b7',
+      ' recommended \u00b7 enter to select \u00b7 esc to cancel',
+    ].join('\n')
+
+    expect(isTerminalOverlay(picker)).toBe(true)
+  })
+
+  // Only offered while a turn is in flight, so it marks the frames whose new
+  // lines belong to the agent rather than to a command.
+  it('recognises the pane while the agent is working', () => {
+    const working = [
+      ' \u25cf Reading files',
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u25c9 Working - autopilot \u00b7 132.7 KiB esc interrupt',
+      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (18%)',
+    ].join('\n')
+
+    expect(isTerminalAgentWorking(working)).toBe(true)
+  })
+
+  it('does not think an idle pane is working', () => {
+    const idle = [
+      ' \u25cf Ready',
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
+      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+    ].join('\n')
+
+    expect(isTerminalAgentWorking(idle)).toBe(false)
+  })
+
+  it('does not mistake an ordinary transcript for a full-screen view', () => {
+    const pane = [
+      ' ● Current working directory: /home/user/project',
+      composer,
+    ].join('\n')
+
+    expect(isTerminalOverlay(pane)).toBe(false)
+  })
+})
+
+// Captured from a real Copilot CLI form: a text field focused, with the tabs
+// naming every field above it.
+const formPaneFirstField = [
+  ' Copilot needs information.',
+  ' Configure the deployment request.',
+  '',
+  '  Deployment name   Catalog scope   Confirm deployment',
+  '',
+  ' Deployment name',
+  ' ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+  '  ❯ swec-default',
+  ' ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+  '',
+  ' enter accept · tab next · ctrl+d decline · esc cancel',
+].join('\n')
+
+// The same form after an attached client moved to the last field, which is a
+// list and so prints its title with a colon.
+const formPaneLastField = [
+  ' Copilot needs information.',
+  ' Configure the deployment request.',
+  '',
+  '  Deployment name   Catalog scope   Confirm deployment',
+  '',
+  ' Confirm deployment:',
+  '   Yes',
+  ' ❯ No',
+  '   Other (type your answer)',
+  '',
+  ' ↑/↓ select · enter accept · shift+tab prev · ctrl+d decline · esc cancel',
+].join('\n')
+
+describe('terminal form identity', () => {
+  const form = {
+    question: 'Configure the deployment request.',
+    fields: ['Deployment name', 'Catalog scope', 'Confirm deployment'],
+  }
+
+  it('recognizes the form the given request describes', () => {
+    expect(terminalFormShowsFields(formPaneFirstField, form)).toBe(true)
+    expect(terminalFormShowsFields(formPaneLastField, form)).toBe(true)
+  })
+
+  it('rejects a form that belongs to another request', () => {
+    // A prompt that replaced the one being answered shows its own fields, so
+    // an answer written for the old form must not reach it.
+    const other = formPaneFirstField.replace(
+      '  Deployment name   Catalog scope   Confirm deployment',
+      '  Branch name   Force push',
+    )
+    expect(terminalFormShowsFields(other, form)).toBe(false)
+    expect(
+      terminalFormShowsFields(other, {
+        question: form.question,
+        fields: ['Branch name', 'Force push'],
+      }),
+    ).toBe(true)
+  })
+
+  it('rejects a repeat of the same schema asked for something else', () => {
+    // Two requests can share a schema, so the fields alone cannot tell them
+    // apart; the question the CLI prints above them is what does.
+    const reasked = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      ' Configure the rollback request.',
+    )
+    expect(terminalFormShowsFields(reasked, form)).toBe(false)
+  })
+
+  it('reads which field the form has focused, by position', () => {
+    expect(parseTerminalFormActiveField(formPaneFirstField, form)).toBe(0)
+    expect(parseTerminalFormActiveField(formPaneLastField, form)).toBe(2)
+  })
+
+  it('refuses to guess focus when a title is repeated', () => {
+    // Answers are written per position, so an ambiguous title would shift
+    // every one of them.
+    const duplicated = formPaneFirstField.replace(
+      '  Deployment name   Catalog scope   Confirm deployment',
+      '  Name   Name   Confirm deployment',
+    )
+    expect(
+      parseTerminalFormActiveField(duplicated, {
+        question: form.question,
+        fields: ['Name', 'Name', 'Confirm deployment'],
+      }),
+    ).toBeUndefined()
+  })
+
+  it('reports no focus for a pane that is not this form', () => {
+    expect(parseTerminalFormActiveField('nothing here', form)).toBeUndefined()
   })
 })

@@ -19,6 +19,7 @@ import {
 import type {
   AgentProvider,
   AgentProviderCapability,
+  ActivityKind,
   ChatMessage,
   AgentMode,
   ConfigureRuntimeInput,
@@ -70,7 +71,11 @@ import {
   searchWorkspace,
 } from './workspace-browser.js'
 import {
+  isTerminalAgentWorking,
+  isTerminalOverlay,
+  terminalCommandOutput,
   TmuxTerminalSessionController,
+  type TerminalFormStep,
   type TerminalSessionController,
 } from './terminal-session.js'
 
@@ -201,9 +206,115 @@ export interface AgentServiceEvents {
   event: [event: ServerEvent]
 }
 
+function activityKind(data: unknown): ActivityKind {
+  const normalizedToolName = (stringValue(recordValue(data).toolName) || 'tool')
+    .toLowerCase()
+    .replaceAll('-', '_')
+  if (normalizedToolName === 'skill') {
+    return 'skill'
+  }
+  if (normalizedToolName === 'task') {
+    return 'agent'
+  }
+  return 'tool'
+}
+
+function activityDuration(startedAt: string, completedAt: string): number | undefined {
+  const start = Date.parse(startedAt)
+  const end = Date.parse(completedAt)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return undefined
+  }
+  return end - start
+}
+
+function activityResult(data: unknown, success: boolean): string | undefined {
+  const tool = recordValue(data)
+  const result = recordValue(tool.result)
+  const resultContent =
+    previewText(result.detailedContent, true) ||
+    previewText(result.content, true) ||
+    previewText(result.output, true) ||
+    previewText(result.message, true) ||
+    previewText(tool.result, true)
+  const error = previewText(tool.error, true) ||
+    previewText(recordValue(tool.error).message, true)
+  const text = success ? resultContent : error || resultContent
+  if (text) {
+    return success ? text : `Error: ${text}`
+  }
+  return success ? undefined : 'Error: tool failed; inspect the session log'
+}
+
+interface ActivityToolStart {
+  kind: ActivityKind
+  parentToolCallId?: string
+  toolCallId: string
+}
+
+function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
+  return kind === 'skill' || kind === 'agent'
+}
+
+function activityGroupIdFor(
+  parentToolCallId: string | undefined,
+  agentId: string | undefined,
+  toolStartsByCallId: Map<string, ActivityToolStart>,
+  subagentParentsByAgentId: Map<string, string>,
+): string | undefined {
+  const candidateParents = [
+    parentToolCallId,
+    agentId ? subagentParentsByAgentId.get(agentId) : undefined,
+  ].filter((value, index, values): value is string =>
+    Boolean(value) && values.indexOf(value) === index,
+  )
+  for (const candidate of candidateParents) {
+    const visited = new Set<string>()
+    let parentToolCallIdToCheck: string | undefined = candidate
+    while (parentToolCallIdToCheck && !visited.has(parentToolCallIdToCheck)) {
+      visited.add(parentToolCallIdToCheck)
+      const parent = toolStartsByCallId.get(parentToolCallIdToCheck)
+      if (!parent) {
+        break
+      }
+      if (isActivityGroupKind(parent.kind)) {
+        return `tool:${parent.toolCallId}`
+      }
+      parentToolCallIdToCheck = parent.parentToolCallId
+    }
+  }
+  return undefined
+}
+
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
+  const toolStartsByCallId = new Map<
+    string,
+    ActivityToolStart
+  >()
+  const subagentParentsByAgentId = new Map<string, string>()
+  for (const event of events) {
+    if (event.type === 'tool.execution_start') {
+      toolStartsByCallId.set(event.data.toolCallId, {
+        kind: activityKind(event.data),
+        parentToolCallId: stringValue(
+          recordValue(event.data).parentToolCallId,
+        ),
+        toolCallId: event.data.toolCallId,
+      })
+    } else if (event.type === 'subagent.started' && event.agentId) {
+      subagentParentsByAgentId.set(event.agentId, event.data.toolCallId)
+    }
+  }
+  const activityGroupId = (event: SessionEvent): string | undefined => {
+    return activityGroupIdFor(
+      stringValue(recordValue(event.data).parentToolCallId),
+      event.agentId,
+      toolStartsByCallId,
+      subagentParentsByAgentId,
+    )
+  }
   const finishRunningActivities = (
     activityStatus: 'completed' | 'failed' = 'completed',
   ) => {
@@ -247,12 +358,12 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       continue
     }
-    if (event.type === 'tool.execution_start' && !event.agentId) {
+    if (event.type === 'tool.execution_start') {
       const toolCallId = event.data.toolCallId
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete') {
+      if (toolName === 'task_complete' && !event.agentId) {
         const summary = stringValue(
           recordValue(event.data.arguments).summary,
         )?.trim()
@@ -266,21 +377,31 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
         content: toolActivityContent(event.data),
         createdAt: event.timestamp,
         activityStatus: 'running',
+        activityKind: activityKind(event.data),
+        activityGroupId: activityGroupId(event),
       })
       continue
     }
-    if (event.type === 'tool.execution_complete' && !event.agentId) {
+    if (event.type === 'tool.execution_complete') {
       const toolCallId = event.data.toolCallId
       const message = messages.find(
         (entry) => entry.id === `tool:${toolCallId}`,
       )
       if (message) {
         message.activityStatus = event.data.success ? 'completed' : 'failed'
-        const resultContent = stringValue(
+        const resultContent = activityResult(event.data, event.data.success)
+        const duration = activityDuration(message.createdAt, event.timestamp)
+        if (resultContent) {
+          message.activityResult = resultContent
+        }
+        if (duration !== undefined) {
+          message.activityDurationMs = duration
+        }
+        const taskResultContent = stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim()
         const taskCompletionSummary = taskCompletionSummaries.has(toolCallId)
-          ? resultContent || taskCompletionSummaries.get(toolCallId)
+          ? taskResultContent || taskCompletionSummaries.get(toolCallId)
           : undefined
         if (event.data.success && taskCompletionSummary) {
           finishRunningActivities()
@@ -700,6 +821,74 @@ export function pendingUserInputFromEvents(
   return pending?.input
 }
 
+/**
+ * Turns an answered form into the moves that fill the agent's own form.
+ * Anything that cannot be mapped confidently returns undefined, so the caller
+ * falls back to cancelling the prompt and answering in a message rather than
+ * submitting a value the user did not choose.
+ */
+export function terminalFormSteps(
+  form: UserInputForm,
+  values: Record<string, UserInputFieldValue>,
+): TerminalFormStep[] | undefined {
+  const steps: TerminalFormStep[] = []
+  for (const field of form.fields) {
+    const value = values[field.name]
+    if (field.type === 'array') {
+      return undefined
+    }
+    if (field.type === 'boolean') {
+      if (typeof value !== 'boolean') {
+        return undefined
+      }
+      // The agent lists Yes, No, then a freeform row.
+      steps.push({ kind: 'select', optionCount: 3, index: value ? 0 : 1 })
+      continue
+    }
+    const options = field.options
+    if (options && options.length > 0) {
+      const index = options.findIndex((option) => option.value === value)
+      if (index < 0) {
+        return undefined
+      }
+      steps.push({
+        kind: 'select',
+        optionCount: options.length + 1,
+        index,
+      })
+      continue
+    }
+    if (value !== undefined && typeof value !== 'string' && typeof value !== 'number') {
+      return undefined
+    }
+    steps.push({ kind: 'text', value: value === undefined ? '' : String(value) })
+  }
+  return steps.length === form.fields.length ? steps : undefined
+}
+
+/**
+ * A cancelled prompt leaves the agent without its answer, so the reply spells
+ * out every field it asked for instead of sending an opaque JSON blob.
+ */
+function persistedFormAnswer(
+  request: PendingUserInput,
+  values: Record<string, UserInputFieldValue>,
+): string {
+  const lines = (request.form?.fields || []).map((field) => {
+    const value = values[field.name]
+    const rendered = Array.isArray(value)
+      ? value.join(', ')
+      : value === undefined
+        ? ''
+        : String(value)
+    return `- ${field.name}: ${rendered}`
+  })
+  return [
+    'Answering the question you just asked, from the Agentic Remote app:',
+    ...lines,
+  ].join('\n')
+}
+
 function visibleUserContent(content: string): string {
   const direct = content.trim()
   if (direct) {
@@ -851,10 +1040,24 @@ function stripAnsi(value: string): string {
   return value.replace(ansiSequence, '')
 }
 
-function statusFromEvents(events: SessionEvent[]): SessionStatus {
+export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
+  // Work a turn handed to background agents outlives the turn itself, so the
+  // agents still running are tracked separately from it.
+  const workingAgents = new Set<string>()
   for (const event of events) {
     if (event.agentId) {
+      if (event.type === 'subagent.started') {
+        workingAgents.add(event.agentId)
+      } else if (
+        event.type === 'subagent.completed' ||
+        event.type === 'subagent.failed'
+      ) {
+        // Failing ends an agent just as completing does. Tracking only the
+        // completions would leave a failed agent working for good, and the
+        // session running with it.
+        workingAgents.delete(event.agentId)
+      }
       continue
     }
     switch (event.type) {
@@ -872,13 +1075,21 @@ function statusFromEvents(events: SessionEvent[]): SessionStatus {
         break
       case 'assistant.turn_end':
       case 'session.idle':
+        status = 'idle'
+        break
       case 'abort':
       case 'session.shutdown':
+        // Nothing outlives the session ending, so agents it was waiting on
+        // are not still working.
+        workingAgents.clear()
         status = 'idle'
         break
     }
   }
-  return status
+  // A turn that handed its work to background agents and then ended has not
+  // finished it. Reporting the session as idle offers it for the next prompt
+  // and calls the work done while it is still going on.
+  return status === 'idle' && workingAgents.size > 0 ? 'running' : status
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -1177,6 +1388,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly liveTaskCompletionSummaries = new Map<string, string>()
+  private readonly liveActivityEvents = new Map<
+    string,
+    Map<
+      string,
+      {
+        agentId?: string
+        parentToolCallId?: string
+        kind?: ActivityKind
+        toolCallId?: string
+        subagentToolCallId?: string
+      }
+    >
+  >()
   private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
   private readonly runtimeModels = new Map<string, RuntimeModelOption>()
   private runtimeModelLoad?: Promise<void>
@@ -2003,6 +2227,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.eventLogVersions.delete(id)
       this.workspaceVersions.delete(id)
       this.liveTranscriptWatermarks.delete(id)
+      this.liveActivityEvents.delete(id)
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
       this.terminalUserInputChecks.delete(id)
@@ -2206,11 +2431,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async enqueuePrompt(
     sessionId: string,
     content: string,
+    command = false,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
       content,
       createdAt: new Date().toISOString(),
+      ...(command ? { command: true } : {}),
     }
     return this.serializeQueue(sessionId, async () => {
       const queued = await this.store.enqueuePrompt(sessionId, prompt)
@@ -2222,9 +2449,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async enqueueTerminalPrompt(
     sessionId: string,
     content: string,
+    command = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content)
+    const queued = await this.enqueuePrompt(sessionId, content, command)
     if (!wasIdle) {
       return queued
     }
@@ -2443,11 +2671,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, canonicalCommand)
+      return this.enqueueTerminalPrompt(sessionId, canonicalCommand, true)
     }
     const nativeEnqueue =
       !catalog.session &&
       this.shouldUseNativeTerminalQueue(sessionId, enqueue)
+    // Taken before the command is sent so the response can be told apart from
+    // content the pane was already showing. While the agent is working its own
+    // streaming output arrives in the same pane and cannot be told apart from
+    // the command's response, so no attempt is made to report one.
+    const before =
+      nativeEnqueue || busy || this.store.get(sessionId)?.status === 'running'
+        ? undefined
+        : await this.terminalController.capture?.(sessionId)
     if (
       await this.terminalController.send(
         sessionId,
@@ -2455,14 +2691,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         nativeEnqueue,
       )
     ) {
+      const feedback = await this.terminalCommandFeedback(
+        sessionId,
+        canonicalCommand,
+        before,
+      )
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
         role: 'notice',
-        content: canonicalCommand,
+        content: feedback.notice,
         createdAt: new Date().toISOString(),
       })
       this.publish(notice)
-      return notice
+      if (!feedback.startedTurn) {
+        return notice
+      }
+      // A command sent directly can start a turn just as a queued one can, and
+      // the session has to read as busy for it too, or the next prompt is sent
+      // into the turn before polling notices it.
+      const started = await this.store.markTerminalPromptDispatched(
+        sessionId,
+        new Date().toISOString(),
+      )
+      this.publish(started)
+      return started
     }
     const session = catalog.session
     if (!session) {
@@ -2518,6 +2770,66 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
     this.publish(notice)
     return notice
+  }
+
+  /**
+   * The CLI writes a slash command's response into the terminal rather than
+   * the event log, so without this the conversation only shows the command
+   * that was sent. Polls briefly for the response and falls back to the
+   * command itself when there is nothing to report.
+   */
+  /**
+   * The notice a command produced, and what it left the terminal doing. Both
+   * matter apart from the text: a command that began a turn, and one that
+   * opened a full-screen view, each keep the keyboard, so nothing further may
+   * be sent until they release it.
+   */
+  private async terminalCommandFeedback(
+    sessionId: string,
+    command: string,
+    before: string | undefined,
+  ): Promise<{ notice: string; startedTurn: boolean; overlayOpen: boolean }> {
+    if (before === undefined || !this.terminalController.capture) {
+      return { notice: command, startedTurn: false, overlayOpen: false }
+    }
+    let previous: string | undefined
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      const after = await this.terminalController.capture(sessionId)
+      if (!after) {
+        continue
+      }
+      if (isTerminalOverlay(after)) {
+        // The view takes the keyboard: anything sent now lands in its search
+        // box instead of the composer, so the terminal counts as held.
+        return {
+          notice: `${command}\n\nOpened an interactive view in the terminal. Continue there; it cannot be shown here.`,
+          startedTurn: false,
+          overlayOpen: true,
+        }
+      }
+      // The command started a turn, so anything appearing now is the agent
+      // writing rather than the command answering.
+      if (isTerminalAgentWorking(after)) {
+        return { notice: command, startedTurn: true, overlayOpen: false }
+      }
+      const output = terminalCommandOutput(before, after, command)
+      // A response can be captured mid-paint, so report it only once it stops
+      // growing; otherwise a multi-line response is cut short.
+      if (output && output === previous) {
+        return {
+          notice: `${command}\n\n${output}`,
+          startedTurn: false,
+          overlayOpen: false,
+        }
+      }
+      previous = output
+    }
+    return {
+      notice: previous ? `${command}\n\n${previous}` : command,
+      startedTurn: false,
+      overlayOpen: false,
+    }
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -2591,6 +2903,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.drainingSessions.delete(sessionId)
       this.queueOperations.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
+      this.liveActivityEvents.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
       this.terminalUpdateChecks.delete(sessionId)
       this.answeredTerminalPermissions.delete(sessionId)
@@ -2757,6 +3070,93 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         requestId,
         expiresAt: Date.now() + 60_000,
       })
+      // The agent is still showing this prompt in its terminal. Typing the
+      // answer while a structured form is open fills that form's focused
+      // field and submits every other field at its default, which silently
+      // turns confirmations into `false`. Close the prompt first, then answer.
+      const toolCallId = requestId.slice('persisted-user-input:'.length)
+      const terminalBacked = await this.terminalController.has(sessionId)
+      if (
+        terminalBacked &&
+        (await this.isToolCallComplete(sessionId, toolCallId))
+      ) {
+        // The agent already stopped waiting on this request, so it was
+        // answered or cancelled in the terminal. Whatever is on screen now
+        // belongs to something else, and filling it would answer the wrong
+        // prompt; the reply is dropped and the stale request cleared instead.
+        this.answeredPersistedInputs.delete(sessionId)
+        const settled = await this.store.update(sessionId, (session) => {
+          session.pendingUserInput = undefined
+        })
+        this.publish(settled)
+        return settled
+      }
+      if (terminalBacked && request.form) {
+        // Filling the agent's own form answers the tool it is waiting on, so
+        // the values arrive as the result it asked for.
+        const steps = terminalFormSteps(request.form, input.values || {})
+        const identity = {
+          question: request.question,
+          fields: request.form.fields.map((field) => field.title),
+        }
+        const filled =
+          steps &&
+          (await this.terminalController
+            .fillUserInputForm?.(sessionId, steps, identity)
+            .catch(() => false))
+        // Filling reports failure for a capture that timed out as well as for
+        // keys never sent, and the last Enter may already have submitted the
+        // form. Answering again would then submit a second time, so the agent
+        // is asked whether the request it was waiting on has finished.
+        if (
+          !filled &&
+          (await this.isToolCallComplete(sessionId, toolCallId))
+        ) {
+          const submitted = await this.store.update(sessionId, (session) => {
+            session.pendingUserInput = undefined
+            session.status = 'running'
+            session.activity = 'Continuing'
+          })
+          this.publish(submitted)
+          return submitted
+        }
+        if (filled) {
+          const answeredSession = await this.store.update(
+            sessionId,
+            (session) => {
+              session.pendingUserInput = undefined
+              session.status = 'running'
+              session.activity = 'Continuing'
+            },
+          )
+          this.publish(answeredSession)
+          return answeredSession
+        }
+      }
+      if (terminalBacked) {
+        const dismissed =
+          (await this.terminalController
+            .dismissUserInput?.(
+              sessionId,
+              request.form && {
+                question: request.question,
+                fields: request.form.fields.map((field) => field.title),
+              },
+            )
+            .catch(() => false)) ?? false
+        const closed =
+          dismissed && (await this.waitForToolCompletion(sessionId, toolCallId))
+        // The answer is about to be typed at the prompt. A form that is still
+        // open captures those keystrokes into its fields and submits the rest
+        // at their defaults, which is the corruption this path exists to
+        // avoid, so nothing is sent unless the form is known to have closed.
+        if (request.form && !closed) {
+          this.answeredPersistedInputs.delete(sessionId)
+          throw new Error(
+            'The agent is still showing its prompt, so the answer was not sent. Try again.',
+          )
+        }
+      }
       const cleared = await this.store.update(sessionId, (session) => {
         session.pendingUserInput = undefined
         session.status = 'idle'
@@ -2765,7 +3165,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(cleared)
       return this.sendMessage(
         sessionId,
-        request.form ? JSON.stringify(input.values) : answer,
+        request.form
+          ? persistedFormAnswer(request, input.values || {})
+          : answer,
         false,
       )
     } else {
@@ -3177,6 +3579,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (event) =>
             event.type === 'assistant.turn_end' ||
             event.type === 'session.idle' ||
+            // A turn that handed its work to background agents ends before
+            // they do, so the last agent finishing is the completion a prompt
+            // queued behind them is waiting on.
+            event.type === 'subagent.completed' ||
+            event.type === 'subagent.failed' ||
             event.type === 'session.error' ||
             event.type === 'abort' ||
             event.type === 'session.shutdown',
@@ -3310,6 +3717,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         continue
       }
       return message.content.startsWith('Ask User')
+    }
+    return false
+  }
+
+  /**
+   * Whether the agent has already recorded this tool call as finished. A
+   * request answered or cancelled in an attached terminal completes there, so
+   * this is what tells a reply that it is answering a prompt the agent has
+   * stopped waiting on.
+   */
+  private async isToolCallComplete(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<boolean> {
+    const events = await this.sessionEventReader(sessionId).catch(() => [])
+    return events.some(
+      (event) =>
+        event.type === 'tool.execution_complete' &&
+        !event.agentId &&
+        stringValue(recordValue(event.data).toolCallId) === toolCallId,
+    )
+  }
+
+  /**
+   * Waits for the agent to record the prompt as finished, so the answer that
+   * follows is typed at the prompt instead of into the closing form.
+   */
+  private async waitForToolCompletion(
+    sessionId: string,
+    toolCallId: string,
+    attempts = 20,
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      if (await this.isToolCallComplete(sessionId, toolCallId)) {
+        return true
+      }
     }
     return false
   }
@@ -3469,6 +3913,75 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private rememberLiveActivityEvent(
+    sessionId: string,
+    event: SessionEvent,
+    kind?: ActivityKind,
+    toolCallId?: string,
+  ): void {
+    const events =
+      this.liveActivityEvents.get(sessionId) ||
+      new Map<
+        string,
+        {
+          agentId?: string
+          parentToolCallId?: string
+          kind?: ActivityKind
+          toolCallId?: string
+          subagentToolCallId?: string
+        }
+      >()
+    const data = recordValue(event.data)
+    events.set(event.id, {
+      agentId: event.agentId,
+      parentToolCallId: stringValue(data.parentToolCallId),
+      kind,
+      toolCallId,
+      subagentToolCallId:
+        event.type === 'subagent.started'
+          ? stringValue(data.toolCallId)
+          : undefined,
+    })
+    while (events.size > 2_000) {
+      const oldest = events.keys().next().value
+      if (!oldest) {
+        break
+      }
+      events.delete(oldest)
+    }
+    this.liveActivityEvents.set(sessionId, events)
+  }
+
+  private liveActivityGroupId(
+    sessionId: string,
+    event: SessionEvent,
+  ): string | undefined {
+    const events = this.liveActivityEvents.get(sessionId)
+    const toolStartsByCallId = new Map<string, ActivityToolStart>()
+    const subagentParentsByAgentId = new Map<string, string>()
+    for (const activity of events?.values() || []) {
+      if (activity.toolCallId && activity.kind) {
+        toolStartsByCallId.set(activity.toolCallId, {
+          kind: activity.kind,
+          parentToolCallId: activity.parentToolCallId,
+          toolCallId: activity.toolCallId,
+        })
+      }
+      if (activity.agentId && activity.subagentToolCallId) {
+        subagentParentsByAgentId.set(
+          activity.agentId,
+          activity.subagentToolCallId,
+        )
+      }
+    }
+    return activityGroupIdFor(
+      stringValue(recordValue(event.data).parentToolCallId),
+      event.agentId,
+      toolStartsByCallId,
+      subagentParentsByAgentId,
+    )
+  }
+
   private attachSession(session: CopilotSessionLike): void {
     session.on((event) => {
       this.handleSessionEvent(session.sessionId, event)
@@ -3478,6 +3991,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
+    this.rememberLiveActivityEvent(sessionId, event)
 
     if (
       event.type === 'session.context_changed' &&
@@ -3559,32 +4073,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'tool.execution_start' && !event.agentId) {
+    if (event.type === 'tool.execution_start') {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete') {
+      if (toolName === 'task_complete' && !event.agentId) {
         this.liveTaskCompletionSummaries.set(
           `${sessionId}:${event.data.toolCallId}`,
           stringValue(recordValue(event.data.arguments).summary)?.trim() || '',
         )
       }
+      this.rememberLiveActivityEvent(
+        sessionId,
+        event,
+        activityKind(event.data),
+        event.data.toolCallId,
+      )
       void this.store
         .startToolActivity(
           sessionId,
           event.data.toolCallId,
           toolActivityContent(event.data),
           event.timestamp,
+          activityKind(event.data),
+          this.liveActivityGroupId(sessionId, event),
         )
         .then((stored) => this.publish(stored))
         .catch((error: unknown) => this.publishError(sessionId, error))
       return
     }
 
-    if (event.type === 'tool.execution_complete' && !event.agentId) {
+    if (event.type === 'tool.execution_complete') {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
@@ -3598,6 +4120,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim() || fallbackSummary
+      const presentationResult = activityResult(event.data, event.data.success)
       const update =
         isTaskCompletion && event.data.success && resultContent
           ? this.store.finishTaskCompletion(
@@ -3611,6 +4134,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               sessionId,
               event.data.toolCallId,
               event.data.success,
+              event.timestamp,
+              presentationResult,
             )
       void update
         .then((stored) => this.publish(stored))
@@ -3665,6 +4190,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             entry.activityStatus === 'running'
           ) {
             entry.activityStatus = 'failed'
+            entry.activityResult = `Error: ${message}`
           }
         }
         const assistant = session.messages.find(
@@ -3725,34 +4251,82 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.drainingSessions.add(sessionId)
     try {
-      await this.serializeQueue(sessionId, async () => {
-        const stored = this.store.get(sessionId)
-        const next = stored?.queuedPrompts?.[0]
-        if (!next || stored.status !== 'idle') {
-          return
-        }
-        const dispatchedAt = new Date().toISOString()
-        if (!(await this.terminalController.send(sessionId, next.content, false))) {
-          throw new Error('External terminal is no longer available')
-        }
-        const { prompt } = await this.store.removeQueuedPrompt(
-          sessionId,
-          next.id,
-        )
-        if (!prompt) {
-          return
-        }
-        const running = await this.store.markTerminalPromptDispatched(
-          sessionId,
-          dispatchedAt,
-        )
-        this.publish(running)
-      })
+      // A command answers in the pane instead of starting a turn, so it adds
+      // no completion event and nothing else would drain what is queued behind
+      // it. Draining continues here until the queue is empty or a turn begins.
+      while (await this.drainNextTerminalPrompt(sessionId)) {
+        // Keep draining while commands keep answering.
+      }
     } catch (error) {
       this.publishError(sessionId, error)
     } finally {
       this.drainingSessions.delete(sessionId)
     }
+  }
+
+  /**
+   * Sends the next queued entry. Returns true when the caller should drain
+   * again immediately, which is only the case for a command that answered
+   * without starting a turn: a dispatched prompt and a command that began a
+   * turn both leave the terminal busy, and their completion drains the rest.
+   */
+  private async drainNextTerminalPrompt(sessionId: string): Promise<boolean> {
+    return await this.serializeQueue(sessionId, async () => {
+      const stored = this.store.get(sessionId)
+      const next = stored?.queuedPrompts?.[0]
+      if (!next || stored.status !== 'idle') {
+        return false
+      }
+      const dispatchedAt = new Date().toISOString()
+      // A command reports what it printed instead of starting a turn, so its
+      // pane is captured before the keystrokes go in, exactly as it would be
+      // had the command not been queued.
+      const before = next.command
+        ? await this.terminalController.capture?.(sessionId)
+        : undefined
+      if (!(await this.terminalController.send(sessionId, next.content, false))) {
+        throw new Error('External terminal is no longer available')
+      }
+      const { prompt } = await this.store.removeQueuedPrompt(sessionId, next.id)
+      if (!prompt) {
+        return false
+      }
+      if (next.command) {
+        const feedback = await this.terminalCommandFeedback(
+          sessionId,
+          next.content,
+          before,
+        )
+        const notice = await this.store.addMessage(sessionId, {
+          id: randomUUID(),
+          role: 'notice',
+          content: feedback.notice,
+          createdAt: new Date().toISOString(),
+        })
+        this.publish(notice)
+        if (feedback.startedTurn) {
+          // The command began a turn instead of answering, so the terminal is
+          // busy until it ends. Recording the dispatch now keeps anything else
+          // from being sent into that turn before polling observes it.
+          const started = await this.store.markTerminalPromptDispatched(
+            sessionId,
+            dispatchedAt,
+          )
+          this.publish(started)
+          return false
+        }
+        // A full-screen view owns the keyboard without starting a turn, so the
+        // session stays idle while the rest of the queue waits for it to close
+        // rather than being typed into its search box.
+        return !feedback.overlayOpen
+      }
+      const running = await this.store.markTerminalPromptDispatched(
+        sessionId,
+        dispatchedAt,
+      )
+      this.publish(running)
+      return false
+    })
   }
 
   private async serializeQueue<T>(

@@ -181,6 +181,7 @@ enable_linger() {
 setup_service() {
   local host="" port="" role="" name="" data_directory="" allowed_origins=""
   local allowed_roots=""
+  local transcription_computer=""
   while (($# > 0)); do
     case "$1" in
       --host)
@@ -221,6 +222,7 @@ setup_service() {
   name="${name:-$(config_value AGENTIC_REMOTE_NODE_NAME)}"
   data_directory="$(config_value AGENTIC_REMOTE_DATA_DIR)"
   allowed_roots="${AGENTIC_REMOTE_ALLOWED_ROOTS:-$(config_value AGENTIC_REMOTE_ALLOWED_ROOTS)}"
+  transcription_computer="${AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER:-$(config_value AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER)}"
   local previous_host previous_port previous_origins
   previous_host="$(config_value HOST)"
   previous_port="$(config_value PORT)"
@@ -268,6 +270,12 @@ setup_service() {
   fi
   if [[ -n "$allowed_roots" ]]; then
     printf 'AGENTIC_REMOTE_ALLOWED_ROOTS=%s\n' "$allowed_roots" >>"$environment_tmp"
+  fi
+  # A downstream host runs setup with no environment of its own, so the computer
+  # assigned to transcribe has to survive from the file setup is replacing.
+  if [[ -n "$transcription_computer" ]]; then
+    printf 'AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER=%s\n' \
+      "$transcription_computer" >>"$environment_tmp"
   fi
   printf 'AGENTIC_REMOTE_ALLOWED_ORIGINS=%s\n' "$allowed_origins" >>"$environment_tmp"
   install -m 0600 "$environment_tmp" "$ENV_FILE"

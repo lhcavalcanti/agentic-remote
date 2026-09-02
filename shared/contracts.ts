@@ -14,6 +14,8 @@ export interface AgentProviderCapability {
 }
 
 export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
+export type ActivityStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type ActivityKind = 'tool' | 'skill' | 'agent'
 
 export interface ChatMessage {
   id: string
@@ -21,7 +23,11 @@ export interface ChatMessage {
   content: string
   createdAt: string
   streaming?: boolean
-  activityStatus?: 'running' | 'completed' | 'failed'
+  activityStatus?: ActivityStatus
+  activityKind?: ActivityKind
+  activityGroupId?: string
+  activityResult?: string
+  activityDurationMs?: number
 }
 
 export interface PermissionOption {
@@ -79,6 +85,9 @@ export interface QueuedPrompt {
   id: string
   content: string
   createdAt: string
+  // A slash command reports what it printed rather than starting a turn, so
+  // draining it has to follow the command path and not the prompt one.
+  command?: boolean
 }
 
 export interface SessionRuntimeInfo {

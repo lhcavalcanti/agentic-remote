@@ -576,6 +576,214 @@ describe('App', () => {
     )
   })
 
+  it('renders transcript headings, statuses, results, and optional durations', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:skill-call',
+          role: 'activity',
+          content: 'Skill (tool-model-catalog)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+        },
+        {
+          id: 'mcp-call',
+          role: 'activity',
+          content: 'MCP · ecs-mcp-server · search_config',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityResult: '48 lines read',
+          activityDurationMs: 1_250,
+          activityGroupId: 'tool:skill-call',
+        },
+        {
+          id: 'failed-call',
+          role: 'activity',
+          content: 'Read\nmissing.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'failed',
+          activityResult: 'Error: file not found',
+        },
+        {
+          id: 'pending-call',
+          role: 'activity',
+          content: 'Search\ncache',
+          createdAt: '2026-07-22T00:00:01.500Z',
+          activityStatus: 'pending',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(screen.getByText('skill(tool-model-catalog)')).toBeInTheDocument()
+    expect(screen.getByText('search_config')).toBeInTheDocument()
+    expect(screen.getByText('(MCP: ecs-mcp-server)')).toBeInTheDocument()
+    expect(screen.getByText('48 lines read')).toBeInTheDocument()
+    expect(screen.getByText('1.3s')).toBeInTheDocument()
+    expect(screen.getByText('Error: file not found')).toBeInTheDocument()
+    expect(screen.getByText('cache')).toBeInTheDocument()
+    expect(document.querySelectorAll('.activity-message')).toHaveLength(4)
+    expect(document.querySelector('.activity-group__children')).toHaveTextContent(
+      'search_config',
+    )
+    expect(
+      document.querySelector('.activity-message--pending'),
+    ).toHaveTextContent('—')
+    expect(
+      document.querySelectorAll('.activity-message__glyph'),
+    ).toHaveLength(4)
+  })
+
+  it('renders nested activity groups recursively', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:agent-call',
+          role: 'activity',
+          content: 'Agent (reviewer)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'agent',
+        },
+        {
+          id: 'tool:nested-skill-call',
+          role: 'activity',
+          content: 'Skill (agentic-remote-navigation)',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+          activityGroupId: 'tool:agent-call',
+        },
+        {
+          id: 'tool:nested-child-call',
+          role: 'activity',
+          content: 'View\n docs/app-spec.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:nested-skill-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelectorAll('.activity-group')).toHaveLength(2)
+    const nestedGroup = [...document.querySelectorAll('.activity-group')].find(
+      (group) => group.textContent?.includes('skill(agentic-remote-navigation)'),
+    )
+    expect(nestedGroup?.querySelector('.activity-group__children')).toHaveTextContent(
+      'View',
+    )
+  })
+
+  it('keeps a parent group together across a nested child', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:agent-call',
+          role: 'activity',
+          content: 'Agent (reviewer)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'agent',
+        },
+        {
+          id: 'tool:nested-skill-call',
+          role: 'activity',
+          content: 'Skill (agentic-remote-navigation)',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+          activityGroupId: 'tool:agent-call',
+        },
+        {
+          id: 'tool:nested-child-call',
+          role: 'activity',
+          content: 'View\n docs/app-spec.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:nested-skill-call',
+        },
+        {
+          id: 'tool:later-agent-call',
+          role: 'activity',
+          content: 'Search\n "cache" in *.md',
+          createdAt: '2026-07-22T00:00:02.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:agent-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The agent's own later tool belongs to it, and a child owning activity of
+    // its own in between must not turn that into a top-level row.
+    const agentGroup = [...document.querySelectorAll('.activity-group')].find(
+      (group) => group.textContent?.includes('agent(reviewer)'),
+    )
+    expect(
+      agentGroup?.querySelector('.activity-group__children'),
+    ).toHaveTextContent('Search')
+  })
+
+  it('keeps non-contiguous activity in chronological order', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'skill-call',
+          role: 'activity',
+          content: 'Skill (tool-model-catalog)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'skill',
+        },
+        {
+          id: 'unrelated-call',
+          role: 'activity',
+          content: 'Read\nREADME.md',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+        },
+        {
+          id: 'child-call',
+          role: 'activity',
+          content: 'MCP · GitHub · Search Repositories',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'skill-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      [...document.querySelectorAll('.activity-message__name')].map(
+        (name) => name.textContent,
+      ),
+    ).toEqual(['skill(tool-model-catalog)', 'Read', 'Search Repositories'])
+    expect(document.querySelectorAll('.activity-group')).toHaveLength(0)
+  })
+
   it('keeps sidebar actions outside the independently scrolling navigation', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

@@ -44,6 +44,9 @@ The supported topology is:
 Any public hostname MUST route to the hub. Paired-node listeners MUST remain
 headless and MUST NOT serve the UI.
 
+Transcription is the one hub responsibility a deployment MAY reassign to a
+paired computer, because it needs Whisper rather than hub-owned state.
+
 Every session MUST execute on its owning computer. The hub MUST route operations
 to that computer without copying its repository, provider authentication,
 session history, or tool permissions.
@@ -233,7 +236,12 @@ switches, failed sends, and clear replacement IDs.
 - Audio capture and selection MUST support AAC, FLAC, M4A, MP3, MP4, OGG, WAV,
   and WebM.
 - Maximum audio size is 25 MiB and maximum duration is 15 minutes.
-- The hub MUST convert and transcribe audio locally.
+- Conversion and transcription MUST run on one computer the deployment
+  designates, defaulting to the hub.
+- A deployment MAY assign transcription to a paired computer. The hub MUST then
+  forward the recording over the authenticated node API and MUST NOT retain it.
+- An assignment naming an unpaired or offline computer MUST fail the recording
+  with an actionable error instead of silently transcribing elsewhere.
 - Source, converted WAV, and transcript artifacts MUST use private temporary
   storage and MUST be deleted after success or failure.
 - Only transcript text MAY be retained in the draft.
@@ -467,6 +475,7 @@ Every material release SHOULD preserve:
 | Workspace security/search | `server/workspace-browser.ts` |
 | Knowledge persistence | `server/knowledge-store.ts` |
 | Audio transcription | `server/transcription-service.ts` |
+| Transcription on another computer | `server/delegated-transcription-service.ts` |
 | Push notifications | `server/push-notification-service.ts`, `public/sw.js` |
 | PWA update logic | `src/pwa.ts`, `public/sw.js` |
 

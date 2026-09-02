@@ -324,6 +324,36 @@ describe('promotion monitor', () => {
     )
   })
 
+  it('refuses to promote a commit that validation did not see', async () => {
+    const context = await fixture()
+    const previous = await git(context.runtime, 'rev-parse', 'HEAD')
+    await advanceMain(context)
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+
+    // The development checkout is writable and shared. Moving it while the
+    // suite runs leaves a clean tree, so only re-reading HEAD can tell that
+    // the commit about to be promoted is not the one that was tested.
+    await stub(
+      path.join(context.root, 'bin'),
+      'corepack',
+      [
+        'case "$*" in',
+        '  *" check"*)',
+        `    git -C ${JSON.stringify(context.dev)} commit -q --allow-empty -m "slipped in during validation"`,
+        '    ;;',
+        'esac',
+        'exit 0',
+      ].join('\n'),
+    )
+
+    const result = await monitor(context)
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('during validation')
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)
+    expect(await git(context.dev, 'rev-parse', 'HEAD')).not.toBe(candidate)
+  })
+
   it('runs the whole suite before promoting', async () => {
     const context = await fixture()
     await advanceMain(context)

@@ -320,6 +320,15 @@ run() {
   CI=true run_pnpm "$DEV_ROOT" audit --prod --audit-level=moderate
   assert_clean "$DEV_ROOT"
 
+  # The development checkout is writable and shared, so it can move while the
+  # suite runs. A clean tree afterwards proves nothing about *which* commit was
+  # tested, and promoting the captured SHA would then ship something no gate
+  # ever saw. Re-reading HEAD is what ties the result to the commit.
+  local validated_commit
+  validated_commit="$(git -C "$DEV_ROOT" rev-parse HEAD)"
+  [[ "$validated_commit" == "$candidate_commit" ]] ||
+    die "development moved from $candidate_commit to $validated_commit during validation"
+
 
   assert_clean "$PROD_ROOT"
   prod_branch="$(git -C "$PROD_ROOT" branch --show-current)"

@@ -50,6 +50,8 @@ import {
   renameSession,
   readWorkspaceFile,
   restartSession,
+  resumeSession,
+  suspendSession,
   replyUserInput,
   sendMessage,
   sendTestPushNotification,
@@ -90,6 +92,8 @@ vi.mock('./api', () => ({
   getProviderRuntimeOptions: vi.fn(),
   clearConversation: vi.fn(),
   restartSession: vi.fn(),
+  resumeSession: vi.fn(),
+  suspendSession: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
   executeCommand: vi.fn(),
@@ -479,6 +483,8 @@ describe('App', () => {
       messages: [],
     })
     vi.mocked(restartSession).mockResolvedValue(session)
+    vi.mocked(suspendSession).mockResolvedValue({ ...session, suspended: true })
+    vi.mocked(resumeSession).mockResolvedValue({ ...session, suspended: false })
     vi.mocked(moveSessionToTmux).mockResolvedValue({
       ...session,
       executionMode: 'tmux',
@@ -2469,6 +2475,44 @@ describe('App', () => {
         'Original message\n\nTranscribed walking idea',
       ),
     )
+  })
+
+  it('suspends the selected session and offers to start it again', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend session' }))
+
+    await waitFor(() =>
+      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+    // The session is kept, so the way back has to be offered where the way
+    // out was.
+    const resume = await screen.findByRole('button', {
+      name: 'Resume session',
+    })
+    fireEvent.click(resume)
+    await waitFor(() =>
+      expect(resumeSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+  })
+
+  it('offers to start a suspended session even though it is not idle', async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { ...session, suspended: true, status: 'error' },
+    ])
+    vi.mocked(getSession).mockResolvedValue({
+      ...session,
+      suspended: true,
+      status: 'error',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      await screen.findByRole('button', { name: 'Resume session' }),
+    ).toBeEnabled()
   })
 
   it('mutes notifications for the selected session from the header', async () => {

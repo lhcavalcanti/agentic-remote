@@ -268,7 +268,11 @@ export class SessionStore {
     return Object.values(this.state.sessions)
       .filter(
         (session) =>
-          session.backend === 'terminal' && session.managedOpen === true,
+          session.backend === 'terminal' &&
+          session.managedOpen === true &&
+          // A suspended session is meant to have nothing running for it.
+          // Starting one back up at boot is the opposite of what was asked.
+          session.suspended !== true,
       )
       .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
       .map(cloneSession)
@@ -284,6 +288,20 @@ export class SessionStore {
       if (managedOpen) {
         session.managedOpen = isOpen
       }
+    })
+  }
+
+  async setSuspended(
+    sessionId: string,
+    suspended: boolean,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.suspended = suspended
+      session.status = 'idle'
+      session.activity = undefined
+      session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      session.updatedAt = new Date().toISOString()
     })
   }
 

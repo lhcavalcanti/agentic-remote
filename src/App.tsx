@@ -67,7 +67,9 @@ import {
   Mic,
   MonitorCog,
   Paperclip,
+  Pause,
   Pencil,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -156,6 +158,8 @@ import {
   renameSession,
   readWorkspaceFile,
   restartSession,
+  resumeSession,
+  suspendSession,
   replyPermission,
   replyUserInput,
   sendMessage,
@@ -5605,6 +5609,7 @@ function App() {
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [restarting, setRestarting] = useState(false)
+  const [suspending, setSuspending] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
   const [movingSessionFolder, setMovingSessionFolder] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
@@ -9018,6 +9023,26 @@ function App() {
     }
   }
 
+  async function toggleSelectedSessionSuspended() {
+    if (!selected || suspending) {
+      return
+    }
+    const target = selected
+    const wasSuspended = target.suspended === true
+    setSuspending(true)
+    setError(undefined)
+    try {
+      const updated = wasSuspended
+        ? await resumeSession(target.computerId, target.id)
+        : await suspendSession(target.computerId, target.id)
+      setSessions((current) => upsertSession(current, updated))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setSuspending(false)
+    }
+  }
+
   async function restartSelectedSession() {
     if (!selected || restarting) {
       return
@@ -9815,6 +9840,27 @@ function App() {
               type="button"
             >
               <SquareTerminal size={18} />
+            </button>
+          ) : null}
+          {selected ? (
+            <button
+              aria-label={
+                selected.suspended ? 'Resume session' : 'Suspend session'
+              }
+              aria-pressed={selected.suspended ? true : undefined}
+              className={`icon-button${selected.suspended ? ' icon-button--active' : ''}`}
+              disabled={
+                suspending || (!selected.suspended && selected.status !== 'idle')
+              }
+              onClick={() => void toggleSelectedSessionSuspended()}
+              title={
+                selected.suspended
+                  ? 'Start this session up again'
+                  : 'Keep this session but stop what is running for it'
+              }
+              type="button"
+            >
+              {selected.suspended ? <Play size={17} /> : <Pause size={17} />}
             </button>
           ) : null}
           {selected ? (

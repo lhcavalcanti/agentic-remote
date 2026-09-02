@@ -211,6 +211,14 @@ export interface SessionSummary {
    * clears in a row, and the ones in between are gone with them.
    */
   replacedSessionIds?: string[]
+  /**
+   * Whether the session is being kept without anything running for it.
+   *
+   * The conversation is on disk, so the process holding it is the expendable
+   * part: a suspended session keeps its id, its history and its place in the
+   * list, and gives back the memory and CPU until it is wanted again.
+   */
+  suspended?: boolean
 }
 
 export interface SessionDetail extends SessionSummary {

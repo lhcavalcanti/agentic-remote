@@ -26,6 +26,45 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it('leaves a suspended session alone when recovering terminals', async () => {
+    const { directory, store } = await createStore()
+    await store.create(
+      {
+        id: 'terminal-session',
+        cwd: '/tmp/terminal-project',
+        title: 'Terminal project',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.create(
+      {
+        id: 'resting-session',
+        cwd: '/tmp/resting-project',
+        title: 'Resting project',
+        updatedAt: '2026-07-22T00:00:01.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.setSuspended('resting-session', true)
+
+    const restored = new SessionStore(directory)
+    await restored.initialize()
+
+    // Starting a suspended session back up at boot is the opposite of what
+    // suspending it asked for.
+    expect(restored.terminalRecoverySessions()).toEqual([
+      expect.objectContaining({ id: 'terminal-session' }),
+    ])
+    expect(restored.get('resting-session')).toMatchObject({ suspended: true })
+  })
+
   it('persists sessions and protects the state file', async () => {
     const { directory, store } = await createStore()
     await store.create({

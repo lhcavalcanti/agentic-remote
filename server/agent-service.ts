@@ -2149,6 +2149,87 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return reconciled
   }
 
+  /**
+   * Keeps a session while giving back everything running for it.
+   *
+   * The conversation lives on disk, so the process holding it is the
+   * expendable part. Suspending ends it and keeps the session, its id and its
+   * history, which is what makes a machine full of sessions affordable.
+   */
+  async suspendSession(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (stored.suspended) {
+      return stored
+    }
+    if (
+      stored.status === 'running' ||
+      stored.status === 'waiting' ||
+      this.drainingSessions.has(id)
+    ) {
+      throw new Error('Session can only be suspended while idle')
+    }
+    if (this.externalSessionIds.has(id)) {
+      if (!this.terminalController.stop) {
+        throw new Error('Terminal session suspend is not available')
+      }
+      if (!(await this.terminalController.stop(id))) {
+        throw new Error('The terminal window could not be closed')
+      }
+    } else {
+      const active = this.sessions.get(id)
+      if (active) {
+        await active.disconnect()
+        this.sessions.delete(id)
+      }
+      this.hydratedSessions.delete(id)
+    }
+    const suspended = await this.store.setSuspended(id, true)
+    this.publish(suspended)
+    return suspended
+  }
+
+  /** Gives a suspended session something to run in again. */
+  async resumeSession(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (!stored.suspended) {
+      return stored
+    }
+    if (this.store.backend(id) === 'terminal') {
+      if (!this.terminalController.create) {
+        throw new Error('Terminal session resume is not available')
+      }
+      if (!(await this.terminalController.has(id))) {
+        this.launchingTerminalSessionIds.add(id)
+        this.discoveryGeneration += 1
+        try {
+          // The same id is what brings the conversation back: Copilot reads
+          // its own record for it rather than starting from nothing.
+          await this.terminalController.create(
+            id,
+            stored.cwd,
+            stored.title,
+            stored.runtime?.allowAllPermissions ?? true,
+            stored.runtime,
+          )
+        } finally {
+          this.launchingTerminalSessionIds.delete(id)
+        }
+      }
+      this.externalSessionIds.add(id)
+    }
+    // An SDK session reconnects on its own when it is next spoken to, so
+    // there is nothing to start here.
+    const resumed = await this.store.setSuspended(id, false)
+    this.publish(resumed)
+    return resumed
+  }
+
   async restartSession(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {
@@ -2174,7 +2255,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await active.disconnect()
         this.sessions.delete(id)
       }
-      await this.resumeSession(id)
+      await this.attachSdkSession(id)
     }
     const restarted = await this.store.update(id, (session) => {
       session.status = 'idle'
@@ -2531,6 +2612,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const content = rawContent.trim()
     if (!content) {
       throw new Error('Message cannot be empty')
+    }
+    if (this.store.get(sessionId)?.suspended) {
+      throw new Error('Resume the session before sending to it')
     }
     const terminalBacked = await this.terminalController.has(sessionId)
     if (terminalBacked) {
@@ -3494,7 +3578,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (inFlight) {
       return inFlight
     }
-    const loading = this.resumeSession(sessionId)
+    const loading = this.attachSdkSession(sessionId)
     this.loadingSessions.set(sessionId, loading)
     try {
       return await loading
@@ -3503,7 +3587,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  private async resumeSession(sessionId: string): Promise<CopilotSessionLike> {
+  private async attachSdkSession(sessionId: string): Promise<CopilotSessionLike> {
     const stored = this.store.get(sessionId)
     if (!stored) {
       throw new Error('Session not found')

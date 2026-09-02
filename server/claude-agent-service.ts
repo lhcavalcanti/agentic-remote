@@ -460,6 +460,40 @@ export class ClaudeAgentService
     return cleared
   }
 
+  async suspendSession(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (stored.suspended) {
+      return stored
+    }
+    this.requireIdle(id)
+    // The conversation is held on disk and a query is started again for the
+    // next message, so letting go of it costs nothing but starting one.
+    const active = this.active.get(id)
+    if (active) {
+      active.abortController.abort()
+      this.active.delete(id)
+    }
+    const suspended = await this.store.setSuspended(id, true)
+    this.publish(suspended)
+    return suspended
+  }
+
+  async resumeSession(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (!stored.suspended) {
+      return stored
+    }
+    const resumed = await this.store.setSuspended(id, false)
+    this.publish(resumed)
+    return resumed
+  }
+
   async restartSession(id: string): Promise<SessionDetail> {
     this.requireIdle(id)
     const restarted = await this.store.updateStatus(id, 'idle')

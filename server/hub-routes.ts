@@ -494,6 +494,26 @@ export async function registerHubRoutes(
   )
 
   app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/suspend',
+    async (request) => ({
+      session: await manager.suspendSession(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/resume',
+    async (request) => ({
+      session: await manager.resumeSession(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
+  )
+
+  app.post<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/restart',
     async (request) => ({
       session: await manager.restartSession(

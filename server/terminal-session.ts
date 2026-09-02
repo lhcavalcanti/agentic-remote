@@ -59,6 +59,8 @@ export interface TerminalSessionController {
     clearState: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
+  /** Ends the window running a session without forgetting the session. */
+  stop?(sessionId: string): Promise<boolean>
   pendingPermission?(sessionId: string): Promise<PendingPermission | undefined>
   replyPermission?(
     sessionId: string,
@@ -275,6 +277,27 @@ export class TmuxTerminalSessionController
         throw error
       }
       return true
+    })
+  }
+
+  async stop(sessionId: string): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        // Already gone: the caller wanted nothing running for this session,
+        // and nothing is.
+        return true
+      }
+      await execFileAsync('tmux', ['kill-window', '-t', owner.target])
+      // The pane is torn down asynchronously, and a resume that raced it would
+      // find the old window and take it for the new one.
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (!(await this.owner(sessionId))) {
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      return false
     })
   }
 

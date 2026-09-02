@@ -539,6 +539,7 @@ describe('AgentService deletion', () => {
         "timestamp":"2026-08-28T00:00:01.000Z",
         "data":{
           "toolCallId":"mcp-call",
+          "parentToolCallId":"skill-call",
           "toolName":"mcp:ecs-mcp-server-search_config",
           "mcpServerName":"ecs-mcp-server",
           "mcpToolName":"search_config",
@@ -626,6 +627,122 @@ describe('AgentService deletion', () => {
         activityGroupId: 'tool:agent-call',
         activityResult: '12 lines read',
         activityDurationMs: 1_000,
+      }),
+    ])
+  })
+
+  it('uses tool ownership instead of chronological event links for grouping', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"skill-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"skill-call",
+          "toolName":"skill",
+          "arguments":{"skill":"tool-model-catalog"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"unrelated-start",
+        "parentId":"skill-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"unrelated-call",
+          "toolName":"read",
+          "arguments":{"path":"README.md"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"agent-start",
+        "parentId":"unrelated-start",
+        "timestamp":"2026-08-28T00:00:02.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "toolName":"task",
+          "arguments":{"agent_type":"reviewer"}
+        }
+      },
+      {
+        "type":"subagent.started",
+        "id":"subagent-start",
+        "agentId":"reviewer-1",
+        "parentId":"agent-start",
+        "timestamp":"2026-08-28T00:00:03.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "agentName":"reviewer",
+          "agentDisplayName":"Reviewer",
+          "agentDescription":"Review the change"
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"child-start",
+        "agentId":"reviewer-1",
+        "parentId":"subagent-start",
+        "timestamp":"2026-08-28T00:00:04.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "toolName":"read",
+          "arguments":{"path":"src/App.tsx"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"nested-skill-start",
+        "agentId":"reviewer-1",
+        "parentId":"child-start",
+        "timestamp":"2026-08-28T00:00:05.000Z",
+        "data":{
+          "toolCallId":"nested-skill-call",
+          "parentToolCallId":"agent-call",
+          "toolName":"skill",
+          "arguments":{"skill":"agentic-remote-navigation"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"nested-child-start",
+        "agentId":"reviewer-1",
+        "parentId":"nested-skill-start",
+        "timestamp":"2026-08-28T00:00:06.000Z",
+        "data":{
+          "toolCallId":"nested-child-call",
+          "parentToolCallId":"nested-skill-call",
+          "toolName":"read",
+          "arguments":{"path":"docs/app-spec.md"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:skill-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:unrelated-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:agent-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:child-call',
+        activityGroupId: 'tool:agent-call',
+      }),
+      expect.objectContaining({
+        id: 'tool:nested-skill-call',
+        activityGroupId: 'tool:agent-call',
+      }),
+      expect.objectContaining({
+        id: 'tool:nested-child-call',
+        activityGroupId: 'tool:nested-skill-call',
       }),
     ])
   })

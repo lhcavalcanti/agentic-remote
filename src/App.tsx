@@ -2694,66 +2694,79 @@ function ConversationMessages({
   messages: ChatMessage[]
   currentToolId?: string
 }) {
-  const rendered: ReactNode[] = []
-  let index = 0
-  while (index < messages.length) {
-    const message = messages[index]
-    if (!message) {
-      index += 1
+  const activityMessages = new Map(
+    messages
+      .filter((message) => message.role === 'activity')
+      .map((message) => [message.id, message]),
+  )
+  const activityIndexes = new Map(
+    messages
+      .map((message, index) => [message.id, index] as const)
+      .filter(([id]) => activityMessages.has(id)),
+  )
+  const activityChildren = new Map<string, ChatMessage[]>()
+  for (const message of activityMessages.values()) {
+    const groupId = message.activityGroupId
+    if (!groupId || !activityMessages.has(groupId)) {
       continue
     }
-    if (message.role === 'activity') {
-      const kind = activityKindFromMessage(message)
-      if (kind === 'skill' || kind === 'agent') {
-        const children: ChatMessage[] = []
-        let nextIndex = index + 1
-        while (
-          nextIndex < messages.length &&
-          messages[nextIndex]?.role === 'activity' &&
-          messages[nextIndex]?.activityGroupId === message.id
-        ) {
-          const child = messages[nextIndex]
-          if (child) {
-            children.push(child)
-          }
-          nextIndex += 1
-        }
-        rendered.push(
-          <div
-            aria-label={`${kind === 'skill' ? 'Skill' : 'Agent'} ${
-              activityPresentation(message).name
-            } activity group`}
-            className="activity-group"
-            key={message.id}
-          >
-            <ActivityArticle
-              currentToolId={currentToolId}
-              message={message}
-            />
-            {children.length > 0 ? (
-              <div className="activity-group__children">
-                {children.map((child) => (
-                  <ActivityArticle
-                    currentToolId={currentToolId}
-                    key={child.id}
-                    message={child}
-                  />
-                ))}
-              </div>
-            ) : null}
-          </div>,
-        )
-        index = nextIndex
-        continue
-      }
-      rendered.push(
+    const children = activityChildren.get(groupId) || []
+    children.push(message)
+    activityChildren.set(groupId, children)
+  }
+  const renderActivity = (message: ChatMessage): ReactNode => {
+    const parentIndex = activityIndexes.get(message.id)
+    const children = (activityChildren.get(message.id) || []).filter(
+      (child) =>
+        parentIndex === undefined ||
+        (activityIndexes.get(child.id) || -1) > parentIndex,
+    )
+    if (children.length === 0) {
+      return (
         <ActivityArticle
           currentToolId={currentToolId}
           key={message.id}
           message={message}
-        />,
+        />
       )
-      index += 1
+    }
+    const kind = activityKindFromMessage(message)
+    const groupLabel =
+      kind === 'skill' ? 'Skill' : kind === 'agent' ? 'Agent' : 'Activity'
+    return (
+      <div
+        aria-label={`${groupLabel} ${
+          activityPresentation(message).name
+        } activity group`}
+        className="activity-group"
+        key={message.id}
+      >
+        <ActivityArticle
+          currentToolId={currentToolId}
+          message={message}
+        />
+        <div className="activity-group__children">
+          {children.map((child) => renderActivity(child))}
+        </div>
+      </div>
+    )
+  }
+  const rendered: ReactNode[] = []
+  for (const [index, message] of messages.entries()) {
+    if (message.role === 'activity') {
+      const parentId = message.activityGroupId
+      const parentIndex = parentId
+        ? activityIndexes.get(parentId)
+        : undefined
+      if (
+        parentId &&
+        activityMessages.has(parentId) &&
+        parentIndex !== undefined &&
+        parentIndex < index
+      ) {
+        continue
+      }
+      rendered.push(renderActivity(message))
       continue
     }
     rendered.push(
@@ -2789,7 +2802,6 @@ function ConversationMessages({
         </div>
       </article>,
     )
-    index += 1
   }
   return <div className="message-stack">{rendered}</div>
 }

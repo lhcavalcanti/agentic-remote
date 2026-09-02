@@ -605,6 +605,52 @@ describe('App', () => {
     ).toHaveLength(4)
   })
 
+  it('renders nested activity groups recursively', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'tool:agent-call',
+          role: 'activity',
+          content: 'Agent (reviewer)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'agent',
+        },
+        {
+          id: 'tool:nested-skill-call',
+          role: 'activity',
+          content: 'Skill (agentic-remote-navigation)',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+          activityKind: 'skill',
+          activityGroupId: 'tool:agent-call',
+        },
+        {
+          id: 'tool:nested-child-call',
+          role: 'activity',
+          content: 'View\n docs/app-spec.md',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'tool:nested-skill-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelectorAll('.activity-group')).toHaveLength(2)
+    const nestedGroup = [...document.querySelectorAll('.activity-group')].find(
+      (group) => group.textContent?.includes('skill(agentic-remote-navigation)'),
+    )
+    expect(nestedGroup?.querySelector('.activity-group__children')).toHaveTextContent(
+      'View',
+    )
+  })
+
   it('keeps sidebar actions outside the independently scrolling navigation', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

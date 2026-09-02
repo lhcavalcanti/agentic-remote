@@ -224,64 +224,74 @@ function activityResult(data: unknown, success: boolean): string | undefined {
   return success ? undefined : 'Error: tool failed; inspect the session log'
 }
 
+interface ActivityToolStart {
+  kind: ActivityKind
+  parentToolCallId?: string
+  toolCallId: string
+}
+
+function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
+  return kind === 'skill' || kind === 'agent'
+}
+
+function activityGroupIdFor(
+  parentToolCallId: string | undefined,
+  agentId: string | undefined,
+  toolStartsByCallId: Map<string, ActivityToolStart>,
+  subagentParentsByAgentId: Map<string, string>,
+): string | undefined {
+  const candidateParents = [
+    parentToolCallId,
+    agentId ? subagentParentsByAgentId.get(agentId) : undefined,
+  ].filter((value, index, values): value is string =>
+    Boolean(value) && values.indexOf(value) === index,
+  )
+  for (const candidate of candidateParents) {
+    const visited = new Set<string>()
+    let parentToolCallIdToCheck: string | undefined = candidate
+    while (parentToolCallIdToCheck && !visited.has(parentToolCallIdToCheck)) {
+      visited.add(parentToolCallIdToCheck)
+      const parent = toolStartsByCallId.get(parentToolCallIdToCheck)
+      if (!parent) {
+        break
+      }
+      if (isActivityGroupKind(parent.kind)) {
+        return `tool:${parent.toolCallId}`
+      }
+      parentToolCallIdToCheck = parent.parentToolCallId
+    }
+  }
+  return undefined
+}
+
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
-  const eventsById = new Map(events.map((event) => [event.id, event]))
-  const toolStartsByEventId = new Map<
-    string,
-    {
-      kind: ActivityKind
-      parentId: string | null
-      parentToolCallId?: string
-      toolCallId: string
-    }
-  >()
   const toolStartsByCallId = new Map<
     string,
-    {
-      kind: ActivityKind
-      parentId: string | null
-      parentToolCallId?: string
-      toolCallId: string
-    }
+    ActivityToolStart
   >()
+  const subagentParentsByAgentId = new Map<string, string>()
   for (const event of events) {
-    if (event.type !== 'tool.execution_start') {
-      continue
+    if (event.type === 'tool.execution_start') {
+      toolStartsByCallId.set(event.data.toolCallId, {
+        kind: activityKind(event.data),
+        parentToolCallId: stringValue(
+          recordValue(event.data).parentToolCallId,
+        ),
+        toolCallId: event.data.toolCallId,
+      })
+    } else if (event.type === 'subagent.started' && event.agentId) {
+      subagentParentsByAgentId.set(event.agentId, event.data.toolCallId)
     }
-    const start = {
-      kind: activityKind(event.data),
-      parentId: event.parentId,
-      parentToolCallId: stringValue(
-        recordValue(event.data).parentToolCallId,
-      ),
-      toolCallId: event.data.toolCallId,
-    }
-    toolStartsByEventId.set(event.id, start)
-    toolStartsByCallId.set(event.data.toolCallId, start)
   }
   const activityGroupId = (event: SessionEvent): string | undefined => {
-    let parentId = event.parentId
-    const visited = new Set<string>()
-    while (parentId && !visited.has(parentId)) {
-      visited.add(parentId)
-      const parentTool = toolStartsByEventId.get(parentId)
-      if (parentTool && (parentTool.kind === 'skill' || parentTool.kind === 'agent')) {
-        return `tool:${parentTool.toolCallId}`
-      }
-      parentId = eventsById.get(parentId)?.parentId || null
-    }
-    const parentToolCallId = stringValue(
-      recordValue(event.data).parentToolCallId,
+    return activityGroupIdFor(
+      stringValue(recordValue(event.data).parentToolCallId),
+      event.agentId,
+      toolStartsByCallId,
+      subagentParentsByAgentId,
     )
-    const parentTool = parentToolCallId
-      ? toolStartsByCallId.get(parentToolCallId)
-      : undefined
-    if (parentTool && (parentTool.kind === 'skill' || parentTool.kind === 'agent')) {
-      return `tool:${parentTool.toolCallId}`
-    }
-    return undefined
   }
   const finishRunningActivities = (
     activityStatus: 'completed' | 'failed' = 'completed',
@@ -1361,10 +1371,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     Map<
       string,
       {
-        parentId: string | null
+        agentId?: string
         parentToolCallId?: string
         kind?: ActivityKind
         toolCallId?: string
+        subagentToolCallId?: string
       }
     >
   >()
@@ -3815,19 +3826,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       new Map<
         string,
         {
-          parentId: string | null
+          agentId?: string
           parentToolCallId?: string
           kind?: ActivityKind
           toolCallId?: string
+          subagentToolCallId?: string
         }
       >()
+    const data = recordValue(event.data)
     events.set(event.id, {
-      parentId: event.parentId,
-      parentToolCallId: stringValue(
-        recordValue(event.data).parentToolCallId,
-      ),
+      agentId: event.agentId,
+      parentToolCallId: stringValue(data.parentToolCallId),
       kind,
       toolCallId,
+      subagentToolCallId:
+        event.type === 'subagent.started'
+          ? stringValue(data.toolCallId)
+          : undefined,
     })
     while (events.size > 2_000) {
       const oldest = events.keys().next().value
@@ -3844,28 +3859,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     event: SessionEvent,
   ): string | undefined {
     const events = this.liveActivityEvents.get(sessionId)
-    let parentId = event.parentId
-    const visited = new Set<string>()
-    while (parentId && !visited.has(parentId)) {
-      visited.add(parentId)
-      const parent = events?.get(parentId)
-      if (parent && (parent.kind === 'skill' || parent.kind === 'agent')) {
-        return parent.toolCallId ? `tool:${parent.toolCallId}` : undefined
+    const toolStartsByCallId = new Map<string, ActivityToolStart>()
+    const subagentParentsByAgentId = new Map<string, string>()
+    for (const activity of events?.values() || []) {
+      if (activity.toolCallId && activity.kind) {
+        toolStartsByCallId.set(activity.toolCallId, {
+          kind: activity.kind,
+          parentToolCallId: activity.parentToolCallId,
+          toolCallId: activity.toolCallId,
+        })
       }
-      parentId = parent?.parentId || null
+      if (activity.agentId && activity.subagentToolCallId) {
+        subagentParentsByAgentId.set(
+          activity.agentId,
+          activity.subagentToolCallId,
+        )
+      }
     }
-    const parentToolCallId = stringValue(
-      recordValue(event.data).parentToolCallId,
+    return activityGroupIdFor(
+      stringValue(recordValue(event.data).parentToolCallId),
+      event.agentId,
+      toolStartsByCallId,
+      subagentParentsByAgentId,
     )
-    if (parentToolCallId) {
-      const parent = [...(events?.values() || [])].find(
-        (candidate) => candidate.toolCallId === parentToolCallId,
-      )
-      if (parent && (parent.kind === 'skill' || parent.kind === 'agent')) {
-        return `tool:${parent.toolCallId}`
-      }
-    }
-    return undefined
   }
 
   private attachSession(session: CopilotSessionLike): void {

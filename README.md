@@ -93,7 +93,7 @@ an immutable release under `~/.config/agentic-remote/releases/current`.
 
 `--role hub|node` describes the runtime topology; it does not select the
 development or production channel. A machine-local, opt-in monitor may pull
-`main`, run the configured validation and matching CI gate, promote the exact
+`main`, run the configured validation, promote the exact
 commit, restart the managed service, and verify recovery. The monitor and its
 machine paths belong outside this repository so application development cannot
 break the external access path.
@@ -171,6 +171,7 @@ flowchart TB
 | Capability | GitHub Copilot | Claude Agent |
 | --- | --- | --- |
 | Streaming, queue, cancel, permissions, questions | Yes | Yes |
+| Background task monitoring | Yes, when the Copilot runtime advertises it | No |
 | Models and effort | Yes | Yes |
 | tmux and SSH attachment | Yes | No |
 | Native slash commands | Yes | Web commands only |
@@ -193,6 +194,8 @@ matrix.
 - **Queue**: add, edit, or remove prompts while an agent runs.
 - **Stop**: cancel the active response.
 - **Runtime**: configure supported model, effort, context, and mode options.
+- **Background tasks**: inspect live task progress, output, errors, timestamps,
+  and cancel supported tasks from the session header.
 - **App settings**: configure separate default model IDs for Copilot and Claude.
 - **Session files**: browse, search, preview, and save Knowledge paths.
 - **Knowledge**: a per-session panel that docks beside the conversation or
@@ -329,12 +332,36 @@ binaries means the digest did not match the table in
 `server/transcription-service.ts` — expected after bumping `ffmpeg-static` or
 `ffprobe-static`, and `pnpm test` reports the replacement digests.
 
+### Transcribing on another computer
+
+By default the hub transcribes audio itself and needs `whisper-cli` and a model.
+Set `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER` to the name or id of a paired
+computer to run transcription there instead:
+
+```bash
+AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER=workstation
+```
+
+The hub streams the recording to that computer's authenticated node API and
+keeps nothing on disk; only the transcript comes back. Sessions, uploads, and
+Knowledge are unaffected, and naming the hub's own computer matches the default.
+
+- Whisper and its model belong on the named computer, not the hub.
+- `setup` reads the assignment back from the environment file it replaces, so it
+  survives updates. Clear it by deleting the line and re-running setup.
+- An unpaired or offline computer fails the recording with a `503`; one on a
+  release without the endpoint reports a `409`.
+
 ## Documentation
 
 - [Application specification](docs/app-spec.md) — normative product behavior
 - [Multi-computer architecture](docs/architecture.md) — routing and ownership
 - [Provider compatibility](docs/provider-compatibility.md) — Copilot/Claude
   differences
+- [Background tasks](docs/background-tasks.md) — SDK review, UI gaps, and
+  visual states
+- [Slash command feedback](docs/slash-command-feedback.md) — what terminal-backed
+  sessions report for each command
 - [Security policy](SECURITY.md) — reporting and deployment boundaries
 
 Agentic Remote is available under the [MIT License](LICENSE).

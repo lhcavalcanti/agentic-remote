@@ -925,6 +925,29 @@ button {
   box-shadow: 0 0 0 4px rgba(184, 243, 107, 0.1);
 }
 
+.session-item--background-running {
+  --computer-accent: #6ea8fe;
+  --computer-tint: rgba(110, 168, 254, 0.1);
+}
+
+/* Any status, not just running: a session can be idle in the foreground while
+   background work continues. The waiting and error rules below are more
+   specific, so they still take precedence. */
+.session-item--background-running .status-dot {
+  background: #6ea8fe;
+  box-shadow: 0 0 0 4px rgba(110, 168, 254, 0.12);
+}
+
+.session-item--background-running .status-dot.status-dot--waiting {
+  background: #f2c96d;
+  box-shadow: none;
+}
+
+.session-item--background-running .status-dot.status-dot--error {
+  background: var(--danger);
+  box-shadow: none;
+}
+
 .status-dot--waiting {
   background: #f2c96d;
 }
@@ -980,6 +1003,12 @@ button {
 .session-item small {
   color: #74786d;
   font-size: 10.5px;
+}
+
+.session-item__tasks {
+  color: #6ea8fe;
+  font-size: 9px;
+  font-weight: 650;
 }
 
 .conversation {
@@ -1192,14 +1221,11 @@ button {
 }
 
 .message--activity {
-  margin: -18px 0;
+  margin: -12px 0;
 }
 
-/* Flex items do not collapse margins, so two adjacent activity rows would
-   otherwise net 28px - 18px - 18px = -8px and overlap. Pull only the second
-   one, keeping the tighter spacing against ordinary messages. */
 .message--activity + .message--activity {
-  margin-top: -10px;
+  margin-top: -12px;
 }
 
 .tool-activity-slot {
@@ -1208,6 +1234,22 @@ button {
 
 .tool-activity-history {
   opacity: 0.78;
+}
+
+.activity-group {
+  min-width: 0;
+  margin: -12px 0;
+}
+
+.activity-group .message--activity {
+  margin: 0;
+}
+
+.activity-group__children {
+  min-width: 0;
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
 }
 
 .message--notice {
@@ -1219,78 +1261,118 @@ button {
 }
 
 .activity-message {
-  display: flex;
-  width: fit-content;
-  max-width: 100%;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 3px 7px;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.018);
-  font-size: 10px;
-}
-
-.activity-message > svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
-
-.activity-message > span {
   display: grid;
+  width: 100%;
+  max-width: none;
   min-width: 0;
-  gap: 1px;
-}
-
-.activity-message strong {
-  color: inherit;
-  font-size: 10px;
-  font-weight: 590;
-  line-height: 1.35;
-}
-
-.activity-message code {
-  display: block;
-  max-width: min(680px, 100%);
-  padding: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 6px;
   color: var(--muted);
+  border-radius: 5px;
   background: transparent;
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 9px;
-  line-height: 1.35;
+  font-size: 11.5px;
+  line-height: 1.6;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+}
+
+.activity-message:hover {
+  background: var(--panel-raised);
+}
+
+.activity-message__glyph {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+}
+
+.activity-message__body {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.activity-message--completed {
+.activity-message__name {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.activity-message__origin,
+.activity-message__summary,
+.activity-message__arguments,
+.activity-message__result,
+.activity-message__separator {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.activity-message__duration {
+  min-width: 4ch;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.activity-message__legacy-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.activity-message--heading {
+  margin-top: 8px;
+}
+
+.activity-message--heading .activity-message__name {
+  color: var(--agent);
+  font-weight: 700;
+}
+
+.activity-message--completed .activity-message__glyph {
   color: #89b66c;
 }
 
-.activity-message--failed {
+.activity-message--failed .activity-message__glyph,
+.activity-message--failed .activity-message__name {
   color: var(--danger);
 }
 
-.activity-message--mcp {
-  color: #a9c9f6;
-  border-color: rgba(110, 168, 254, 0.28);
-  background: rgba(110, 168, 254, 0.06);
-}
-
-.activity-message--agent {
-  color: #e0c78a;
-  border-color: rgba(224, 199, 138, 0.28);
-  background: rgba(224, 199, 138, 0.06);
-}
-
-/* Stays on the row, so the indicator costs no extra vertical space. */
-.activity-message__note {
-  margin-left: 6px;
+.activity-message--pending .activity-message__glyph {
   color: var(--muted);
-  font-size: 10px;
-  font-style: normal;
+}
+
+.activity-message--running .activity-message__glyph {
+  color: var(--muted-strong);
+}
+
+.activity-message--mcp .activity-message__name {
+  color: var(--text);
+}
+
+.activity-message--agent .activity-message__name {
+  color: var(--agent);
+}
+
+.activity-message--agent.activity-message--failed .activity-message__name {
+  color: var(--danger);
+}
+
+.activity-message--agent.activity-message--running .activity-message__result {
+  color: var(--muted-strong);
+}
+
+.activity-message--agent.activity-message--completed .activity-message__result {
+  color: var(--muted);
 }
 
 .activity-message__spinner {
@@ -1301,6 +1383,15 @@ button {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Long arguments and results stay on one dense row and remain readable
+   through the native row tooltip. */
+.activity-message__arguments,
+.activity-message__result {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes tool-activity-change {
@@ -1886,6 +1977,9 @@ button {
   grid-area: composer;
   position: relative;
   z-index: 2;
+  /* Named so the composer can lay itself out from the width it actually has
+     rather than the width of the window. */
+  container: composer / inline-size;
   padding: 8px
     max(18px, env(safe-area-inset-right), calc((100% - var(--composer-max-width)) / 2))
     max(10px, env(safe-area-inset-bottom))
@@ -2008,6 +2102,255 @@ button {
   margin: 12px 0 0;
 }
 
+.background-tasks-dialog {
+  width: min(100%, 620px);
+  max-height: min(88vh, 760px);
+  overflow-y: auto;
+}
+
+.background-tasks-dialog__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -8px 0 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.background-tasks-dialog__toolbar p {
+  margin: 0;
+}
+
+.background-tasks-dialog__toolbar strong {
+  color: #6ea8fe;
+  font-size: 14px;
+}
+
+.background-tasks-dialog__empty {
+  margin: 18px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.background-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.background-task {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--panel-raised);
+}
+
+.background-task--running,
+.background-task--queued {
+  border-left-color: #6ea8fe;
+}
+
+.background-task--completed {
+  border-left-color: var(--accent-deep);
+}
+
+.background-task--failed {
+  border-left-color: var(--danger);
+}
+
+.background-task--cancelled {
+  border-left-color: #777c72;
+}
+
+.background-task__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.background-task__title {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.background-task__title > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.background-task__title strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.background-task__title small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.background-task__status-icon {
+  display: grid;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #6ea8fe;
+  place-items: center;
+}
+
+.background-task--completed .background-task__status-icon {
+  color: var(--accent);
+}
+
+.background-task--failed .background-task__status-icon {
+  color: var(--danger);
+}
+
+.background-task--cancelled .background-task__status-icon {
+  color: var(--muted);
+}
+
+.background-task__status {
+  flex: 0 0 auto;
+  color: #6ea8fe;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.background-task--completed .background-task__status {
+  color: var(--accent);
+}
+
+.background-task--failed .background-task__status {
+  color: var(--danger);
+}
+
+.background-task--cancelled .background-task__status {
+  color: var(--muted);
+}
+
+.background-task__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  margin: 10px 0 0 22px;
+}
+
+.background-task__metadata div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.background-task__metadata dt {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.background-task__metadata dd {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 10px;
+}
+
+.background-task__intent {
+  margin: 11px 0 0 22px;
+  color: var(--muted-strong);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.background-task__progress,
+.background-task__output,
+.background-task__error,
+.background-task__details {
+  margin: 11px 0 0 22px;
+  font-size: 10px;
+}
+
+.background-task__progress > strong,
+.background-task__output > strong,
+.background-task__error > strong {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.background-task__progress ul {
+  display: flex;
+  max-height: 150px;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.background-task__progress li {
+  display: flex;
+  gap: 8px;
+  color: var(--muted-strong);
+}
+
+.background-task__progress time {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.background-task__output pre,
+.background-task__error pre,
+.background-task__details pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  padding: 8px;
+  overflow: auto;
+  color: var(--muted-strong);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #111210;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.background-task__error {
+  color: var(--danger);
+}
+
+.background-task__error pre {
+  color: #f3ada1;
+  border-color: rgba(239, 129, 111, 0.3);
+}
+
+.background-task__details summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.background-task__cancel {
+  min-height: 30px;
+  margin: 12px 0 0 22px;
+  padding: 0 10px;
+  color: #b8d5ff;
+  border-color: rgba(110, 168, 254, 0.35);
+  background: rgba(110, 168, 254, 0.08);
+  font-size: 10px;
+}
+
 .update-toast {
   position: fixed;
   z-index: 40;
@@ -2064,6 +2407,30 @@ button {
   color: var(--accent);
 }
 
+.web-statusline__tasks {
+  color: #6ea8fe;
+}
+
+.icon-button--task-running {
+  position: relative;
+  color: #6ea8fe;
+}
+
+.background-task-button__count {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  color: #0e1728;
+  border-radius: 50%;
+  background: #6ea8fe;
+  font-size: 8px;
+  font-weight: 750;
+}
+
 .web-statusline__status {
   display: inline-flex;
   align-items: center;
@@ -2088,6 +2455,10 @@ button {
 
 .web-statusline__status--error {
   color: var(--danger);
+}
+
+.web-statusline__update {
+  color: #f2c96d;
 }
 
 .statusline-toggle,
@@ -2176,6 +2547,33 @@ button {
 .app-settings-section h3 {
   margin: 0;
   font-size: 14px;
+}
+
+.default-runtime {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.default-runtime h4 {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.default-runtime__description {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.default-runtime__description > :first-child {
+  margin-top: 0;
+}
+
+.default-runtime__description > :last-child {
+  margin-bottom: 0;
 }
 
 .app-settings-section__action {
@@ -2394,6 +2792,80 @@ button {
 
 .composer-audio-input {
   display: none;
+}
+
+/*
+ * A pointer can hit a small target, so the actions sit inside the text panel
+ * rather than occupying a second full-width bar of their own. Touch keeps the
+ * stacked bar.
+ *
+ * Keyed on the width of the composer itself, not the viewport: the sidebar is
+ * resizable, so a wide window can still leave a narrow conversation column,
+ * and sharing that row would squeeze the text field down to nothing.
+ */
+@media (hover: hover) {
+ @container composer (min-width: 620px) {
+  .composer {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    background: var(--panel-raised);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  }
+
+  .composer:focus-within {
+    border-color: #59634c;
+    box-shadow: 0 0 0 3px rgba(184, 243, 107, 0.055);
+  }
+
+  .composer > .composer-text-panel,
+  .composer > .composer-actions {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .composer > .composer-text-panel {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 0 7px 14px;
+  }
+
+  .composer > .composer-actions {
+    padding: 7px 8px;
+  }
+
+  /* The row is sized by the text panel, so the spacer would only stretch the
+     buttons away from it. */
+  .composer-actions__spacer {
+    display: none;
+  }
+
+  /* Recording replaces the buttons with a status panel that needs the full
+     width, and reads better as its own card than nested inside the box. */
+  .composer:has(.recording-panel) {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    gap: 7px;
+  }
+
+  .composer:has(.recording-panel) > .composer-text-panel {
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    background: var(--panel-raised);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    padding: 7px 14px;
+  }
+
+  .composer > .recording-panel {
+    flex: 1 0 100%;
+  }
+ }
 }
 
 .composer-attachment-button {

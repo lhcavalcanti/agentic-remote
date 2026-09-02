@@ -38,7 +38,7 @@ credentials, pairing tokens, repositories, or SSH keys.
 | `service_name` | Managed systemd service to restart |
 | `health_url` | Local health endpoint after promotion |
 | `external_check` | Optional tunnel or external access check |
-| `validation_policy` | Local checks and/or matching CI workflow |
+| `validation_policy` | Local lint, test, and build that gate promotion |
 | `promotion_policy` | How the exact validated commit is installed |
 | `rollback_policy` | Previous-release and failure behavior |
 
@@ -55,8 +55,6 @@ AGENTIC_REMOTE_MONITOR_PROD_ROOT=/path/to/production/runtime
 AGENTIC_REMOTE_MONITOR_RELEASE_ROOT=/path/to/releases
 AGENTIC_REMOTE_MONITOR_SERVICE=agentic-remote.service
 AGENTIC_REMOTE_MONITOR_HEALTH_URL=http://127.0.0.1:4317/health
-AGENTIC_REMOTE_MONITOR_REPOSITORY=owner/repository
-AGENTIC_REMOTE_MONITOR_WORKFLOW=ci.yml
 ```
 
 ### Inherit the runtime identity by default
@@ -92,9 +90,8 @@ release pointer, restart the service, and leave the success marker unchanged so
 the next run retries from a known state.
 
 Graduate only what `origin/main` already contains. A clean local `main` can sit
-ahead of its upstream, and a CI run matched only by commit SHA can come from a
-feature branch, so comparing `HEAD` against `refs/remotes/origin/main` after the
-fetch is what prevents promoting an unmerged commit.
+ahead of its upstream, so comparing `HEAD` against `refs/remotes/origin/main`
+after the fetch is what prevents promoting an unmerged commit.
 
 ### Where values live, and what each location exposes
 
@@ -151,9 +148,9 @@ A local-only monitor may run this sequence on an opt-in machine:
 2. Require the development checkout to be a clean `main` worktree.
 3. Fetch and fast-forward `main`; never merge or rewrite local development
    changes.
-4. Install dependencies and run the configured development validation.
-5. Require the matching CI result when the local host cannot reliably run the
-   complete suite.
+4. Install dependencies and run the configured development validation. Nothing
+   runs the suite remotely, so this is the only gate a commit passes before
+   production and it has to include the tests.
 6. Verify the production runtime worktree is clean and intentionally detached.
 7. Promote the exact validated commit, publish an immutable release, and
    restart the managed service.

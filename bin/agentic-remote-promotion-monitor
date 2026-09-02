@@ -25,10 +25,6 @@ profile_value() {
 readonly DEV_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_DEV_ROOT '')"
 readonly PROD_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_PROD_ROOT '')"
 readonly USER_HOME="$(profile_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME_DEFAULT")"
-readonly GH_CLI_CONFIG_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR '')"
-readonly GITHUB_USER="$(profile_value AGENTIC_REMOTE_MONITOR_GITHUB_USER '')"
-readonly GITHUB_REPOSITORY="$(profile_value AGENTIC_REMOTE_MONITOR_REPOSITORY '')"
-readonly CI_WORKFLOW="$(profile_value AGENTIC_REMOTE_MONITOR_WORKFLOW ci.yml)"
 readonly STATE_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_STATE_DIR "$USER_HOME/.local/state/agentic-remote-monitor")"
 readonly STATE_FILE="$STATE_DIR/last-graduated-commit"
 readonly STATE_RECORD="$STATE_DIR/promotion-state"
@@ -54,8 +50,6 @@ readonly PRODUCTION_HOST="$(profile_value AGENTIC_REMOTE_MONITOR_HOST '')"
 readonly PRODUCTION_PORT="$(profile_value AGENTIC_REMOTE_MONITOR_PORT '')"
 readonly PRODUCTION_ROLE="$(profile_value AGENTIC_REMOTE_MONITOR_ROLE '')"
 readonly PRODUCTION_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_NAME '')"
-
-export GH_CONFIG_DIR="$GH_CLI_CONFIG_DIR"
 
 log() {
   printf '[agentic-remote-promotion] %s\n' "$*"
@@ -236,9 +230,6 @@ run() {
   require_value AGENTIC_REMOTE_MONITOR_DEV_ROOT "$DEV_ROOT"
   require_value AGENTIC_REMOTE_MONITOR_PROD_ROOT "$PROD_ROOT"
   require_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME"
-  require_value AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR "$GH_CLI_CONFIG_DIR"
-  require_value AGENTIC_REMOTE_MONITOR_GITHUB_USER "$GITHUB_USER"
-  require_value AGENTIC_REMOTE_MONITOR_REPOSITORY "$GITHUB_REPOSITORY"
   require_value AGENTIC_REMOTE_MONITOR_HEALTH_URL "$HEALTH_URL"
   # Validate cross-field requirements before anything is built or restarted, so
   # an incomplete downstream profile cannot be discovered after local promotion.
@@ -258,7 +249,6 @@ run() {
 
   require_command corepack
   require_command curl
-  require_command gh
   require_command git
   require_command python3
   require_command systemctl
@@ -316,40 +306,14 @@ run() {
   CI=true run_pnpm "$DEV_ROOT" install --frozen-lockfile
   log "running development lint"
   CI=true run_pnpm "$DEV_ROOT" lint
+  # The repository has no hosted CI, so the suite that used to gate promotion
+  # remotely has to run here. Without it nothing would exercise the tests
+  # before a commit reaches production.
+  log "running development tests"
+  CI=true run_pnpm "$DEV_ROOT" test
   log "building development release"
   CI=true run_pnpm "$DEV_ROOT" build
   assert_clean "$DEV_ROOT"
-
-  local github_token ci_run ci_run_id ci_status ci_conclusion
-  github_token="$(gh auth token --hostname github.com --user "$GITHUB_USER")" ||
-    die "GitHub CLI has no token for $GITHUB_USER in $GH_CLI_CONFIG_DIR"
-  [[ -n "$github_token" ]] || die "GitHub CLI returned an empty token"
-  export GH_TOKEN="$github_token"
-
-  ci_run="$(
-    gh run list \
-      --repo "$GITHUB_REPOSITORY" \
-      --workflow "$CI_WORKFLOW" \
-      --commit "$candidate_commit" \
-      --limit 1 \
-      --json databaseId,status,conclusion \
-      --jq 'if length == 0 then "" else .[0] | [.databaseId,.status,(.conclusion // "")] | @tsv end'
-  )"
-  [[ -n "$ci_run" ]] || die "no GitHub CI run found for $candidate_commit"
-  IFS=$'\t' read -r ci_run_id ci_status ci_conclusion <<<"$ci_run"
-  if [[ "$ci_status" != "completed" ]]; then
-    log "waiting for GitHub CI run $ci_run_id"
-    gh run watch "$ci_run_id" --repo "$GITHUB_REPOSITORY" --exit-status
-    ci_conclusion="$(
-      gh run view "$ci_run_id" \
-        --repo "$GITHUB_REPOSITORY" \
-        --json conclusion \
-        --jq '.conclusion'
-    )"
-  fi
-  [[ "$ci_conclusion" == "success" ]] ||
-    die "GitHub CI run $ci_run_id did not pass: ${ci_conclusion:-unknown}"
-  log "GitHub CI passed for $candidate_commit"
 
   assert_clean "$PROD_ROOT"
   prod_branch="$(git -C "$PROD_ROOT" branch --show-current)"

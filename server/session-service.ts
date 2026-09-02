@@ -2,9 +2,12 @@ import type { DirectoryScope } from './directory-browser.js'
 import type {
   AgentProvider,
   AgentProviderCapability,
+  BackgroundTaskSnapshot,
   DirectoryListing,
   ConfigureRuntimeInput,
+  ProviderRuntimeOptions,
   RuntimeOptions,
+  RuntimeReasoningEffort,
   SessionFileUpload,
   WorkspaceFile,
   WorkspaceListing,
@@ -31,6 +34,8 @@ export interface SessionService {
     allowAllPermissions?: boolean,
     provider?: AgentProvider,
     model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
   ): Promise<SessionDetail>
   uploadFile(
     sessionId: string,
@@ -38,6 +43,7 @@ export interface SessionService {
     data: Buffer,
   ): Promise<SessionFileUpload>
   renameSession(id: string, title: string): Promise<SessionDetail>
+  providerRuntimeOptions(provider: AgentProvider): Promise<ProviderRuntimeOptions>
   runtimeOptions(id: string): Promise<RuntimeOptions>
   configureRuntime(
     id: string,
@@ -67,6 +73,11 @@ export interface SessionService {
     enqueue?: boolean,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
+  listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>
+  cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot>
   deleteSession(sessionId: string): Promise<void>
   replyPermission(
     sessionId: string,

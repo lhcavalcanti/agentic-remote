@@ -1,6 +1,7 @@
 import type {
   AddComputerInput,
   AudioTranscription,
+  BackgroundTaskSnapshot,
   ComputerSummary,
   ConfigureRuntimeInput,
   CreateSessionInput,
@@ -10,6 +11,7 @@ import type {
   AddKnowledgeRootInput,
   KnowledgeRoot,
   PushSettings,
+  ProviderRuntimeOptions,
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
   RenameSessionInput,
@@ -241,6 +243,15 @@ export async function createSession(
   return response.session
 }
 
+export async function getProviderRuntimeOptions(
+  computerId: string,
+  provider: 'copilot' | 'claude',
+): Promise<ProviderRuntimeOptions> {
+  return request<ProviderRuntimeOptions>(
+    `/api/computers/${encodeURIComponent(computerId)}/providers/${encodeURIComponent(provider)}/runtime`,
+  )
+}
+
 export async function activateSession(
   computerId: string,
   sessionId: string,
@@ -411,6 +422,29 @@ export async function cancelSession(
     method: 'POST',
     body: '{}',
   })
+}
+
+export async function listBackgroundTasks(
+  computerId: string,
+  sessionId: string,
+): Promise<BackgroundTaskSnapshot> {
+  return request<BackgroundTaskSnapshot>(
+    `${sessionPath(computerId, sessionId)}/tasks`,
+  )
+}
+
+export async function cancelBackgroundTask(
+  computerId: string,
+  sessionId: string,
+  taskId: string,
+): Promise<BackgroundTaskSnapshot> {
+  return request<BackgroundTaskSnapshot>(
+    `${sessionPath(computerId, sessionId)}/tasks/${encodeURIComponent(taskId)}/cancel`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
 }
 
 export async function deleteSession(

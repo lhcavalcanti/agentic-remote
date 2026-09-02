@@ -35,8 +35,10 @@
   `bin/agentic-remote-promotion-setup`, and
   `config/agentic-remote-promotion.env.example` generic. Installed profiles,
   systemd units, state, and credentials remain outside the repository.
-- Promote only the exact commit that passed development validation and the
-  matching CI gate. Record the promoted and previous release identifiers.
+- Promote only the exact commit that passed development validation. The
+  repository has no hosted CI, so that validation is the whole gate and has to
+  run the complete suite locally. Record the promoted and previous release
+  identifiers.
 - Reaching other machines is part of the profile, not of this repository. Use
   the profile's downstream settings rather than hard-coding a host, account, or
   SSH alias anywhere in the repository.

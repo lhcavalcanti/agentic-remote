@@ -75,8 +75,8 @@ import {
   Trash2,
   Wifi,
   WifiOff,
-  XCircle,
   X,
+  XCircle,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import {
@@ -95,6 +95,11 @@ import remarkGfm from 'remark-gfm'
 import type {
   AgentProvider,
   AgentProviderCapability,
+  ActivityKind,
+  ActivityStatus,
+  BackgroundTask,
+  BackgroundTaskSnapshot,
+  ChatMessage,
   ComputerSummary,
   ConfigureRuntimeInput,
   DirectoryListing,
@@ -107,6 +112,8 @@ import type {
   UserInputFieldValue,
   UserInputReplyInput,
   RuntimeOptions,
+  RuntimeModelOption,
+  RuntimeReasoningEffort,
   SlashCommand,
   WorkspaceFile,
   WorkspaceListing,
@@ -115,6 +122,7 @@ import type {
 import {
   activateSession,
   addComputer,
+  cancelBackgroundTask,
   cancelSession,
   clearConversation,
   configureRuntime,
@@ -123,9 +131,11 @@ import {
   executeCommand,
   getPushSettings,
   getSession,
+  getProviderRuntimeOptions,
   getRuntimeOptions,
   listComputers,
   listCommands,
+  listBackgroundTasks,
   listHistory,
   listKnowledgeEntries,
   listKnowledgeRoots,
@@ -281,6 +291,7 @@ type StatuslineSettings = {
   path: boolean
   status: boolean
   queue: boolean
+  backgroundTasks: boolean
   sessionId: boolean
   model: boolean
   effort: boolean
@@ -288,11 +299,21 @@ type StatuslineSettings = {
   contextUsage: boolean
   mode: boolean
   permissions: boolean
+  update: boolean
 }
 
-type DefaultModelSettings = {
-  copilot: string
-  claude: string
+type DefaultRuntimeSelection = {
+  model: string
+  reasoningEffort: RuntimeReasoningEffort | ''
+  contextTier: 'default' | 'long_context'
+}
+
+type DefaultRuntimeSettings = Record<AgentProvider, DefaultRuntimeSelection>
+
+const emptyRuntimeSelection: DefaultRuntimeSelection = {
+  model: '',
+  reasoningEffort: '',
+  contextTier: 'default',
 }
 
 type DefaultSessionFolders = Record<string, string>
@@ -354,20 +375,48 @@ type KnowledgePosition = {
   file?: string
 }
 
-const defaultModelSettings: DefaultModelSettings = {
-  copilot: '',
-  claude: '',
+function isRuntimeReasoningEffort(
+  value: unknown,
+): value is RuntimeReasoningEffort {
+  return (
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh' ||
+    value === 'max'
+  )
 }
 
-function readDefaultModelSettings(): DefaultModelSettings {
-  const stored = readStoredOrder<Partial<DefaultModelSettings>>(
+function readDefaultRuntimeSettings(): DefaultRuntimeSettings {
+  const parsed = readStoredOrder<unknown>(
     'agentic-remote:default-models',
     {},
   )
+  const stored =
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  const selection = (provider: AgentProvider): DefaultRuntimeSelection => {
+    const value = stored[provider]
+    if (typeof value === 'string') {
+      return { ...emptyRuntimeSelection, model: value }
+    }
+    if (!value || typeof value !== 'object') {
+      return { ...emptyRuntimeSelection }
+    }
+    const fields = value as Record<string, unknown>
+    return {
+      model: typeof fields.model === 'string' ? fields.model : '',
+      reasoningEffort: isRuntimeReasoningEffort(fields.reasoningEffort)
+        ? fields.reasoningEffort
+        : '',
+      contextTier:
+        fields.contextTier === 'long_context' ? 'long_context' : 'default',
+    }
+  }
   return {
-    ...defaultModelSettings,
-    copilot: typeof stored.copilot === 'string' ? stored.copilot : '',
-    claude: typeof stored.claude === 'string' ? stored.claude : '',
+    copilot: selection('copilot'),
+    claude: selection('claude'),
   }
 }
 
@@ -402,6 +451,7 @@ const defaultStatusline: StatuslineSettings = {
   path: true,
   status: true,
   queue: true,
+  backgroundTasks: true,
   sessionId: false,
   model: true,
   effort: true,
@@ -409,6 +459,7 @@ const defaultStatusline: StatuslineSettings = {
   contextUsage: true,
   mode: true,
   permissions: true,
+  update: true,
 }
 
 const timelineBottomThreshold = 48
@@ -422,6 +473,7 @@ const statuslineOptions: Array<{
   { key: 'path', label: 'Working directory' },
   { key: 'status', label: 'Agent status' },
   { key: 'queue', label: 'Queued prompts' },
+  { key: 'backgroundTasks', label: 'Running background tasks' },
   { key: 'sessionId', label: 'Session ID' },
   { key: 'model', label: 'Model' },
   { key: 'effort', label: 'Reasoning effort' },
@@ -429,6 +481,7 @@ const statuslineOptions: Array<{
   { key: 'contextUsage', label: 'Context usage' },
   { key: 'mode', label: 'Agent mode' },
   { key: 'permissions', label: 'Permission mode' },
+  { key: 'update', label: 'Agent update available' },
 ]
 
 const webCommands: SlashCommand[] = [
@@ -514,6 +567,47 @@ function executionModeName(
       : undefined
 }
 
+function supportsBackgroundTasks(
+  computer: ComputerSummary | undefined,
+  provider: AgentProvider | undefined,
+): boolean {
+  if (provider === 'claude' || !computer) {
+    return false
+  }
+  const capability = computer.providers?.find(
+    (candidate) => candidate.id === (provider || 'copilot'),
+  )
+  return capability?.supportsBackgroundTasks === true
+}
+
+function taskSnapshot(
+  snapshots: Record<string, BackgroundTaskSnapshot>,
+  session: Pick<ManagedSession, 'computerId' | 'id'>,
+): BackgroundTaskSnapshot | undefined {
+  return snapshots[sessionKey(session)]
+}
+
+function taskStatusLabel(status: BackgroundTask['status']): string {
+  return status === 'queued'
+    ? 'Queued'
+    : status === 'running'
+      ? 'Running'
+      : status === 'completed'
+        ? 'Completed'
+        : status === 'failed'
+          ? 'Failed'
+          : 'Cancelled'
+}
+
+function taskDurationLabel(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1_000))
+  if (seconds < 60) {
+    return `${seconds}s`
+  }
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${seconds % 60}s`
+}
+
 function computerProviders(
   computer: ComputerSummary | undefined,
 ): AgentProviderCapability[] {
@@ -593,7 +687,7 @@ function NewSessionDialog({
   open,
   computers,
   defaultComputerId,
-  defaultModels,
+  defaultRuntimes,
   defaultSessionFolders,
   onClose,
   onCreated,
@@ -601,7 +695,7 @@ function NewSessionDialog({
   open: boolean
   computers: ComputerSummary[]
   defaultComputerId?: string
-  defaultModels: DefaultModelSettings
+  defaultRuntimes: DefaultRuntimeSettings
   defaultSessionFolders: DefaultSessionFolders
   onClose: () => void
   onCreated: (session: ManagedSession) => void
@@ -621,6 +715,10 @@ function NewSessionDialog({
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const [runtimeLoading, setRuntimeLoading] = useState(false)
+  const [runtimeError, setRuntimeError] = useState<string>()
+  const [providerRuntimeModels, setProviderRuntimeModels] =
+    useState<RuntimeModelOption[]>()
   const available = useMemo(
     () => computers.filter((computer) => computer.online),
     [computers],
@@ -682,6 +780,42 @@ function NewSessionDialog({
     }
   }, [computerId, defaultSessionFolders, mode, open])
 
+  useEffect(() => {
+    if (!open || mode !== 'new' || !computerId) {
+      return
+    }
+    let active = true
+    setRuntimeLoading(true)
+    setRuntimeError(undefined)
+    setProviderRuntimeModels(undefined)
+    void getProviderRuntimeOptions(computerId, provider)
+      .then(({ models }) => {
+        if (active) {
+          setProviderRuntimeModels(models)
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setRuntimeError(
+            caught instanceof Error ? caught.message : String(caught),
+          )
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setRuntimeLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [
+    computerId,
+    mode,
+    open,
+    provider,
+  ])
+
   if (!open) {
     return null
   }
@@ -715,7 +849,13 @@ function NewSessionDialog({
     setError(undefined)
     try {
       if (mode === 'new') {
-        const defaultModel = defaultModels[provider].trim()
+        const defaultRuntime = providerRuntimeModels
+          ? normalizedRuntimeSelection(
+              defaultRuntimes[provider],
+              providerRuntimeModels,
+            )
+          : undefined
+        const defaultModel = defaultRuntime?.model.trim()
         onCreated(
           await createSession(computerId, {
             cwd,
@@ -727,7 +867,17 @@ function NewSessionDialog({
                 ? terminalBacked
                 : false,
             allowAllPermissions,
-            ...(defaultModel ? { model: defaultModel } : {}),
+            ...(defaultModel && defaultRuntime
+              ? {
+                  model: defaultModel,
+                  ...(defaultRuntime.reasoningEffort
+                    ? {
+                        reasoningEffort: defaultRuntime.reasoningEffort,
+                      }
+                    : {}),
+                  contextTier: defaultRuntime.contextTier,
+                }
+              : {}),
           }),
         )
         setCwd('')
@@ -756,7 +906,11 @@ function NewSessionDialog({
   )
   const providers = computerProviders(selectedComputer)
   const selectedProvider = providers.find((entry) => entry.id === provider)
-  const defaultModel = defaultModels[provider].trim()
+  const savedDefaultRuntime = defaultRuntimes[provider]
+  const defaultRuntime = providerRuntimeModels
+    ? normalizedRuntimeSelection(savedDefaultRuntime, providerRuntimeModels)
+    : savedDefaultRuntime
+  const defaultModel = defaultRuntime?.model.trim() || ''
 
   return (
     <DialogFrame
@@ -840,8 +994,20 @@ function NewSessionDialog({
             ) : null}
             {defaultModel ? (
               <small className="field__hint">
-                New sessions use <strong>{defaultModel}</strong> by default.
+                New sessions use <strong>{defaultModel}</strong> with{' '}
+                {defaultRuntime?.reasoningEffort ? (
+                  <>
+                    <strong>{defaultRuntime.reasoningEffort}</strong> effort and{' '}
+                  </>
+                ) : null}
+                <strong>
+                  {defaultRuntime?.contextTier.replace('_', ' ')}
+                </strong>{' '}
+                context.
               </small>
+            ) : null}
+            {runtimeError ? (
+              <small className="field__hint">{runtimeError}</small>
             ) : null}
           </label>
         ) : null}
@@ -956,6 +1122,8 @@ function NewSessionDialog({
           disabled={
             submitting ||
             !computerId ||
+            Boolean(defaultModel && runtimeLoading) ||
+            Boolean(defaultModel && runtimeError) ||
             (mode === 'new' && !selectedProvider?.available) ||
             (mode === 'new' ? !cwd.trim() : !historyKey)
           }
@@ -1311,6 +1479,212 @@ function StatuslineControls({
   )
 }
 
+function normalizedRuntimeSelection(
+  selection: DefaultRuntimeSelection,
+  models: RuntimeModelOption[],
+): DefaultRuntimeSelection | undefined {
+  const modelId = selection.model.trim()
+  if (!modelId) {
+    return undefined
+  }
+
+  const model =
+    models.find((candidate) => candidate.id === modelId) || models[0]
+  if (!model) {
+    return undefined
+  }
+
+  return {
+    model: model.id,
+    reasoningEffort:
+      selection.reasoningEffort !== '' &&
+      model.reasoningEfforts.includes(selection.reasoningEffort)
+      ? selection.reasoningEffort
+      : model.reasoningEfforts[0] || '',
+    contextTier: model.contextTiers.includes(selection.contextTier)
+      ? selection.contextTier
+      : 'default',
+  }
+}
+
+function mergeRuntimeModelOptions(
+  catalogs: RuntimeModelOption[][],
+): RuntimeModelOption[] {
+  const merged = new Map<string, RuntimeModelOption>()
+  for (const catalog of catalogs) {
+    for (const model of catalog) {
+      const existing = merged.get(model.id)
+      if (!existing) {
+        merged.set(model.id, {
+          ...model,
+          reasoningEfforts: [...model.reasoningEfforts],
+          contextTiers: [...model.contextTiers],
+          contextTokenLimits: model.contextTokenLimits
+            ? { ...model.contextTokenLimits }
+            : undefined,
+        })
+        continue
+      }
+      merged.set(model.id, {
+        ...existing,
+        description: existing.description || model.description,
+        reasoningEfforts: [
+          ...new Set([
+            ...existing.reasoningEfforts,
+            ...model.reasoningEfforts,
+          ]),
+        ],
+        contextTiers: [
+          ...new Set([...existing.contextTiers, ...model.contextTiers]),
+        ],
+        contextTokenLimits: {
+          ...model.contextTokenLimits,
+          ...existing.contextTokenLimits,
+        },
+      })
+    }
+  }
+  return [...merged.values()]
+}
+
+function sameRuntimeSelection(
+  left: DefaultRuntimeSelection,
+  right: DefaultRuntimeSelection,
+): boolean {
+  return (
+    left.model === right.model &&
+    left.reasoningEffort === right.reasoningEffort &&
+    left.contextTier === right.contextTier
+  )
+}
+
+function DefaultRuntimeControls({
+  error,
+  loading,
+  models,
+  onChange,
+  provider,
+  selection,
+}: {
+  error?: string
+  loading: boolean
+  models: RuntimeModelOption[]
+  onChange: (selection: DefaultRuntimeSelection) => void
+  provider: AgentProvider
+  selection: DefaultRuntimeSelection
+}) {
+  const name = providerName(provider)
+  const selectedModel = models.find((model) => model.id === selection.model)
+  const unavailableModel = selection.model.trim() && !selectedModel
+
+  return (
+    <div className="default-runtime">
+      <h4>{name}</h4>
+      {loading ? <p className="dialog-message">Loading models…</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
+      {!loading && !error && models.length === 0 ? (
+        <p className="dialog-message">No models are available.</p>
+      ) : null}
+      {models.length > 0 ? (
+        <>
+          <label className="field">
+            <span>Model</span>
+            <select
+              aria-label={`${name} default model`}
+              className="dialog-select"
+              onChange={(event) => {
+                if (!event.target.value) {
+                  onChange({ ...emptyRuntimeSelection })
+                  return
+                }
+                const model = models.find(
+                  (candidate) => candidate.id === event.target.value,
+                )
+                if (!model) {
+                  return
+                }
+                onChange({
+                  model: model.id,
+                  reasoningEffort: model.reasoningEfforts[0] || '',
+                  contextTier: 'default',
+                })
+              }}
+              value={selection.model.trim()}
+            >
+              <option value="">Provider default</option>
+              {unavailableModel ? (
+                <option value={selection.model.trim()}>
+                  {selection.model.trim()} (unavailable)
+                </option>
+              ) : null}
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedModel?.description ? (
+            <div className="default-runtime__description">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {selectedModel.description}
+              </ReactMarkdown>
+            </div>
+          ) : null}
+          {selectedModel && selectedModel.reasoningEfforts.length > 0 ? (
+            <label className="field">
+              <span>Reasoning effort</span>
+              <select
+                aria-label={`${name} default reasoning effort`}
+                className="dialog-select"
+                onChange={(event) =>
+                  isRuntimeReasoningEffort(event.target.value)
+                    ? onChange({
+                        ...selection,
+                        reasoningEffort: event.target.value,
+                      })
+                    : undefined
+                }
+                value={selection.reasoningEffort}
+              >
+                {selectedModel.reasoningEfforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {selectedModel ? (
+            <label className="field">
+              <span>Context size</span>
+              <select
+                aria-label={`${name} default context size`}
+                className="dialog-select"
+                onChange={(event) =>
+                  onChange({
+                    ...selection,
+                    contextTier: event.target.value as
+                      | 'default'
+                      | 'long_context',
+                  })
+                }
+                value={selection.contextTier}
+              >
+                {selectedModel.contextTiers.map((tier) => (
+                  <option key={tier} value={tier}>
+                    {contextSizeLabel(selectedModel, tier)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  )
+}
+
 function DefaultSessionFolderControl({
   computer,
   value,
@@ -1511,12 +1885,12 @@ function DefaultSessionFolderControl({
 
 function AppSettingsDialog({
   open,
+  computers,
   onClose,
   onApplyUpdate,
   onUpdateReady,
-  defaultModels,
-  onDefaultModelsChange,
-  computers,
+  defaultRuntimes,
+  onDefaultRuntimesChange,
   defaultSessionFolders,
   onDefaultSessionFoldersChange,
   statusline,
@@ -1525,12 +1899,12 @@ function AppSettingsDialog({
   updatingApp,
 }: {
   open: boolean
+  computers: ComputerSummary[]
   onClose: () => void
   onApplyUpdate: () => void
   onUpdateReady: (registration: ServiceWorkerRegistration) => void
-  defaultModels: DefaultModelSettings
-  onDefaultModelsChange: (settings: DefaultModelSettings) => void
-  computers: ComputerSummary[]
+  defaultRuntimes: DefaultRuntimeSettings
+  onDefaultRuntimesChange: (settings: DefaultRuntimeSettings) => void
   defaultSessionFolders: DefaultSessionFolders
   onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
   statusline: StatuslineSettings
@@ -1546,6 +1920,16 @@ function AppSettingsDialog({
   const [updateMessage, setUpdateMessage] = useState<string>()
   const [testingNotification, setTestingNotification] = useState(false)
   const [testMessage, setTestMessage] = useState<string>()
+  const [runtimeModels, setRuntimeModels] = useState<
+    Partial<Record<AgentProvider, RuntimeModelOption[]>>
+  >({})
+  const [runtimeCatalogsComplete, setRuntimeCatalogsComplete] = useState<
+    Partial<Record<AgentProvider, boolean>>
+  >({})
+  const [runtimeLoading, setRuntimeLoading] = useState(false)
+  const [runtimeErrors, setRuntimeErrors] = useState<
+    Partial<Record<AgentProvider, string>>
+  >({})
   const supported = pushNotificationsSupported()
   const ios =
     typeof navigator !== 'undefined' &&
@@ -1583,6 +1967,136 @@ function AppSettingsDialog({
       active = false
     }
   }, [open, requiresInstall, supported])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    let active = true
+    const providers: AgentProvider[] = ['copilot', 'claude']
+    const sources = providers.flatMap((provider) => {
+      const providerComputers = computers.filter(
+        (candidate) =>
+          candidate.online &&
+          computerProviders(candidate).some(
+            (capability) =>
+              capability.id === provider && capability.available,
+          ),
+      )
+      return providerComputers.map((computer) => ({ provider, computer }))
+    })
+    setRuntimeLoading(true)
+    setRuntimeModels({})
+    setRuntimeCatalogsComplete({})
+    setRuntimeErrors(
+      Object.fromEntries(
+        providers
+          .filter(
+            (provider) =>
+              !sources.some((source) => source.provider === provider),
+          )
+          .map((provider) => [
+            provider,
+            `${providerName(provider)} is not available on an online computer.`,
+          ]),
+      ),
+    )
+    void Promise.allSettled(
+      sources.map(async ({ provider, computer }) => ({
+        provider,
+        options: await getProviderRuntimeOptions(computer.id, provider),
+      })),
+    ).then((results) => {
+      if (!active) {
+        return
+      }
+      const models: Partial<Record<AgentProvider, RuntimeModelOption[]>> = {}
+      const complete: Partial<Record<AgentProvider, boolean>> = {}
+      const errors: Partial<Record<AgentProvider, string>> = {}
+      for (const provider of providers) {
+        const hasOfflineProviderComputer = computers.some(
+          (computer) => !computer.isLocal && !computer.online,
+        )
+        // Discovery only asks computers that advertise the provider, and a
+        // node can synthesize Copilot-only metadata it never confirmed. Any
+        // online computer left unasked is therefore an unknown rather than a
+        // no, and a saved model must not be retired on an unknown.
+        const queried = new Set(
+          sources
+            .filter((source) => source.provider === provider)
+            .map((source) => source.computer.id),
+        )
+        const hasUnqueriedProviderComputer = computers.some(
+          (computer) => computer.online && !queried.has(computer.id),
+        )
+        const providerResults = results.filter(
+          (_result, index) => sources[index].provider === provider,
+        )
+        const catalogs = providerResults.flatMap((result) =>
+          result.status === 'fulfilled'
+            ? [result.value.options.models]
+            : [],
+        )
+        if (catalogs.length > 0) {
+          models[provider] = mergeRuntimeModelOptions(catalogs)
+          complete[provider] =
+            !hasOfflineProviderComputer &&
+            !hasUnqueriedProviderComputer &&
+            providerResults.every((result) => result.status === 'fulfilled')
+        } else if (providerResults.length === 0) {
+          errors[provider] =
+            `${providerName(provider)} is not available on an online computer.`
+        } else {
+          const failure = providerResults.find(
+            (result) => result.status === 'rejected',
+          )
+          errors[provider] =
+            failure?.status === 'rejected'
+              ? failure.reason instanceof Error
+                ? failure.reason.message
+                : String(failure.reason)
+              : `Unable to load ${providerName(provider)} models.`
+        }
+      }
+      setRuntimeModels(models)
+      setRuntimeCatalogsComplete(complete)
+      setRuntimeErrors(errors)
+      setRuntimeLoading(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [computers, open])
+
+  useEffect(() => {
+    let changed = false
+    const next = { ...defaultRuntimes }
+    for (const provider of ['copilot', 'claude'] as const) {
+      const models = runtimeModels[provider]
+      if (!models || !runtimeCatalogsComplete[provider]) {
+        continue
+      }
+      const normalized = normalizedRuntimeSelection(
+        defaultRuntimes[provider],
+        models,
+      )
+      if (
+        normalized &&
+        !sameRuntimeSelection(normalized, defaultRuntimes[provider])
+      ) {
+        next[provider] = normalized
+        changed = true
+      }
+    }
+    if (changed) {
+      onDefaultRuntimesChange(next)
+    }
+  }, [
+    defaultRuntimes,
+    onDefaultRuntimesChange,
+    runtimeCatalogsComplete,
+    runtimeModels,
+  ])
 
   if (!open) {
     return null
@@ -1669,43 +2183,27 @@ function AppSettingsDialog({
       )}
 
       <section className="app-settings-section">
-        <h3>Default models</h3>
+        <h3>Session defaults</h3>
         <p className="dialog-message">
-          These model IDs are used for new sessions. Existing sessions keep
-          their current model. Leave a field blank to use the provider default.
+          New sessions use these provider settings. Existing sessions keep
+          their current model, effort, and context.
         </p>
-        <label className="field">
-          <span>Copilot default model</span>
-          <input
-            aria-label="Copilot default model"
-            className="dialog-input"
-            onChange={(event) =>
-              onDefaultModelsChange({
-                ...defaultModels,
-                copilot: event.target.value,
+        {(['copilot', 'claude'] as const).map((provider) => (
+          <DefaultRuntimeControls
+            error={runtimeErrors[provider]}
+            key={provider}
+            loading={runtimeLoading}
+            models={runtimeModels[provider] || []}
+            onChange={(selection) =>
+              onDefaultRuntimesChange({
+                ...defaultRuntimes,
+                [provider]: selection,
               })
             }
-            placeholder="e.g. gpt-5.6-sol"
-            spellCheck={false}
-            value={defaultModels.copilot}
+            provider={provider}
+            selection={defaultRuntimes[provider]}
           />
-        </label>
-        <label className="field">
-          <span>Claude default model</span>
-          <input
-            aria-label="Claude default model"
-            className="dialog-input"
-            onChange={(event) =>
-              onDefaultModelsChange({
-                ...defaultModels,
-                claude: event.target.value,
-              })
-            }
-            placeholder="e.g. sonnet"
-            spellCheck={false}
-            value={defaultModels.claude}
-          />
-        </label>
+        ))}
       </section>
 
       <section className="app-settings-section">
@@ -2507,43 +3005,372 @@ function UserInputCard({
   )
 }
 
-function ActivityMessage({
-  content,
-  status,
-}: {
-  content: string
-  status?: 'running' | 'completed' | 'failed'
-}) {
-  const [title, ...detailLines] = content.split('\n')
-  const detail = detailLines.join('\n').trim()
-  const isMcp = title.startsWith('MCP ·')
-  // A background agent is the one tool that routinely outlives the parent's
-  // last message, so a running one says so instead of looking finished.
-  const isAgent = title.startsWith('Agent (')
-  const icon =
-    status === 'failed' ? (
-      <XCircle size={14} />
-    ) : status === 'completed' ? (
-      <CheckCircle2 size={14} />
-    ) : (
-      <LoaderCircle className="activity-message__spinner" size={14} />
-    )
+function activityKindFromMessage(message: ChatMessage): ActivityKind {
+  if (message.activityKind) {
+    return message.activityKind
+  }
+  const title = message.content.split('\n', 1)[0] || ''
+  if (/^Skill \(/.test(title)) {
+    return 'skill'
+  }
+  if (/^Agent \(/.test(title)) {
+    return 'agent'
+  }
+  return 'tool'
+}
+
+function activityStatusFromMessage(message: ChatMessage): ActivityStatus {
+  return message.activityStatus || 'running'
+}
+
+function compactActivityText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function activityPresentation(message: ChatMessage): {
+  title: string
+  kind: ActivityKind
+  name: string
+  origin?: string
+  summary?: string
+  arguments?: string
+} {
+  const [title = '', ...detailLines] = message.content.split('\n')
+  const detail = compactActivityText(detailLines.join('\n'))
+  const kind = activityKindFromMessage(message)
+  if (kind === 'skill') {
+    const match = title.match(/^Skill \((.+)\)$/)
+    return {
+      title,
+      kind,
+      name: match ? `skill(${match[1]})` : 'skill',
+      arguments: detail || undefined,
+    }
+  }
+  if (kind === 'agent') {
+    const match = title.match(/^Agent \(([^)]+)\)(?: · (.*))?$/)
+    return {
+      title,
+      kind,
+      name: match ? `agent(${match[1]})` : 'agent',
+      summary: match?.[2],
+      arguments: detail || undefined,
+    }
+  }
+  if (title.startsWith('MCP ·')) {
+    const parts = title.split(' · ')
+    const hasServer = parts.length > 2
+    const server = hasServer ? parts[1] || '' : ''
+    const operation = hasServer ? parts[2] || 'tool' : parts[1] || 'tool'
+    return {
+      title,
+      kind,
+      name: operation,
+      origin: server ? `(MCP: ${server})` : '(MCP)',
+      summary: parts.slice(3).join(' · ') || undefined,
+      arguments: detail || undefined,
+    }
+  }
+  const [name = 'tool', ...summaryParts] = title.split(' · ')
+  return {
+    title,
+    kind,
+    name,
+    summary: summaryParts.join(' · ') || undefined,
+    arguments: detail || undefined,
+  }
+}
+
+function formatActivityDuration(durationMs?: number): string {
+  if (
+    durationMs === undefined ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 0
+  ) {
+    return '—'
+  }
+  const seconds = durationMs / 1_000
+  if (seconds < 1) {
+    return `${Math.round(durationMs)}ms`
+  }
+  if (seconds < 10) {
+    return `${seconds.toFixed(1)}s`
+  }
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`
+  }
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = Math.round(seconds % 60)
+  return `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s`
+}
+
+function activityStatusGlyph(status: ActivityStatus): string {
+  switch (status) {
+    case 'completed':
+      return '●'
+    case 'failed':
+      return '×'
+    case 'pending':
+      return '·'
+    case 'running':
+      return '○'
+  }
+}
+
+function activityStatusLabel(status: ActivityStatus): string {
+  switch (status) {
+    case 'completed':
+      return 'Completed'
+    case 'failed':
+      return 'Failed'
+    case 'pending':
+      return 'Pending'
+    case 'running':
+      return 'Running'
+  }
+}
+
+function ActivityMessage({ message }: { message: ChatMessage }) {
+  const presentation = activityPresentation(message)
+  const status = activityStatusFromMessage(message)
+  const isMcp = message.content.startsWith('MCP ·')
+  const isAgent = presentation.kind === 'agent'
+  const isHeading =
+    presentation.kind === 'skill' || presentation.kind === 'agent'
+  const result =
+    message.activityResult ||
+    (status === 'failed'
+      ? 'Error: tool failed; inspect the session log'
+      : isAgent && status !== 'completed'
+        ? 'still working'
+        : undefined)
+  const legacyTitle = presentation.title
+  const duration = formatActivityDuration(message.activityDurationMs)
+  const accessibleDetails = [
+    `${activityStatusLabel(status)}: ${legacyTitle}`,
+    result,
+    message.activityDurationMs === undefined ? undefined : `${duration} duration`,
+  ]
+    .filter(Boolean)
+    .join('; ')
   return (
     <div
-      className={`activity-message activity-message--${status || 'running'}${
+      aria-label={accessibleDetails}
+      className={`activity-message activity-message--${status}${
         isMcp ? ' activity-message--mcp' : ''
-      }${isAgent ? ' activity-message--agent' : ''}`}
+      }${isAgent ? ' activity-message--agent' : ''}${
+        isHeading ? ' activity-message--heading' : ''
+      }`}
+      aria-level={isHeading ? 3 : undefined}
+      role={isHeading ? 'heading' : undefined}
+      title={legacyTitle}
     >
-      {icon}
-      <span>
-        <strong>{title}</strong>
-        {isAgent && status !== 'completed' && status !== 'failed' ? (
-          <em className="activity-message__note">still working</em>
-        ) : null}
-        {detail ? <code>{detail}</code> : null}
+      <span
+        aria-hidden="true"
+        className="activity-message__glyph"
+      >
+        {activityStatusGlyph(status)}
       </span>
+      <span className="activity-message__body">
+        <strong className="activity-message__name">{presentation.name}</strong>
+        {presentation.origin ? (
+          <span className="activity-message__origin">
+            {' '}
+            {presentation.origin}
+          </span>
+        ) : null}
+        {presentation.summary ? (
+          <>
+            <span className="activity-message__separator"> · </span>
+            <span className="activity-message__summary">
+              {compactActivityText(presentation.summary)}
+            </span>
+          </>
+        ) : null}
+        {presentation.arguments ? (
+          <>
+            <span className="activity-message__separator"> · </span>
+            <span className="activity-message__arguments">
+              {presentation.arguments}
+            </span>
+          </>
+        ) : null}
+        {result ? (
+          <>
+            <span className="activity-message__separator"> · </span>
+            <span
+              className="activity-message__result"
+              title={result}
+            >
+              {compactActivityText(result)}
+            </span>
+          </>
+        ) : null}
+      </span>
+      <span
+        aria-label={
+          message.activityDurationMs === undefined
+            ? 'No duration recorded'
+            : `${duration} duration`
+        }
+        className="activity-message__duration"
+      >
+        {duration}
+      </span>
+      {legacyTitle !== presentation.name ? (
+        <span
+          aria-hidden="true"
+          className="activity-message__legacy-title"
+        >
+          {legacyTitle}
+        </span>
+      ) : null}
     </div>
   )
+}
+
+function ActivityArticle({
+  message,
+  currentToolId,
+}: {
+  message: ChatMessage
+  currentToolId?: string
+}) {
+  return (
+    <article
+      className={`message message--activity ${
+        message.id === currentToolId
+          ? 'tool-activity-slot'
+          : 'tool-activity-history'
+      }`}
+      key={message.id}
+    >
+      <ActivityMessage message={message} />
+    </article>
+  )
+}
+
+function ConversationMessages({
+  messages,
+  currentToolId,
+}: {
+  messages: ChatMessage[]
+  currentToolId?: string
+}) {
+  const activityMessages = new Map(
+    messages
+      .filter((message) => message.role === 'activity')
+      .map((message) => [message.id, message]),
+  )
+  const activityIndexes = new Map(
+    messages
+      .map((message, index) => [message.id, index] as const)
+      .filter(([id]) => activityMessages.has(id)),
+  )
+  const activityChildren = new Map<string, ChatMessage[]>()
+  const groupedActivityIds = new Set<string>()
+  for (const [parentId, parentIndex] of activityIndexes) {
+    // A child can own activity of its own, and those entries are grouped under
+    // it rather than this parent. Walking over them keeps the parent's later
+    // tools in its group instead of stopping at the first nested one and
+    // leaving them at the top level.
+    const owned = new Set<string>([parentId])
+    for (let index = parentIndex + 1; index < messages.length; index += 1) {
+      const message = messages[index]
+      if (
+        !message ||
+        message.role !== 'activity' ||
+        !message.activityGroupId ||
+        !owned.has(message.activityGroupId)
+      ) {
+        break
+      }
+      owned.add(message.id)
+      if (message.activityGroupId !== parentId) {
+        continue
+      }
+      const children = activityChildren.get(parentId) || []
+      children.push(message)
+      activityChildren.set(parentId, children)
+      groupedActivityIds.add(message.id)
+    }
+  }
+  const renderActivity = (message: ChatMessage): ReactNode => {
+    const children = activityChildren.get(message.id) || []
+    if (children.length === 0) {
+      return (
+        <ActivityArticle
+          currentToolId={currentToolId}
+          key={message.id}
+          message={message}
+        />
+      )
+    }
+    const kind = activityKindFromMessage(message)
+    const groupLabel =
+      kind === 'skill' ? 'Skill' : kind === 'agent' ? 'Agent' : 'Activity'
+    return (
+      <div
+        aria-label={`${groupLabel} ${
+          activityPresentation(message).name
+        } activity group`}
+        className="activity-group"
+        key={message.id}
+      >
+        <ActivityArticle
+          currentToolId={currentToolId}
+          message={message}
+        />
+        <div className="activity-group__children">
+          {children.map((child) => renderActivity(child))}
+        </div>
+      </div>
+    )
+  }
+  const rendered: ReactNode[] = []
+  for (const message of messages) {
+    if (message.role === 'activity') {
+      if (groupedActivityIds.has(message.id)) {
+        continue
+      }
+      rendered.push(renderActivity(message))
+      continue
+    }
+    rendered.push(
+      <article className={`message message--${message.role}`} key={message.id}>
+        <div className="message__metadata">
+          <span className="message__label">
+            {message.role === 'user'
+              ? 'You'
+              : message.role === 'notice'
+                ? 'Command'
+                : 'Agent'}
+          </span>
+          <time
+            className="message__timestamp"
+            dateTime={message.createdAt}
+            title={messageDateTimeFormatter.format(new Date(message.createdAt))}
+          >
+            {messageTimeFormatter.format(new Date(message.createdAt))}
+          </time>
+        </div>
+        <div className="message__content">
+          {message.content ? (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {message.content}
+            </ReactMarkdown>
+          ) : (
+            <span className="typing-indicator">
+              <i />
+              <i />
+              <i />
+            </span>
+          )}
+        </div>
+      </article>,
+    )
+  }
+  return <div className="message-stack">{rendered}</div>
 }
 
 function EmptyConversation({ onCreate }: { onCreate: () => void }) {
@@ -2565,10 +3392,12 @@ function EmptyConversation({ onCreate }: { onCreate: () => void }) {
 function SortableSessionItem({
   session,
   selected,
+  backgroundTasks,
   onSelect,
 }: {
   session: ManagedSession
   selected: boolean
+  backgroundTasks?: BackgroundTaskSnapshot
   onSelect: () => void
 }) {
   const sortableId = `session:${sessionKey(session)}`
@@ -2580,12 +3409,21 @@ function SortableSessionItem({
     transition,
     isDragging,
   } = useSortable({ id: sortableId })
+  const runningBackgroundTasks = backgroundTasks?.runningCount || 0
+  const taskCount = backgroundTasks?.tasks.length || 0
+  const foregroundStatusAllowsTaskTreatment =
+    session.status === 'idle' || session.status === 'running'
+  const backgroundTaskActive =
+    runningBackgroundTasks > 0 &&
+    foregroundStatusAllowsTaskTreatment
   return (
     <button
       aria-current={selected ? 'page' : undefined}
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
-      )} ${selected ? 'session-item--active' : ''} ${
+      )} ${backgroundTaskActive ? 'session-item--background-running' : ''} ${
+        selected ? 'session-item--active' : ''
+      } ${
         isDragging ? 'sortable-dragging' : ''
       }`}
       onClick={onSelect}
@@ -2621,6 +3459,15 @@ function SortableSessionItem({
           {session.title}
         </strong>
         <small>{shortPath(session.cwd)}</small>
+        {taskCount > 0 ? (
+          <span className="session-item__tasks">
+            {runningBackgroundTasks > 0
+              ? `${runningBackgroundTasks} running task${
+                  runningBackgroundTasks === 1 ? '' : 's'
+                }`
+              : `${taskCount} task${taskCount === 1 ? '' : 's'}`}
+          </span>
+        ) : null}
       </span>
     </button>
   )
@@ -2629,12 +3476,14 @@ function SortableSessionItem({
 function SortableComputerGroup({
   computer,
   sessions,
+  backgroundTasks,
   selectedKey,
   showComputerHandle,
   onSelectSession,
 }: {
   computer: ComputerSummary
   sessions: ManagedSession[]
+  backgroundTasks: Record<string, BackgroundTaskSnapshot>
   selectedKey?: string
   showComputerHandle: boolean
   onSelectSession: (session: ManagedSession) => void
@@ -2685,6 +3534,7 @@ function SortableComputerGroup({
           {sessions.map((session) => (
             <SortableSessionItem
               key={sessionKey(session)}
+              backgroundTasks={taskSnapshot(backgroundTasks, session)}
               onSelect={() => onSelectSession(session)}
               selected={sessionKey(session) === selectedKey}
               session={session}
@@ -2717,6 +3567,205 @@ function StatuslineDialog({
       title="Status line"
     >
       <StatuslineControls onChange={onChange} settings={settings} />
+    </DialogFrame>
+  )
+}
+
+function BackgroundTaskCard({
+  task,
+  cancelling,
+  onCancel,
+}: {
+  task: BackgroundTask
+  cancelling: boolean
+  onCancel: () => void
+}) {
+  const statusIcon =
+    task.status === 'failed' ? (
+      <XCircle size={14} />
+    ) : task.status === 'completed' ? (
+      <CheckCircle2 size={14} />
+    ) : task.status === 'running' ? (
+      <LoaderCircle className="activity-message__spinner" size={14} />
+    ) : (
+      <List size={14} />
+    )
+  const progress = task.progress
+  return (
+    <article className={`background-task background-task--${task.status}`}>
+      <header className="background-task__header">
+        <div className="background-task__title">
+          <span className="background-task__status-icon">{statusIcon}</span>
+          <span>
+            <strong>{task.description}</strong>
+            <small>
+              {task.type === 'agent'
+                ? task.agentType || 'Background agent'
+                : task.command || 'Background shell'}
+            </small>
+          </span>
+        </div>
+        <span className="background-task__status">
+          {taskStatusLabel(task.status)}
+        </span>
+      </header>
+      <dl className="background-task__metadata">
+        <div>
+          <dt>Started</dt>
+          <dd>
+            <time dateTime={task.startedAt}>
+              {messageDateTimeFormatter.format(new Date(task.startedAt))}
+            </time>
+          </dd>
+        </div>
+        {task.completedAt ? (
+          <div>
+            <dt>Finished</dt>
+            <dd>
+              <time dateTime={task.completedAt}>
+                {messageDateTimeFormatter.format(new Date(task.completedAt))}
+              </time>
+            </dd>
+          </div>
+        ) : null}
+        {task.activeTimeMs !== undefined ? (
+          <div>
+            <dt>Active time</dt>
+            <dd>{taskDurationLabel(task.activeTimeMs)}</dd>
+          </div>
+        ) : null}
+        {task.pid !== undefined || progress?.pid !== undefined ? (
+          <div>
+            <dt>PID</dt>
+            <dd>{task.pid || progress?.pid}</dd>
+          </div>
+        ) : null}
+      </dl>
+      {task.prompt ? (
+        <details className="background-task__details">
+          <summary>Prompt</summary>
+          <pre>{task.prompt}</pre>
+        </details>
+      ) : null}
+      {progress?.latestIntent ? (
+        <p className="background-task__intent">{progress.latestIntent}</p>
+      ) : null}
+      {progress?.recentActivity?.length ? (
+        <div className="background-task__progress">
+          <strong>Recent activity</strong>
+          <ul>
+            {progress.recentActivity.map((line, index) => (
+              <li key={`${line.timestamp}-${index}`}>
+                <time dateTime={line.timestamp}>
+                  {messageTimeFormatter.format(new Date(line.timestamp))}
+                </time>
+                <span>{line.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {progress?.recentOutput ? (
+        <div className="background-task__output">
+          <strong>Output</strong>
+          <pre>{progress.recentOutput}</pre>
+        </div>
+      ) : null}
+      {task.result || task.latestResponse ? (
+        <div className="background-task__output">
+          <strong>Result</strong>
+          <pre>{task.result || task.latestResponse}</pre>
+        </div>
+      ) : null}
+      {task.error ? (
+        <div className="background-task__error" role="alert">
+          <strong>Error</strong>
+          <pre>{task.error}</pre>
+        </div>
+      ) : null}
+      {task.canCancel ? (
+        <button
+          className="secondary-button background-task__cancel"
+          disabled={cancelling}
+          onClick={onCancel}
+          type="button"
+        >
+          {cancelling ? 'Cancelling…' : 'Cancel task'}
+        </button>
+      ) : null}
+    </article>
+  )
+}
+
+function BackgroundTasksDialog({
+  open,
+  sessionTitle,
+  snapshot,
+  loading,
+  cancellingTaskId,
+  onClose,
+  onRefresh,
+  onCancel,
+}: {
+  open: boolean
+  sessionTitle: string
+  snapshot: BackgroundTaskSnapshot
+  loading: boolean
+  cancellingTaskId?: string
+  onClose: () => void
+  onRefresh: () => void
+  onCancel: (taskId: string) => void
+}) {
+  if (!open) {
+    return null
+  }
+  return (
+    <DialogFrame
+      className="background-tasks-dialog"
+      eyebrow="Tasks"
+      onClose={onClose}
+      title={`Background tasks · ${sessionTitle}`}
+    >
+      <div className="background-tasks-dialog__toolbar">
+        <p>
+          <strong>{snapshot.runningCount}</strong>{' '}
+          {snapshot.runningCount === 1
+            ? 'background task is running'
+            : 'background tasks are running'}
+        </p>
+        <button
+          aria-label="Refresh background tasks"
+          className="icon-button"
+          disabled={loading}
+          onClick={onRefresh}
+          type="button"
+        >
+          <RefreshCw
+            className={loading ? 'activity-message__spinner' : ''}
+            size={16}
+          />
+        </button>
+      </div>
+      {!snapshot.supported ? (
+        <p className="dialog-message">
+          This Copilot runtime does not expose background task monitoring.
+        </p>
+      ) : snapshot.tasks.length === 0 ? (
+        <p className="background-tasks-dialog__empty">
+          No background tasks are currently tracked.
+        </p>
+      ) : (
+        <div aria-label="Background task list" className="background-task-list">
+          {snapshot.tasks.map((task) => (
+            <BackgroundTaskCard
+              cancelling={cancellingTaskId === task.id}
+              key={task.id}
+              onCancel={() => onCancel(task.id)}
+              task={task}
+            />
+          ))}
+        </div>
+      )}
     </DialogFrame>
   )
 }
@@ -2767,7 +3816,7 @@ function RuntimeDialog({
           setConfiguration({
             model: model.id,
             reasoningEffort:
-              loaded.current.reasoningEffort &&
+              isRuntimeReasoningEffort(loaded.current.reasoningEffort) &&
               model.reasoningEfforts.includes(
                 loaded.current.reasoningEffort,
               )
@@ -2877,25 +3926,29 @@ function RuntimeDialog({
               ))}
             </select>
           </label>
-          <label className="field">
-            <span>Reasoning effort</span>
-            <select
-              className="dialog-select"
-              onChange={(event) =>
-                setConfiguration({
-                  ...configuration,
-                  reasoningEffort: event.target.value,
-                })
-              }
-              value={configuration.reasoningEffort}
-            >
-              {selectedModel.reasoningEfforts.map((effort) => (
-                <option key={effort} value={effort}>
-                  {effort}
-                </option>
-              ))}
-            </select>
-          </label>
+          {selectedModel.reasoningEfforts.length > 0 ? (
+            <label className="field">
+              <span>Reasoning effort</span>
+              <select
+                className="dialog-select"
+                onChange={(event) => {
+                  if (isRuntimeReasoningEffort(event.target.value)) {
+                    setConfiguration({
+                      ...configuration,
+                      reasoningEffort: event.target.value,
+                    })
+                  }
+                }}
+                value={configuration.reasoningEffort}
+              >
+                {selectedModel.reasoningEfforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="field">
             <span>Context size</span>
             <select
@@ -4171,6 +5224,9 @@ function WorkspaceDialog({
 function App() {
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
+  const [backgroundTaskSnapshots, setBackgroundTaskSnapshots] = useState<
+    Record<string, BackgroundTaskSnapshot>
+  >({})
   const [selectedKey, setSelectedKey] = useState<string>()
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
@@ -4319,6 +5375,12 @@ function App() {
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [statuslineOpen, setStatuslineOpen] = useState(false)
+  const [backgroundTasksOpen, setBackgroundTasksOpen] = useState(false)
+  const [backgroundTaskRefreshVersion, setBackgroundTaskRefreshVersion] =
+    useState(0)
+  const [loadingBackgroundTasks, setLoadingBackgroundTasks] = useState(false)
+  const [cancellingBackgroundTaskId, setCancellingBackgroundTaskId] =
+    useState<string>()
   const [mutedSessions, setMutedSessions] = useState<string[]>([])
   const mutedSessionsRef = useRef<string[]>([])
   const [mutingSession, setMutingSession] = useState(false)
@@ -4344,8 +5406,8 @@ function App() {
       ),
     }),
   )
-  const [defaultModels, setDefaultModels] = useState<DefaultModelSettings>(
-    readDefaultModelSettings,
+  const [defaultRuntimes, setDefaultRuntimes] = useState<DefaultRuntimeSettings>(
+    readDefaultRuntimeSettings,
   )
   const [defaultSessionFolders, setDefaultSessionFolders] =
     useState<DefaultSessionFolders>(readDefaultSessionFolders)
@@ -4373,6 +5435,14 @@ function App() {
   const discardRecordingRef = useRef(false)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
   const eventSequenceRef = useRef(0)
+  const backgroundTaskSnapshotsRef = useRef(backgroundTaskSnapshots)
+  const computersRef = useRef(computers)
+  const backgroundTasksOpenRef = useRef(backgroundTasksOpen)
+  const selectedKeyStateRef = useRef(selectedKey)
+  const backgroundTaskRequestsRef = useRef(new Set<string>())
+  const queuedBackgroundTaskRefreshesRef = useRef(new Set<string>())
+  const backgroundTaskEventSequenceRef = useRef(new Map<string, number>())
+  const seenBackgroundTaskRefreshRef = useRef(0)
   const sessionEventSequenceRef = useRef(new Map<string, number>())
 
   // Silence changes on its own schedule: counting every session event would
@@ -4572,6 +5642,11 @@ function App() {
       }),
     [],
   )
+  const selectedBackgroundTasks = selected
+    ? taskSnapshot(backgroundTaskSnapshots, selected)
+    : undefined
+  const selectedRunningBackgroundTasks =
+    selectedBackgroundTasks?.runningCount || 0
   const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
   const hasBlockingUi =
     newSessionOpen ||
@@ -4603,6 +5678,12 @@ function App() {
         computers.find((computer) => computer.id === selected.computerId),
       ).find((provider) => provider.id === (selected.provider || 'copilot'))
     : undefined
+  const selectedSupportsBackgroundTasks = selected
+    ? supportsBackgroundTasks(
+        computers.find((computer) => computer.id === selected.computerId),
+        selected.provider,
+      ) || selectedBackgroundTasks?.supported === true
+    : false
   const commandQuery = composer.startsWith('/')
     ? composer.slice(1).split(/\s/, 1)[0].toLowerCase()
     : ''
@@ -4632,6 +5713,96 @@ function App() {
       ? selectedComputerId
       : computers.find((computer) => computer.isLocal)?.id) ||
     computers.find((computer) => computer.online)?.id
+
+  const applyBackgroundTaskSnapshot = useCallback(
+    (
+      session: ManagedSession,
+      snapshot: BackgroundTaskSnapshot,
+      startedAtSequence: number,
+    ) => {
+      const key = sessionKey(session)
+      if (
+        (backgroundTaskEventSequenceRef.current.get(key) || 0) >
+        startedAtSequence
+      ) {
+        return
+      }
+      setBackgroundTaskSnapshots((current) => ({
+        ...current,
+        [key]: snapshot,
+      }))
+    },
+    [],
+  )
+
+  const loadBackgroundTasks = useCallback(
+    async (session: ManagedSession, force = false): Promise<void> => {
+      const key = sessionKey(session)
+      if (
+        !supportsBackgroundTasks(
+          computersRef.current.find(
+            (computer) => computer.id === session.computerId,
+          ),
+          session.provider,
+        )
+      ) {
+        return
+      }
+      if (backgroundTaskRequestsRef.current.has(key)) {
+        if (force) {
+          queuedBackgroundTaskRefreshesRef.current.add(key)
+        }
+        return
+      }
+      if (!force && backgroundTaskSnapshotsRef.current[key]) {
+        return
+      }
+      backgroundTaskRequestsRef.current.add(key)
+      const startedAtSequence = eventSequenceRef.current
+      if (
+        backgroundTasksOpenRef.current &&
+        selectedKeyStateRef.current === key
+      ) {
+        setLoadingBackgroundTasks(true)
+      }
+      try {
+        const snapshot = await listBackgroundTasks(
+          session.computerId,
+          session.id,
+        )
+        if (snapshot) {
+          applyBackgroundTaskSnapshot(session, snapshot, startedAtSequence)
+        }
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      } finally {
+        backgroundTaskRequestsRef.current.delete(key)
+        if (
+          backgroundTasksOpenRef.current &&
+          selectedKeyStateRef.current === key
+        ) {
+          setLoadingBackgroundTasks(false)
+        }
+        if (queuedBackgroundTaskRefreshesRef.current.delete(key)) {
+          void loadBackgroundTasks(session, true)
+        }
+      }
+    },
+    [applyBackgroundTaskSnapshot],
+  )
+
+  useEffect(() => {
+    backgroundTaskSnapshotsRef.current = backgroundTaskSnapshots
+    computersRef.current = computers
+    backgroundTasksOpenRef.current = backgroundTasksOpen
+    selectedKeyStateRef.current = selectedKey
+  }, [
+    backgroundTaskSnapshots,
+    backgroundTasksOpen,
+    computers,
+    selectedKey,
+    sessions,
+  ])
 
   useEffect(() => {
     const updateViewport = () => {
@@ -5340,9 +6511,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       'agentic-remote:default-models',
-      JSON.stringify(defaultModels),
+      JSON.stringify(defaultRuntimes),
     )
-  }, [defaultModels])
+  }, [defaultRuntimes])
 
   useEffect(() => {
     localStorage.setItem(
@@ -5429,6 +6600,26 @@ function App() {
     // `selectedKey` is a dependency because history can name a session that
     // has since been deleted, and that has to fall back to a real one.
   }, [loading, selectedKey, sessions])
+
+  useEffect(() => {
+    if (loading) {
+      return
+    }
+    const force = backgroundTaskRefreshVersion !==
+      seenBackgroundTaskRefreshRef.current
+    if (force) {
+      seenBackgroundTaskRefreshRef.current = backgroundTaskRefreshVersion
+    }
+    for (const session of sessions) {
+      void loadBackgroundTasks(session, force)
+    }
+  }, [
+    backgroundTaskRefreshVersion,
+    computers,
+    loading,
+    loadBackgroundTasks,
+    sessions,
+  ])
 
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
@@ -5594,6 +6785,7 @@ function App() {
       if (pushSettings) {
         applyMutedSessions(pushSettings.mutedSessions, startedAtMuteRevision)
       }
+      setBackgroundTaskRefreshVersion((current) => current + 1)
       const selectedAtRefresh = selectedRef.current
       // A replacement selected while the refresh was in flight is missing
       // from the snapshot by definition, and dropping it would jump the
@@ -5688,6 +6880,25 @@ function App() {
                 session.computerId !== event.computerId,
             ),
           )
+          setBackgroundTaskSnapshots((current) => {
+          const { [removedKey]: _removed, ...remaining } = current
+          return remaining
+          })
+        } else if (event.type === 'session.tasks.updated') {
+          const key = `${event.computerId}:${event.sessionId}`
+          eventSequenceRef.current += 1
+          backgroundTaskEventSequenceRef.current.set(
+          key,
+          eventSequenceRef.current,
+          )
+          setBackgroundTaskSnapshots((current) => ({
+          ...current,
+          [key]: {
+            tasks: event.tasks,
+            runningCount: event.runningCount,
+            supported: event.supported,
+          },
+          }))
         } else if (event.type === 'computer.updated') {
           eventSequenceRef.current += 1
           computerEventSequenceRef.current.set(
@@ -5706,6 +6917,13 @@ function App() {
           )
           setSessions((current) =>
             current.filter((session) => session.computerId !== event.computerId),
+          )
+          setBackgroundTaskSnapshots((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(
+                ([key]) => !key.startsWith(`${event.computerId}:`),
+              ),
+            ),
           )
           setComposerDrafts((current) =>
             Object.fromEntries(
@@ -6397,6 +7615,38 @@ function App() {
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
     setError(undefined)
+  }
+
+  function openBackgroundTasks() {
+    if (!selected || !selectedSupportsBackgroundTasks) {
+      return
+    }
+    setBackgroundTasksOpen(true)
+    void loadBackgroundTasks(selected, true)
+  }
+
+  async function cancelSelectedBackgroundTask(taskId: string) {
+    if (!selected || cancellingBackgroundTaskId) {
+      return
+    }
+    const target = selected
+    setCancellingBackgroundTaskId(taskId)
+    setError(undefined)
+    const startedAtSequence = eventSequenceRef.current
+    try {
+      const snapshot = await cancelBackgroundTask(
+        target.computerId,
+        target.id,
+        taskId,
+      )
+      if (snapshot) {
+        applyBackgroundTaskSnapshot(target, snapshot, startedAtSequence)
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setCancellingBackgroundTaskId(undefined)
+    }
   }
 
   function sidebarTouchStart(event: ReactTouchEvent<HTMLDivElement>) {
@@ -7274,6 +8524,7 @@ function App() {
                   {orderedComputers.map((computer) => (
                     <SortableComputerGroup
                       computer={computer}
+                      backgroundTasks={backgroundTaskSnapshots}
                       key={computer.id}
                       onSelectSession={selectSession}
                       selectedKey={selectedKey}
@@ -7580,6 +8831,26 @@ function App() {
               <FolderOpen size={18} />
             </button>
           ) : null}
+          {selected && selectedSupportsBackgroundTasks ? (
+            <button
+              aria-label="View background tasks"
+              className={`icon-button ${
+                selectedRunningBackgroundTasks > 0
+                  ? 'icon-button--task-running'
+                  : ''
+              }`}
+              onClick={openBackgroundTasks}
+              title="View background tasks"
+              type="button"
+            >
+              <List size={18} />
+              {selectedRunningBackgroundTasks > 0 ? (
+                <span className="background-task-button__count">
+                  {selectedRunningBackgroundTasks}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
           {selected?.provider !== 'claude' &&
           selected?.executionMode === 'sdk' &&
           selectedProviderCapability?.supportsTmuxMigration === true ? (
@@ -7702,65 +8973,10 @@ function App() {
               </p>
             </div>
           ) : (
-            <div className="message-stack">
-              {selected.messages
-                .map((message) => (
-                  message.role === 'activity' ? (
-                    <article
-                      className={`message message--activity ${
-                        message.id === currentTool?.id
-                          ? 'tool-activity-slot'
-                          : 'tool-activity-history'
-                      }`}
-                      key={message.id}
-                    >
-                      <ActivityMessage
-                        content={message.content}
-                        status={message.activityStatus}
-                      />
-                    </article>
-                  ) : (
-                    <article
-                      className={`message message--${message.role}`}
-                      key={message.id}
-                    >
-                      <div className="message__metadata">
-                        <span className="message__label">
-                          {message.role === 'user'
-                            ? 'You'
-                            : message.role === 'notice'
-                              ? 'Command'
-                              : 'Agent'}
-                        </span>
-                        <time
-                          className="message__timestamp"
-                          dateTime={message.createdAt}
-                          title={messageDateTimeFormatter.format(
-                            new Date(message.createdAt),
-                          )}
-                        >
-                          {messageTimeFormatter.format(
-                            new Date(message.createdAt),
-                          )}
-                        </time>
-                      </div>
-                      <div className="message__content">
-                        {message.content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {message.content}
-                          </ReactMarkdown>
-                        ) : (
-                          <span className="typing-indicator">
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                        )}
-                      </div>
-                    </article>
-                  )
-                ))}
-            </div>
+            <ConversationMessages
+              currentToolId={currentTool?.id}
+              messages={selected.messages}
+            />
           )}
           {selected?.pendingPermission ? (
             <PermissionCard
@@ -7816,6 +9032,12 @@ function App() {
             {statusline.queue ? (
               <span>{selected.queuedCount || 0} queued</span>
             ) : null}
+            {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
+              <span className="web-statusline__tasks">
+                {selectedRunningBackgroundTasks} background task
+                {selectedRunningBackgroundTasks === 1 ? '' : 's'} running
+              </span>
+            ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
             ) : null}
@@ -7826,6 +9048,14 @@ function App() {
             selected.runtime?.allowAllPermissions !== undefined ? (
               <span>
                 {selected.runtime.allowAllPermissions ? 'allow all' : 'ask'}
+              </span>
+            ) : null}
+            {statusline.update && selected.runtime?.updateAvailable ? (
+              <span
+                className="web-statusline__update"
+                data-testid="web-statusline-update"
+              >
+                v{selected.runtime.updateAvailable} available · run /update
               </span>
             ) : null}
           </div>
@@ -8200,7 +9430,7 @@ function App() {
       <NewSessionDialog
         computers={computers}
         defaultComputerId={defaultComputerId}
-        defaultModels={defaultModels}
+        defaultRuntimes={defaultRuntimes}
         defaultSessionFolders={defaultSessionFolders}
         onClose={() => setNewSessionOpen(false)}
         onCreated={created}
@@ -8219,6 +9449,13 @@ function App() {
           setSessions((current) =>
             current.filter((session) => session.computerId !== computerId),
           )
+          setBackgroundTaskSnapshots((current) =>
+            Object.fromEntries(
+              Object.entries(current).filter(
+                ([key]) => !key.startsWith(`${computerId}:`),
+              ),
+            ),
+          )
         }}
         open={computersOpen}
       />
@@ -8228,13 +9465,31 @@ function App() {
         open={statuslineOpen}
         settings={statusline}
       />
+      {selected ? (
+        <BackgroundTasksDialog
+          cancellingTaskId={cancellingBackgroundTaskId}
+          loading={loadingBackgroundTasks}
+          onCancel={(taskId) => void cancelSelectedBackgroundTask(taskId)}
+          onClose={() => setBackgroundTasksOpen(false)}
+          onRefresh={() => void loadBackgroundTasks(selected, true)}
+          open={backgroundTasksOpen}
+          sessionTitle={selected.title}
+          snapshot={
+            selectedBackgroundTasks || {
+              tasks: [],
+              runningCount: 0,
+              supported: selectedSupportsBackgroundTasks,
+            }
+          }
+        />
+      ) : null}
       <AppSettingsDialog
         onApplyUpdate={() => void applyPwaUpdate()}
         onClose={() => setSettingsOpen(false)}
         computers={computers}
-        defaultModels={defaultModels}
+        defaultRuntimes={defaultRuntimes}
         defaultSessionFolders={defaultSessionFolders}
-        onDefaultModelsChange={setDefaultModels}
+        onDefaultRuntimesChange={setDefaultRuntimes}
         onDefaultSessionFoldersChange={setDefaultSessionFolders}
         onStatuslineChange={setStatusline}
         onUpdateReady={setUpdateRegistration}

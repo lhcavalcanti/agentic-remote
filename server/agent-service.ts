@@ -19,11 +19,15 @@ import {
 import type {
   AgentProvider,
   AgentProviderCapability,
+  ActivityKind,
+  BackgroundTask,
+  BackgroundTaskSnapshot,
   ChatMessage,
   AgentMode,
   ConfigureRuntimeInput,
   PendingPermission,
   PendingUserInput,
+  ProviderRuntimeOptions,
   QueuedPrompt,
   RemovedQueuedPrompt,
   ServerEvent,
@@ -37,12 +41,22 @@ import type {
   UserInputForm,
   RuntimeModelOption,
   RuntimeOptions,
+  RuntimeReasoningEffort,
   SessionStatus,
   SlashCommand,
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
+import {
+  backgroundTasksFromEvents,
+  MAX_BACKGROUND_TASKS,
+  normalizeBackgroundTask,
+  type CopilotTaskInfo,
+  type CopilotTaskProgress,
+  type CopilotTasksApi,
+} from './background-task-adapter.js'
+import { BackgroundTaskTracker } from './background-task-tracker.js'
 import { SessionStore, type DiscoveredSession } from './session-store.js'
 import {
   findActiveCopilotSessions,
@@ -68,7 +82,11 @@ import {
   searchWorkspace,
 } from './workspace-browser.js'
 import {
+  isTerminalAgentWorking,
+  isTerminalOverlay,
+  terminalCommandOutput,
   TmuxTerminalSessionController,
+  type TerminalFormStep,
   type TerminalSessionController,
 } from './terminal-session.js'
 
@@ -112,6 +130,7 @@ export interface CopilotSessionLike {
       CopilotSession['rpc']['commands'],
       'list' | 'invoke' | 'enqueue'
     >
+    tasks?: CopilotTasksApi
     name: Pick<CopilotSession['rpc']['name'], 'set'>
     model: Pick<CopilotSession['rpc']['model'], 'getCurrent' | 'switchTo'>
     mode: Pick<CopilotSession['rpc']['mode'], 'set'>
@@ -136,6 +155,26 @@ interface ModelPromptLimits {
   default?: number
   long?: number
   maximum?: number
+}
+
+interface CreationRuntime {
+  model: string
+  reasoningEffort?: RuntimeReasoningEffort
+  contextTier: 'default' | 'long_context'
+  contextTokenLimit?: number
+  contextEstimated: true
+}
+
+function isRuntimeReasoningEffort(
+  value: unknown,
+): value is RuntimeReasoningEffort {
+  return (
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh' ||
+    value === 'max'
+  )
 }
 
 class RuntimeConfigurationError extends Error {
@@ -179,9 +218,115 @@ export interface AgentServiceEvents {
   event: [event: ServerEvent]
 }
 
+function activityKind(data: unknown): ActivityKind {
+  const normalizedToolName = (stringValue(recordValue(data).toolName) || 'tool')
+    .toLowerCase()
+    .replaceAll('-', '_')
+  if (normalizedToolName === 'skill') {
+    return 'skill'
+  }
+  if (normalizedToolName === 'task') {
+    return 'agent'
+  }
+  return 'tool'
+}
+
+function activityDuration(startedAt: string, completedAt: string): number | undefined {
+  const start = Date.parse(startedAt)
+  const end = Date.parse(completedAt)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return undefined
+  }
+  return end - start
+}
+
+function activityResult(data: unknown, success: boolean): string | undefined {
+  const tool = recordValue(data)
+  const result = recordValue(tool.result)
+  const resultContent =
+    previewText(result.detailedContent, true) ||
+    previewText(result.content, true) ||
+    previewText(result.output, true) ||
+    previewText(result.message, true) ||
+    previewText(tool.result, true)
+  const error = previewText(tool.error, true) ||
+    previewText(recordValue(tool.error).message, true)
+  const text = success ? resultContent : error || resultContent
+  if (text) {
+    return success ? text : `Error: ${text}`
+  }
+  return success ? undefined : 'Error: tool failed; inspect the session log'
+}
+
+interface ActivityToolStart {
+  kind: ActivityKind
+  parentToolCallId?: string
+  toolCallId: string
+}
+
+function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
+  return kind === 'skill' || kind === 'agent'
+}
+
+function activityGroupIdFor(
+  parentToolCallId: string | undefined,
+  agentId: string | undefined,
+  toolStartsByCallId: Map<string, ActivityToolStart>,
+  subagentParentsByAgentId: Map<string, string>,
+): string | undefined {
+  const candidateParents = [
+    parentToolCallId,
+    agentId ? subagentParentsByAgentId.get(agentId) : undefined,
+  ].filter((value, index, values): value is string =>
+    Boolean(value) && values.indexOf(value) === index,
+  )
+  for (const candidate of candidateParents) {
+    const visited = new Set<string>()
+    let parentToolCallIdToCheck: string | undefined = candidate
+    while (parentToolCallIdToCheck && !visited.has(parentToolCallIdToCheck)) {
+      visited.add(parentToolCallIdToCheck)
+      const parent = toolStartsByCallId.get(parentToolCallIdToCheck)
+      if (!parent) {
+        break
+      }
+      if (isActivityGroupKind(parent.kind)) {
+        return `tool:${parent.toolCallId}`
+      }
+      parentToolCallIdToCheck = parent.parentToolCallId
+    }
+  }
+  return undefined
+}
+
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
+  const toolStartsByCallId = new Map<
+    string,
+    ActivityToolStart
+  >()
+  const subagentParentsByAgentId = new Map<string, string>()
+  for (const event of events) {
+    if (event.type === 'tool.execution_start') {
+      toolStartsByCallId.set(event.data.toolCallId, {
+        kind: activityKind(event.data),
+        parentToolCallId: stringValue(
+          recordValue(event.data).parentToolCallId,
+        ),
+        toolCallId: event.data.toolCallId,
+      })
+    } else if (event.type === 'subagent.started' && event.agentId) {
+      subagentParentsByAgentId.set(event.agentId, event.data.toolCallId)
+    }
+  }
+  const activityGroupId = (event: SessionEvent): string | undefined => {
+    return activityGroupIdFor(
+      stringValue(recordValue(event.data).parentToolCallId),
+      event.agentId,
+      toolStartsByCallId,
+      subagentParentsByAgentId,
+    )
+  }
   const finishRunningActivities = (
     activityStatus: 'completed' | 'failed' = 'completed',
   ) => {
@@ -212,7 +357,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       continue
     }
-    if (event.type === 'assistant.message' && !event.agentId) {
+    if (event.type === 'assistant.message' && !eventAgentId(event)) {
       const content = event.data.content.trim()
       if (content) {
         finishRunningActivities()
@@ -225,12 +370,12 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       }
       continue
     }
-    if (event.type === 'tool.execution_start' && !event.agentId) {
+    if (event.type === 'tool.execution_start') {
       const toolCallId = event.data.toolCallId
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete') {
+      if (toolName === 'task_complete' && !event.agentId) {
         const summary = stringValue(
           recordValue(event.data.arguments).summary,
         )?.trim()
@@ -244,21 +389,31 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
         content: toolActivityContent(event.data),
         createdAt: event.timestamp,
         activityStatus: 'running',
+        activityKind: activityKind(event.data),
+        activityGroupId: activityGroupId(event),
       })
       continue
     }
-    if (event.type === 'tool.execution_complete' && !event.agentId) {
+    if (event.type === 'tool.execution_complete') {
       const toolCallId = event.data.toolCallId
       const message = messages.find(
         (entry) => entry.id === `tool:${toolCallId}`,
       )
       if (message) {
         message.activityStatus = event.data.success ? 'completed' : 'failed'
-        const resultContent = stringValue(
+        const resultContent = activityResult(event.data, event.data.success)
+        const duration = activityDuration(message.createdAt, event.timestamp)
+        if (resultContent) {
+          message.activityResult = resultContent
+        }
+        if (duration !== undefined) {
+          message.activityDurationMs = duration
+        }
+        const taskResultContent = stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim()
         const taskCompletionSummary = taskCompletionSummaries.has(toolCallId)
-          ? resultContent || taskCompletionSummaries.get(toolCallId)
+          ? taskResultContent || taskCompletionSummaries.get(toolCallId)
           : undefined
         if (event.data.success && taskCompletionSummary) {
           finishRunningActivities()
@@ -626,7 +781,7 @@ export function pendingUserInputFromEvents(
       }
     | undefined
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     if (event.type === 'user.message') {
@@ -676,6 +831,74 @@ export function pendingUserInputFromEvents(
     }
   }
   return pending?.input
+}
+
+/**
+ * Turns an answered form into the moves that fill the agent's own form.
+ * Anything that cannot be mapped confidently returns undefined, so the caller
+ * falls back to cancelling the prompt and answering in a message rather than
+ * submitting a value the user did not choose.
+ */
+export function terminalFormSteps(
+  form: UserInputForm,
+  values: Record<string, UserInputFieldValue>,
+): TerminalFormStep[] | undefined {
+  const steps: TerminalFormStep[] = []
+  for (const field of form.fields) {
+    const value = values[field.name]
+    if (field.type === 'array') {
+      return undefined
+    }
+    if (field.type === 'boolean') {
+      if (typeof value !== 'boolean') {
+        return undefined
+      }
+      // The agent lists Yes, No, then a freeform row.
+      steps.push({ kind: 'select', optionCount: 3, index: value ? 0 : 1 })
+      continue
+    }
+    const options = field.options
+    if (options && options.length > 0) {
+      const index = options.findIndex((option) => option.value === value)
+      if (index < 0) {
+        return undefined
+      }
+      steps.push({
+        kind: 'select',
+        optionCount: options.length + 1,
+        index,
+      })
+      continue
+    }
+    if (value !== undefined && typeof value !== 'string' && typeof value !== 'number') {
+      return undefined
+    }
+    steps.push({ kind: 'text', value: value === undefined ? '' : String(value) })
+  }
+  return steps.length === form.fields.length ? steps : undefined
+}
+
+/**
+ * A cancelled prompt leaves the agent without its answer, so the reply spells
+ * out every field it asked for instead of sending an opaque JSON blob.
+ */
+function persistedFormAnswer(
+  request: PendingUserInput,
+  values: Record<string, UserInputFieldValue>,
+): string {
+  const lines = (request.form?.fields || []).map((field) => {
+    const value = values[field.name]
+    const rendered = Array.isArray(value)
+      ? value.join(', ')
+      : value === undefined
+        ? ''
+        : String(value)
+    return `- ${field.name}: ${rendered}`
+  })
+  return [
+    'Answering the question you just asked, from the Agentic Remote app:',
+    ...lines,
+  ].join('\n')
 }
 
 function visibleUserContent(content: string): string {
@@ -829,10 +1052,83 @@ function stripAnsi(value: string): string {
   return value.replace(ansiSequence, '')
 }
 
-function statusFromEvents(events: SessionEvent[]): SessionStatus {
+const foregroundLifecycleEvents = new Set<SessionEvent['type']>([
+  'assistant.turn_start',
+  'permission.requested',
+  'permission.completed',
+  'session.error',
+  'assistant.turn_end',
+  'session.idle',
+  'abort',
+  'session.shutdown',
+])
+
+function eventAgentId(event: SessionEvent): string | undefined {
+  return (
+    stringValue(event.agentId) ||
+    stringValue(recordValue(event.data).agentId)
+  )
+}
+
+function isForegroundLifecycleEvent(event: SessionEvent): boolean {
+  return !eventAgentId(event) && foregroundLifecycleEvents.has(event.type)
+}
+
+function isForegroundCompletionEvent(event: SessionEvent): boolean {
+  return (
+    isForegroundLifecycleEvent(event) &&
+    (event.type === 'assistant.turn_end' ||
+      event.type === 'session.idle' ||
+      event.type === 'session.error' ||
+      event.type === 'abort' ||
+      event.type === 'session.shutdown')
+  )
+}
+
+function isBackgroundTaskEvent(event: SessionEvent): boolean {
+  if (
+    eventAgentId(event) ||
+    event.type === 'session.background_tasks_changed' ||
+    event.type === 'subagent.started' ||
+    event.type === 'subagent.completed' ||
+    event.type === 'subagent.failed'
+  ) {
+    return true
+  }
+  if (event.type !== 'system.notification') {
+    return false
+  }
+  const data = recordValue(event.data)
+  const kind = recordValue(data.kind)
+  return [
+    'agent_idle',
+    'agent_completed',
+    'shell_completed',
+    'shell_detached_completed',
+  ].includes(stringValue(kind.type) || '')
+}
+
+export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
+  // Work a turn handed to background agents outlives the turn itself, so the
+  // agents still running are tracked separately from it.
+  const workingAgents = new Set<string>()
   for (const event of events) {
-    if (event.agentId) {
+    if (!isForegroundLifecycleEvent(event)) {
+      const agentId = eventAgentId(event)
+      if (agentId) {
+        if (event.type === 'subagent.started') {
+          workingAgents.add(agentId)
+        } else if (
+          event.type === 'subagent.completed' ||
+          event.type === 'subagent.failed'
+        ) {
+          // Failing ends an agent just as completing does. Tracking only the
+          // completions would leave a failed agent working for good, and the
+          // session running with it.
+          workingAgents.delete(agentId)
+        }
+      }
       continue
     }
     switch (event.type) {
@@ -850,13 +1146,21 @@ function statusFromEvents(events: SessionEvent[]): SessionStatus {
         break
       case 'assistant.turn_end':
       case 'session.idle':
+        status = 'idle'
+        break
       case 'abort':
       case 'session.shutdown':
+        // Nothing outlives the session ending, so agents it was waiting on
+        // are not still working.
+        workingAgents.clear()
         status = 'idle'
         break
     }
   }
-  return status
+  // A turn that handed its work to background agents and then ended has not
+  // finished it. Reporting the session as idle offers it for the next prompt
+  // and calls the work done while it is still going on.
+  return status === 'idle' && workingAgents.size > 0 ? 'running' : status
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -903,10 +1207,10 @@ function eventContextLength(event: SessionEvent): number {
   }
 
   if (event.type === 'assistant.message') {
-    return event.agentId ? 0 : contextTextLength(data.content)
+    return eventAgentId(event) ? 0 : contextTextLength(data.content)
   }
   if (event.type === 'tool.execution_complete') {
-    return event.agentId ? 0 : contextTextLength(data.result)
+    return eventAgentId(event) ? 0 : contextTextLength(data.result)
   }
   return 0
 }
@@ -917,7 +1221,7 @@ function workingDirectoryFromEvents(
 ): string | undefined {
   let cwd = fallback
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     const data = recordValue(event.data)
@@ -978,7 +1282,7 @@ export function runtimeInfoFromEvents(
   const runtime: SessionRuntimeInfo = { ...previous }
   let exactContext = false
   for (const event of events) {
-    if (event.agentId) {
+    if (eventAgentId(event)) {
       continue
     }
     const data = recordValue(event.data)
@@ -1076,6 +1380,35 @@ function isMissingSessionError(error: unknown): boolean {
   )
 }
 
+function isUnsupportedBackgroundTaskError(error: unknown): boolean {
+  const details = recordValue(error)
+  const nestedDetails = recordValue(details.error)
+  const code = details.code ?? nestedDetails.code
+  if (
+    code === -32601 ||
+    code === '-32601' ||
+    (typeof code === 'string' &&
+      code.toLowerCase().replaceAll(/[\s_-]+/g, '') === 'methodnotfound')
+  ) {
+    return true
+  }
+  const message =
+    error instanceof Error
+      ? error.message
+      : stringValue(details.message) || stringValue(nestedDetails.message)
+  if (!message) {
+    return false
+  }
+  const normalizedMessage = message.toLowerCase()
+  return (
+    normalizedMessage.includes('method not found') ||
+    normalizedMessage.includes('methodnotfound') ||
+    normalizedMessage.includes('unknown method') ||
+    normalizedMessage.includes('unhandled method') ||
+    normalizedMessage.includes('not supported')
+  )
+}
+
 function normalizedTitle(value: string | undefined, fallback: string): string {
   const firstLine = value?.trim().split(/\r?\n/, 1)[0]?.trim() || fallback
   return firstLine.length > 72 ? `${firstLine.slice(0, 72)}…` : firstLine
@@ -1123,9 +1456,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
+  private readonly backgroundTaskTracker = new BackgroundTaskTracker()
+  private readonly backgroundTaskSyncs = new Map<
+    string,
+    Promise<BackgroundTaskSnapshot>
+  >()
+  private readonly backgroundTaskResyncNeeded = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
   private readonly terminalUserInputChecks = new Map<string, number>()
+  private readonly terminalUpdateChecks = new Map<string, number>()
   private readonly answeredTerminalPermissions = new Map<
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
@@ -1154,6 +1494,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly liveTaskCompletionSummaries = new Map<string, string>()
+  private readonly liveActivityEvents = new Map<
+    string,
+    Map<
+      string,
+      {
+        agentId?: string
+        parentToolCallId?: string
+        kind?: ActivityKind
+        toolCallId?: string
+        subagentToolCallId?: string
+      }
+    >
+  >()
   private readonly modelPromptLimits = new Map<string, ModelPromptLimits>()
   private readonly runtimeModels = new Map<string, RuntimeModelOption>()
   private runtimeModelLoad?: Promise<void>
@@ -1197,6 +1550,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         available: true,
         terminalBacked: true,
         supportsTmuxMigration: true,
+        supportsBackgroundTasks: true,
       },
     ]
   }
@@ -1258,8 +1612,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.elicitations.clear()
     this.terminalUserInputChecks.clear()
+    this.terminalUpdateChecks.clear()
     this.answeredTerminalPermissions.clear()
     this.answeredTerminalInputs.clear()
+    this.backgroundTaskSyncs.clear()
+    this.backgroundTaskResyncNeeded.clear()
+    for (const session of this.store.list()) {
+      this.backgroundTaskTracker.remove(session.id)
+    }
     const disconnected = await Promise.allSettled(
       [...this.sessions.values()].map((session) => session.disconnect()),
     )
@@ -1377,6 +1737,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.runtimeModels.size > 0) {
       return Promise.resolve()
     }
+    return this.refreshRuntimeModels()
+  }
+
+  private refreshRuntimeModels(): Promise<void> {
     if (this.runtimeModelLoad) {
       return this.runtimeModelLoad
     }
@@ -1403,8 +1767,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         503,
       )
     }
-    this.modelPromptLimits.clear()
-    this.runtimeModels.clear()
+    const promptLimits = new Map<string, ModelPromptLimits>()
+    const runtimeModels = new Map<string, RuntimeModelOption>()
     for (const model of models) {
       const value = recordValue(model)
       const capabilities = recordValue(value.capabilities)
@@ -1417,19 +1781,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         long: numberValue(longContext.maxPromptTokens),
         maximum: numberValue(capabilityLimits.max_prompt_tokens),
       }
-      this.modelPromptLimits.set(model.id, limits)
+      promptLimits.set(model.id, limits)
       const supportedEfforts = Array.isArray(value.supportedReasoningEfforts)
         ? value.supportedReasoningEfforts.filter(
-            (effort): effort is string => typeof effort === 'string',
+            isRuntimeReasoningEffort,
           )
         : []
-      this.runtimeModels.set(model.id, {
+      runtimeModels.set(model.id, {
         id: model.id,
         name: stringValue(value.name) || model.id,
-        reasoningEfforts:
-          supportedEfforts.length > 0
-            ? supportedEfforts
-            : [stringValue(value.defaultReasoningEffort) || 'medium'],
+        reasoningEfforts: supportedEfforts,
         contextTiers:
           Object.keys(longContext).length > 0
             ? ['default', 'long_context']
@@ -1439,6 +1800,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           long_context: limits.long || limits.maximum,
         },
       })
+    }
+    this.modelPromptLimits.clear()
+    this.runtimeModels.clear()
+    for (const [id, limits] of promptLimits) {
+      this.modelPromptLimits.set(id, limits)
+    }
+    for (const [id, model] of runtimeModels) {
+      this.runtimeModels.set(id, model)
     }
   }
 
@@ -1492,19 +1861,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     allowAllPermissions = true,
     provider: AgentProvider = 'copilot',
     model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
   ): Promise<SessionDetail> {
     if (provider !== 'copilot') {
       throw new Error(`Provider ${provider} is not handled by Copilot`)
     }
     const cwd = await this.validateDirectory(inputPath)
-    const selectedModel = model?.trim() || undefined
+    const runtime = await this.creationRuntime(
+      model,
+      reasoningEffort,
+      contextTier,
+    )
     if (terminalBacked) {
-      return this.createTerminalSession(cwd, allowAllPermissions, selectedModel)
+      return this.createTerminalSession(cwd, allowAllPermissions, runtime)
     }
     const sdkSession = await this.client.createSession({
       workingDirectory: cwd,
       streaming: true,
-      ...(selectedModel ? { model: selectedModel } : {}),
+      ...runtime,
       onPermissionRequest: allowAllPermissions
         ? async () => ({ kind: 'approve-once' })
         : (request, invocation) =>
@@ -1529,7 +1904,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         messages: [],
         runtime: {
           allowAllPermissions,
-          ...(selectedModel ? { model: selectedModel } : {}),
+          ...runtime,
         },
       },
       { managedOpen: true, backend: 'sdk' },
@@ -1562,14 +1937,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return renamed
   }
 
-  async runtimeOptions(id: string): Promise<RuntimeOptions> {
-    let stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
+  async providerRuntimeOptions(
+    provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    if (provider !== 'copilot') {
+      throw new Error(`Provider ${provider} is not handled by Copilot`)
     }
-    stored = await this.reconcileRuntimeStatus(stored)
     try {
-      await this.ensureRuntimeModels()
+      await this.refreshRuntimeModels()
     } catch (error) {
       throw new RuntimeConfigurationError(
         'Runtime models are temporarily unavailable. Try again.',
@@ -1577,9 +1952,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         { cause: error },
       )
     }
+    return { models: [...this.runtimeModels.values()] }
+  }
+
+  async runtimeOptions(id: string): Promise<RuntimeOptions> {
+    let stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    stored = await this.reconcileRuntimeStatus(stored)
+    const options = await this.providerRuntimeOptions('copilot')
     return {
       current: stored.runtime || {},
-      models: [...this.runtimeModels.values()],
+      models: options.models,
       status: stored.status,
     }
   }
@@ -1600,7 +1985,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     }
     try {
-      await this.ensureRuntimeModels()
+      await this.refreshRuntimeModels()
     } catch (error) {
       throw new RuntimeConfigurationError(
         'Runtime models are temporarily unavailable. Try again.',
@@ -1612,7 +1997,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!model) {
       throw new RuntimeConfigurationError('Selected model is not available', 400)
     }
-    if (!model.reasoningEfforts.includes(input.reasoningEffort)) {
+    if (
+      input.reasoningEffort &&
+      !model.reasoningEfforts.includes(input.reasoningEffort)
+    ) {
       throw new RuntimeConfigurationError(
         'Selected reasoning effort is not supported by this model',
         400,
@@ -1700,7 +2088,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const events = await this.sessionEventReader(stored.id)
     const latestLifecycle = events.findLast(
       (event) =>
-        !event.agentId &&
+        isForegroundLifecycleEvent(event) &&
         (event.type === 'assistant.turn_start' ||
           event.type === 'assistant.turn_end' ||
           event.type === 'session.idle' ||
@@ -1779,6 +2167,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error('Session can only move to tmux while idle')
     }
+    // A detached shell keeps running without holding the foreground, so an
+    // idle session can still own live work. Migrating disconnects the SDK
+    // owner and drops the tracking, which would abandon it silently.
+    const tasks = await this.syncBackgroundTasks(id).catch(() =>
+      this.backgroundTaskTracker.get(id),
+    )
+    if (
+      tasks.tasks.some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      throw new Error(
+        'Session can only move to tmux once its background tasks finish',
+      )
+    }
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
     }
@@ -1792,6 +2195,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.sessions.delete(id)
     }
     this.hydratedSessions.delete(id)
+    this.backgroundTaskTracker.remove(id)
+    this.backgroundTaskSyncs.delete(id)
     this.launchingTerminalSessionIds.add(id)
     this.discoveryGeneration += 1
     try {
@@ -1837,12 +2242,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const runtime: ConfigureRuntimeInput | undefined =
       stored.runtime?.model &&
-      stored.runtime.reasoningEffort &&
       (stored.runtime.contextTier === 'default' ||
         stored.runtime.contextTier === 'long_context')
         ? {
             model: stored.runtime.model,
-            reasoningEffort: stored.runtime.reasoningEffort,
+            ...(isRuntimeReasoningEffort(stored.runtime.reasoningEffort)
+              ? { reasoningEffort: stored.runtime.reasoningEffort }
+              : {}),
             contextTier: stored.runtime.contextTier,
             mode: agentMode(stored.runtime.mode) || 'interactive',
           }
@@ -1949,10 +2355,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.eventLogFingerprints.delete(id)
       this.eventLogVersions.delete(id)
       this.workspaceVersions.delete(id)
+      this.backgroundTaskSyncs.delete(id)
+      this.backgroundTaskTracker.remove(id)
       this.liveTranscriptWatermarks.delete(id)
+      this.liveActivityEvents.delete(id)
       this.activePrompts.delete(id)
       this.queueOperations.delete(id)
       this.terminalUserInputChecks.delete(id)
+      this.terminalUpdateChecks.delete(id)
       this.answeredTerminalPermissions.delete(id)
       this.answeredTerminalInputs.delete(id)
       const cleared = await this.store.replaceWithClearedSession(
@@ -1978,7 +2388,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async createTerminalSession(
     cwd: string,
     allowAllPermissions: boolean,
-    model?: string,
+    runtime?: SessionRuntimeInfo,
   ): Promise<SessionDetail> {
     if (!this.terminalController.create) {
       throw new Error('Terminal-backed sessions are not available')
@@ -1988,13 +2398,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.launchingTerminalSessionIds.add(sessionId)
     this.discoveryGeneration += 1
     try {
-      if (model) {
+      if (runtime) {
         await this.terminalController.create(
           sessionId,
           cwd,
           title,
           allowAllPermissions,
-          { model },
+          runtime,
         )
       } else {
         await this.terminalController.create(
@@ -2016,7 +2426,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           messages: [],
           runtime: {
             allowAllPermissions,
-            ...(model ? { model } : {}),
+            ...runtime,
           },
         },
         { managedOpen: true, backend: 'terminal' },
@@ -2030,6 +2440,53 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       this.launchingTerminalSessionIds.delete(sessionId)
       this.discoveryGeneration += 1
+    }
+  }
+
+  private async creationRuntime(
+    model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
+  ): Promise<CreationRuntime | undefined> {
+    const modelId = model?.trim()
+    if (!modelId) {
+      if (reasoningEffort?.trim() || contextTier) {
+        throw new RuntimeConfigurationError(
+          'A model is required when setting effort or context',
+          400,
+        )
+      }
+      return undefined
+    }
+    const options = await this.providerRuntimeOptions('copilot')
+    const selected = options.models.find((candidate) => candidate.id === modelId)
+    if (!selected) {
+      throw new RuntimeConfigurationError('Selected model is not available', 400)
+    }
+    const effort = reasoningEffort || selected.reasoningEfforts[0]
+    const tier = contextTier || 'default'
+    if (effort && !selected.reasoningEfforts.includes(effort)) {
+      throw new RuntimeConfigurationError(
+        'Selected reasoning effort is not supported by this model',
+        400,
+      )
+    }
+    if (!selected.contextTiers.includes(tier)) {
+      throw new RuntimeConfigurationError(
+        'Selected context tier is not supported by this model',
+        400,
+      )
+    }
+    const limits = this.modelPromptLimits.get(modelId)
+    return {
+      model: modelId,
+      ...(effort ? { reasoningEffort: effort } : {}),
+      contextTier: tier,
+      contextTokenLimit:
+        tier === 'long_context'
+          ? limits?.long || limits?.maximum
+          : limits?.default || limits?.maximum,
+      contextEstimated: true,
     }
   }
 
@@ -2109,11 +2566,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async enqueuePrompt(
     sessionId: string,
     content: string,
+    command = false,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
       content,
       createdAt: new Date().toISOString(),
+      ...(command ? { command: true } : {}),
     }
     return this.serializeQueue(sessionId, async () => {
       const queued = await this.store.enqueuePrompt(sessionId, prompt)
@@ -2125,9 +2584,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async enqueueTerminalPrompt(
     sessionId: string,
     content: string,
+    command = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content)
+    const queued = await this.enqueuePrompt(sessionId, content, command)
     if (!wasIdle) {
       return queued
     }
@@ -2346,11 +2806,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, canonicalCommand)
+      return this.enqueueTerminalPrompt(sessionId, canonicalCommand, true)
     }
     const nativeEnqueue =
       !catalog.session &&
       this.shouldUseNativeTerminalQueue(sessionId, enqueue)
+    // Taken before the command is sent so the response can be told apart from
+    // content the pane was already showing. While the agent is working its own
+    // streaming output arrives in the same pane and cannot be told apart from
+    // the command's response, so no attempt is made to report one.
+    const before =
+      nativeEnqueue || busy || this.store.get(sessionId)?.status === 'running'
+        ? undefined
+        : await this.terminalController.capture?.(sessionId)
     if (
       await this.terminalController.send(
         sessionId,
@@ -2358,14 +2826,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         nativeEnqueue,
       )
     ) {
+      const feedback = await this.terminalCommandFeedback(
+        sessionId,
+        canonicalCommand,
+        before,
+      )
       const notice = await this.store.addMessage(sessionId, {
         id: randomUUID(),
         role: 'notice',
-        content: canonicalCommand,
+        content: feedback.notice,
         createdAt: new Date().toISOString(),
       })
       this.publish(notice)
-      return notice
+      if (!feedback.startedTurn) {
+        return notice
+      }
+      // A command sent directly can start a turn just as a queued one can, and
+      // the session has to read as busy for it too, or the next prompt is sent
+      // into the turn before polling notices it.
+      const started = await this.store.markTerminalPromptDispatched(
+        sessionId,
+        new Date().toISOString(),
+      )
+      this.publish(started)
+      return started
     }
     const session = catalog.session
     if (!session) {
@@ -2423,6 +2907,66 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return notice
   }
 
+  /**
+   * The CLI writes a slash command's response into the terminal rather than
+   * the event log, so without this the conversation only shows the command
+   * that was sent. Polls briefly for the response and falls back to the
+   * command itself when there is nothing to report.
+   */
+  /**
+   * The notice a command produced, and what it left the terminal doing. Both
+   * matter apart from the text: a command that began a turn, and one that
+   * opened a full-screen view, each keep the keyboard, so nothing further may
+   * be sent until they release it.
+   */
+  private async terminalCommandFeedback(
+    sessionId: string,
+    command: string,
+    before: string | undefined,
+  ): Promise<{ notice: string; startedTurn: boolean; overlayOpen: boolean }> {
+    if (before === undefined || !this.terminalController.capture) {
+      return { notice: command, startedTurn: false, overlayOpen: false }
+    }
+    let previous: string | undefined
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      const after = await this.terminalController.capture(sessionId)
+      if (!after) {
+        continue
+      }
+      if (isTerminalOverlay(after)) {
+        // The view takes the keyboard: anything sent now lands in its search
+        // box instead of the composer, so the terminal counts as held.
+        return {
+          notice: `${command}\n\nOpened an interactive view in the terminal. Continue there; it cannot be shown here.`,
+          startedTurn: false,
+          overlayOpen: true,
+        }
+      }
+      // The command started a turn, so anything appearing now is the agent
+      // writing rather than the command answering.
+      if (isTerminalAgentWorking(after)) {
+        return { notice: command, startedTurn: true, overlayOpen: false }
+      }
+      const output = terminalCommandOutput(before, after, command)
+      // A response can be captured mid-paint, so report it only once it stops
+      // growing; otherwise a multi-line response is cut short.
+      if (output && output === previous) {
+        return {
+          notice: `${command}\n\n${output}`,
+          startedTurn: false,
+          overlayOpen: false,
+        }
+      }
+      previous = output
+    }
+    return {
+      notice: previous ? `${command}\n\n${previous}` : command,
+      startedTurn: false,
+      overlayOpen: false,
+    }
+  }
+
   async cancel(sessionId: string): Promise<void> {
     if (await this.terminalController.cancel(sessionId)) {
       return
@@ -2432,6 +2976,55 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     await session.abort()
+  }
+
+  async listBackgroundTasks(
+    sessionId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    const stored = this.store.get(sessionId)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (this.externalSessionIds.has(sessionId)) {
+      // Projected from an event log rather than owned over RPC, so there is no
+      // channel to cancel through and loading one would attach an SDK owner to
+      // a session the live CLI already owns.
+      const projected = backgroundTasksFromEvents(
+        await this.sessionEventReader(sessionId),
+        { assumeBackground: true },
+      )
+      return this.replaceBackgroundTasks(sessionId, projected, true)
+    }
+    return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
+  }
+
+  async cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    const current = await this.listBackgroundTasks(sessionId)
+    const task = current.tasks.find((candidate) => candidate.id === taskId)
+    if (!task) {
+      throw new Error('Background task not found')
+    }
+    if (!task.canCancel) {
+      throw new Error('Background task cannot be cancelled')
+    }
+    // Checked again before loading: ensureLoaded would attach an SDK owner to a
+    // session the live CLI owns.
+    if (this.externalSessionIds.has(sessionId)) {
+      throw new Error('Background task cannot be cancelled')
+    }
+    const session = await this.ensureLoaded(sessionId)
+    const cancel = session.rpc.tasks?.cancel
+    if (!cancel) {
+      throw new Error('Background task cancellation is not supported')
+    }
+    const result = await cancel({ id: taskId })
+    if (!result.cancelled) {
+      throw new Error('Background task could not be cancelled')
+    }
+    return this.listBackgroundTasks(sessionId)
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -2494,7 +3087,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.drainingSessions.delete(sessionId)
       this.queueOperations.delete(sessionId)
       this.workspaceVersions.delete(sessionId)
+      this.backgroundTaskSyncs.delete(sessionId)
+      this.backgroundTaskTracker.remove(sessionId)
+      this.liveActivityEvents.delete(sessionId)
       this.terminalUserInputChecks.delete(sessionId)
+      this.terminalUpdateChecks.delete(sessionId)
       this.answeredTerminalPermissions.delete(sessionId)
       this.answeredTerminalInputs.delete(sessionId)
       completed = true
@@ -2659,6 +3256,93 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         requestId,
         expiresAt: Date.now() + 60_000,
       })
+      // The agent is still showing this prompt in its terminal. Typing the
+      // answer while a structured form is open fills that form's focused
+      // field and submits every other field at its default, which silently
+      // turns confirmations into `false`. Close the prompt first, then answer.
+      const toolCallId = requestId.slice('persisted-user-input:'.length)
+      const terminalBacked = await this.terminalController.has(sessionId)
+      if (
+        terminalBacked &&
+        (await this.isToolCallComplete(sessionId, toolCallId))
+      ) {
+        // The agent already stopped waiting on this request, so it was
+        // answered or cancelled in the terminal. Whatever is on screen now
+        // belongs to something else, and filling it would answer the wrong
+        // prompt; the reply is dropped and the stale request cleared instead.
+        this.answeredPersistedInputs.delete(sessionId)
+        const settled = await this.store.update(sessionId, (session) => {
+          session.pendingUserInput = undefined
+        })
+        this.publish(settled)
+        return settled
+      }
+      if (terminalBacked && request.form) {
+        // Filling the agent's own form answers the tool it is waiting on, so
+        // the values arrive as the result it asked for.
+        const steps = terminalFormSteps(request.form, input.values || {})
+        const identity = {
+          question: request.question,
+          fields: request.form.fields.map((field) => field.title),
+        }
+        const filled =
+          steps &&
+          (await this.terminalController
+            .fillUserInputForm?.(sessionId, steps, identity)
+            .catch(() => false))
+        // Filling reports failure for a capture that timed out as well as for
+        // keys never sent, and the last Enter may already have submitted the
+        // form. Answering again would then submit a second time, so the agent
+        // is asked whether the request it was waiting on has finished.
+        if (
+          !filled &&
+          (await this.isToolCallComplete(sessionId, toolCallId))
+        ) {
+          const submitted = await this.store.update(sessionId, (session) => {
+            session.pendingUserInput = undefined
+            session.status = 'running'
+            session.activity = 'Continuing'
+          })
+          this.publish(submitted)
+          return submitted
+        }
+        if (filled) {
+          const answeredSession = await this.store.update(
+            sessionId,
+            (session) => {
+              session.pendingUserInput = undefined
+              session.status = 'running'
+              session.activity = 'Continuing'
+            },
+          )
+          this.publish(answeredSession)
+          return answeredSession
+        }
+      }
+      if (terminalBacked) {
+        const dismissed =
+          (await this.terminalController
+            .dismissUserInput?.(
+              sessionId,
+              request.form && {
+                question: request.question,
+                fields: request.form.fields.map((field) => field.title),
+              },
+            )
+            .catch(() => false)) ?? false
+        const closed =
+          dismissed && (await this.waitForToolCompletion(sessionId, toolCallId))
+        // The answer is about to be typed at the prompt. A form that is still
+        // open captures those keystrokes into its fields and submits the rest
+        // at their defaults, which is the corruption this path exists to
+        // avoid, so nothing is sent unless the form is known to have closed.
+        if (request.form && !closed) {
+          this.answeredPersistedInputs.delete(sessionId)
+          throw new Error(
+            'The agent is still showing its prompt, so the answer was not sent. Try again.',
+          )
+        }
+      }
       const cleared = await this.store.update(sessionId, (session) => {
         session.pendingUserInput = undefined
         session.status = 'idle'
@@ -2667,7 +3351,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(cleared)
       return this.sendMessage(
         sessionId,
-        request.form ? JSON.stringify(input.values) : answer,
+        request.form
+          ? persistedFormAnswer(request, input.values || {})
+          : answer,
         false,
       )
     } else {
@@ -2861,6 +3547,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const storedBeforeDiscovery = this.store.list()
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
+    const previouslyExternal = this.externalSessionIds
     this.externalSessionIds = new Set(
       [
         ...activeSessions
@@ -2869,6 +3556,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ...this.launchingTerminalSessionIds,
       ],
     )
+    await this.clearUpdateNoticeForExited(previouslyExternal)
     const indexedSessions = sessions.flatMap((session) => {
       if (this.deletedSessionIds.has(session.sessionId)) {
         return []
@@ -2976,6 +3664,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.externalSessionIds.has(sessionId)) {
           await this.syncExternalWorkspace(sessionId)
           await this.syncTerminalUserInput(sessionId)
+          await this.syncTerminalUpdateNotice(sessionId)
         }
         const version = await this.sessionEventVersion(sessionId)
         if (!version || this.eventLogVersions.get(sessionId) === version) {
@@ -2983,6 +3672,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return
         }
         const events = await this.sessionEventReader(sessionId)
+        const terminalTasks = this.externalSessionIds.has(sessionId)
+          ? backgroundTasksFromEvents(events, { assumeBackground: true })
+          : []
+        if (this.externalSessionIds.has(sessionId)) {
+          this.replaceBackgroundTasks(
+            sessionId,
+            terminalTasks,
+            true,
+          )
+        }
         const fingerprint = `${events.length}:${events.at(-1)?.id || ''}`
         if (this.eventLogFingerprints.get(sessionId) === fingerprint) {
           await this.recoverHiddenUserInput(sessionId, events)
@@ -3020,12 +3719,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           const dispatchTime = Date.parse(queueDispatchAt)
           const completion = events.some(
             (event) =>
-              Date.parse(event.timestamp) > dispatchTime &&
-              (event.type === 'assistant.turn_end' ||
-                event.type === 'session.idle' ||
-                event.type === 'session.error' ||
-                event.type === 'abort' ||
-                event.type === 'session.shutdown'),
+              Date.parse(event.timestamp) >= dispatchTime &&
+              isForegroundCompletionEvent(event),
           )
           if (completion) {
             await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
@@ -3048,7 +3743,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const cwd = workingDirectoryFromEvents(events, stored?.cwd)
         const contextCwd = events.some(
           (event) =>
-            event.type === 'session.context_changed' && !event.agentId,
+            event.type === 'session.context_changed' &&
+            !eventAgentId(event),
         )
         if (
           this.activePrompts.has(sessionId) ||
@@ -3074,11 +3770,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publish(updated)
         const latestCompletionAt = events.findLast(
           (event) =>
-            event.type === 'assistant.turn_end' ||
-            event.type === 'session.idle' ||
-            event.type === 'session.error' ||
-            event.type === 'abort' ||
-            event.type === 'session.shutdown',
+            // A turn that handed its work to background agents ends before
+            // they do, so the last agent finishing is the completion a prompt
+            // queued behind them is waiting on.
+            isForegroundCompletionEvent(event) ||
+            event.type === 'subagent.completed' ||
+            event.type === 'subagent.failed',
         )?.timestamp
         const firstQueuedAt = updated.queuedPrompts?.[0]?.createdAt
         if (
@@ -3092,6 +3789,60 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }),
     )
+  }
+
+  /**
+   * The notice is only true while the terminal that painted it is running.
+   * Once discovery drops the session nothing polls it again, so a stale offer
+   * would otherwise stay on screen until the terminal came back.
+   */
+  private async clearUpdateNoticeForExited(
+    previouslyExternal: Set<string>,
+  ): Promise<void> {
+    for (const sessionId of previouslyExternal) {
+      if (this.externalSessionIds.has(sessionId)) {
+        continue
+      }
+      this.terminalUpdateChecks.delete(sessionId)
+      if (this.store.get(sessionId)?.runtime?.updateAvailable === undefined) {
+        continue
+      }
+      const updated = await this.store.update(sessionId, (session) => {
+        session.runtime = { ...session.runtime, updateAvailable: undefined }
+      })
+      this.publish(updated)
+    }
+  }
+
+  /**
+   * Mirrors the update the CLI is advertising in its own status bar, so a
+   * session supervised from the web is not the only place the recommendation
+   * is invisible. The CLI checks rarely, so this does too.
+   */
+  private async syncTerminalUpdateNotice(sessionId: string): Promise<void> {
+    if (!this.terminalController.updateNotice) {
+      return
+    }
+    const stored = this.store.get(sessionId)
+    if (!stored || this.deletedSessionIds.has(sessionId)) {
+      return
+    }
+    const now = Date.now()
+    const lastCheck = this.terminalUpdateChecks.get(sessionId) || 0
+    if (now - lastCheck < 60_000) {
+      return
+    }
+    this.terminalUpdateChecks.set(sessionId, now)
+    const updateAvailable = await this.terminalController
+      .updateNotice(sessionId)
+      .catch(() => undefined)
+    if ((stored.runtime?.updateAvailable ?? undefined) === updateAvailable) {
+      return
+    }
+    const updated = await this.store.update(sessionId, (session) => {
+      session.runtime = { ...session.runtime, updateAvailable }
+    })
+    this.publish(updated)
   }
 
   /**
@@ -3159,7 +3910,45 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return false
   }
 
-  private async syncTerminalUserInput(sessionId: string): Promise<void> {    if (
+  /**
+   * Whether the agent has already recorded this tool call as finished. A
+   * request answered or cancelled in an attached terminal completes there, so
+   * this is what tells a reply that it is answering a prompt the agent has
+   * stopped waiting on.
+   */
+  private async isToolCallComplete(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<boolean> {
+    const events = await this.sessionEventReader(sessionId).catch(() => [])
+    return events.some(
+      (event) =>
+        event.type === 'tool.execution_complete' &&
+        !event.agentId &&
+        stringValue(recordValue(event.data).toolCallId) === toolCallId,
+    )
+  }
+
+  /**
+   * Waits for the agent to record the prompt as finished, so the answer that
+   * follows is typed at the prompt instead of into the closing form.
+   */
+  private async waitForToolCompletion(
+    sessionId: string,
+    toolCallId: string,
+    attempts = 20,
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      if (await this.isToolCallComplete(sessionId, toolCallId)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private async syncTerminalUserInput(sessionId: string): Promise<void> {
+    if (
       !this.terminalController.pendingUserInput &&
       !this.terminalController.pendingPermission
     ) {
@@ -3256,23 +4045,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const relevant = since
         ? events.filter(
             (event) =>
-              !event.agentId &&
               Date.parse(event.timestamp) >= Date.parse(since),
           )
         : events
-      const hasLifecycleEvent = relevant.some((event) =>
-        [
-          'assistant.turn_start',
-          'permission.requested',
-          'permission.completed',
-          'session.error',
-          'assistant.turn_end',
-          'session.idle',
-          'abort',
-          'session.shutdown',
-        ].includes(event.type),
-      )
+      const hasLifecycleEvent = relevant.some(isForegroundLifecycleEvent)
       if (!hasLifecycleEvent) {
+        const hasBackgroundTaskActivity =
+          relevant.some(isBackgroundTaskEvent) ||
+          backgroundTasksFromEvents(relevant, { assumeBackground: true }).some(
+            (task) => task.executionMode === 'background',
+          )
+        if (
+          hasBackgroundTaskActivity &&
+          events.some(isForegroundLifecycleEvent)
+        ) {
+          // Background work can keep the session running after the turn that
+          // launched it ended. That is the agents' own state rather than a
+          // continuation of the turn just answered, so no activity is shown.
+          return { status: statusFromEvents(events) }
+        }
         return { status: 'running', activity: 'Continuing' }
       }
       const status = statusFromEvents(relevant)
@@ -3313,6 +4104,197 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private syncBackgroundTasks(
+    sessionId: string,
+    sdkSession = this.sessions.get(sessionId),
+  ): Promise<BackgroundTaskSnapshot> {
+    const existing = this.backgroundTaskSyncs.get(sessionId)
+    if (existing) {
+      this.backgroundTaskResyncNeeded.add(sessionId)
+      return existing
+    }
+    let sync: Promise<BackgroundTaskSnapshot>
+    sync = (async () => {
+      let snapshot: BackgroundTaskSnapshot
+      do {
+        this.backgroundTaskResyncNeeded.delete(sessionId)
+        snapshot = await this.readBackgroundTasks(sessionId, sdkSession)
+      } while (this.backgroundTaskResyncNeeded.has(sessionId))
+      return snapshot
+    })().finally(() => {
+      if (this.backgroundTaskSyncs.get(sessionId) === sync) {
+        this.backgroundTaskSyncs.delete(sessionId)
+      }
+      this.backgroundTaskResyncNeeded.delete(sessionId)
+    })
+    this.backgroundTaskSyncs.set(sessionId, sync)
+    return sync
+  }
+
+  private async readBackgroundTasks(
+    sessionId: string,
+    sdkSession = this.sessions.get(sessionId),
+  ): Promise<BackgroundTaskSnapshot> {
+    const tasks = sdkSession?.rpc.tasks
+    if (!tasks?.list) {
+      return this.replaceBackgroundTasks(sessionId, [], false)
+    }
+
+    try {
+      await tasks.refresh?.()
+    } catch (error) {
+      if (!isUnsupportedBackgroundTaskError(error)) {
+        throw error
+      }
+    }
+
+    let listed: { tasks: CopilotTaskInfo[] }
+    try {
+      listed = await tasks.list()
+    } catch (error) {
+      if (isUnsupportedBackgroundTaskError(error)) {
+        return this.replaceBackgroundTasks(sessionId, [], false)
+      }
+      throw error
+    }
+
+    const entries = [...listed.tasks]
+      .sort(
+        (left, right) =>
+          Number(
+            right.status === 'running' ||
+              right.status === 'idle' ||
+              right.status === 'queued',
+          ) -
+            Number(
+              left.status === 'running' ||
+                left.status === 'idle' ||
+                left.status === 'queued',
+            ) ||
+          right.startedAt.localeCompare(left.startedAt),
+      )
+      .slice(0, MAX_BACKGROUND_TASKS)
+    const normalized = await Promise.all(
+      entries.map(async (task) => {
+        let progress: CopilotTaskProgress | null | undefined
+        if (tasks.getProgress) {
+          try {
+            progress = (await tasks.getProgress({ id: task.id })).progress
+          } catch (error) {
+            if (!isUnsupportedBackgroundTaskError(error)) {
+              throw error
+            }
+          }
+        }
+        return normalizeBackgroundTask(
+          task,
+          progress,
+          typeof tasks.cancel === 'function',
+        )
+      }),
+    )
+    return this.replaceBackgroundTasks(sessionId, normalized, true)
+  }
+
+  private replaceBackgroundTasks(
+    sessionId: string,
+    tasks: BackgroundTask[],
+    supported: boolean,
+  ): BackgroundTaskSnapshot {
+    // An externally owned session is projected from its event log, so there is
+    // no channel to cancel a task through however that projection was
+    // produced. Enforcing it here rather than at each call site keeps a path
+    // that publishes a raw projection from re-enabling the control.
+    const owned = this.externalSessionIds.has(sessionId)
+      ? tasks.map((task) =>
+          task.canCancel ? { ...task, canCancel: false } : task,
+        )
+      : tasks
+    const update = this.backgroundTaskTracker.replace(
+      sessionId,
+      owned,
+      supported,
+    )
+    if (update.changed) {
+      const snapshot = update.snapshot
+      this.emit('event', {
+        type: 'session.tasks.updated',
+        sessionId,
+        ...snapshot,
+      })
+    }
+    return update.snapshot
+  }
+
+  private rememberLiveActivityEvent(
+    sessionId: string,
+    event: SessionEvent,
+    kind?: ActivityKind,
+    toolCallId?: string,
+  ): void {
+    const events =
+      this.liveActivityEvents.get(sessionId) ||
+      new Map<
+        string,
+        {
+          agentId?: string
+          parentToolCallId?: string
+          kind?: ActivityKind
+          toolCallId?: string
+          subagentToolCallId?: string
+        }
+      >()
+    const data = recordValue(event.data)
+    events.set(event.id, {
+      agentId: event.agentId,
+      parentToolCallId: stringValue(data.parentToolCallId),
+      kind,
+      toolCallId,
+      subagentToolCallId:
+        event.type === 'subagent.started'
+          ? stringValue(data.toolCallId)
+          : undefined,
+    })
+    while (events.size > 2_000) {
+      const oldest = events.keys().next().value
+      if (!oldest) {
+        break
+      }
+      events.delete(oldest)
+    }
+    this.liveActivityEvents.set(sessionId, events)
+  }
+
+  private liveActivityGroupId(
+    sessionId: string,
+    event: SessionEvent,
+  ): string | undefined {
+    const events = this.liveActivityEvents.get(sessionId)
+    const toolStartsByCallId = new Map<string, ActivityToolStart>()
+    const subagentParentsByAgentId = new Map<string, string>()
+    for (const activity of events?.values() || []) {
+      if (activity.toolCallId && activity.kind) {
+        toolStartsByCallId.set(activity.toolCallId, {
+          kind: activity.kind,
+          parentToolCallId: activity.parentToolCallId,
+          toolCallId: activity.toolCallId,
+        })
+      }
+      if (activity.agentId && activity.subagentToolCallId) {
+        subagentParentsByAgentId.set(
+          activity.agentId,
+          activity.subagentToolCallId,
+        )
+      }
+    }
+    return activityGroupIdFor(
+      stringValue(recordValue(event.data).parentToolCallId),
+      event.agentId,
+      toolStartsByCallId,
+      subagentParentsByAgentId,
+    )
+  }
+
   private attachSession(session: CopilotSessionLike): void {
     session.on((event) => {
       this.handleSessionEvent(session.sessionId, event)
@@ -3322,10 +4304,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
+    this.rememberLiveActivityEvent(sessionId, event)
+
+    if (
+      (event.type === 'session.background_tasks_changed' ||
+        event.type === 'subagent.started' ||
+        event.type === 'subagent.completed' ||
+        event.type === 'subagent.failed') &&
+      stored &&
+      !this.deletingSessions.has(sessionId)
+    ) {
+      void this.syncBackgroundTasks(sessionId).catch((error: unknown) =>
+        this.publishError(sessionId, error),
+      )
+    }
 
     if (
       event.type === 'session.context_changed' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       stored &&
       !this.deletingSessions.has(sessionId)
     ) {
@@ -3341,7 +4337,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (
       event.type === 'session.title_changed' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       stored &&
       !this.deletingSessions.has(sessionId)
     ) {
@@ -3378,7 +4374,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (
       event.type === 'assistant.message_delta' &&
-      !event.agentId &&
+      !eventAgentId(event) &&
       activePrompt
     ) {
       this.publish(
@@ -3391,7 +4387,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'assistant.message' && !event.agentId && activePrompt) {
+    if (
+      event.type === 'assistant.message' &&
+      !eventAgentId(event) &&
+      activePrompt
+    ) {
       this.liveTranscriptWatermarks.set(sessionId, event.timestamp)
       this.publish(
         this.store.setMessageContent(
@@ -3403,32 +4403,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
 
-    if (event.type === 'tool.execution_start' && !event.agentId) {
+    if (event.type === 'tool.execution_start') {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       const toolName = event.data.toolName
         .toLowerCase()
         .replaceAll('-', '_')
-      if (toolName === 'task_complete') {
+      if (toolName === 'task_complete' && !event.agentId) {
         this.liveTaskCompletionSummaries.set(
           `${sessionId}:${event.data.toolCallId}`,
           stringValue(recordValue(event.data.arguments).summary)?.trim() || '',
         )
       }
+      this.rememberLiveActivityEvent(
+        sessionId,
+        event,
+        activityKind(event.data),
+        event.data.toolCallId,
+      )
       void this.store
         .startToolActivity(
           sessionId,
           event.data.toolCallId,
           toolActivityContent(event.data),
           event.timestamp,
+          activityKind(event.data),
+          this.liveActivityGroupId(sessionId, event),
         )
         .then((stored) => this.publish(stored))
         .catch((error: unknown) => this.publishError(sessionId, error))
       return
     }
 
-    if (event.type === 'tool.execution_complete' && !event.agentId) {
+    if (event.type === 'tool.execution_complete') {
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
@@ -3442,6 +4450,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         stringValue(
           recordValue(recordValue(event.data).result).content,
         )?.trim() || fallbackSummary
+      const presentationResult = activityResult(event.data, event.data.success)
       const update =
         isTaskCompletion && event.data.success && resultContent
           ? this.store.finishTaskCompletion(
@@ -3455,6 +4464,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               sessionId,
               event.data.toolCallId,
               event.data.success,
+              event.timestamp,
+              presentationResult,
             )
       void update
         .then((stored) => this.publish(stored))
@@ -3509,6 +4520,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             entry.activityStatus === 'running'
           ) {
             entry.activityStatus = 'failed'
+            entry.activityResult = `Error: ${message}`
           }
         }
         const assistant = session.messages.find(
@@ -3569,34 +4581,82 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.drainingSessions.add(sessionId)
     try {
-      await this.serializeQueue(sessionId, async () => {
-        const stored = this.store.get(sessionId)
-        const next = stored?.queuedPrompts?.[0]
-        if (!next || stored.status !== 'idle') {
-          return
-        }
-        const dispatchedAt = new Date().toISOString()
-        if (!(await this.terminalController.send(sessionId, next.content, false))) {
-          throw new Error('External terminal is no longer available')
-        }
-        const { prompt } = await this.store.removeQueuedPrompt(
-          sessionId,
-          next.id,
-        )
-        if (!prompt) {
-          return
-        }
-        const running = await this.store.markTerminalPromptDispatched(
-          sessionId,
-          dispatchedAt,
-        )
-        this.publish(running)
-      })
+      // A command answers in the pane instead of starting a turn, so it adds
+      // no completion event and nothing else would drain what is queued behind
+      // it. Draining continues here until the queue is empty or a turn begins.
+      while (await this.drainNextTerminalPrompt(sessionId)) {
+        // Keep draining while commands keep answering.
+      }
     } catch (error) {
       this.publishError(sessionId, error)
     } finally {
       this.drainingSessions.delete(sessionId)
     }
+  }
+
+  /**
+   * Sends the next queued entry. Returns true when the caller should drain
+   * again immediately, which is only the case for a command that answered
+   * without starting a turn: a dispatched prompt and a command that began a
+   * turn both leave the terminal busy, and their completion drains the rest.
+   */
+  private async drainNextTerminalPrompt(sessionId: string): Promise<boolean> {
+    return await this.serializeQueue(sessionId, async () => {
+      const stored = this.store.get(sessionId)
+      const next = stored?.queuedPrompts?.[0]
+      if (!next || stored.status !== 'idle') {
+        return false
+      }
+      const dispatchedAt = new Date().toISOString()
+      // A command reports what it printed instead of starting a turn, so its
+      // pane is captured before the keystrokes go in, exactly as it would be
+      // had the command not been queued.
+      const before = next.command
+        ? await this.terminalController.capture?.(sessionId)
+        : undefined
+      if (!(await this.terminalController.send(sessionId, next.content, false))) {
+        throw new Error('External terminal is no longer available')
+      }
+      const { prompt } = await this.store.removeQueuedPrompt(sessionId, next.id)
+      if (!prompt) {
+        return false
+      }
+      if (next.command) {
+        const feedback = await this.terminalCommandFeedback(
+          sessionId,
+          next.content,
+          before,
+        )
+        const notice = await this.store.addMessage(sessionId, {
+          id: randomUUID(),
+          role: 'notice',
+          content: feedback.notice,
+          createdAt: new Date().toISOString(),
+        })
+        this.publish(notice)
+        if (feedback.startedTurn) {
+          // The command began a turn instead of answering, so the terminal is
+          // busy until it ends. Recording the dispatch now keeps anything else
+          // from being sent into that turn before polling observes it.
+          const started = await this.store.markTerminalPromptDispatched(
+            sessionId,
+            dispatchedAt,
+          )
+          this.publish(started)
+          return false
+        }
+        // A full-screen view owns the keyboard without starting a turn, so the
+        // session stays idle while the rest of the queue waits for it to close
+        // rather than being typed into its search box.
+        return !feedback.overlayOpen
+      }
+      const running = await this.store.markTerminalPromptDispatched(
+        sessionId,
+        dispatchedAt,
+      )
+      this.publish(running)
+      return false
+    })
   }
 
   private async serializeQueue<T>(

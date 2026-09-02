@@ -161,8 +161,10 @@ describe('ClaudeAgentService', () => {
     expect(created).toMatchObject({
       provider: 'claude',
       status: 'idle',
-      runtime: { model: 'sonnet' },
+      runtime: { contextTier: 'default' },
     })
+    expect(created.runtime?.model).toBeUndefined()
+    expect(created.runtime?.reasoningEffort).toBeUndefined()
 
     await service.sendMessage(sessionId, 'hello')
     await waitForIdle(service, sessionId)
@@ -174,9 +176,10 @@ describe('ClaudeAgentService', () => {
     expect(queryCalls.at(-1)).toMatchObject({
       cwd: directory,
       sessionId,
-      model: 'sonnet',
       permissionMode: 'bypassPermissions',
     })
+    expect(queryCalls.at(-1)?.model).toBeUndefined()
+    expect(queryCalls.at(-1)?.effort).toBeUndefined()
 
     await service.sendMessage(sessionId, 'follow up')
     await waitForIdle(service, sessionId)
@@ -199,7 +202,7 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(sessionId)).toBeUndefined()
   })
 
-  it('uses a requested Claude model for a new session', async () => {
+  it('uses requested Claude runtime defaults for a new session', async () => {
     const { directory, service } = await fixture(async function* () {})
 
     const created = await service.createSession(
@@ -208,9 +211,66 @@ describe('ClaudeAgentService', () => {
       true,
       'claude',
       'sonnet',
+      'low',
+      'default',
     )
 
-    expect(created.runtime?.model).toBe('sonnet')
+    expect(created.runtime).toMatchObject({
+      model: 'sonnet',
+      reasoningEffort: 'low',
+      contextTier: 'default',
+    })
+    await expect(service.providerRuntimeOptions('claude')).resolves.toEqual({
+      models: [
+        expect.objectContaining({
+          id: 'sonnet',
+          description: 'Efficient for routine tasks',
+          reasoningEfforts: ['low', 'medium', 'high'],
+        }),
+      ],
+    })
+  })
+
+  it('retries model discovery after a transient startup failure', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'claude-retry-test-'))
+    directories.push(directory)
+    let discoveryAttempts = 0
+    const queryMock = vi.fn(() => {
+      const handle = queryHandle(async function* () {})
+      handle.supportedModels = async () => {
+        discoveryAttempts += 1
+        if (discoveryAttempts === 1) {
+          throw new Error('Temporary discovery failure')
+        }
+        return models()
+      }
+      return handle
+    })
+    const authStatus = vi.fn(async () => ({ loggedIn: true }))
+    const service = new ClaudeAgentService(
+      new SessionStore(path.join(directory, 'state')),
+      '/bin/true',
+      {
+        query: queryMock as ClaudeSdk['query'],
+        deleteSession: vi.fn(async () => undefined),
+        getSessionInfo: vi.fn(async () => undefined),
+        renameSession: vi.fn(async () => undefined),
+      },
+      authStatus,
+    )
+
+    await service.start()
+    expect(service.providers()).toEqual([
+      expect.objectContaining({ id: 'claude', available: false }),
+    ])
+
+    await expect(service.providerRuntimeOptions('claude')).resolves.toEqual({
+      models: [expect.objectContaining({ id: 'sonnet' })],
+    })
+    expect(authStatus).toHaveBeenCalledTimes(2)
+    expect(service.providers()).toEqual([
+      expect.objectContaining({ id: 'claude', available: true }),
+    ])
   })
 
   it('surfaces and answers Claude tool permissions', async () => {

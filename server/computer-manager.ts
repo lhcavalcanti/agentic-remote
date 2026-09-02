@@ -2,6 +2,9 @@ import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
   AddComputerInput,
+  AgentProvider,
+  AudioTranscription,
+  BackgroundTaskSnapshot,
   ConfigureRuntimeInput,
   ComputerSummary,
   CreateSessionInput,
@@ -11,6 +14,7 @@ import type {
   ManagedSession,
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
+  ProviderRuntimeOptions,
   RenameSessionInput,
   SendMessageInput,
   UserInputReplyInput,
@@ -294,9 +298,51 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.allowAllPermissions,
             input.provider,
             input.model,
+            input.reasoningEffort,
+            input.contextTier,
           )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)
+  }
+
+  async providerRuntimeOptions(
+    computerId: string,
+    provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    this.requireComputer(computerId)
+    if (computerId === this.identity.info.id) {
+      const before = this.requireComputer(computerId).providers
+      const options = await this.localService.providerRuntimeOptions(provider)
+      const after = this.requireComputer(computerId).providers
+      // Discovery can succeed after a provider was recorded unavailable, and
+      // the UI keeps it disabled until it hears otherwise.
+      if (
+        JSON.stringify(before ?? []) !== JSON.stringify(after ?? [])
+      ) {
+        this.emit('event', {
+          type: 'computer.updated',
+          computer: this.requireComputer(computerId),
+        })
+      }
+      return options
+    }
+    const client = this.requireClient(computerId)
+    const options = await client.providerRuntimeOptions(provider)
+    const advertised = client.providers.some(
+      (capability) => capability.id === provider && capability.available,
+    )
+    if (!advertised) {
+      // The node answered for a provider its cached capabilities call
+      // unavailable, so that cache was taken before the provider existed
+      // there. Refreshing it now keeps the recovered provider from staying
+      // hidden until the node happens to reconnect.
+      await client.getInfo().catch(() => undefined)
+      this.emit('event', {
+        type: 'computer.updated',
+        computer: this.requireComputer(computerId),
+      })
+    }
+    return options
   }
 
   async uploadFile(
@@ -309,6 +355,31 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return computerId === this.identity.info.id
       ? this.localService.uploadFile(sessionId, filename, data)
       : this.requireClient(computerId).uploadFile(sessionId, filename, data)
+  }
+
+  findComputer(nameOrId: string): ComputerSummary | undefined {
+    const wanted = nameOrId.trim().toLowerCase()
+    return this.listComputers().find(
+      (computer) =>
+        computer.id.toLowerCase() === wanted ||
+        computer.name.toLowerCase() === wanted,
+    )
+  }
+
+  async transcribeAudio(
+    computerId: string,
+    filename: string,
+    mimeType: string,
+    data: Buffer,
+    signal?: AbortSignal,
+  ): Promise<AudioTranscription> {
+    this.requireComputer(computerId)
+    return this.requireClient(computerId).transcribe(
+      filename,
+      mimeType,
+      data,
+      signal,
+    )
   }
 
   async activateSession(
@@ -455,6 +526,27 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     await this.requireClient(computerId).cancel(sessionId)
   }
 
+  async listBackgroundTasks(
+    computerId: string,
+    sessionId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.listBackgroundTasks(sessionId)
+      : this.requireClient(computerId).listBackgroundTasks(sessionId)
+  }
+
+  async cancelBackgroundTask(
+    computerId: string,
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? this.localService.cancelBackgroundTask(sessionId, taskId)
+      : this.requireClient(computerId).cancelBackgroundTask(sessionId, taskId)
+  }
+
   async deleteSession(computerId: string, sessionId: string): Promise<void> {
     if (computerId === this.identity.info.id) {
       await this.localService.deleteSession(sessionId)
@@ -507,11 +599,20 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     const client = new RemoteNodeClient(computer)
     this.clients.set(computer.id, client)
     client.on('event', (event) => this.emitNodeEvent(computer, event))
-    client.on('status', () => {
+    client.on('status', (online) => {
       this.emit('event', {
         type: 'computer.updated',
         computer: this.computerSummary(computer),
       })
+      if (online) {
+        void this.resyncRemoteComputer(computer, client).catch((error: unknown) =>
+          this.emit('event', {
+            type: 'error',
+            computerId: computer.id,
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        )
+      }
     })
     client.connect()
     void client.getInfo().then(() => {
@@ -519,8 +620,75 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         type: 'computer.updated',
         computer: this.computerSummary(computer),
       })
+      return this.resyncRemoteComputer(computer, client).catch(
+        (error: unknown) => {
+          this.emit('event', {
+            type: 'error',
+            computerId: computer.id,
+            message: error instanceof Error ? error.message : String(error),
+          })
+        },
+      )
     }).catch(() => undefined)
     return client
+  }
+
+  private async resyncRemoteComputer(
+    computer: RegisteredComputer,
+    client: RemoteNodeClient,
+  ): Promise<void> {
+    const sessions = (await client.listSessions()).map((session) =>
+      managedSession(session, computer),
+    )
+    const previous = this.sessionCache.get(computer.id) || []
+    this.sessionCache.set(computer.id, sessions)
+    for (const session of sessions) {
+      this.emit('event', { type: 'session.upserted', session })
+    }
+    // A session deleted while the node was unreachable is simply absent from
+    // the refreshed list. Without this it would keep its place in every
+    // browser, along with whatever task state it had when the node dropped.
+    const live = new Set(sessions.map((session) => session.id))
+    for (const session of previous) {
+      if (!live.has(session.id)) {
+        this.emit('event', {
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: session.id,
+        })
+      }
+    }
+    if (
+      !client.providers.some(
+        (provider) => provider.supportsBackgroundTasks === true,
+      )
+    ) {
+      // A node that came back without task support may have been rolled back
+      // while clients still show what it last reported. Saying so explicitly
+      // clears those counts and controls instead of leaving them frozen.
+      for (const session of sessions) {
+        this.emit('event', {
+          type: 'session.tasks.updated',
+          computerId: computer.id,
+          sessionId: session.id,
+          tasks: [],
+          runningCount: 0,
+          supported: false,
+        })
+      }
+      return
+    }
+    await Promise.all(
+      sessions.map(async (session) => {
+        const snapshot = await client.listBackgroundTasks(session.id)
+        this.emit('event', {
+          type: 'session.tasks.updated',
+          computerId: computer.id,
+          sessionId: session.id,
+          ...snapshot,
+        })
+      }),
+    )
   }
 
   private emitNodeEvent(
@@ -556,6 +724,13 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         computerId: computer.id,
         sessionId: event.sessionId,
         replacedBy: event.replacedBy,
+      })
+      return
+    }
+    if (event.type === 'session.tasks.updated') {
+      this.emit('event', {
+        ...event,
+        computerId: computer.id,
       })
       return
     }

@@ -1,7 +1,7 @@
 //! The script injected into the hub page.
 //!
 //! This is the only contract between the shell and the web app. Its shape must
-//! stay in step with `src/desktop.ts` in the repository root, which
+//! stay in step with `src/shell.ts` in the repository root, which
 //! feature-detects every method so an older shell degrades instead of breaking.
 //!
 //! Direction of travel:

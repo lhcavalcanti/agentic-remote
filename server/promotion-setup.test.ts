@@ -14,7 +14,7 @@ describe('reproducible promotion setup', () => {
 
     expect(script).toContain('AGENTIC_REMOTE_MONITOR_PROFILE')
     expect(script).toContain('git -C "$DEV_ROOT" pull --ff-only')
-    expect(script).toContain('GitHub CI passed for $candidate_commit')
+    expect(script).toContain('running development tests')
     expect(script).toContain('git -C "$PROD_ROOT" switch --detach "$candidate_commit"')
     expect(script).toContain('"$RELEASE_ROOT/current"')
     expect(script).toContain('production runtime health check failed after graduation')
@@ -38,6 +38,19 @@ describe('reproducible promotion setup', () => {
       .filter((line) => line.trim() && !line.trimStart().startsWith('#'))
     expect(settings).toContain('AGENTIC_REMOTE_MONITOR_DOWNSTREAM_HOSTS=')
     expect(settings).toContain('AGENTIC_REMOTE_MONITOR_DOWNSTREAM_ROOT=')
+  })
+
+  it('requires only the tools promotion actually runs', async () => {
+    const script = await readFile(
+      new URL('../bin/agentic-remote-promotion-monitor', import.meta.url),
+      'utf8',
+    )
+
+    // Validation moved into this script when hosted CI was dropped, so nothing
+    // calls the GitHub CLI any more. Requiring it would fail an otherwise
+    // healthy run on a host that has no reason to install it.
+    expect(script).not.toContain('require_command gh')
+    expect(script).not.toMatch(/\bgh (run|api|workflow|pr)\b/)
   })
 
   it('keeps machine-specific hosts and accounts out of the repository', async () => {

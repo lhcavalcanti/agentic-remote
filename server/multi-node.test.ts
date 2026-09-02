@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WebSocket from 'ws'
 import type {
   AgentProvider,
+  BackgroundTask,
   ConfigureRuntimeInput,
+  BackgroundTaskSnapshot,
   DirectoryListing,
   HubEvent,
   ServerEvent,
@@ -16,21 +18,33 @@ import type {
   SlashCommand,
   UserInputReplyInput,
   RuntimeOptions,
+  ProviderRuntimeOptions,
+  RuntimeReasoningEffort,
   SessionFileUpload,
   WorkspaceFile,
   WorkspaceListing,
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
+import { ComputerManager } from './computer-manager.js'
+import type { ComputerRegistry } from './computer-registry.js'
+import type { NodeIdentityStore } from './node-identity.js'
 import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
+import type {
+  AudioUpload,
+  TranscriptionService,
+} from './transcription-service.js'
 
 class FakeSessionService extends EventEmitter implements SessionService {
   private readonly sessions = new Map<string, SessionDetail>()
   lastCreateTerminalBacked?: boolean
   lastCreateAllowAllPermissions?: boolean
   lastCreateModel?: string
+  lastCreateReasoningEffort?: RuntimeReasoningEffort
+  lastCreateContextTier?: 'default' | 'long_context'
   lastUpload?: { sessionId: string; filename: string; data: Buffer }
+  readonly backgroundTaskSnapshots = new Map<string, BackgroundTaskSnapshot>()
 
   constructor(...sessions: SessionDetail[]) {
     super()
@@ -46,6 +60,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
         name: 'GitHub Copilot',
         available: true,
         terminalBacked: true,
+        supportsBackgroundTasks: true,
       },
     ]
   }
@@ -178,6 +193,8 @@ class FakeSessionService extends EventEmitter implements SessionService {
     allowAllPermissions?: boolean,
     _provider?: AgentProvider,
     model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
   ): Promise<SessionDetail> {
     if (this.createError) {
       throw this.createError
@@ -185,6 +202,8 @@ class FakeSessionService extends EventEmitter implements SessionService {
     this.lastCreateTerminalBacked = terminalBacked
     this.lastCreateAllowAllPermissions = allowAllPermissions
     this.lastCreateModel = model
+    this.lastCreateReasoningEffort = reasoningEffort
+    this.lastCreateContextTier = contextTier
     const session: SessionDetail = {
       id: randomUUID(),
       cwd,
@@ -229,10 +248,19 @@ class FakeSessionService extends EventEmitter implements SessionService {
     }
     return {
       current: session.runtime || {},
+      models: (await this.providerRuntimeOptions('copilot')).models,
+    }
+  }
+
+  async providerRuntimeOptions(
+    _provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    return {
       models: [
         {
           id: 'remote-model',
           name: 'Remote model',
+          description: '**Remote** model description',
           reasoningEfforts: ['medium', 'high'],
           contextTiers: ['default', 'long_context'],
           contextTokenLimits: {
@@ -354,6 +382,46 @@ class FakeSessionService extends EventEmitter implements SessionService {
 
   async cancel() {}
 
+  async listBackgroundTasks(
+    sessionId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    if (!this.sessions.has(sessionId)) {
+      throw new Error('Session not found')
+    }
+    return (
+      this.backgroundTaskSnapshots.get(sessionId) || {
+        tasks: [],
+        runningCount: 0,
+        supported: true,
+      }
+    )
+  }
+
+  async cancelBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTaskSnapshot> {
+    if (!this.sessions.has(sessionId)) {
+      throw new Error('Session not found')
+    }
+    const snapshot = this.backgroundTaskSnapshots.get(sessionId)
+    if (!snapshot?.tasks.some((task) => task.id === taskId)) {
+      throw new Error('Background task not found')
+    }
+    const tasks = snapshot.tasks.map((task) =>
+      task.id === taskId
+        ? { ...task, status: 'cancelled' as const, canCancel: false }
+        : task,
+    )
+    const updated = {
+      tasks,
+      runningCount: tasks.filter((task) => task.status === 'running').length,
+      supported: snapshot.supported,
+    }
+    this.backgroundTaskSnapshots.set(sessionId, updated)
+    return updated
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     if (!this.sessions.delete(sessionId)) {
       throw new Error('Session not found')
@@ -431,6 +499,26 @@ async function temporaryDirectory(label: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), `${label}-`))
   directories.push(directory)
   return directory
+}
+
+function multipartAudio(
+  filename: string,
+  mimeType: string,
+  content: string,
+): { boundary: string; payload: Buffer } {
+  const boundary = 'agentic-remote-audio-boundary'
+  const payload = Buffer.from(
+    [
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="audio"; filename="${filename}"`,
+      `Content-Type: ${mimeType}`,
+      '',
+      content,
+      `--${boundary}--`,
+      '',
+    ].join('\r\n'),
+  )
+  return { boundary, payload }
 }
 
 function waitForEvent(
@@ -669,6 +757,20 @@ describe('multi-node hub', () => {
       remoteSession,
       session('historical-session', 'Historical', false),
     )
+    remoteService.backgroundTaskSnapshots.set('remote-session', {
+      tasks: [
+        {
+          id: 'remote-task',
+          type: 'agent',
+          description: 'Inspect remote files',
+          status: 'running',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          canCancel: true,
+        } satisfies BackgroundTask,
+      ],
+      runningCount: 1,
+      supported: true,
+    })
     const remote = await buildApp({
       dataDirectory: await temporaryDirectory('agentic-remote-node'),
       logger: false,
@@ -748,6 +850,34 @@ describe('multi-node hub', () => {
       })
       expect(computers.json().computers).toHaveLength(2)
 
+      const remoteTasks = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/tasks`,
+      })
+      expect(remoteTasks.statusCode, remoteTasks.body).toBe(200)
+      expect(remoteTasks.json()).toMatchObject({
+        runningCount: 1,
+        tasks: [{ id: 'remote-task', status: 'running' }],
+      })
+      const isolatedTasks = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/sessions/historical-session/tasks`,
+      })
+      expect(isolatedTasks.json()).toMatchObject({
+        runningCount: 0,
+        tasks: [],
+      })
+      const cancelledTask = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/remote-session/tasks/remote-task/cancel`,
+        payload: {},
+      })
+      expect(cancelledTask.statusCode, cancelledTask.body).toBe(200)
+      expect(cancelledTask.json()).toMatchObject({
+        runningCount: 0,
+        tasks: [{ id: 'remote-task', status: 'cancelled' }],
+      })
+
       const directories = await hub.app.inject({
         method: 'GET',
         url: `/api/computers/${remoteComputerId}/directories?path=~`,
@@ -807,12 +937,19 @@ describe('multi-node hub', () => {
       const created = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions`,
-        payload: { cwd: '/srv/new-session', model: 'remote-model' },
+        payload: {
+          cwd: '/srv/new-session',
+          model: 'remote-model',
+          reasoningEffort: 'high',
+          contextTier: 'long_context',
+        },
       })
       expect(created.statusCode, created.body).toBe(201)
       expect(remoteService.lastCreateTerminalBacked).toBe(true)
       expect(remoteService.lastCreateAllowAllPermissions).toBe(true)
       expect(remoteService.lastCreateModel).toBe('remote-model')
+      expect(remoteService.lastCreateReasoningEffort).toBe('high')
+      expect(remoteService.lastCreateContextTier).toBe('long_context')
 
       const document = multipartFile('statement.pdf', 'financial data')
       const uploaded = await hub.app.inject({
@@ -876,6 +1013,17 @@ describe('multi-node hub', () => {
       })
       expect(runtimeOptions.json().models).toEqual([
         expect.objectContaining({ id: 'remote-model' }),
+      ])
+      const providerOptions = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remoteComputerId}/providers/copilot/runtime`,
+      })
+      expect(providerOptions.statusCode, providerOptions.body).toBe(200)
+      expect(providerOptions.json().models).toEqual([
+        expect.objectContaining({
+          id: 'remote-model',
+          description: '**Remote** model description',
+        }),
       ])
       const configuredRuntime = await hub.app.inject({
         method: 'PATCH',
@@ -1181,9 +1329,260 @@ describe('multi-node hub', () => {
       await hub.app.close()
     }
   })
+
+  it('transcribes hub audio on the assigned computer', async () => {
+    const transcribe = vi.fn(async (upload: AudioUpload) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of upload.stream) {
+        chunks.push(Buffer.from(chunk))
+      }
+      expect(Buffer.concat(chunks).toString()).toBe('recorded audio')
+      expect(upload.filename).toBe('memo.m4a')
+      expect(upload.mimeType).toBe('audio/x-m4a')
+      return { transcript: 'Ship the delegated transcriber', durationSeconds: 6 }
+    })
+    const workerTranscription: TranscriptionService = {
+      initialize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      transcribe,
+    }
+    const worker = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-voice-node'),
+      logger: false,
+      role: 'node',
+      service: new FakeSessionService(),
+      transcriptionService: workerTranscription,
+    })
+    await worker.app.listen({ host: '127.0.0.1', port: 0 })
+    const workerAddress = worker.app.server.address() as AddressInfo
+
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', 'workstation')
+    const hubTranscription: TranscriptionService = {
+      initialize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      transcribe: vi.fn(async () => ({
+        transcript: 'Hub transcript',
+        durationSeconds: 1,
+      })),
+    }
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-voice-hub'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(),
+      transcriptionService: hubTranscription,
+    })
+
+    try {
+      const registered = await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${workerAddress.port}`,
+          token: worker.identity.token,
+          name: 'workstation',
+        },
+      })
+      expect(registered.statusCode).toBe(201)
+      const computerId = registered.json().computer.id as string
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const status = await hub.app.inject({
+          method: 'GET',
+          url: '/api/computers',
+        })
+        const online = status
+          .json()
+          .computers.find((entry: { id: string }) => entry.id === computerId)
+          ?.online
+        if (online) {
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      const { boundary, payload } = multipartAudio(
+        'memo.m4a',
+        'audio/x-m4a',
+        'recorded audio',
+      )
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: '/api/transcriptions',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload,
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({
+        transcript: 'Ship the delegated transcriber',
+        durationSeconds: 6,
+      })
+      expect(transcribe).toHaveBeenCalledTimes(1)
+      expect(hubTranscription.transcribe).not.toHaveBeenCalled()
+
+      const authorization = { authorization: `Bearer ${worker.identity.token}` }
+      const unauthenticated = await worker.app.inject({
+        method: 'POST',
+        url: '/node-api/transcriptions',
+        headers: { 'content-type': 'application/octet-stream' },
+        payload: Buffer.from('recorded audio'),
+      })
+      expect(unauthenticated.statusCode).toBe(401)
+
+      const unnamed = await worker.app.inject({
+        method: 'POST',
+        url: '/node-api/transcriptions',
+        headers: { ...authorization, 'content-type': 'application/octet-stream' },
+        payload: Buffer.from('recorded audio'),
+      })
+      expect(unnamed.statusCode).toBe(400)
+      expect(unnamed.json().error).toContain('name is required')
+
+      const empty = await worker.app.inject({
+        method: 'POST',
+        url: '/node-api/transcriptions',
+        headers: {
+          ...authorization,
+          'content-type': 'application/octet-stream',
+          'x-agentic-audio-filename':
+            Buffer.from('memo.m4a').toString('base64url'),
+        },
+        payload: Buffer.alloc(0),
+      })
+      expect(empty.statusCode).toBe(400)
+      expect(empty.json().error).toContain('audio file is required')
+      expect(transcribe).toHaveBeenCalledTimes(1)
+    } finally {
+      await hub.app.close()
+      await worker.app.close()
+    }
+  })
+
+  it('keeps transcribing on the hub when no computer is assigned', async () => {
+    const hubTranscription: TranscriptionService = {
+      initialize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      transcribe: vi.fn(async () => ({
+        transcript: 'Hub transcript',
+        durationSeconds: 2,
+      })),
+    }
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-voice-local'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(),
+      transcriptionService: hubTranscription,
+    })
+
+    try {
+      const { boundary, payload } = multipartAudio(
+        'memo.m4a',
+        'audio/x-m4a',
+        'recorded audio',
+      )
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: '/api/transcriptions',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload,
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ transcript: 'Hub transcript' })
+      expect(hubTranscription.transcribe).toHaveBeenCalledTimes(1)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it('reports an assigned computer that is not paired', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', 'missing-workstation')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-voice-missing'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(),
+      transcriptionService: {
+        initialize: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+        transcribe: vi.fn(),
+      },
+    })
+
+    try {
+      const { boundary, payload } = multipartAudio(
+        'memo.m4a',
+        'audio/x-m4a',
+        'recorded audio',
+      )
+      const response = await hub.app.inject({
+        method: 'POST',
+        url: '/api/transcriptions',
+        headers: {
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload,
+      })
+
+      expect(response.statusCode).toBe(503)
+      expect(response.json().error).toContain('missing-workstation')
+    } finally {
+      await hub.app.close()
+    }
+  })
 })
 
 describe('readiness endpoints by role', () => {
+  it('removes sessions deleted while a node was disconnected', async () => {
+    const computer = {
+      id: 'node-1',
+      name: 'Workshop',
+      baseUrl: 'http://node-1.local:4319',
+      token: 'node-token',
+    }
+    const manager = new ComputerManager(
+      new FakeSessionService(),
+      { info: { id: 'hub' } } as unknown as NodeIdentityStore,
+      { list: () => [computer] } as unknown as ComputerRegistry,
+    )
+    // The node held two sessions when the connection dropped.
+    manager['sessionCache'].set('node-1', [
+      { ...session('kept-session', 'Kept'), computerId: 'node-1' },
+      { ...session('deleted-session', 'Deleted'), computerId: 'node-1' },
+    ] as never)
+    const events: ServerEvent[] = []
+    manager.on('event', (event) => events.push(event as ServerEvent))
+
+    // One of them was deleted before it came back, so it is simply absent.
+    await manager['resyncRemoteComputer'](computer, {
+      listSessions: async () => [session('kept-session', 'Kept')],
+      providers: [],
+    } as never)
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'session.removed',
+        computerId: 'node-1',
+        sessionId: 'deleted-session',
+      }),
+    )
+    // The surviving session is refreshed rather than removed.
+    expect(
+      events.filter((event) => event.type === 'session.removed'),
+    ).toHaveLength(1)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'session.upserted',
+        session: expect.objectContaining({ id: 'kept-session' }),
+      }),
+    )
+  })
+
   it('serves /health on a node while /api/health stays hub-only', async () => {
     const node = await buildApp({
       dataDirectory: await temporaryDirectory('agentic-remote-node-health'),

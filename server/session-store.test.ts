@@ -164,7 +164,13 @@ describe('SessionStore', () => {
       'View\n/tmp/source.ts',
       '2026-07-22T00:00:02.000Z',
     )
-    await store.finishToolActivity('session-1', 'second', false)
+    await store.finishToolActivity(
+      'session-1',
+      'second',
+      false,
+      '2026-07-22T00:00:03.000Z',
+      'Permission denied',
+    )
     await store.addMessage('session-1', {
       id: 'assistant',
       role: 'assistant',
@@ -182,6 +188,8 @@ describe('SessionStore', () => {
       expect.objectContaining({
         id: 'tool:second',
         activityStatus: 'failed',
+        activityResult: 'Permission denied',
+        activityDurationMs: 1_000,
       }),
       expect.objectContaining({ id: 'assistant', content: 'Done' }),
     ])

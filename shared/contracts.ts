@@ -2,6 +2,7 @@ export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
 export type AgentProvider = 'copilot' | 'claude'
 export type SessionExecutionMode = 'tmux' | 'sdk'
+export type RuntimeReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface AgentProviderCapability {
   id: AgentProvider
@@ -9,10 +10,13 @@ export interface AgentProviderCapability {
   available: boolean
   terminalBacked: boolean
   supportsTmuxMigration?: boolean
+  supportsBackgroundTasks?: boolean
   unavailableReason?: string
 }
 
 export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
+export type ActivityStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type ActivityKind = 'tool' | 'skill' | 'agent'
 
 export interface ChatMessage {
   id: string
@@ -20,7 +24,11 @@ export interface ChatMessage {
   content: string
   createdAt: string
   streaming?: boolean
-  activityStatus?: 'running' | 'completed' | 'failed'
+  activityStatus?: ActivityStatus
+  activityKind?: ActivityKind
+  activityGroupId?: string
+  activityResult?: string
+  activityDurationMs?: number
 }
 
 export interface PermissionOption {
@@ -78,6 +86,9 @@ export interface QueuedPrompt {
   id: string
   content: string
   createdAt: string
+  // A slash command reports what it printed rather than starting a turn, so
+  // draining it has to follow the command path and not the prompt one.
+  command?: boolean
 }
 
 export interface SessionRuntimeInfo {
@@ -89,12 +100,67 @@ export interface SessionRuntimeInfo {
   contextEstimated?: boolean
   mode?: string
   allowAllPermissions?: boolean
+  updateAvailable?: string
+}
+
+export type BackgroundTaskStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+export type BackgroundTaskKind = 'agent' | 'shell'
+export type BackgroundTaskExecutionMode = 'sync' | 'background'
+export type BackgroundTaskAttachmentMode = 'attached' | 'detached'
+
+export interface BackgroundTaskProgressLine {
+  message: string
+  timestamp: string
+}
+
+export interface BackgroundTaskProgress {
+  type: BackgroundTaskKind
+  recentActivity?: BackgroundTaskProgressLine[]
+  latestIntent?: string
+  recentOutput?: string
+  pid?: number
+}
+
+export interface BackgroundTask {
+  id: string
+  type: BackgroundTaskKind
+  description: string
+  status: BackgroundTaskStatus
+  startedAt: string
+  completedAt?: string
+  activeTimeMs?: number
+  activeStartedAt?: string
+  error?: string
+  agentType?: string
+  prompt?: string
+  result?: string
+  latestResponse?: string
+  model?: string
+  resolvedModel?: string
+  executionMode?: BackgroundTaskExecutionMode
+  command?: string
+  attachmentMode?: BackgroundTaskAttachmentMode
+  pid?: number
+  progress?: BackgroundTaskProgress
+  canCancel: boolean
+}
+
+export interface BackgroundTaskSnapshot {
+  tasks: BackgroundTask[]
+  runningCount: number
+  supported: boolean
 }
 
 export interface RuntimeModelOption {
   id: string
   name: string
-  reasoningEfforts: string[]
+  description?: string
+  reasoningEfforts: RuntimeReasoningEffort[]
   contextTiers: Array<'default' | 'long_context'>
   contextTokenLimits?: {
     default?: number
@@ -108,9 +174,13 @@ export interface RuntimeOptions {
   status?: SessionStatus
 }
 
+export interface ProviderRuntimeOptions {
+  models: RuntimeModelOption[]
+}
+
 export interface ConfigureRuntimeInput {
   model: string
-  reasoningEffort: string
+  reasoningEffort?: RuntimeReasoningEffort
   contextTier: 'default' | 'long_context'
   mode?: AgentMode
 }
@@ -179,6 +249,13 @@ export type ServerEvent =
        */
       replacedBy?: string
     }
+  | {
+      type: 'session.tasks.updated'
+      sessionId: string
+      tasks: BackgroundTask[]
+      runningCount: number
+      supported: boolean
+    }
   | { type: 'error'; sessionId?: string; message: string }
 
 export type HubEvent =
@@ -190,6 +267,14 @@ export type HubEvent =
       /** See the node event above. */
       replacedBy?: string
     }
+  | {
+      type: 'session.tasks.updated'
+      computerId: string
+      sessionId: string
+      tasks: BackgroundTask[]
+      runningCount: number
+      supported: boolean
+    }
   | { type: 'computer.updated'; computer: ComputerSummary }
   | { type: 'computer.removed'; computerId: string }
   | { type: 'error'; computerId?: string; sessionId?: string; message: string }
@@ -200,6 +285,8 @@ export interface CreateSessionInput {
   terminalBacked?: boolean
   allowAllPermissions?: boolean
   model?: string
+  reasoningEffort?: RuntimeReasoningEffort
+  contextTier?: 'default' | 'long_context'
 }
 
 export interface SendMessageInput {
@@ -327,4 +414,3 @@ export interface AddKnowledgeRootInput {
   path: string
   name?: string
 }
-

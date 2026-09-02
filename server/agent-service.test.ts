@@ -11,6 +11,7 @@ import type {
   SessionEvent,
   SessionMetadata,
 } from '@github/copilot-sdk'
+import type { UserInputForm } from '../shared/contracts.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentService,
@@ -19,11 +20,19 @@ import {
   messagesFromHistory,
   pendingUserInputFromEvents,
   runtimeInfoFromEvents,
+  statusFromEvents,
+  terminalFormSteps,
 } from './agent-service.js'
+import type {
+  CopilotTaskInfo,
+  CopilotTaskProgress,
+} from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId = 'active-session'
+  readonly backgroundTasks: CopilotTaskInfo[] = []
+  readonly taskProgress = new Map<string, CopilotTaskProgress>()
   readonly sentPrompts: string[] = []
   disconnectCount = 0
   readonly invokedCommands: string[] = []
@@ -126,6 +135,21 @@ class DeferredSession implements CopilotSessionLike {
         }
       },
       enqueue: async () => ({ queued: true }),
+    },
+    tasks: {
+      list: async () => ({ tasks: this.backgroundTasks }),
+      getProgress: async ({ id }: { id: string }) => ({
+        progress: this.taskProgress.get(id),
+      }),
+      cancel: async ({ id }: { id: string }) => {
+        const task = this.backgroundTasks.find((entry) => entry.id === id)
+        if (!task) {
+          return { cancelled: false }
+        }
+        task.status = 'cancelled'
+        task.completedAt = new Date().toISOString()
+        return { cancelled: true }
+      },
     },
   }
 
@@ -472,6 +496,8 @@ describe('AgentService deletion', () => {
         id: 'tool:task-call',
         role: 'activity',
         activityStatus: 'failed',
+        activityResult: 'Error: tool failed; inspect the session log',
+        activityDurationMs: 1_000,
       }),
     ])
   })
@@ -508,6 +534,236 @@ describe('AgentService deletion', () => {
         role: 'activity',
         content: 'Bash\n$ pnpm test',
         activityStatus: 'completed',
+        activityResult: 'All tests passed',
+        activityDurationMs: 1_000,
+      }),
+    ])
+  })
+
+  it('groups activity beneath a skill and preserves failed results', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"skill-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"skill-call",
+          "toolName":"skill",
+          "arguments":{"skill":"tool-model-catalog"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"mcp-start",
+        "parentId":"skill-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"mcp-call",
+          "parentToolCallId":"skill-call",
+          "toolName":"mcp:ecs-mcp-server-search_config",
+          "mcpServerName":"ecs-mcp-server",
+          "mcpToolName":"search_config",
+          "arguments":{"query":"cache"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"mcp-end",
+        "parentId":"mcp-start",
+        "timestamp":"2026-08-28T00:00:03.500Z",
+        "data":{
+          "toolCallId":"mcp-call",
+          "success":false,
+          "result":{"content":"404 operation not found"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:skill-call',
+        activityKind: 'skill',
+      }),
+      expect.objectContaining({
+        id: 'tool:mcp-call',
+        activityKind: 'tool',
+        activityGroupId: 'tool:skill-call',
+        activityResult: 'Error: 404 operation not found',
+        activityDurationMs: 2_500,
+      }),
+    ])
+  })
+
+  it('includes sub-agent tool calls beneath their agent heading', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"agent-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "toolName":"task",
+          "arguments":{
+            "agent_type":"rubber-duck",
+            "description":"Review the cache path"
+          }
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"child-start",
+        "agentId":"rubber-duck-1",
+        "parentId":"agent-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "parentToolCallId":"agent-call",
+          "toolName":"read",
+          "arguments":{"path":"cache.md"}
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"child-end",
+        "agentId":"rubber-duck-1",
+        "parentId":"child-start",
+        "timestamp":"2026-08-28T00:00:02.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "success":true,
+          "result":{"content":"12 lines read"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:agent-call',
+        activityKind: 'agent',
+      }),
+      expect.objectContaining({
+        id: 'tool:child-call',
+        activityGroupId: 'tool:agent-call',
+        activityResult: '12 lines read',
+        activityDurationMs: 1_000,
+      }),
+    ])
+  })
+
+  it('uses tool ownership instead of chronological event links for grouping', () => {
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"skill-start",
+        "parentId":null,
+        "timestamp":"2026-08-28T00:00:00.000Z",
+        "data":{
+          "toolCallId":"skill-call",
+          "toolName":"skill",
+          "arguments":{"skill":"tool-model-catalog"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"unrelated-start",
+        "parentId":"skill-start",
+        "timestamp":"2026-08-28T00:00:01.000Z",
+        "data":{
+          "toolCallId":"unrelated-call",
+          "toolName":"read",
+          "arguments":{"path":"README.md"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"agent-start",
+        "parentId":"unrelated-start",
+        "timestamp":"2026-08-28T00:00:02.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "toolName":"task",
+          "arguments":{"agent_type":"reviewer"}
+        }
+      },
+      {
+        "type":"subagent.started",
+        "id":"subagent-start",
+        "agentId":"reviewer-1",
+        "parentId":"agent-start",
+        "timestamp":"2026-08-28T00:00:03.000Z",
+        "data":{
+          "toolCallId":"agent-call",
+          "agentName":"reviewer",
+          "agentDisplayName":"Reviewer",
+          "agentDescription":"Review the change"
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"child-start",
+        "agentId":"reviewer-1",
+        "parentId":"subagent-start",
+        "timestamp":"2026-08-28T00:00:04.000Z",
+        "data":{
+          "toolCallId":"child-call",
+          "toolName":"read",
+          "arguments":{"path":"src/App.tsx"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"nested-skill-start",
+        "agentId":"reviewer-1",
+        "parentId":"child-start",
+        "timestamp":"2026-08-28T00:00:05.000Z",
+        "data":{
+          "toolCallId":"nested-skill-call",
+          "parentToolCallId":"agent-call",
+          "toolName":"skill",
+          "arguments":{"skill":"agentic-remote-navigation"}
+        }
+      },
+      {
+        "type":"tool.execution_start",
+        "id":"nested-child-start",
+        "agentId":"reviewer-1",
+        "parentId":"nested-skill-start",
+        "timestamp":"2026-08-28T00:00:06.000Z",
+        "data":{
+          "toolCallId":"nested-child-call",
+          "parentToolCallId":"nested-skill-call",
+          "toolName":"read",
+          "arguments":{"path":"docs/app-spec.md"}
+        }
+      }
+    ]`) as SessionEvent[]
+
+    expect(messagesFromHistory(events)).toEqual([
+      expect.objectContaining({
+        id: 'tool:skill-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:unrelated-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:agent-call',
+        activityGroupId: undefined,
+      }),
+      expect.objectContaining({
+        id: 'tool:child-call',
+        activityGroupId: 'tool:agent-call',
+      }),
+      expect.objectContaining({
+        id: 'tool:nested-skill-call',
+        activityGroupId: 'tool:agent-call',
+      }),
+      expect.objectContaining({
+        id: 'tool:nested-child-call',
+        activityGroupId: 'tool:nested-skill-call',
       }),
     ])
   })
@@ -589,6 +845,328 @@ describe('AgentService deletion', () => {
         activityStatus: 'running',
       }),
     ])
+  })
+
+  it('lists, updates, and cancels SDK background tasks independently of session status', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    let taskEventCount = 0
+    service.on('event', (event) => {
+      if (event.type === 'session.tasks.updated') {
+        taskEventCount += 1
+      }
+    })
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'task-1',
+      description: 'Inspect the repository',
+      status: 'running',
+      startedAt: '2026-08-31T18:00:00.000Z',
+      agentType: 'explore',
+      executionMode: 'background',
+    })
+    client.session.taskProgress.set('task-1', {
+      type: 'agent',
+      latestIntent: 'Reading source files',
+      recentActivity: [
+        {
+          message: '▸ view',
+          timestamp: '2026-08-31T18:00:01.000Z',
+        },
+      ],
+    })
+
+    await expect(service.listBackgroundTasks(created.id)).resolves.toMatchObject({
+      runningCount: 1,
+      supported: true,
+      tasks: [
+        {
+          id: 'task-1',
+          status: 'running',
+          progress: { latestIntent: 'Reading source files' },
+        },
+      ],
+    })
+    expect(taskEventCount).toBeGreaterThan(0)
+
+    await expect(
+      service.cancelBackgroundTask(created.id, 'task-1'),
+    ).resolves.toMatchObject({
+      runningCount: 0,
+      tasks: [{ id: 'task-1', status: 'cancelled', canCancel: false }],
+    })
+    await service.stop()
+  })
+
+  it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    let taskListError: unknown = new Error(
+      'Unhandled method session.tasks.list',
+    )
+    client.session.rpc.tasks!.list = async () => {
+      throw taskListError
+    }
+
+    await expect(service.listBackgroundTasks(created.id)).resolves.toEqual({
+      tasks: [],
+      runningCount: 0,
+      supported: false,
+    })
+
+    taskListError = Object.assign(new Error('Request failed'), { code: -32601 })
+    await expect(service.listBackgroundTasks(created.id)).resolves.toEqual({
+      tasks: [],
+      runningCount: 0,
+      supported: false,
+    })
+    await service.stop()
+  })
+
+  it('keeps terminal foreground status idle while a background task runs', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-terminal-task-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const completedAt = new Date(Date.now() + 1_000).toISOString()
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'task-start',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {
+          toolCallId: 'task-call',
+          toolName: 'task',
+          arguments: {
+            agent_type: 'explore',
+            description: 'Inspect the repository',
+            prompt: 'Find the relevant files',
+          },
+        },
+      },
+      {
+        type: 'assistant.turn_end',
+        id: 'turn-end',
+        parentId: 'task-start',
+        timestamp: completedAt,
+        data: {},
+      },
+      {
+        type: 'assistant.turn_start',
+        id: 'background-turn',
+        parentId: 'turn-end',
+        timestamp: new Date(Date.parse(completedAt) + 1_000).toISOString(),
+        data: {
+          agentId: 'agent-1',
+        },
+      },
+    ] as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-task-events',
+      terminal,
+    )
+
+    await service.start()
+    await service.store.updateStatus(client.session.sessionId, 'running')
+
+    const options = await service.runtimeOptions(client.session.sessionId)
+
+    expect(options.status).toBe('idle')
+    await expect(
+      service.listBackgroundTasks(client.session.sessionId),
+    ).resolves.toMatchObject({
+      runningCount: 1,
+      tasks: [
+        expect.objectContaining({
+          id: 'task-call',
+          executionMode: 'background',
+          status: 'running',
+        }),
+      ],
+    })
+    expect(service.store.get(client.session.sessionId)?.status).toBe('idle')
+    await service.stop()
+  })
+
+  it('refuses to cancel a task projected from a terminal session', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-terminal-cancel-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    // agent_idle is the projection path that marks a task cancellable.
+    const events = [
+      {
+        type: 'system.notification',
+        id: 'agent-idle',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {
+          kind: {
+            type: 'agent_idle',
+            agentId: 'agent-1',
+            description: 'Inspect the repository',
+          },
+        },
+      },
+    ] as unknown as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-cancel-events',
+      terminal,
+    )
+    await service.start()
+
+    const snapshot = await service.listBackgroundTasks(client.session.sessionId)
+
+    // Projected from an event log, so there is no channel to cancel through.
+    expect(snapshot.tasks.length).toBeGreaterThan(0)
+    for (const task of snapshot.tasks) {
+      expect(task.canCancel).toBe(false)
+    }
+
+    await expect(
+      service.cancelBackgroundTask(client.session.sessionId, 'agent-1'),
+    ).rejects.toThrow('cannot be cancelled')
+
+    // The live CLI still owns the session: cancelling must not have attached
+    // an SDK owner by resuming or creating one.
+    expect(client.resumedSessionIds).not.toContain(client.session.sessionId)
+    expect(client.createdConfigs).toHaveLength(0)
+    await service.stop()
+  })
+
+  it('does not resume a finished terminal turn for background task activity', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-terminal-continuation-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const request = {
+      requestId: 'terminal:question',
+      question: 'Choose a color',
+      choices: ['Red', 'Blue'],
+      allowFreeform: false,
+    }
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingUserInput: vi.fn(
+        async (): Promise<typeof request | undefined> => request,
+      ),
+      replyUserInput: vi.fn(async () => true),
+    }
+    const events = [
+      {
+        type: 'assistant.turn_end',
+        id: 'completed-turn',
+        parentId: null,
+        timestamp: new Date(Date.now() - 1_000).toISOString(),
+        data: {},
+      },
+      {
+        type: 'subagent.started',
+        id: 'background-start',
+        parentId: 'completed-turn',
+        timestamp: new Date(Date.now() + 60_000).toISOString(),
+        agentId: 'agent-1',
+        data: {
+          agentType: 'explore',
+          agentName: 'explore',
+          agentDescription: 'Inspect the repository',
+          toolCallId: 'task-call',
+        },
+      },
+    ] as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Terminal session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'terminal-continuation-events',
+      terminal,
+    )
+
+    await service.start()
+    const updated = await service.replyUserInput(
+      client.session.sessionId,
+      request.requestId,
+      { answer: 'Blue', wasFreeform: false },
+    )
+
+    // The finished turn is not resumed: no activity is shown and the request
+    // is cleared. The session still reads as running because the background
+    // agent it launched has not finished, which is its own state rather than
+    // a continuation of the answered turn.
+    expect(updated).toMatchObject({
+      status: 'running',
+      activity: undefined,
+      pendingUserInput: undefined,
+    })
+    await service.stop()
   })
 
   it('reconstructs only unresolved root ask-user requests', () => {
@@ -1484,10 +2062,11 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('applies a requested model to new SDK sessions', async () => {
+  it('applies requested runtime defaults to new SDK sessions', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
@@ -1502,12 +2081,78 @@ describe('AgentService deletion', () => {
       true,
       'copilot',
       'gpt-configurable',
+      'high',
+      'long_context',
     )
 
     expect(client.createdConfigs.at(-1)).toMatchObject({
       model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
     })
-    expect(created.runtime?.model).toBe('gpt-configurable')
+    expect(created.runtime).toMatchObject({
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+      contextTokenLimit: 100_000,
+    })
+    await service.stop()
+  })
+
+  it('refreshes SDK models and omits effort for models without effort support', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [
+      {
+        ...configurableModel(),
+        id: 'gpt-no-effort',
+        name: 'GPT No Effort',
+        supportedReasoningEfforts: undefined,
+        defaultReasoningEffort: undefined,
+        capabilities: {
+          ...configurableModel().capabilities,
+          supports: {
+            ...configurableModel().capabilities.supports,
+            reasoningEffort: false,
+          },
+        },
+      },
+    ]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await expect(service.providerRuntimeOptions('copilot')).resolves.toEqual({
+      models: [
+        expect.objectContaining({
+          id: 'gpt-no-effort',
+          reasoningEfforts: [],
+        }),
+      ],
+    })
+    const created = await service.createSession(
+      directory,
+      false,
+      true,
+      'copilot',
+      'gpt-no-effort',
+    )
+    expect(client.createdConfigs.at(-1)).toMatchObject({
+      model: 'gpt-no-effort',
+      contextTier: 'default',
+    })
+    expect(client.createdConfigs.at(-1)).not.toHaveProperty('reasoningEffort')
+    expect(created.runtime).not.toHaveProperty('reasoningEffort')
+
+    client.models = [configurableModel()]
+    await expect(service.providerRuntimeOptions('copilot')).resolves.toEqual({
+      models: [expect.objectContaining({ id: 'gpt-configurable' })],
+    })
     await service.stop()
   })
 
@@ -1726,15 +2371,27 @@ describe('AgentService deletion', () => {
       true,
       'copilot',
       'gpt-configurable',
+      'high',
+      'long_context',
     )
     expect(terminal.create).toHaveBeenLastCalledWith(
       modelSession.id,
       directory,
       path.basename(directory),
       true,
-      { model: 'gpt-configurable' },
+      {
+        model: 'gpt-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        contextTokenLimit: 100_000,
+        contextEstimated: true,
+      },
     )
-    expect(modelSession.runtime?.model).toBe('gpt-configurable')
+    expect(modelSession.runtime).toMatchObject({
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
     const guarded = await service.createSession(directory, true, false)
     expect(terminal.create).toHaveBeenCalledWith(
       guarded.id,
@@ -3455,11 +4112,16 @@ describe('AgentService deletion', () => {
       '/usage',
       false,
     )
+    // A command answers in the pane rather than starting a turn, so draining
+    // it reports what it printed and leaves the session idle.
     expect(service.store.get(client.session.sessionId)).toMatchObject({
-      status: 'running',
+      status: 'idle',
       queuedCount: 0,
       queuedPrompts: [],
     })
+    expect(
+      service.store.get(client.session.sessionId)?.messages.at(-1)?.role,
+    ).toBe('notice')
     await service.stop()
   })
 
@@ -3555,6 +4217,714 @@ describe('AgentService deletion', () => {
       queuedCount: 0,
       queuedPrompts: [],
     })
+    await service.stop()
+  })
+
+  it('surfaces the update the terminal CLI is offering', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-upd-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      updateNotice: vi.fn(async () => '1.0.83'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+
+    expect(terminal.updateNotice).toHaveBeenCalled()
+    expect(
+      service.store.get(client.session.sessionId)?.runtime?.updateAvailable,
+    ).toBe('1.0.83')
+    await service.stop()
+  })
+
+  // The notice is only true while the terminal that painted it is running, and
+  // nothing polls a session discovery has dropped.
+  it('clears the update once the terminal session is gone', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-updx-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    let running = true
+    const terminal = {
+      has: vi.fn(async () => running),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      updateNotice: vi.fn(async () => '1.0.83'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () =>
+        running
+          ? [
+              {
+                id: client.session.sessionId,
+                cwd: directory,
+                title: 'Active Copilot session',
+                updatedAt: new Date().toISOString(),
+              },
+            ]
+          : [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+
+    await service.start()
+    expect(
+      service.store.get(client.session.sessionId)?.runtime?.updateAvailable,
+    ).toBe('1.0.83')
+
+    running = false
+    await service.refreshDiscovery()
+
+    expect(
+      service.store.get(client.session.sessionId)?.runtime?.updateAvailable,
+    ).toBeUndefined()
+    await service.stop()
+  })
+
+  it('reports what a terminal slash command printed', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-slash-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        // The CLI writes its answer into the terminal, not the event log.
+        pane = [
+          ' \u25cf Tip: /plugin',
+          ' \u25cf Current working directory: /home/user/project',
+          composer,
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const result = await service.executeCommand(client.session.sessionId, '/cwd')
+
+    const notice = result.messages.at(-1)
+    expect(notice?.role).toBe('notice')
+    expect(notice?.content).toContain('/cwd')
+    expect(notice?.content).toContain(
+      'Current working directory: /home/user/project',
+    )
+    await service.stop()
+  })
+
+  it('waits for a terminal slash command response to finish painting', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-paint-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const frame = (...lines: string[]) =>
+      [' \u25cf Tip: /plugin', ...lines, composer].join('\n')
+    let pane = frame()
+    let captures = 0
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      // The pane is captured mid-paint, so the first line lands before the
+      // rest of the response does.
+      capture: vi.fn(async () => {
+        captures += 1
+        if (captures === 2) {
+          pane = frame(' \u25cf Allowed directories for file access:')
+        }
+        if (captures >= 3) {
+          pane = frame(
+            ' \u25cf Allowed directories for file access:',
+            '   1. /home/user/project',
+          )
+        }
+        return pane
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const result = await service.executeCommand(
+      client.session.sessionId,
+      '/list-dirs',
+    )
+
+    const notice = result.messages.at(-1)
+    expect(notice?.content).toContain('Allowed directories for file access:')
+    expect(notice?.content).toContain('1. /home/user/project')
+    await service.stop()
+  })
+
+  // While the agent is working, its streaming output lands in the same pane
+  // and cannot be told apart from a command's response.
+  it('does not attribute pane output to a command run while the agent works', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-busy-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => ' \u25cf streaming assistant text'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
+
+    const result = await service.executeCommand(
+      client.session.sessionId,
+      '/usage',
+    )
+
+    expect(terminal.capture).not.toHaveBeenCalled()
+    expect(result.messages.at(-1)?.content).toBe('/usage')
+    await service.stop()
+  })
+
+  it('says so when a terminal slash command opens a full-screen view', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-overlay-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let pane = ' \u25cf Tip: /plugin'
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        pane = [
+          ' Settings',
+          ' \u276f allowedUrls        (default)',
+          ' / search \u00b7 \u2191/\u2193 navigate \u00b7 tab switch scope \u00b7 enter edit',
+          ' esc close',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const result = await service.executeCommand(
+      client.session.sessionId,
+      '/config',
+    )
+
+    // Dumping a redrawing TUI into the transcript would be noise, so the
+    // conversation says where it went instead.
+    expect(result.messages.at(-1)?.content).toContain(
+      'Opened an interactive view in the terminal',
+    )
+    await service.stop()
+  })
+
+  // Queued behind active work, a command used to be drained as an ordinary
+  // prompt and never reported the output it printed.
+  it('reports what a queued slash command printed once it is drained', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-queue-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        pane = [
+          ' \u25cf Tip: /plugin',
+          ' \u25cf Usage this month: 42 requests',
+          composer,
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      // A version is required before the queue path is taken at all.
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.executeCommand(client.session.sessionId, '/usage', true)
+
+    // Draining it as an ordinary prompt would mark a turn dispatched and add
+    // no notice at all.
+    const notice = service.store.get(client.session.sessionId)?.messages.at(-1)
+    expect(notice?.role).toBe('notice')
+    expect(notice?.content).toContain('Usage this month: 42 requests')
+    await service.stop()
+  })
+
+  // A command can start a turn, and the pane then fills with the agent's
+  // writing rather than an answer to the command.
+  it('keeps draining queued commands after one of them answers', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-drain-'),
+    )
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const seed = new SessionStore(stateDirectory)
+    await seed.initialize()
+    await seed.create(
+      {
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'External session',
+        updatedAt: '2026-07-25T01:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        queuedCount: 2,
+        queuedPrompts: [
+          {
+            id: 'queued-usage',
+            content: '/usage',
+            command: true,
+            createdAt: '2026-07-25T01:00:01.000Z',
+          },
+          {
+            id: 'queued-cwd',
+            content: '/cwd',
+            command: true,
+            createdAt: '2026-07-25T01:00:02.000Z',
+          },
+        ],
+        messages: [],
+      },
+      { managedOpen: true },
+    )
+    const answered: string[] = []
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async (_sessionId: string, content: string) => {
+        answered.push(content)
+        pane = [
+          ' \u25cf Tip: /plugin',
+          ` \u25cf answered ${content}`,
+          composer,
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.executeCommand(client.session.sessionId, '/model', true)
+
+    // A command answers in the pane and adds no completion event, so nothing
+    // else would drain the entries behind it.
+    expect(answered).toEqual(['/usage', '/cwd', '/model'])
+    expect(
+      service.store.get(client.session.sessionId)?.queuedCount ?? 0,
+    ).toBe(0)
+    await service.stop()
+  })
+
+  it('marks the session busy when a queued command starts a turn', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-turn-'),
+    )
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const seed = new SessionStore(stateDirectory)
+    await seed.initialize()
+    await seed.create(
+      {
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'External session',
+        updatedAt: '2026-07-25T01:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        queuedCount: 2,
+        queuedPrompts: [
+          {
+            id: 'queued-init',
+            content: '/init',
+            command: true,
+            createdAt: '2026-07-25T01:00:01.000Z',
+          },
+          {
+            id: 'queued-cwd',
+            content: '/cwd',
+            command: true,
+            createdAt: '2026-07-25T01:00:02.000Z',
+          },
+        ],
+        messages: [],
+      },
+      { managedOpen: true },
+    )
+    const answered: string[] = []
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async (_sessionId: string, content: string) => {
+        answered.push(content)
+        // /init answers by starting a turn rather than printing.
+        pane = [
+          ' \u25cf Working on it',
+          composer,
+          ' esc interrupt \u00b7 ctrl+c quit',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.executeCommand(client.session.sessionId, '/model', true)
+
+    // The turn owns the terminal, so the entries behind it wait rather than
+    // being typed into the running agent.
+    expect(answered).toEqual(['/init'])
+    const stored = service.store.get(client.session.sessionId)
+    expect(stored?.status).toBe('running')
+    expect(stored?.queuedCount ?? 0).toBe(2)
+    await service.stop()
+  })
+
+  it('stops draining when a queued command opens a full-screen view', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-overlay-'),
+    )
+    directories.push(directory)
+    const stateDirectory = path.join(directory, 'state')
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const seed = new SessionStore(stateDirectory)
+    await seed.initialize()
+    await seed.create(
+      {
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'External session',
+        updatedAt: '2026-07-25T01:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        queuedCount: 2,
+        queuedPrompts: [
+          {
+            id: 'queued-model',
+            content: '/model',
+            command: true,
+            createdAt: '2026-07-25T01:00:01.000Z',
+          },
+          {
+            id: 'queued-cwd',
+            content: '/cwd',
+            command: true,
+            createdAt: '2026-07-25T01:00:02.000Z',
+          },
+        ],
+        messages: [],
+      },
+      { managedOpen: true },
+    )
+    const answered: string[] = []
+    let pane = [' \u25cf Tip: /plugin', composer].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async (_sessionId: string, content: string) => {
+        answered.push(content)
+        // /model opens the picker, which repaints over the composer and takes
+        // the keyboard for its own search box.
+        pane = [
+          ' Select a model',
+          ' > claude-sonnet-4.6',
+          '   gpt-5.6-sol',
+          ' esc close \u00b7 enter select',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(stateDirectory),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.executeCommand(client.session.sessionId, '/usage', true)
+
+    // The view owns the keyboard, so the entries behind it wait instead of
+    // being typed into its search box.
+    expect(answered).toEqual(['/model'])
+    expect(
+      service.store.get(client.session.sessionId)?.queuedCount ?? 0,
+    ).toBe(2)
+    await service.stop()
+  })
+
+  it('reports nothing when the command started a turn', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-slash-turn-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let pane = [
+      ' \u25cf Tip: /plugin',
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        pane = [
+          ' \u25cf Tip: /plugin',
+          ' \u25cf Let me look at the repository first.',
+          '\u257b\u2584\u2584\u2584\u2584',
+          '\u2503',
+          '\u2579\u2580\u2580\u2580\u2580',
+          ' \u25c9 Working - autopilot \u00b7 2.3 KiB esc interrupt',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const result = await service.executeCommand(
+      client.session.sessionId,
+      '/plan',
+    )
+
+    expect(result.messages.at(-1)?.content).toBe('/plan')
     await service.stop()
   })
 
@@ -3755,6 +5125,392 @@ describe('AgentService deletion', () => {
       },
     })
     await service.stop()
+  })
+
+  it('fills the agent form instead of typing into it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async () => true),
+    }
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Choose the deployment",
+            "requestedSchema":{
+              "properties":{
+                "deploymentName":{"type":"string","title":"Name","default":"keepme"},
+                "catalogScope":{
+                  "type":"string",
+                  "title":"Scope",
+                  "oneOf":[
+                    {"const":"arm_only","title":"ARM only"},
+                    {"const":"new_dev_model","title":"New dev model"}
+                  ]
+                },
+                "confirmDeployment":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-answer-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
+
+    const values = {
+      deploymentName: 'swec-gpt55-chat-cache-engine-treatment',
+      catalogScope: 'new_dev_model',
+      confirmDeployment: true,
+    }
+    const answered = await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // The answer goes into the form the agent is waiting on, so it arrives as
+    // that tool's result instead of being typed into a field.
+    // The field titles travel with the answer so the controller can confirm
+    // the form on screen is still the one being answered.
+    expect(terminal.fillUserInputForm).toHaveBeenCalledWith(
+      sessionId,
+      [
+        { kind: 'text', value: 'swec-gpt55-chat-cache-engine-treatment' },
+        { kind: 'select', optionCount: 3, index: 1 },
+        { kind: 'select', optionCount: 3, index: 0 },
+      ],
+      { question: 'Choose the deployment', fields: ['Name', 'Scope', 'Confirm'] },
+    )
+    expect(terminal.send).not.toHaveBeenCalled()
+    expect(terminal.dismissUserInput).not.toHaveBeenCalled()
+    expect(answered.pendingUserInput).toBeUndefined()
+    await service.stop()
+  })
+
+  it('cancels the form and answers in a message when it cannot be filled', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      // Escape cancels the tool the agent was waiting on, which it records as
+      // complete; that is what makes typing the answer safe afterwards.
+      dismissUserInput: vi.fn(async () => {
+        events.push(
+          JSON.parse(`{
+            "type":"tool.execution_complete",
+            "id":"ask-end",
+            "parentId":null,
+            "timestamp":"2026-09-01T04:30:24.000Z",
+            "data":{"toolCallId":"ask-call"}
+          }`) as SessionEvent,
+        )
+        return true
+      }),
+      fillUserInputForm: vi.fn(async () => false),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-fallback-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+    await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // Closing the prompt first keeps the answer out of the form's fields.
+    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
+      question: 'Confirm the transfer',
+      fields: ['Confirm'],
+    })
+    const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
+    expect(content).toContain('confirmTransfer: true')
+    expect(content).not.toContain('{"confirmTransfer"')
+    await service.stop()
+  })
+
+  it('does not send an answer while the form is still open', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      // Escape never lands, so the tool stays open and the form keeps the
+      // keyboard.
+      dismissUserInput: vi.fn(async () => false),
+      fillUserInputForm: vi.fn(async () => false),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-open-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+
+    await expect(
+      service.replyUserInput(sessionId, 'persisted-user-input:ask-call', {
+        answer: JSON.stringify(values),
+        wasFreeform: false,
+        values,
+      }),
+    ).rejects.toThrow('still showing its prompt')
+
+    // Typing now would land in the open form and submit every other field at
+    // its default, which is the corruption this path exists to avoid.
+    expect(terminal.send).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('drops a reply to a request the agent already finished', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const events = JSON.parse(`[
+      {
+        "type":"tool.execution_start",
+        "id":"ask-start",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:21.270Z",
+        "data":{
+          "toolCallId":"ask-call",
+          "toolName":"ask_user",
+          "arguments":{
+            "message":"Confirm the transfer",
+            "requestedSchema":{
+              "properties":{
+                "confirmTransfer":{"type":"boolean","title":"Confirm","default":false}
+              }
+            }
+          }
+        }
+      },
+      {
+        "type":"tool.execution_complete",
+        "id":"unrelated-end",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:22.000Z",
+        "data":{"toolCallId":"unrelated-call"}
+      }
+    ]`) as SessionEvent[]
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) => true,
+      ),
+      cancel: vi.fn(async () => true),
+      pendingPermission: vi.fn(async () => undefined),
+      pendingUserInput: vi.fn(async () => undefined),
+      replyUserInput: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => true),
+      fillUserInputForm: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Deploy the engine',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => 'form-answered-v1',
+      terminal,
+    )
+
+    await service.start()
+    const sessionId = client.session.sessionId
+    const values = { confirmTransfer: true }
+    // The prompt is answered in the attached terminal after the app synced it,
+    // so the agent records the tool as finished while the reply is in flight.
+    events.push(
+      JSON.parse(`{
+        "type":"tool.execution_complete",
+        "id":"ask-end",
+        "parentId":null,
+        "timestamp":"2026-09-01T04:30:23.000Z",
+        "data":{"toolCallId":"ask-call"}
+      }`) as SessionEvent,
+    )
+    await service.replyUserInput(
+      sessionId,
+      'persisted-user-input:ask-call',
+      { answer: JSON.stringify(values), wasFreeform: false, values },
+    )
+
+    // Whatever is on screen now belongs to something else, so it must not be
+    // filled or typed into.
+    expect(terminal.fillUserInputForm).not.toHaveBeenCalled()
+    expect(terminal.send).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('maps answered fields onto the agent form, and refuses what it cannot', () => {
+    const form: UserInputForm = {
+      fields: [
+        { name: 'name', title: 'Name', type: 'string', required: false },
+        {
+          name: 'scope',
+          title: 'Scope',
+          type: 'string',
+          required: false,
+          options: [
+            { value: 'arm_only', label: 'ARM only' },
+            { value: 'new_dev_model', label: 'New dev model' },
+          ],
+        },
+        { name: 'confirm', title: 'Confirm', type: 'boolean', required: false },
+      ],
+    }
+    expect(
+      terminalFormSteps(form, {
+        name: 'swec',
+        scope: 'new_dev_model',
+        confirm: false,
+      }),
+    ).toEqual([
+      { kind: 'text', value: 'swec' },
+      { kind: 'select', optionCount: 3, index: 1 },
+      // Yes is first, so a declined confirmation lands on No.
+      { kind: 'select', optionCount: 3, index: 1 },
+    ])
+
+    // An option the agent never offered must not be guessed at.
+    expect(
+      terminalFormSteps(form, { name: 'x', scope: 'other', confirm: true }),
+    ).toBeUndefined()
+    expect(
+      terminalFormSteps(
+        {
+          fields: [
+            { name: 'tags', title: 'Tags', type: 'array', required: false },
+          ],
+        },
+        { tags: ['a'] },
+      ),
+    ).toBeUndefined()
   })
 
   it('recovers and answers a persisted SDK ask-user request', async () => {
@@ -4020,3 +5776,73 @@ function messagesAsEvents(
     ),
   ) as SessionEvent[]
 }
+
+describe('statusFromEvents', () => {
+  const event = (
+    type: string,
+    agentId?: string,
+  ): SessionEvent =>
+    ({
+      type,
+      ...(agentId ? { agentId } : {}),
+      data: {},
+    }) as unknown as SessionEvent
+
+  it('keeps a session running while a background agent is still working', () => {
+    // The turn ends as soon as the agents are launched: their work carries on
+    // afterwards, and the session is still doing it.
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('subagent.started', 'agent-2'),
+        event('assistant.turn_end'),
+        event('subagent.completed', 'agent-1'),
+      ]),
+    ).toBe('running')
+  })
+
+  it('goes idle when a background agent fails rather than completes', () => {
+    // Failing ends an agent too. Tracking only completions would leave the
+    // session running for good after one failed.
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('subagent.failed', 'agent-1'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('goes idle once every background agent has finished', () => {
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('subagent.completed', 'agent-1'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('does not keep a stopped session running for agents it was waiting on', () => {
+    expect(
+      statusFromEvents([
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('abort'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('still reports a question rather than the agents behind it', () => {
+    expect(
+      statusFromEvents([
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('permission.requested'),
+      ]),
+    ).toBe('waiting')
+  })
+})

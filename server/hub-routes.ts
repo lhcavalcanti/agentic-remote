@@ -16,6 +16,8 @@ const createSessionSchema = z.object({
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
   model: z.string().trim().min(1).max(200).optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  contextTier: z.enum(['default', 'long_context']).optional(),
 })
 
 const renameSessionSchema = z.object({
@@ -65,7 +67,7 @@ const executeCommandSchema = z.object({
 
 const configureRuntimeSchema = z.object({
   model: z.string().trim().min(1).max(200),
-  reasoningEffort: z.string().trim().min(1).max(50),
+  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
   contextTier: z.enum(['default', 'long_context']),
   mode: z.enum(['interactive', 'plan', 'autopilot']).optional(),
 })
@@ -439,6 +441,17 @@ export async function registerHubRoutes(
     },
   )
 
+  app.get<{
+    Params: { computerId: string; provider: 'copilot' | 'claude' }
+  }>(
+    '/api/computers/:computerId/providers/:provider/runtime',
+    async (request) =>
+      manager.providerRuntimeOptions(
+        request.params.computerId,
+        z.enum(['copilot', 'claude']).parse(request.params.provider),
+      ),
+  )
+
   app.post<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/open',
     async (request) => ({
@@ -569,6 +582,27 @@ export async function registerHubRoutes(
       await manager.cancel(request.params.computerId, request.params.sessionId)
       return reply.code(202).send({ ok: true })
     },
+  )
+
+  app.get<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/tasks',
+    async (request) =>
+      manager.listBackgroundTasks(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+  )
+
+  app.post<{
+    Params: SessionParams & { taskId: string }
+  }>(
+    '/api/computers/:computerId/sessions/:sessionId/tasks/:taskId/cancel',
+    async (request) =>
+      manager.cancelBackgroundTask(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.taskId,
+      ),
   )
 
   app.delete<{ Params: SessionParams }>(

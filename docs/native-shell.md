@@ -1,7 +1,7 @@
 # Native shell plan
 
-Status: Desktop implemented and building in CI; iOS structured and compiling,
-not yet run on a device
+Status: Desktop implemented and building locally; iOS structured and
+compiling, not yet run on a device
 
 This document records the architecture decision for the native applications
 that supervise Agentic Remote sessions, and the phased plan to build them. One
@@ -62,9 +62,8 @@ The one real cost is keeping native build dependencies out of the Linux
 service install. This repository is a single package, not a pnpm workspace, so
 `shell/` carries its own `package.json` and lockfile and is not referenced by
 the root manifest. `bin/agentic-remote setup`, `pnpm install`, and release
-publication therefore never see Tauri, Rust, Xcode, or any Apple tooling. CI
-keeps the existing `ubuntu-latest` job untouched and adds separate `shell` and
-`shell-ios` jobs.
+publication therefore never see Tauri, Rust, Xcode, or any Apple tooling, and
+the repository's existing `ubuntu-latest` check is untouched by the shell.
 
 ### 2.2 Why the shell loads the remote URL
 
@@ -218,21 +217,27 @@ native calls cross the IPC boundary.
 
 ### 3.2 Progressive enhancement in the web app
 
-The web app stays a browser app. A new `src/desktop.ts` detects the shell and
-enables extra behavior only when present:
+The web app stays a browser app. `src/shell.ts` detects the shell and enables
+extra behavior only when present:
 
 ```ts
-export function desktopShell(): boolean {
-  return '__TAURI_INTERNALS__' in window
+export function nativeShell(): boolean {
+  return bridge() !== undefined
 }
 ```
+
+Detection keys off the injected `window.__AGENTIC_SHELL__` object rather than
+Tauri's own globals, so the web app stays independent of the shell's
+implementation and a partially initialized runtime is never mistaken for a
+working bridge.
 
 - In Safari and on iPhone, nothing changes.
 - In the shell, the app additionally reports the count of sessions awaiting
   input for the badge, routes notifications through the shell instead of Web
   Push, and handles deep-link navigation events.
-- Every desktop feature MUST degrade silently. A hub opened in a browser MUST
-  NOT show controls that only the shell can satisfy.
+- Every shell feature MUST degrade silently. A hub opened in a browser, or in a
+  shell too old or on a platform too limited to provide it, MUST NOT show a
+  control that nothing can satisfy.
 
 ### 3.3 Authentication
 
@@ -354,8 +359,9 @@ require the hub to serve an association file and are therefore deferred.
 ### 4.4 The iOS badge is not reachable from Tauri today
 
 `WebviewWindow::set_badge_count` documents iOS behavior, but it lives inside a
-`#[cfg(desktop)]` impl block in Tauri 2.11, so it does not exist on iOS. The
-`shell-ios` CI job caught this; the documentation alone was misleading.
+`#[cfg(desktop)]` impl block in Tauri 2.11, so it does not exist on iOS. A
+`cargo check --target aarch64-apple-ios` caught this; the documentation alone
+was misleading.
 
 The `set_badge` command is therefore a no-op on mobile. An iOS badge needs
 either an APNs payload carrying `badge` or a small Swift addition to the
@@ -365,19 +371,32 @@ tracked separately.
 More generally, `show`, `hide`, `close`, `destroy`, `set_focus`, and
 `set_badge_count` are all `#[cfg(desktop)]` on `WebviewWindow`, while
 `navigate`, `eval`, and the visibility getters are available everywhere. New
-shell code MUST assume nothing from a doc comment and MUST be checked by the
-`shell-ios` job.
+shell code MUST assume nothing from a doc comment and MUST be verified with
+`cargo check --target aarch64-apple-ios` on a Mac.
 
 ## 5. Release and distribution
 
-- Bundles cannot be cross-compiled. Each platform builds itself, so CI runs a
-  `shell` job on `macos-latest`, `ubuntu-latest`, and `windows-latest`, plus a
-  `shell-ios` job that compiles for `aarch64-apple-ios`. The Linux service hosts
-  never build the shell.
+- Bundles cannot be cross-compiled, so each platform builds itself. The Linux
+  service hosts never build the shell.
+- **The shell is built locally, not in CI.** This is a private repository, where
+  macOS runners bill at ten times the Linux rate and Windows at twice, so a
+  three-platform build cost roughly 60 billable minutes per run and exhausted
+  the account's monthly allowance. Automated shell builds were removed; the
+  repository's existing application check is the only workflow.
+- Because nothing verifies the shell automatically, a change to platform-specific
+  code MUST be checked on a Mac before it is trusted: window or tray APIs,
+  capabilities, and the `cfg(desktop)` and `cfg(mobile)` split. Run
+  `cargo fmt --check`, `cargo clippy`, `cargo test`, and
+  `cargo check --target aarch64-apple-ios`. That last one is what caught a call
+  which compiled on every desktop target and not on iOS.
 - The shell is a separate package with its own `package.json` and lockfile, so
   the existing `pnpm check` job and the service install are unaffected by it.
 - Bundle icons are generated from `public/icons/icon-512.png` by `pnpm icons`
   rather than committed, so there is one icon source in the repository.
+- Installable bundles are produced by `pnpm build:desktop` on each platform and
+  attached to a GitHub release by hand. Build macOS with
+  `--target universal-apple-darwin` so one download covers Apple Silicon and
+  Intel.
 - Updates use the Tauri updater against a self-hosted JSON manifest, signed with
   a repository-independent ed25519 key. The **private updater key is a secret**:
   it lives in GitHub Actions secrets and MUST NOT be committed. The updater
@@ -425,7 +444,7 @@ Each phase is independently shippable and independently abandonable.
 | Phase | Scope | Exit criterion | Status |
 | --- | --- | --- | --- |
 | **0** | Safari Add to Dock and the existing iPhone PWA. No code. | Sessions supervised from a Dock icon and a phone; baseline understood. | Available now |
-| **1** | `shell/` package. Tauri shell, configurable hub URL, runtime remote capability, settings page, persistent cookies. | App opens to the hub, Access login survives a restart, sessions stream over WSS. | Implemented; desktop builds in CI |
+| **1** | `shell/` package. Tauri shell, configurable hub URL, runtime remote capability, settings page, persistent cookies. | App opens to the hub, Access login survives a restart, sessions stream over WSS. | Implemented; desktop builds locally |
 | **2** | `src/shell.ts` bridge, badge, notifications, tray, global shortcut, deep links. | Waiting-session count visible from the badge; `agentic://` opens the right session. | Implemented |
 | **3** | iOS target: `tauri ios init`, signing, TestFlight or ad-hoc install. | The app runs on a real iPhone and reaches the hub through Access. | Structured and compiling; needs a Mac |
 | **4** | macOS signing and notarization (§5.1). | A downloaded build opens with no Gatekeeper prompt and updates cleanly. | Planned |
@@ -433,7 +452,7 @@ Each phase is independently shippable and independently abandonable.
 | **6** | macOS notification actions via `UNUserNotificationCenter` (§4.1). | The same on macOS. | Planned |
 | **7** | Launch at login, window-state restore, self-hosted updater, Live Activities. | — | Optional |
 
-Phases 1 and 2 are code-complete and pass CI on macOS, Windows, and Linux, and
+Phases 1 and 2 are code-complete and build on macOS, Windows, and Linux, and
 the iOS target compiles. Nothing has been run against a hub on a real device
 yet; that first run is the remaining risk and should happen before any further
 phase starts.

@@ -328,32 +328,23 @@ binaries means the digest did not match the table in
 
 ### Transcribing on another computer
 
-By default the hub transcribes audio itself, so it needs `whisper-cli` and a
-model. Set `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER` to the name or id of a paired
-computer to run transcription there instead, which is what you want when the
-computer serving the UI is small and a paired one already has Whisper and the
-hardware to accelerate it:
+By default the hub transcribes audio itself and needs `whisper-cli` and a model.
+Set `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER` to the name or id of a paired
+computer to run transcription there instead:
 
 ```bash
 AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER=workstation
 ```
 
-`agentic-remote setup` records the assignment and reads it back from the
-environment file it replaces, so it survives updates and promotions. Clear it by
-removing the line from `~/.config/agentic-remote/environment` and re-running
-setup.
+The hub streams the recording to that computer's authenticated node API and
+keeps nothing on disk; only the transcript comes back. Sessions, uploads, and
+Knowledge are unaffected, and naming the hub's own computer matches the default.
 
-The hub still receives the recording, but it streams it straight to that
-computer's authenticated node API and keeps nothing on disk. Only the transcript
-comes back. Naming the hub's own computer is the same as leaving the variable
-unset. Nothing else moves: sessions, uploads, and Knowledge stay on their owning
-computer.
-
-The named computer needs `whisper-cli` and its model; the hub does not. If the
-assignment names a computer that is not paired or is offline, recordings fail
-with a `503` that says so rather than quietly transcribing somewhere else. A
-computer still running a release without this endpoint reports a `409` asking
-you to update it.
+- Whisper and its model belong on the named computer, not the hub.
+- `setup` reads the assignment back from the environment file it replaces, so it
+  survives updates. Clear it by deleting the line and re-running setup.
+- An unpaired or offline computer fails the recording with a `503`; one on a
+  release without the endpoint reports a `409`.
 
 ## Documentation
 

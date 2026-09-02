@@ -370,6 +370,9 @@ export class SessionStore {
     })
   }
 
+  /** How far back a cleared session's ancestry is worth carrying. */
+  private static readonly clearedAncestryLimit = 25
+
   async replaceWithClearedSession(
     sessionId: string,
     replacementId: string,
@@ -381,7 +384,14 @@ export class SessionStore {
     const replacement: StoredSession = {
       ...existing,
       id: replacementId,
-      replacedSessionId: sessionId,
+      // The predecessor's own ancestry comes too: a client that missed both
+      // clears has state under a session the predecessor already replaced.
+      // Capped because a long-lived conversation can be cleared many times,
+      // and only the recent ancestry can still have anything under it.
+      replacedSessionIds: [
+        ...(existing.replacedSessionIds || []),
+        sessionId,
+      ].slice(-SessionStore.clearedAncestryLimit),
       revision: (existing.revision ?? 0) + 1,
       messages: [],
       status: 'idle',

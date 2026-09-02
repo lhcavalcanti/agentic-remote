@@ -200,14 +200,17 @@ export interface SessionSummary {
   activity?: string
   runtime?: SessionRuntimeInfo
   /**
-   * The session this one replaced when its conversation was cleared.
+   * The sessions this one replaced, oldest first, as its conversation was
+   * cleared over and over.
    *
    * Clearing is announced as a removal and an arrival, which a client that is
    * asleep or offline never sees. Carrying the lineage in the session itself
    * means a client can still tell, from a snapshot alone, that what it is
-   * holding for the old session belongs to this one.
+   * holding for a session that is gone belongs to this one. It is the whole
+   * ancestry rather than the last step because a client can miss several
+   * clears in a row, and the ones in between are gone with them.
    */
-  replacedSessionId?: string
+  replacedSessionIds?: string[]
 }
 
 export interface SessionDetail extends SessionSummary {

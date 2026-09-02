@@ -6118,7 +6118,7 @@ describe('App', () => {
     const replacement: ManagedSession = {
       ...session,
       id: 'session-1-cleared',
-      replacedSessionId: 'session-1',
+      replacedSessionIds: ['session-1'],
       messages: [],
     }
     vi.mocked(listSessions).mockResolvedValue([replacement])
@@ -6143,6 +6143,60 @@ describe('App', () => {
       'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
     })
     expect(screen.getByLabelText('Message')).toHaveValue('Half-written thought')
+  })
+
+  it('claims state from a session cleared twice while it was away', async () => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'Half-written thought' }),
+    )
+    // Cleared twice over: the session in between is gone as well, so only the
+    // whole ancestry can lead back to what the draft was left under.
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-twice',
+      replacedSessionIds: ['session-1', 'session-1-once'],
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1-twice': 'Half-written thought' }),
+    )
+  })
+
+  it('opens what a linked session became after a clear it missed', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2',
+    )
+    const replacement: ManagedSession = {
+      ...secondSession,
+      id: 'session-2-cleared',
+      title: 'Second chat',
+      replacedSessionIds: ['session-2'],
+      messages: [],
+    }
+    // The link names a session that no longer exists, and an unrelated one is
+    // listed first, so falling back would open the wrong conversation.
+    vi.mocked(listSessions).mockResolvedValue([session, replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-2-cleared'),
+    )
+    window.history.replaceState({}, '', '/')
   })
 
   it('retries a knowledge restore that failed', async () => {

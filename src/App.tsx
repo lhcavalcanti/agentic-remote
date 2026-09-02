@@ -5693,21 +5693,29 @@ function App() {
    */
   const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {
     for (const session of loaded) {
-      if (!session.replacedSessionId) {
-        continue
+      const replacement = sessionKey(session)
+      // Oldest first, so that when several ancestors held something the most
+      // recent one is what the conversation ends up with.
+      for (const ancestorId of session.replacedSessionIds || []) {
+        const ancestor = sessionKey({
+          computerId: session.computerId,
+          id: ancestorId,
+        })
+        if (adoptedReplacements.current.has(ancestor)) {
+          continue
+        }
+        adoptedReplacements.current.add(ancestor)
+        migrateSessionStateRef.current(ancestor, replacement)
+        setSelectedKey((current) =>
+          current === ancestor ? replacement : current,
+        )
+        // A link to a session that has since been cleared should open what it
+        // became. Nothing is selected yet on the first load, so the address
+        // the loader is about to read is what has to follow the lineage.
+        if (initialUrlSelection.current === ancestor) {
+          initialUrlSelection.current = replacement
+        }
       }
-      const predecessor = sessionKey({
-        computerId: session.computerId,
-        id: session.replacedSessionId,
-      })
-      if (adoptedReplacements.current.has(predecessor)) {
-        continue
-      }
-      adoptedReplacements.current.add(predecessor)
-      migrateSessionStateRef.current(predecessor, sessionKey(session))
-      setSelectedKey((current) =>
-        current === predecessor ? sessionKey(session) : current,
-      )
     }
   }, [])
 

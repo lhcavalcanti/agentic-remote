@@ -4529,7 +4529,12 @@ describe('AgentService deletion', () => {
 
     await expect(
       service.sendMessage(client.session.sessionId, 'Deploy the engine'),
-    ).rejects.toThrow('full-screen view')
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('full-screen view'),
+      // Without a status the reason is reported as a generic server error and
+      // the reader learns nothing.
+      statusCode: 409,
+    })
 
     // Typing now would filter the picker's list, and a stray Enter could
     // choose from it, with nothing to say the prompt never arrived.

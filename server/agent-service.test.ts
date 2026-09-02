@@ -1707,10 +1707,11 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('applies a requested model to new SDK sessions', async () => {
+  it('applies requested runtime defaults to new SDK sessions', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
@@ -1725,12 +1726,78 @@ describe('AgentService deletion', () => {
       true,
       'copilot',
       'gpt-configurable',
+      'high',
+      'long_context',
     )
 
     expect(client.createdConfigs.at(-1)).toMatchObject({
       model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
     })
-    expect(created.runtime?.model).toBe('gpt-configurable')
+    expect(created.runtime).toMatchObject({
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+      contextTokenLimit: 100_000,
+    })
+    await service.stop()
+  })
+
+  it('refreshes SDK models and omits effort for models without effort support', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [
+      {
+        ...configurableModel(),
+        id: 'gpt-no-effort',
+        name: 'GPT No Effort',
+        supportedReasoningEfforts: undefined,
+        defaultReasoningEffort: undefined,
+        capabilities: {
+          ...configurableModel().capabilities,
+          supports: {
+            ...configurableModel().capabilities.supports,
+            reasoningEffort: false,
+          },
+        },
+      },
+    ]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    await expect(service.providerRuntimeOptions('copilot')).resolves.toEqual({
+      models: [
+        expect.objectContaining({
+          id: 'gpt-no-effort',
+          reasoningEfforts: [],
+        }),
+      ],
+    })
+    const created = await service.createSession(
+      directory,
+      false,
+      true,
+      'copilot',
+      'gpt-no-effort',
+    )
+    expect(client.createdConfigs.at(-1)).toMatchObject({
+      model: 'gpt-no-effort',
+      contextTier: 'default',
+    })
+    expect(client.createdConfigs.at(-1)).not.toHaveProperty('reasoningEffort')
+    expect(created.runtime).not.toHaveProperty('reasoningEffort')
+
+    client.models = [configurableModel()]
+    await expect(service.providerRuntimeOptions('copilot')).resolves.toEqual({
+      models: [expect.objectContaining({ id: 'gpt-configurable' })],
+    })
     await service.stop()
   })
 
@@ -1949,15 +2016,27 @@ describe('AgentService deletion', () => {
       true,
       'copilot',
       'gpt-configurable',
+      'high',
+      'long_context',
     )
     expect(terminal.create).toHaveBeenLastCalledWith(
       modelSession.id,
       directory,
       path.basename(directory),
       true,
-      { model: 'gpt-configurable' },
+      {
+        model: 'gpt-configurable',
+        reasoningEffort: 'high',
+        contextTier: 'long_context',
+        contextTokenLimit: 100_000,
+        contextEstimated: true,
+      },
     )
-    expect(modelSession.runtime?.model).toBe('gpt-configurable')
+    expect(modelSession.runtime).toMatchObject({
+      model: 'gpt-configurable',
+      reasoningEffort: 'high',
+      contextTier: 'long_context',
+    })
     const guarded = await service.createSession(directory, true, false)
     expect(terminal.create).toHaveBeenCalledWith(
       guarded.id,

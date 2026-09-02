@@ -2094,6 +2094,33 @@ button {
   font-size: 14px;
 }
 
+.default-runtime {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.default-runtime h4 {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.default-runtime__description {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.default-runtime__description > :first-child {
+  margin-top: 0;
+}
+
+.default-runtime__description > :last-child {
+  margin-bottom: 0;
+}
+
 .app-settings-section__action {
   width: 100%;
   min-height: 42px;

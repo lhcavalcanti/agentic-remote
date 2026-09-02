@@ -20,9 +20,11 @@ import type {
   AgentProviderCapability,
   ConfigureRuntimeInput,
   PendingUserInput,
+  ProviderRuntimeOptions,
   RemovedQueuedPrompt,
   RuntimeModelOption,
   RuntimeOptions,
+  RuntimeReasoningEffort,
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
@@ -254,6 +256,8 @@ export class ClaudeAgentService
     allowAllPermissions = true,
     provider: AgentProvider = 'claude',
     model?: string,
+    reasoningEffort?: RuntimeReasoningEffort,
+    contextTier?: 'default' | 'long_context',
   ): Promise<SessionDetail> {
     if (provider !== 'claude') {
       throw new Error(`Provider ${provider} is not handled by Claude Agent`)
@@ -262,11 +266,28 @@ export class ClaudeAgentService
     const cwd = await this.validateDirectory(inputPath)
     const id = randomUUID()
     const now = new Date().toISOString()
-    const defaultModel = model
-      ? this.models.find((candidate) => candidate.id === model.trim())
-      : this.models[0]
-    if (model?.trim() && !defaultModel) {
+    const modelId = model?.trim()
+    const defaultModel = modelId
+      ? this.models.find((candidate) => candidate.id === modelId)
+      : undefined
+    if (modelId && !defaultModel) {
       throw new Error('Selected Claude model is not available')
+    }
+    const effort =
+      reasoningEffort ||
+      (defaultModel?.reasoningEfforts.includes('high') === true
+        ? 'high'
+        : defaultModel?.reasoningEfforts[0])
+    const tier = contextTier || 'default'
+    if (
+      defaultModel &&
+      effort &&
+      !defaultModel.reasoningEfforts.includes(effort)
+    ) {
+      throw new Error('Selected reasoning effort is not supported by this model')
+    }
+    if (defaultModel && !defaultModel.contextTiers.includes(tier)) {
+      throw new Error('Selected context tier is not supported by this model')
     }
     const session = await this.store.create(
       {
@@ -280,12 +301,9 @@ export class ClaudeAgentService
         messages: [],
         runtime: {
           allowAllPermissions,
-          model: defaultModel?.id || 'default',
-          reasoningEffort:
-            defaultModel?.reasoningEfforts.includes('high') === true
-              ? 'high'
-              : defaultModel?.reasoningEfforts[0] || 'medium',
-          contextTier: 'default',
+          ...(defaultModel ? { model: defaultModel.id } : {}),
+          ...(effort ? { reasoningEffort: effort } : {}),
+          contextTier: tier,
           mode: 'interactive',
         },
       },
@@ -319,11 +337,27 @@ export class ClaudeAgentService
 
   async runtimeOptions(id: string): Promise<RuntimeOptions> {
     const session = this.requireSession(id)
+    const options = await this.providerRuntimeOptions('claude')
     return {
       current: session.runtime || {},
-      models: this.models,
+      models: options.models,
       status: session.status,
     }
+  }
+
+  async providerRuntimeOptions(
+    provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    if (provider !== 'claude') {
+      throw new Error(`Provider ${provider} is not handled by Claude Agent`)
+    }
+    if (!this.available) {
+      await this.detectAvailability()
+      this.requireAvailable()
+      return { models: this.models }
+    }
+    this.models = await this.loadModels()
+    return { models: this.models }
   }
 
   async configureRuntime(
@@ -334,11 +368,15 @@ export class ClaudeAgentService
     if (session.status !== 'idle') {
       throw new Error('Runtime settings can only change while the session is idle')
     }
+    await this.providerRuntimeOptions('claude')
     const model = this.models.find((candidate) => candidate.id === input.model)
     if (!model) {
       throw new Error('Selected Claude model is not available')
     }
-    if (!model.reasoningEfforts.includes(input.reasoningEffort)) {
+    if (
+      input.reasoningEffort &&
+      !model.reasoningEfforts.includes(input.reasoningEffort)
+    ) {
       throw new Error('Selected reasoning effort is not supported by this model')
     }
     if (input.contextTier !== 'default') {
@@ -657,10 +695,11 @@ export class ClaudeAgentService
     return {
       id: model.value,
       name: model.displayName,
+      description: model.description,
       reasoningEfforts:
         model.supportedEffortLevels?.length
           ? [...model.supportedEffortLevels]
-          : ['medium'],
+          : [],
       contextTiers: ['default'],
     }
   }

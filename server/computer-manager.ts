@@ -2,6 +2,7 @@ import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
   AddComputerInput,
+  AgentProvider,
   AudioTranscription,
   ConfigureRuntimeInput,
   ComputerSummary,
@@ -12,6 +13,7 @@ import type {
   ManagedSession,
   ManagedRemovedQueuedPrompt,
   PermissionReplyInput,
+  ProviderRuntimeOptions,
   RenameSessionInput,
   SendMessageInput,
   UserInputReplyInput,
@@ -295,9 +297,51 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.allowAllPermissions,
             input.provider,
             input.model,
+            input.reasoningEffort,
+            input.contextTier,
           )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)
+  }
+
+  async providerRuntimeOptions(
+    computerId: string,
+    provider: AgentProvider,
+  ): Promise<ProviderRuntimeOptions> {
+    this.requireComputer(computerId)
+    if (computerId === this.identity.info.id) {
+      const before = this.requireComputer(computerId).providers
+      const options = await this.localService.providerRuntimeOptions(provider)
+      const after = this.requireComputer(computerId).providers
+      // Discovery can succeed after a provider was recorded unavailable, and
+      // the UI keeps it disabled until it hears otherwise.
+      if (
+        JSON.stringify(before ?? []) !== JSON.stringify(after ?? [])
+      ) {
+        this.emit('event', {
+          type: 'computer.updated',
+          computer: this.requireComputer(computerId),
+        })
+      }
+      return options
+    }
+    const client = this.requireClient(computerId)
+    const options = await client.providerRuntimeOptions(provider)
+    const advertised = client.providers.some(
+      (capability) => capability.id === provider && capability.available,
+    )
+    if (!advertised) {
+      // The node answered for a provider its cached capabilities call
+      // unavailable, so that cache was taken before the provider existed
+      // there. Refreshing it now keeps the recovered provider from staying
+      // hidden until the node happens to reconnect.
+      await client.getInfo().catch(() => undefined)
+      this.emit('event', {
+        type: 'computer.updated',
+        computer: this.requireComputer(computerId),
+      })
+    }
+    return options
   }
 
   async uploadFile(

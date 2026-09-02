@@ -36,6 +36,23 @@ describe('managed service unit', () => {
     )
   })
 
+  it('keeps the assigned transcription computer across a re-run of setup', async () => {
+    const script = await readFile(
+      new URL('../bin/agentic-remote', import.meta.url),
+      'utf8',
+    )
+
+    // A downstream host graduates a commit by running setup with no environment
+    // of its own, so the assignment has to be read back from the file setup is
+    // about to replace or voice silently returns to the hub.
+    expect(script).toContain(
+      'transcription_computer="${AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER:-$(config_value AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER)}"',
+    )
+    expect(script).toContain(
+      "printf 'AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER=%s\\n' \\",
+    )
+  })
+
   it('installs dependencies without requiring an interactive prompt', async () => {
     const script = await readFile(
       new URL('../bin/agentic-remote', import.meta.url),

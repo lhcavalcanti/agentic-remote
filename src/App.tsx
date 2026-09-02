@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -3250,7 +3251,67 @@ function ActivityArticle({
   )
 }
 
-function ConversationMessages({
+/**
+ * One transcript row. Each parses its own Markdown, so a memo keeps a new
+ * message from re-parsing every earlier one: the content is immutable once
+ * written, and only a streaming row changes.
+ */
+function sameMessage(left: ChatMessage, right: ChatMessage): boolean {
+  return (
+    left.id === right.id &&
+    left.role === right.role &&
+    left.content === right.content &&
+    left.createdAt === right.createdAt &&
+    left.streaming === right.streaming
+  )
+}
+
+const TranscriptMessage = memo(function TranscriptMessage({
+  message,
+}: {
+  message: ChatMessage
+}) {
+  return (
+    <article className={`message message--${message.role}`} key={message.id}>
+      <div className="message__metadata">
+        <span className="message__label">
+          {message.role === 'user'
+            ? 'You'
+            : message.role === 'notice'
+              ? 'Command'
+              : 'Agent'}
+        </span>
+        <time
+          className="message__timestamp"
+          dateTime={message.createdAt}
+          title={messageDateTimeFormatter.format(new Date(message.createdAt))}
+        >
+          {messageTimeFormatter.format(new Date(message.createdAt))}
+        </time>
+      </div>
+      <div className="message__content">
+        {message.content ? (
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {message.content}
+          </ReactMarkdown>
+        ) : (
+          <span className="typing-indicator">
+            <i />
+            <i />
+            <i />
+          </span>
+        )}
+      </div>
+    </article>
+  )
+}, (previous, next) => sameMessage(previous.message, next.message))
+
+/**
+ * The transcript is the largest thing on screen and does not change while the
+ * composer is typed into, so it is kept out of that render. Rebuilding a few
+ * thousand rows for every keystroke is what made typing lag.
+ */
+const ConversationMessages = memo(function ConversationMessages({
   messages,
   currentToolId,
 }: {
@@ -3337,41 +3398,11 @@ function ConversationMessages({
       continue
     }
     rendered.push(
-      <article className={`message message--${message.role}`} key={message.id}>
-        <div className="message__metadata">
-          <span className="message__label">
-            {message.role === 'user'
-              ? 'You'
-              : message.role === 'notice'
-                ? 'Command'
-                : 'Agent'}
-          </span>
-          <time
-            className="message__timestamp"
-            dateTime={message.createdAt}
-            title={messageDateTimeFormatter.format(new Date(message.createdAt))}
-          >
-            {messageTimeFormatter.format(new Date(message.createdAt))}
-          </time>
-        </div>
-        <div className="message__content">
-          {message.content ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.content}
-            </ReactMarkdown>
-          ) : (
-            <span className="typing-indicator">
-              <i />
-              <i />
-              <i />
-            </span>
-          )}
-        </div>
-      </article>,
+      <TranscriptMessage key={message.id} message={message} />,
     )
   }
   return <div className="message-stack">{rendered}</div>
-}
+})
 
 function EmptyConversation({ onCreate }: { onCreate: () => void }) {
   return (

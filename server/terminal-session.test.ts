@@ -477,6 +477,19 @@ describe('paneShowsText', () => {
     expect(paneShowsText(pane, message)).toBe(true)
   })
 
+  it('recognises text wrapped across bordered composer lines', () => {
+    const message =
+      'Please inspect the deployment-orchestration-controller module today'
+    const pane = [
+      '\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e',
+      '\u2503 > Please inspect the deployment-orchestration- \u2503',
+      '\u2503 controller module today                         \u2503',
+      '\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f',
+    ].join('\n')
+
+    expect(paneShowsText(pane, message)).toBe(true)
+  })
+
   it('recognises a paste Copilot replaced with a placeholder', () => {
     expect(
       paneShowsText('> [Pasted text #1 +40 lines]', 'a very long message'),

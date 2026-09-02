@@ -20,6 +20,7 @@ import {
   messagesFromHistory,
   pendingUserInputFromEvents,
   runtimeInfoFromEvents,
+  statusFromEvents,
   terminalFormSteps,
 } from './agent-service.js'
 import { SessionStore } from './session-store.js'
@@ -5109,3 +5110,73 @@ function messagesAsEvents(
     ),
   ) as SessionEvent[]
 }
+
+describe('statusFromEvents', () => {
+  const event = (
+    type: string,
+    agentId?: string,
+  ): SessionEvent =>
+    ({
+      type,
+      ...(agentId ? { agentId } : {}),
+      data: {},
+    }) as unknown as SessionEvent
+
+  it('keeps a session running while a background agent is still working', () => {
+    // The turn ends as soon as the agents are launched: their work carries on
+    // afterwards, and the session is still doing it.
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('subagent.started', 'agent-2'),
+        event('assistant.turn_end'),
+        event('subagent.completed', 'agent-1'),
+      ]),
+    ).toBe('running')
+  })
+
+  it('goes idle when a background agent fails rather than completes', () => {
+    // Failing ends an agent too. Tracking only completions would leave the
+    // session running for good after one failed.
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('subagent.failed', 'agent-1'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('goes idle once every background agent has finished', () => {
+    expect(
+      statusFromEvents([
+        event('assistant.turn_start'),
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('subagent.completed', 'agent-1'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('does not keep a stopped session running for agents it was waiting on', () => {
+    expect(
+      statusFromEvents([
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('abort'),
+      ]),
+    ).toBe('idle')
+  })
+
+  it('still reports a question rather than the agents behind it', () => {
+    expect(
+      statusFromEvents([
+        event('subagent.started', 'agent-1'),
+        event('assistant.turn_end'),
+        event('permission.requested'),
+      ]),
+    ).toBe('waiting')
+  })
+})

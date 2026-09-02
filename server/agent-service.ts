@@ -901,10 +901,24 @@ function stripAnsi(value: string): string {
   return value.replace(ansiSequence, '')
 }
 
-function statusFromEvents(events: SessionEvent[]): SessionStatus {
+export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
+  // Work a turn handed to background agents outlives the turn itself, so the
+  // agents still running are tracked separately from it.
+  const workingAgents = new Set<string>()
   for (const event of events) {
     if (event.agentId) {
+      if (event.type === 'subagent.started') {
+        workingAgents.add(event.agentId)
+      } else if (
+        event.type === 'subagent.completed' ||
+        event.type === 'subagent.failed'
+      ) {
+        // Failing ends an agent just as completing does. Tracking only the
+        // completions would leave a failed agent working for good, and the
+        // session running with it.
+        workingAgents.delete(event.agentId)
+      }
       continue
     }
     switch (event.type) {
@@ -922,13 +936,21 @@ function statusFromEvents(events: SessionEvent[]): SessionStatus {
         break
       case 'assistant.turn_end':
       case 'session.idle':
+        status = 'idle'
+        break
       case 'abort':
       case 'session.shutdown':
+        // Nothing outlives the session ending, so agents it was waiting on
+        // are not still working.
+        workingAgents.clear()
         status = 'idle'
         break
     }
   }
-  return status
+  // A turn that handed its work to background agents and then ended has not
+  // finished it. Reporting the session as idle offers it for the next prompt
+  // and calls the work done while it is still going on.
+  return status === 'idle' && workingAgents.size > 0 ? 'running' : status
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -3327,6 +3349,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (event) =>
             event.type === 'assistant.turn_end' ||
             event.type === 'session.idle' ||
+            // A turn that handed its work to background agents ends before
+            // they do, so the last agent finishing is the completion a prompt
+            // queued behind them is waiting on.
+            event.type === 'subagent.completed' ||
+            event.type === 'subagent.failed' ||
             event.type === 'session.error' ||
             event.type === 'abort' ||
             event.type === 'session.shutdown',

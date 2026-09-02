@@ -134,10 +134,9 @@ Do not weaken these without an explicit product decision.
   `agentic-remote pair-info` for troubleshooting; it prints that token.
 - Never copy state, pairing tokens, provider credentials, repositories, or SSH
   keys between hosts. Each host pulls from GitHub independently.
-- Uploads, transcripts, and audio stay on the owning computer. The one exception
-  is `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER`, which forwards a recording to the
-  named paired computer so Whisper runs there; the audio is buffered in hub
-  memory only for the length of that request and never written to hub storage.
+- Uploads, transcripts, and audio stay on the owning computer, except when
+  `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER` sends a recording to a paired computer
+  to be transcribed. The hub buffers that audio in memory only, never on disk.
 
 ## Performance invariants
 

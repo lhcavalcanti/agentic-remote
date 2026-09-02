@@ -55,8 +55,6 @@ AGENTIC_REMOTE_MONITOR_PROD_ROOT=/path/to/production/runtime
 AGENTIC_REMOTE_MONITOR_RELEASE_ROOT=/path/to/releases
 AGENTIC_REMOTE_MONITOR_SERVICE=agentic-remote.service
 AGENTIC_REMOTE_MONITOR_HEALTH_URL=http://127.0.0.1:4317/health
-AGENTIC_REMOTE_MONITOR_REPOSITORY=owner/repository
-AGENTIC_REMOTE_MONITOR_WORKFLOW=ci.yml
 ```
 
 ### Inherit the runtime identity by default

@@ -315,6 +315,92 @@ describe('background task adapter', () => {
     )
   })
 
+  it('leaves a promoted shell running after the turn that started it ends', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "sync-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:03:00.000Z",
+          "data": {
+            "toolCallId": "sync-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm check",
+              "description": "Run checks",
+              "mode": "sync"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "sync-handoff",
+          "parentId": "sync-start",
+          "timestamp": "2026-08-31T18:03:01.000Z",
+          "data": {
+            "toolCallId": "sync-call",
+            "success": true,
+            "result": {
+              "content": "Command moved to background (shellId: shell-promoted)"
+            }
+          }
+        },
+        {
+          "type": "assistant.turn_end",
+          "id": "turn-end",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:04:00.000Z",
+          "data": {}
+        }
+      ]`) as SessionEvent[],
+    )
+
+    // Being promoted is how a shell comes to outlive the turn that started
+    // it, so the turn ending says nothing about whether it is still running.
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        id: 'shell-promoted',
+        type: 'shell',
+        status: 'running',
+        attachmentMode: 'attached',
+      }),
+    ])
+  })
+
+  it('leaves an async shell running after the turn that started it ends', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "async-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:02:00.000Z",
+          "data": {
+            "toolCallId": "async-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm dev",
+              "description": "Start the dev server",
+              "mode": "async"
+            }
+          }
+        },
+        {
+          "type": "assistant.turn_end",
+          "id": "turn-end",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:04:00.000Z",
+          "data": {}
+        }
+      ]`) as SessionEvent[],
+    )
+
+    expect(tasks).toEqual([
+      expect.objectContaining({ id: 'async-call', status: 'running' }),
+    ])
+  })
+
   it('does not promote an explicitly synchronous shell when assuming background', () => {
     const tasks = backgroundTasksFromEvents(
       JSON.parse(`[

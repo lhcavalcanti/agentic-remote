@@ -489,6 +489,7 @@ function shellTaskMode(
 ): {
   executionMode: BackgroundTask['executionMode']
   attachmentMode: BackgroundTask['attachmentMode']
+  assumed: boolean
 } | undefined {
   const telemetry = toolTelemetryProperties(data)
   const requestedMode = (
@@ -541,6 +542,9 @@ function shellTaskMode(
   return {
     executionMode: 'background',
     attachmentMode: attachmentMode || (detached ? 'detached' : 'attached'),
+    // Nothing said this was in the background; it is only being treated that
+    // way because the transport left the mode out.
+    assumed: !background,
   }
 }
 
@@ -671,6 +675,7 @@ function shellTask(
   mode: {
     executionMode: BackgroundTask['executionMode']
     attachmentMode: BackgroundTask['attachmentMode']
+    assumed: boolean
   },
 ): BackgroundTask {
   const args = taskArguments(data)
@@ -731,6 +736,9 @@ function backgroundHandoff(
   | {
       executionMode: BackgroundTask['executionMode']
       attachmentMode: BackgroundTask['attachmentMode']
+      // A handoff is the shell saying outright that it went to the
+      // background, which is the opposite of being assumed to be there.
+      assumed: false
     }
   | undefined {
   const result = recordValue(data.result)
@@ -755,6 +763,7 @@ function backgroundHandoff(
     detached
   ) {
     return {
+      assumed: false,
       executionMode: 'background',
       attachmentMode:
         detached ? 'detached' : 'attached',
@@ -768,6 +777,7 @@ function backgroundHandoff(
     booleanValue(telemetry.background)
   ) {
     return {
+      assumed: false,
       executionMode: 'background',
       attachmentMode:
         booleanValue(data.detached) ||
@@ -789,6 +799,7 @@ function backgroundHandoff(
     /(?:background|detached|async|still running|moved)/i.test(message)
   ) {
     return {
+      assumed: false,
       executionMode: 'background',
       attachmentMode: /detached/i.test(message) ? 'detached' : 'attached',
     }
@@ -840,6 +851,10 @@ export function backgroundTasksFromEvents(
 ): BackgroundTask[] {
   const assumeBackground = options.assumeBackground === true
   const tasks = new Map<string, BackgroundTask>()
+  // Shells that never said they were in the background, and are only being
+  // treated as such because the transport left the mode out. They are the
+  // only ones a finished turn can be said to have taken with it.
+  const assumedBackground = new Set<string>()
   const aliases = new Map<string, string>()
   const shellStarts = new Map<
     string,
@@ -894,8 +909,12 @@ export function backgroundTasksFromEvents(
           executionMode: 'background',
           attachmentMode:
             data.type === 'shell_detached_completed' ? 'detached' : 'attached',
+          assumed: false,
         },
       )
+      if (start.mode?.assumed) {
+        assumedBackground.add(current.id)
+      }
       tasks.set(start.id, current)
       aliases.set(start.id, start.id)
     }
@@ -991,6 +1010,7 @@ export function backgroundTasksFromEvents(
               kindType === 'shell_detached_started'
                 ? ('detached' as const)
                 : ('attached' as const),
+            assumed: false,
           }
           const current = shellTask(
             shellId,
@@ -1087,6 +1107,9 @@ export function backgroundTasksFromEvents(
         }
         if (mode && shellId) {
           const current = shellTask(shellId, event.timestamp, data, mode)
+          if (mode?.assumed) {
+            assumedBackground.add(current.id)
+          }
           tasks.set(shellId, current)
           if (toolCallId) {
             aliases.set(toolCallId, shellId)
@@ -1267,18 +1290,24 @@ export function backgroundTasksFromEvents(
       tasks.set(id, current)
     }
   }
-  // A shell that runs inside the turn cannot outlive it. One that started
-  // before the agent last finished and never reported is not still going: the
-  // turn ended and took it along, and leaving it running fills the panel with
-  // work that stopped hours ago. Detached shells and agents are exempt, since
-  // outliving the turn is the whole point of both, and each has its own
-  // completion to close it.
+  // A shell that only ever ran inside the turn cannot outlive it. One that
+  // started before the agent last finished and never reported is not still
+  // going: the turn ended and took it along, and leaving it running fills the
+  // panel with work that stopped hours ago.
+  //
+  // Only a shell that never reached the background is swept. Going async or
+  // being promoted mid-command is precisely how a shell comes to outlive the
+  // turn that started it, so those are still running exactly when they say
+  // they are, and each has its own completion to close it. What is left is a
+  // shell whose mode the transport never reported, which is treated as
+  // background on the chance that it is.
   const lastTurnEndAt = lastForegroundCompletionAt(events)
   if (lastTurnEndAt) {
     for (const task of tasks.values()) {
       if (
         task.status === 'running' &&
         task.type === 'shell' &&
+        assumedBackground.has(task.id) &&
         task.attachmentMode !== 'detached' &&
         task.startedAt < lastTurnEndAt
       ) {

@@ -14,7 +14,7 @@ describe('reproducible promotion setup', () => {
 
     expect(script).toContain('AGENTIC_REMOTE_MONITOR_PROFILE')
     expect(script).toContain('git -C "$DEV_ROOT" pull --ff-only')
-    expect(script).toContain('GitHub CI passed for $candidate_commit')
+    expect(script).toContain('running development tests')
     expect(script).toContain('git -C "$PROD_ROOT" switch --detach "$candidate_commit"')
     expect(script).toContain('"$RELEASE_ROOT/current"')
     expect(script).toContain('production runtime health check failed after graduation')

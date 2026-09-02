@@ -103,29 +103,22 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
   const remote = path.join(root, 'remote')
   await run('git', ['clone', origin, remote])
 
-  await stub(bin, 'corepack', 'exit "${COREPACK_EXIT:-0}"')
+  await stub(
+    bin,
+    'corepack',
+    [
+      // Only the last argument names the script, so a directory that happens
+      // to contain the word cannot be mistaken for one.
+      'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
+      'exit "${COREPACK_EXIT:-0}"',
+    ].join('\n'),
+  )
   await stub(
     bin,
     'systemctl',
     'case "$*" in *"is-active"*) exit "${SERVICE_ACTIVE:-0}";; esac\nexit 0',
   )
   await stub(bin, 'curl', 'exit "${CURL_EXIT:-0}"')
-  await stub(
-    bin,
-    'gh',
-    [
-      'case "$1" in',
-      '  auth) printf \'token\\n\'; exit 0;;',
-      '  run)',
-      '    case "$2" in',
-      '      list) printf \'%s\\n\' "${GH_RUN:-1\tcompleted\tsuccess}"; exit 0;;',
-      '      view) printf \'%s\\n\' "${GH_CONCLUSION:-success}"; exit 0;;',
-      '      watch) exit "${GH_WATCH_EXIT:-0}";;',
-      '    esac;;',
-      'esac',
-      'exit 0',
-    ].join('\n'),
-  )
   // sshd hands the command to a login shell, so the stub must evaluate it.
   // A stub that only logged the string could not detect an injected expansion.
   await stub(
@@ -142,10 +135,6 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
     AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
     AGENTIC_REMOTE_MONITOR_SERVICE: 'fixture.service',
     AGENTIC_REMOTE_MONITOR_HEALTH_URL: 'http://127.0.0.1:1/health',
-    AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR: root,
-    AGENTIC_REMOTE_MONITOR_GITHUB_USER: 'tester',
-    AGENTIC_REMOTE_MONITOR_REPOSITORY: 'owner/repo',
-    AGENTIC_REMOTE_MONITOR_WORKFLOW: 'ci.yml',
     AGENTIC_REMOTE_RUNTIME_TOOLS: bin,
     AGENTIC_REMOTE_MONITOR_DOWNSTREAM_SSH: 'ssh',
     AGENTIC_REMOTE_MONITOR_READY_ATTEMPTS: '2',
@@ -299,12 +288,14 @@ describe('promotion monitor', () => {
     )
   })
 
-  it('does not graduate when CI did not pass', async () => {
+  it('does not graduate when the tests fail', async () => {
     const context = await fixture()
     const previous = await git(context.runtime, 'rev-parse', 'HEAD')
     await advanceMain(context)
 
-    const result = await monitor(context, { GH_RUN: '1\tcompleted\tfailure' })
+    // Nothing runs the suite remotely any more, so a failing test has to stop
+    // the promotion here or it would reach production unexercised.
+    const result = await monitor(context, { PNPM_TEST_EXIT: '1' })
 
     expect(result.code).not.toBe(0)
     expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previous)

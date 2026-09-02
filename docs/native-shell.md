@@ -1,7 +1,7 @@
 # Native shell plan
 
-Status: Desktop implemented and building in CI; iOS structured and compiling,
-not yet run on a device
+Status: Desktop implemented and building locally; iOS structured and
+compiling, not yet run on a device
 
 This document records the architecture decision for the native applications
 that supervise Agentic Remote sessions, and the phased plan to build them. One
@@ -444,7 +444,7 @@ Each phase is independently shippable and independently abandonable.
 | Phase | Scope | Exit criterion | Status |
 | --- | --- | --- | --- |
 | **0** | Safari Add to Dock and the existing iPhone PWA. No code. | Sessions supervised from a Dock icon and a phone; baseline understood. | Available now |
-| **1** | `shell/` package. Tauri shell, configurable hub URL, runtime remote capability, settings page, persistent cookies. | App opens to the hub, Access login survives a restart, sessions stream over WSS. | Implemented; desktop builds in CI |
+| **1** | `shell/` package. Tauri shell, configurable hub URL, runtime remote capability, settings page, persistent cookies. | App opens to the hub, Access login survives a restart, sessions stream over WSS. | Implemented; desktop builds locally |
 | **2** | `src/shell.ts` bridge, badge, notifications, tray, global shortcut, deep links. | Waiting-session count visible from the badge; `agentic://` opens the right session. | Implemented |
 | **3** | iOS target: `tauri ios init`, signing, TestFlight or ad-hoc install. | The app runs on a real iPhone and reaches the hub through Access. | Structured and compiling; needs a Mac |
 | **4** | macOS signing and notarization (§5.1). | A downloaded build opens with no Gatekeeper prompt and updates cleanly. | Planned |
@@ -452,7 +452,7 @@ Each phase is independently shippable and independently abandonable.
 | **6** | macOS notification actions via `UNUserNotificationCenter` (§4.1). | The same on macOS. | Planned |
 | **7** | Launch at login, window-state restore, self-hosted updater, Live Activities. | — | Optional |
 
-Phases 1 and 2 are code-complete and pass CI on macOS, Windows, and Linux, and
+Phases 1 and 2 are code-complete and build on macOS, Windows, and Linux, and
 the iOS target compiles. Nothing has been run against a hub on a real device
 yet; that first run is the remaining risk and should happen before any further
 phase starts.

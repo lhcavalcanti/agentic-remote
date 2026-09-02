@@ -74,21 +74,17 @@ validate_profile() {
     AGENTIC_REMOTE_MONITOR_PROD_ROOT \
     AGENTIC_REMOTE_MONITOR_RELEASE_ROOT \
     AGENTIC_REMOTE_MONITOR_SERVICE \
-    AGENTIC_REMOTE_MONITOR_HEALTH_URL \
-    AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR \
-    AGENTIC_REMOTE_MONITOR_GITHUB_USER \
-    AGENTIC_REMOTE_MONITOR_REPOSITORY; do
+    AGENTIC_REMOTE_MONITOR_HEALTH_URL; do
     [[ -n "$(profile_value "$profile" "$key")" ]] ||
       die "profile is missing $key: $profile"
   done
 }
 
 write_units() {
-  local dev_root node_bin corepack_bin gh_bin runtime_path temporary
+  local dev_root node_bin corepack_bin runtime_path temporary
   node_bin="$(command -v node)"
   corepack_bin="$(command -v corepack)"
-  gh_bin="$(command -v gh)"
-  runtime_path="$(dirname "$node_bin"):$(dirname "$corepack_bin"):$(dirname "$gh_bin"):/usr/local/bin:/usr/bin:/bin"
+  runtime_path="$(dirname "$node_bin"):$(dirname "$corepack_bin"):/usr/local/bin:/usr/bin:/bin"
   dev_root="$(profile_value "$PROFILE_DEST" AGENTIC_REMOTE_MONITOR_DEV_ROOT)"
   [[ -n "$dev_root" ]] || die "profile is missing AGENTIC_REMOTE_MONITOR_DEV_ROOT"
 
@@ -211,7 +207,6 @@ install_monitor() {
   done
 
   require_command corepack
-  require_command gh
   require_command node
   require_command systemctl
   validate_profile "$profile"

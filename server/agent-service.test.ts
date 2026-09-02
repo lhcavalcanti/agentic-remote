@@ -4546,7 +4546,7 @@ describe('AgentService deletion', () => {
         { kind: 'select', optionCount: 3, index: 1 },
         { kind: 'select', optionCount: 3, index: 0 },
       ],
-      ['Name', 'Scope', 'Confirm'],
+      { question: 'Choose the deployment', fields: ['Name', 'Scope', 'Confirm'] },
     )
     expect(terminal.send).not.toHaveBeenCalled()
     expect(terminal.dismissUserInput).not.toHaveBeenCalled()
@@ -4630,9 +4630,10 @@ describe('AgentService deletion', () => {
     )
 
     // Closing the prompt first keeps the answer out of the form's fields.
-    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, [
-      'Confirm',
-    ])
+    expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
+      question: 'Confirm the transfer',
+      fields: ['Confirm'],
+    })
     const content = terminal.send.mock.calls.at(-1)?.[1] as string | undefined
     expect(content).toContain('confirmTransfer: true')
     expect(content).not.toContain('{"confirmTransfer"')

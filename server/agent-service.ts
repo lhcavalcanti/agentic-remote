@@ -2843,12 +2843,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // Filling the agent's own form answers the tool it is waiting on, so
         // the values arrive as the result it asked for.
         const steps = terminalFormSteps(request.form, input.values || {})
-        const fields = request.form.fields.map((field) => field.title)
+        const identity = {
+          question: request.question,
+          fields: request.form.fields.map((field) => field.title),
+        }
         const filled =
           steps &&
           (await this.terminalController
-            .fillUserInputForm?.(sessionId, steps, fields)
+            .fillUserInputForm?.(sessionId, steps, identity)
             .catch(() => false))
+        // Filling reports failure for a capture that timed out as well as for
+        // keys never sent, and the last Enter may already have submitted the
+        // form. Answering again would then submit a second time, so the agent
+        // is asked whether the request it was waiting on has finished.
+        if (
+          !filled &&
+          (await this.isToolCallComplete(sessionId, toolCallId))
+        ) {
+          const submitted = await this.store.update(sessionId, (session) => {
+            session.pendingUserInput = undefined
+            session.status = 'running'
+            session.activity = 'Continuing'
+          })
+          this.publish(submitted)
+          return submitted
+        }
         if (filled) {
           const answeredSession = await this.store.update(
             sessionId,
@@ -2867,7 +2886,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (await this.terminalController
             .dismissUserInput?.(
               sessionId,
-              request.form?.fields.map((field) => field.title),
+              request.form && {
+                question: request.question,
+                fields: request.form.fields.map((field) => field.title),
+              },
             )
             .catch(() => false)) ?? false
         const closed =

@@ -745,11 +745,14 @@ const formPaneLastField = [
 ].join('\n')
 
 describe('terminal form identity', () => {
-  const fields = ['Deployment name', 'Catalog scope', 'Confirm deployment']
+  const form = {
+    question: 'Configure the deployment request.',
+    fields: ['Deployment name', 'Catalog scope', 'Confirm deployment'],
+  }
 
-  it('recognizes the form the given fields describe', () => {
-    expect(terminalFormShowsFields(formPaneFirstField, fields)).toBe(true)
-    expect(terminalFormShowsFields(formPaneLastField, fields)).toBe(true)
+  it('recognizes the form the given request describes', () => {
+    expect(terminalFormShowsFields(formPaneFirstField, form)).toBe(true)
+    expect(terminalFormShowsFields(formPaneLastField, form)).toBe(true)
   })
 
   it('rejects a form that belongs to another request', () => {
@@ -759,22 +762,46 @@ describe('terminal form identity', () => {
       '  Deployment name   Catalog scope   Confirm deployment',
       '  Branch name   Force push',
     )
-    expect(terminalFormShowsFields(other, fields)).toBe(false)
-    expect(terminalFormShowsFields(other, ['Branch name', 'Force push'])).toBe(
-      true,
-    )
+    expect(terminalFormShowsFields(other, form)).toBe(false)
+    expect(
+      terminalFormShowsFields(other, {
+        question: form.question,
+        fields: ['Branch name', 'Force push'],
+      }),
+    ).toBe(true)
   })
 
-  it('reads which field the form has focused', () => {
-    expect(parseTerminalFormActiveField(formPaneFirstField, fields)).toBe(
-      'Deployment name',
+  it('rejects a repeat of the same schema asked for something else', () => {
+    // Two requests can share a schema, so the fields alone cannot tell them
+    // apart; the question the CLI prints above them is what does.
+    const reasked = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      ' Configure the rollback request.',
     )
-    expect(parseTerminalFormActiveField(formPaneLastField, fields)).toBe(
-      'Confirm deployment',
+    expect(terminalFormShowsFields(reasked, form)).toBe(false)
+  })
+
+  it('reads which field the form has focused, by position', () => {
+    expect(parseTerminalFormActiveField(formPaneFirstField, form)).toBe(0)
+    expect(parseTerminalFormActiveField(formPaneLastField, form)).toBe(2)
+  })
+
+  it('refuses to guess focus when a title is repeated', () => {
+    // Answers are written per position, so an ambiguous title would shift
+    // every one of them.
+    const duplicated = formPaneFirstField.replace(
+      '  Deployment name   Catalog scope   Confirm deployment',
+      '  Name   Name   Confirm deployment',
     )
+    expect(
+      parseTerminalFormActiveField(duplicated, {
+        question: form.question,
+        fields: ['Name', 'Name', 'Confirm deployment'],
+      }),
+    ).toBeUndefined()
   })
 
   it('reports no focus for a pane that is not this form', () => {
-    expect(parseTerminalFormActiveField('nothing here', fields)).toBeUndefined()
+    expect(parseTerminalFormActiveField('nothing here', form)).toBeUndefined()
   })
 })

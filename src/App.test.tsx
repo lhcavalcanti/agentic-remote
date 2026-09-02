@@ -651,6 +651,49 @@ describe('App', () => {
     )
   })
 
+  it('keeps non-contiguous activity in chronological order', async () => {
+    const activitySession: ManagedSession = {
+      ...session,
+      messages: [
+        {
+          id: 'skill-call',
+          role: 'activity',
+          content: 'Skill (tool-model-catalog)',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          activityStatus: 'running',
+          activityKind: 'skill',
+        },
+        {
+          id: 'unrelated-call',
+          role: 'activity',
+          content: 'Read\nREADME.md',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+        },
+        {
+          id: 'child-call',
+          role: 'activity',
+          content: 'MCP · GitHub · Search Repositories',
+          createdAt: '2026-07-22T00:00:01.000Z',
+          activityStatus: 'completed',
+          activityGroupId: 'skill-call',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([activitySession])
+    vi.mocked(getSession).mockResolvedValue(activitySession)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      [...document.querySelectorAll('.activity-message__name')].map(
+        (name) => name.textContent,
+      ),
+    ).toEqual(['skill(tool-model-catalog)', 'Read', 'Search Repositories'])
+    expect(document.querySelectorAll('.activity-group')).toHaveLength(0)
+  })
+
   it('keeps sidebar actions outside the independently scrolling navigation', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

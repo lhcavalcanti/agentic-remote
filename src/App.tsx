@@ -2705,22 +2705,25 @@ function ConversationMessages({
       .filter(([id]) => activityMessages.has(id)),
   )
   const activityChildren = new Map<string, ChatMessage[]>()
-  for (const message of activityMessages.values()) {
-    const groupId = message.activityGroupId
-    if (!groupId || !activityMessages.has(groupId)) {
-      continue
+  const groupedActivityIds = new Set<string>()
+  for (const [parentId, parentIndex] of activityIndexes) {
+    for (let index = parentIndex + 1; index < messages.length; index += 1) {
+      const message = messages[index]
+      if (
+        !message ||
+        message.role !== 'activity' ||
+        message.activityGroupId !== parentId
+      ) {
+        break
+      }
+      const children = activityChildren.get(parentId) || []
+      children.push(message)
+      activityChildren.set(parentId, children)
+      groupedActivityIds.add(message.id)
     }
-    const children = activityChildren.get(groupId) || []
-    children.push(message)
-    activityChildren.set(groupId, children)
   }
   const renderActivity = (message: ChatMessage): ReactNode => {
-    const parentIndex = activityIndexes.get(message.id)
-    const children = (activityChildren.get(message.id) || []).filter(
-      (child) =>
-        parentIndex === undefined ||
-        (activityIndexes.get(child.id) || -1) > parentIndex,
-    )
+    const children = activityChildren.get(message.id) || []
     if (children.length === 0) {
       return (
         <ActivityArticle
@@ -2752,18 +2755,9 @@ function ConversationMessages({
     )
   }
   const rendered: ReactNode[] = []
-  for (const [index, message] of messages.entries()) {
+  for (const message of messages) {
     if (message.role === 'activity') {
-      const parentId = message.activityGroupId
-      const parentIndex = parentId
-        ? activityIndexes.get(parentId)
-        : undefined
-      if (
-        parentId &&
-        activityMessages.has(parentId) &&
-        parentIndex !== undefined &&
-        parentIndex < index
-      ) {
+      if (groupedActivityIds.has(message.id)) {
         continue
       }
       rendered.push(renderActivity(message))

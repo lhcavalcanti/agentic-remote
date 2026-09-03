@@ -536,6 +536,40 @@ describe('App', () => {
     cleanup()
   })
 
+  it('makes a diagram the block, not something inside a code block', async () => {
+    // Overriding only `code` leaves React Markdown's own `<pre>` wrapped round
+    // the result, which boxes the diagram in a code block and gives the source
+    // fallback a second one.
+    const diagramSession = {
+      ...session,
+      messages: [
+        {
+          id: 'diagram-1',
+          role: 'assistant' as const,
+          content: '```mermaid\ngraph TD; A--\n```\n\n```js\nconst a = 1\n```',
+          createdAt: '2026-07-22T00:00:02.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([diagramSession])
+    vi.mocked(getSession).mockResolvedValue(diagramSession)
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The diagram falls back to its source here, and that source is the block
+    // itself rather than a `<pre>` inside another one.
+    const fallback = await waitFor(() => {
+      const found = document.querySelector('.mermaid-source')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    expect(fallback.parentElement?.closest('pre')).toBeNull()
+
+    // An ordinary fenced block still gets its code block.
+    const js = screen.getByText('const a = 1')
+    expect(js.closest('pre')).not.toBeNull()
+  })
+
   it('renders a readable session and markdown response', async () => {
     render(<App />)
 

@@ -1129,6 +1129,26 @@ button {
 /* Sticky inside the transcript's own scroll box, so it stays at the bottom
    right of what is on screen without moving with the conversation. Zero
    height keeps it out of the flow, so it never adds space of its own. */
+.mermaid-diagram {
+  overflow-x: auto;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-raised);
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* A diagram that will not parse yet — half-written, or still streaming — is
+   shown as what it was written as rather than as an error. */
+.mermaid-source {
+  overflow-x: auto;
+}
+
 .timeline-follow {
   position: sticky;
   bottom: 4px;

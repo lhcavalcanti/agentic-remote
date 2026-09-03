@@ -1,4 +1,5 @@
 import {
+  isValidElement,
   memo,
   useCallback,
   useEffect,
@@ -80,6 +81,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { MermaidDiagram } from './MermaidDiagram.js'
 import {
   breadcrumbSegments,
   headingSlug,
@@ -3291,7 +3293,10 @@ const TranscriptMessage = memo(function TranscriptMessage({
       </div>
       <div className="message__content">
         {message.content ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown
+            components={mermaidComponents}
+            remarkPlugins={[remarkGfm]}
+          >
             {message.content}
           </ReactMarkdown>
         ) : (
@@ -4451,6 +4456,7 @@ function markdownComponentsFor(
 ) {
   return {
     ...knowledgeHeadingComponents,
+    ...mermaidComponents,
     img({ alt, src, title }: { alt?: string; src?: unknown; title?: string }) {
       return (
         <MarkdownImage
@@ -4463,6 +4469,71 @@ function markdownComponentsFor(
       )
     },
   }
+}
+
+/** Reads the text of a fenced block, which arrives as its children. */
+function fencedSource(children: ReactNode): string {
+  if (typeof children === 'string') {
+    return children
+  }
+  if (Array.isArray(children)) {
+    return children.map((child) => fencedSource(child as ReactNode)).join('')
+  }
+  return ''
+}
+
+const mermaidComponents = {
+  // Replacing the fenced block at the `pre` level, not the `code` level: an
+  // override on `code` leaves React Markdown's own `<pre>` around the result,
+  // which boxes the diagram in a code block and doubles the one the source
+  // fallback draws for itself.
+  pre({
+    children,
+    node: _node,
+    ...rest
+  }: {
+    children?: ReactNode
+    node?: unknown
+  }) {
+    const source = mermaidFencedSource(children)
+    if (source === undefined) {
+      return <pre {...rest}>{children}</pre>
+    }
+    return <MermaidDiagram source={source} />
+  },
+  code({
+    children,
+    className,
+    // React Markdown hands every custom component its own syntax tree node.
+    // Forwarding it would put an object on a DOM attribute.
+    node: _node,
+    ...rest
+  }: {
+    children?: ReactNode
+    className?: string
+    node?: unknown
+  }) {
+    return (
+      <code className={className} {...rest}>
+        {children}
+      </code>
+    )
+  },
+}
+
+/** The text of a fenced mermaid block, or nothing if that is not what it is. */
+function mermaidFencedSource(children: ReactNode): string | undefined {
+  const fence = Array.isArray(children)
+    ? children.find((child) => isValidElement(child))
+    : children
+  if (!isValidElement(fence)) {
+    return undefined
+  }
+  const props = fence.props as { className?: string; children?: ReactNode }
+  if (!/\blanguage-mermaid\b/.test(props.className || '')) {
+    return undefined
+  }
+  return fencedSource(props.children).trimEnd()
 }
 
 function markdownHeading(level: 1 | 2 | 3 | 4 | 5 | 6) {

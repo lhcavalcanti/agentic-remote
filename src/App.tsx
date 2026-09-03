@@ -7118,7 +7118,11 @@ function App() {
           return
         }
         setSessions((current) => upsertSession(current, detail))
-      } else if (selectedAtRefresh) {
+      } else if (
+        selectedAtRefresh &&
+        !pendingReplacements.current.has(sessionKey(selectedAtRefresh)) &&
+        !replacedInto.current.has(sessionKey(selectedAtRefresh))
+      ) {
         setSelectedKey(
           snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined,
         )
@@ -7165,6 +7169,7 @@ function App() {
             // replacement now stops the fallback from selecting an unrelated
             // session in the gap, which the later upsert would not undo.
             pendingReplacements.current.add(replacementKey)
+            replacedInto.current.set(removedKey, replacementKey)
             // Seen live, so the snapshot's lineage has nothing left to claim.
             adoptedReplacements.current.add(removedKey)
             // The replacement changed here too, so a snapshot taken before

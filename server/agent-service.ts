@@ -2320,11 +2320,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.discoveryGeneration += 1
       const closed = await this.terminalController.stop(id, async () => {
         this.assertStillIdle(id)
-        // A detached task started while the owner was being found holds no
-        // turn, so the status read below would not see it and the pane would
-        // be killed out from under live work.
-        await this.assertNoLiveBackgroundTasks(id)
-        this.assertStillIdle(id)
+        // One reading answers both questions, and nothing is awaited after it.
+        // A terminal session's background tasks are projected from the same
+        // event log its foreground status comes from, so asking separately
+        // left a gap: a detached task started during the second read holds no
+        // turn, the status still said idle, and the pane went down underneath
+        // live work.
         const live = await this.sessionEventReader(id).catch(() => {
           throw new Error(
             'Session cannot be suspended until its transcript can be read',
@@ -2333,6 +2334,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (statusFromEvents(live) !== 'idle') {
           throw new Error('Session can only be suspended while idle')
         }
+        const running = backgroundTasksFromEvents(live, {
+          assumeBackground: true,
+        }).filter(
+          (task) => task.status === 'running' || task.status === 'queued',
+        )
+        if (running.length) {
+          throw new Error(
+            'Session can only be suspended once its background tasks finish',
+          )
+        }
+        this.assertStillIdle(id)
       })
       this.discoveryGeneration += 1
       if (!closed) {

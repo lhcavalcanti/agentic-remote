@@ -616,5 +616,33 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(session.id)?.messages.length).toBe(before)
   })
 
+  it('leaves a suspended session where it was when the send is refused', async () => {
+    // The list is ordered by `updatedAt`, and both writes advance it. Putting
+    // only the messages back left the session at the top of the list for a
+    // send that was refused -- the opposite of keeping the place it had.
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    const before = service.getSession(session.id)?.updatedAt
+
+    const addMessage = service.store.addMessage.bind(service.store)
+    let writes = 0
+    vi.spyOn(service.store, 'addMessage').mockImplementation(
+      async (id, message) => {
+        const result = await addMessage(id, message)
+        writes += 1
+        if (writes === 2) {
+          await service.store.setSuspended(id, true)
+        }
+        return result
+      },
+    )
+
+    await expect(
+      service.sendMessage(session.id, 'lost to a suspension'),
+    ).rejects.toThrow(/Resume the session/)
+
+    expect(service.getSession(session.id)?.updatedAt).toBe(before)
+  })
+
 
 })

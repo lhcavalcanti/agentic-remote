@@ -706,6 +706,10 @@ export class ClaudeAgentService
       throw new Error('Resume the session before sending to it')
     }
     const createdAt = new Date().toISOString()
+    // Kept so a refused send can put it back. Both `addMessage` calls move the
+    // session to the top of the list, and a rollback that only removed the
+    // messages left a suspended session reordered by a send it rejected.
+    const previousUpdatedAt = this.store.get(sessionId)?.updatedAt
     const userId = randomUUID()
     await this.store.addMessage(sessionId, {
       id: userId,
@@ -738,6 +742,11 @@ export class ClaudeAgentService
           stored.messages = stored.messages.filter(
             (message) => message.id !== userId && message.id !== assistantId,
           )
+          if (previousUpdatedAt) {
+            // `updatedAt` is when the conversation last moved, and the list is
+            // ordered by it. This send did not move it.
+            stored.updatedAt = previousUpdatedAt
+          }
         })
         // Announced as well as written: readers were shown the prompt and the
         // blank reply as they went in, so putting the store back without

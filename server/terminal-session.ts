@@ -305,9 +305,20 @@ export class TmuxTerminalSessionController
       // awaited, and the pane belongs to somebody who may have started a turn
       // in it while that happened.
       await confirm?.()
+      // Ownership is settled again now that confirmation has finished its own
+      // I/O. The pane may have gone in the meantime, or been respawned under a
+      // new process, and killing on the strength of the earlier reading would
+      // take whatever is there now.
+      const current = await this.owner(sessionId)
+      if (!current) {
+        return true
+      }
+      if (current.pid !== owner.pid) {
+        throw new Error('The terminal window changed hands while closing it')
+      }
       // The target names a pane. Killing the window would take any pane
       // beside it, which belongs to whoever split it there.
-      await execFileAsync('tmux', ['kill-pane', '-t', owner.target])
+      await execFileAsync('tmux', ['kill-pane', '-t', current.target])
       // The pane is torn down asynchronously, and a resume that raced it would
       // find the old window and take it for the new one.
       for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -1714,7 +1725,12 @@ async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
         'list-panes',
         '-a',
         '-F',
-        '#{pane_pid}\t#{session_name}:#{window_index}.#{pane_index}',
+        // The pane id rather than `session:window.pane`. The index form is
+        // recomputed whenever panes are moved, closed, or renumbered, so a
+        // target resolved before an await could name a different pane by the
+        // time it is used -- and killing it would take somebody else's work.
+        // A pane id belongs to one pane for as long as it exists.
+        '#{pane_pid}\t#{pane_id}',
       ])
     ).stdout
   } catch (error) {

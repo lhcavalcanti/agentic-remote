@@ -15,9 +15,9 @@ const execFileAsync = promisify(execFile)
 
 /**
  * One field of the agent's structured form. Fields are tabs: a select is
- * driven by moving the cursor and committing it, a text field by replacing
- * its contents. Committing a field advances to the next one, and committing
- * the last field submits the form.
+ * driven by moving the cursor, a text field by replacing its contents. Moving
+ * between them is Tab, and Enter accepts the whole form, so Enter is pressed
+ * once, at the end.
  */
 export type TerminalFormStep =
   | { kind: 'select'; optionCount: number; index: number }
@@ -505,8 +505,6 @@ export class TmuxTerminalSessionController
       ) {
         return false
       }
-      // Read from the form being answered, while it is certainly that form.
-      const submitsItself = !terminalFormHasSubmitRow(pane, form)
       // The steps are written from the first field onwards, but an attached
       // client can leave any field focused. Walking focus back with shift+tab
       // is what stops the answers landing one field over.
@@ -533,7 +531,8 @@ export class TmuxTerminalSessionController
       if (parseTerminalFormActiveField(pane, form) !== 0) {
         return false
       }
-      for (const step of steps) {
+      const commitKeys = terminalFormCommitKeys(steps.length)
+      for (const [position, step] of steps.entries()) {
         if (step.kind === 'select') {
           // Normalising to the top first makes the move independent of
           // whichever option the field currently holds.
@@ -581,15 +580,16 @@ export class TmuxTerminalSessionController
             await new Promise((resolve) => setTimeout(resolve, 45))
           }
         }
-        // Committing a field advances to the next; the last one submits.
-        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
+        // Tab moves to the next field. Enter does not: it accepts the whole
+        // form, leaving every field after this one at whatever it opened with,
+        // so it is pressed once and only when there is nothing left to fill.
+        await execFileAsync('tmux', [
+          'send-keys',
+          '-t',
+          owner.target,
+          commitKeys[position],
+        ])
         await new Promise((resolve) => setTimeout(resolve, 90))
-      }
-      if (!submitsItself) {
-        // Committing the last field left focus on the form's own Submit row.
-        // Pressed here, with no pause and nothing read in between, so there is
-        // no moment in which the form could have become another one.
-        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
       }
       return submitTerminalForm(capture, (ms) =>
         new Promise((resolve) => setTimeout(resolve, ms)),
@@ -1089,24 +1089,17 @@ export function terminalCommandOutput(
  * replaced it.
  */
 /**
- * Whether the form on screen ends with a Submit row of its own.
+ * The key that ends each field, in order.
  *
- * Committing the last field submits a form whose fields are all there is, and
- * moves to Submit in a form that has one. Which of the two is open has to be
- * read from the form being answered, before any answer is sent: afterwards the
- * same question asked again is indistinguishable from it, and a form is named
- * only by its question and its fields.
+ * The CLI prints its own contract along the bottom of the form — `enter
+ * accept · tab next` — so Enter is not a way of moving on. Sending it between
+ * fields submits the form with every field after it at whatever it opened
+ * with, which is how a confirmation nobody agreed to gets answered.
  */
-export function terminalFormHasSubmitRow(
-  pane: string,
-  form: TerminalFormIdentity,
-): boolean {
-  const lines = pane.split('\n').map(cleanDialogLine)
-  const tabs = terminalFormTabsIndex(lines, form)
-  if (tabs < 0) {
-    return false
-  }
-  return lines.slice(tabs).some((line) => /^submit$/i.test(line))
+export function terminalFormCommitKeys(fieldCount: number): string[] {
+  return Array.from({ length: fieldCount }, (_, index) =>
+    index === fieldCount - 1 ? 'Enter' : 'Tab',
+  )
 }
 
 /** Waits for a filled form to close, reporting whether it ever did. */

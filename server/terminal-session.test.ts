@@ -14,7 +14,7 @@ import {
   parseTerminalFormActiveField,
   parseTerminalPermission,
   submitTerminalForm,
-  terminalFormHasSubmitRow,
+  terminalFormCommitKeys,
   parseTerminalUpdateNotice,
   parseTerminalUserInput,
   terminalCommandOutput,
@@ -906,43 +906,16 @@ describe('terminal form identity', () => {
   })
 })
 
-describe('terminalFormHasSubmitRow', () => {
-  const form = { question: 'Pick one', fields: ['Mode', 'Scope'] }
-  const withTabs = [
-    ' Copilot needs information.',
-    ' Pick one',
-    ' Mode    Scope',
-  ]
-
-  it('finds the Submit row a form ends with', () => {
-    const pane = [
-      ...withTabs,
-      ' Mode:',
-      ' Scope:',
-      ' Submit',
-      ' enter accept · esc cancel',
-    ].join('\n')
-    expect(terminalFormHasSubmitRow(pane, form)).toBe(true)
+describe('terminalFormCommitKeys', () => {
+  it('moves between fields with Tab and accepts once at the end', () => {
+    // The CLI prints its own contract: `enter accept · tab next`. Enter
+    // between fields would accept the form with every field after it left at
+    // whatever it opened with.
+    expect(terminalFormCommitKeys(3)).toEqual(['Tab', 'Tab', 'Enter'])
   })
 
-  it('reports none when the fields are all there is', () => {
-    const pane = [
-      ...withTabs,
-      ' Mode:',
-      ' Scope:',
-      ' enter accept · esc cancel',
-    ].join('\n')
-    expect(terminalFormHasSubmitRow(pane, form)).toBe(false)
-  })
-
-  it('reports none when the form on screen is a different one', () => {
-    const pane = [
-      ' Copilot needs information.',
-      ' An entirely different question',
-      ' Something    Else',
-      ' Submit',
-    ].join('\n')
-    expect(terminalFormHasSubmitRow(pane, form)).toBe(false)
+  it('accepts immediately when the form has one field', () => {
+    expect(terminalFormCommitKeys(1)).toEqual(['Enter'])
   })
 })
 
@@ -950,7 +923,6 @@ describe('submitTerminalForm', () => {
   const openForm = [
     ' Copilot needs information.',
     ' Which sessions get the button',
-    ' Submit',
     ' enter accept · esc cancel',
   ].join('\n')
   const closed = '❯ \n'

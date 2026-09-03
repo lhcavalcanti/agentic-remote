@@ -5513,9 +5513,10 @@ function App() {
   const snapshotApplied = useRef(0)
   // The newest refresh that actually reached each computer.
   const computerSnapshotApplied = useRef(new Map<string, number>())
-  // Computers that have answered for their own sessions at least once. Until
-  // one has, its sessions being absent says nothing.
-  const answeredComputers = useRef(new Set<string>())
+  // Computers whose sessions the most recent list actually reached. A computer
+  // that answered before and cannot be reached now is saying nothing about a
+  // session announced since, so absence is only news while it is in here.
+  const authoritativeNow = useRef(new Set<string>())
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -6303,11 +6304,26 @@ function App() {
       const selectedSession = sessions.find(
         (session) => sessionKey(session) === selectedKey,
       )
-      const next = selectedSession
-        ? `${window.location.pathname}?${new URLSearchParams({
-            computer: selectedSession.computerId,
-            session: selectedSession.id,
-          }).toString()}`
+      // A selected session that is not in the list yet is not proof there is
+      // nothing to name. Its computer may not have answered, or its
+      // replacement may still be on its way, and rewriting the address to a
+      // bare path loses the link outright: reloading before it arrives opens
+      // something else, and the lineage that would have redirected the reader
+      // has nobody left to redirect.
+      const unresolved =
+        !selectedSession && selectedKey && selectedKey.includes(':')
+          ? {
+              computer: selectedKey.slice(0, selectedKey.indexOf(':')),
+              session: selectedKey.slice(selectedKey.indexOf(':') + 1),
+            }
+          : undefined
+      const named = selectedSession
+        ? { computer: selectedSession.computerId, session: selectedSession.id }
+        : unresolved
+      const next = named
+        ? `${window.location.pathname}?${new URLSearchParams(
+            named,
+          ).toString()}`
         : window.location.pathname
       const intent = historyIntentRef.current
       historyIntentRef.current = 'replace'
@@ -6961,9 +6977,7 @@ function App() {
           snapshotApplied.current = asked
         }
         const loadedSessions = listing.sessions
-        for (const id of listing.answeredComputerIds) {
-          answeredComputers.current.add(id)
-        }
+        authoritativeNow.current = new Set(listing.answeredComputerIds)
         for (const id of mine) {
           computerSnapshotApplied.current.set(id, asked)
         }
@@ -7051,11 +7065,16 @@ function App() {
       current &&
       (sessions.some((session) => sessionKey(session) === current) ||
         pendingReplacements.current.has(current) ||
-        // Its computer has never answered for it, so nobody has said it is
-        // not there. Moving the reader off it sends them somewhere they never
-        // asked for, and the session arriving later only redirects a reader
-        // still sitting where the address put them.
-        !answeredComputers.current.has(current.slice(0, current.indexOf(':'))))
+        // Its computer did not answer the most recent time it was asked, so
+        // nobody has said this session is not there. Moving the reader off it
+        // sends them somewhere they never asked for, and the session arriving
+        // later only redirects a reader still sitting where the address put
+        // them.
+        //
+        // The latest word, not whether the computer has ever spoken: one that
+        // answered an hour ago and cannot be reached now is saying nothing
+        // about a session announced in between.
+        !authoritativeNow.current.has(current.slice(0, current.indexOf(':'))))
         ? current
         : sessions[0]
           ? sessionKey(sessions[0])
@@ -7214,9 +7233,7 @@ function App() {
         const mine = answeredIds.filter(
           (id) => asked > (computerSnapshotApplied.current.get(id) || 0),
         )
-        for (const id of answeredIds) {
-          answeredComputers.current.add(id)
-        }
+        authoritativeNow.current = new Set(answeredIds)
         for (const id of mine) {
           computerSnapshotApplied.current.set(id, asked)
         }
@@ -7867,7 +7884,19 @@ function App() {
     if (fromKey === toKey) {
       return
     }
+    // While the reader is walking back through what they sent, the composer
+    // shows an old message and their own unsent text is held in the history
+    // record. Resetting that record here and moving only what is displayed
+    // carried the recalled message across and lost the real draft for good.
+    const history = composerHistoryRef.current[fromKey]
+    const unsent = history ? history.draft : undefined
     updateComposerDrafts([fromKey, toKey], (current) => {
+      if (unsent !== undefined) {
+        const { [fromKey]: _recalled, ...remaining } = current
+        return current[toKey]
+          ? remaining
+          : { ...remaining, [toKey]: unsent }
+      }
       const value = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
       // Only into an empty destination. A browser that used the replacement

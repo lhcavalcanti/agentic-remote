@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MermaidDiagram } from './MermaidDiagram.js'
 
 const render_ = vi.hoisted(() => vi.fn())
-vi.mock('mermaid', () => ({
+const mermaidModule = vi.hoisted(() => ({
   default: { initialize: vi.fn(), render: render_ },
 }))
+vi.mock('mermaid', () => mermaidModule)
 
 describe('MermaidDiagram', () => {
   beforeEach(() => {
@@ -103,6 +104,44 @@ describe('MermaidDiagram', () => {
 
     const [first, second] = render_.mock.calls.map((call) => call[0])
     expect(first).not.toBe(second)
+  })
+
+
+  it('does not reconfigure Mermaid while another diagram is drawing', async () => {
+    // Mermaid's configuration is global and its renders are serial, so
+    // configuring one diagram while another is between its own configuration
+    // and its layout takes away settings that one is still relying on.
+    const order: string[] = []
+    const initialize = vi.fn(() => {
+      order.push('init')
+    })
+    render_.mockImplementation(async () => {
+      order.push('render')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      order.push('done')
+      return { svg: '<svg></svg>' }
+    })
+    mermaidModule.default.initialize = initialize
+
+    render(
+      <>
+        <MermaidDiagram source={'graph TD; A-->B;'} />
+        <MermaidDiagram source={'graph TD; C-->D;'} />
+      </>,
+    )
+
+    await waitFor(() => expect(render_).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(order.filter((e) => e === 'done')).toHaveLength(2))
+
+    // Each diagram is configured and drawn before the next is configured.
+    expect(order).toEqual([
+      'init',
+      'render',
+      'done',
+      'init',
+      'render',
+      'done',
+    ])
   })
 
 })

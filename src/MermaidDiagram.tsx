@@ -10,6 +10,36 @@ import { useEffect, useId, useRef, useState } from 'react'
 const SETTLE_MS = 120
 
 /**
+ * Mermaid's configuration is global and its renders are serial.
+ *
+ * Configuring it while another diagram is between its own configuration and
+ * its layout resets settings that diagram is still relying on, so the two are
+ * done together and one diagram at a time.
+ */
+let drawing: Promise<unknown> = Promise.resolve()
+
+function drawDiagram(
+  id: string,
+  source: string,
+): Promise<{ svg: string }> {
+  const next = drawing.catch(() => undefined).then(async () => {
+    const { default: mermaid } = await import('mermaid')
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      securityLevel: 'strict',
+      // Mermaid otherwise draws a syntax-error diagram of its own into the
+      // document and leaves it there, once per revision of a diagram that is
+      // still being typed.
+      suppressErrorRendering: true,
+    })
+    return mermaid.render(id, source)
+  })
+  drawing = next.catch(() => undefined)
+  return next
+}
+
+/**
  * Renders a Mermaid diagram, falling back to its source when it cannot.
  *
  * Mermaid is large and most documents have no diagram in them, so it is only
@@ -38,17 +68,7 @@ export function MermaidDiagram({ source }: { source: string }) {
         attempt.current += 1
         const id = `mermaid-${base}-${attempt.current}`
         try {
-          const { default: mermaid } = await import('mermaid')
-          mermaid.initialize({
-            startOnLoad: false,
-            theme: 'dark',
-            securityLevel: 'strict',
-            // Mermaid otherwise draws a syntax-error diagram of its own into
-            // the document and leaves it there, once per revision of a
-            // diagram that is still being typed.
-            suppressErrorRendering: true,
-          })
-          const result = await mermaid.render(id, source)
+          const result = await drawDiagram(id, source)
           if (active) {
             setDrawn({ source, svg: result.svg })
           }

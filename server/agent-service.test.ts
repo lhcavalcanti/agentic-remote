@@ -1012,6 +1012,59 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('keeps the reservation while a second send is still on its way', async () => {
+    // Two sends can overlap. Marked with a flag rather than counted, the first
+    // to finish cleared it while the second was still awaiting delivery, and
+    // suspension saw an idle session with nothing holding it.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-hold-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const gates: (() => void)[] = []
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async () =>
+          new Promise<boolean>((resolve) => {
+            gates.push(() => resolve(true))
+          }),
+      ),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const first = service.sendMessage(client.session.sessionId, 'one', false)
+    const second = service.sendMessage(client.session.sessionId, 'two', false)
+    await vi.waitFor(() => expect(gates.length).toBe(2))
+
+    // The first finishes; the second is still on its way.
+    gates[0]()
+    await first.catch(() => undefined)
+
+    await expect(
+      service.suspendSession(client.session.sessionId),
+    ).rejects.toThrow(/only be suspended while idle/)
+
+    gates[1]()
+    await second.catch(() => undefined)
+    await service.stop()
+  })
+
   it('keeps a suspended terminal session when it is opened', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-'))
     directories.push(directory)

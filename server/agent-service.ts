@@ -1513,7 +1513,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   // Sessions with a prompt on its way to a runtime. Suspending has to leave
   // them alone: the store still says idle until the turn is recorded, and
   // tearing the runtime down here kills a turn that has already started.
-  private readonly dispatchingSessions = new Set<string>()
+  private readonly dispatchingSessions = new Map<string, number>()
+
+  /** Marks a session as having a prompt on its way, and gives back the undo. */
+  private holdDispatch(sessionId: string): () => void {
+    // Counted rather than flagged: two sends can overlap, and the first to
+    // finish would otherwise clear the mark while the second is still
+    // awaiting delivery, leaving suspension free to tear it down.
+    this.dispatchingSessions.set(
+      sessionId,
+      (this.dispatchingSessions.get(sessionId) || 0) + 1,
+    )
+    let released = false
+    return () => {
+      if (released) {
+        return
+      }
+      released = true
+      const held = (this.dispatchingSessions.get(sessionId) || 1) - 1
+      if (held > 0) {
+        this.dispatchingSessions.set(sessionId, held)
+      } else {
+        this.dispatchingSessions.delete(sessionId)
+      }
+    }
+  }
 
   /** Runs lifecycle work for a session one at a time, in arrival order. */
   private serializeLifecycle<T>(
@@ -1636,6 +1660,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (session) =>
             session.isOpen &&
             session.queuedPrompts?.length &&
+            // A suspended session has nothing to run the queue in. The runtime
+            // guard refuses it anyway, but only after taking the head off and
+            // putting it back with an error nobody asked for.
+            !session.suspended &&
             !this.externalSessionIds.has(session.id),
         )
         .map((session) => this.drainSdkQueue(session.id)),
@@ -2259,8 +2287,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // is already running. The log is asked directly rather than trusted to
     // have been read in the last fraction of a second.
     if (this.externalSessionIds.has(id) || this.store.backend(id) === 'terminal') {
-      const events = await this.sessionEventReader(id).catch(() => undefined)
-      if (events && statusFromEvents(events) !== 'idle') {
+      // An absent log already reads as an empty list, so anything thrown here
+      // is a log that could not be read. Carrying on would suspend on the
+      // strength of a status the poll may not have refreshed, and take a live
+      // turn down with it.
+      const events = await this.sessionEventReader(id).catch(() => {
+        throw new Error(
+          'Session cannot be suspended until its transcript can be read',
+        )
+      })
+      if (statusFromEvents(events) !== 'idle') {
         throw new Error('Session can only be suspended while idle')
       }
     }
@@ -2321,6 +2357,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   /** Gives a suspended session something to run in again. */
   async resumeSession(id: string): Promise<SessionDetail> {
+    // In the same queue as suspend, restart, clear and migration. Reading the
+    // stored flag on the way in saw a session that suspension was still in
+    // the middle of putting down, and returned success for a resume the
+    // suspension then wrote over.
+    return this.serializeLifecycle(id, () => this.resumeQueued(id))
+  }
+
+  private async resumeQueued(id: string): Promise<SessionDetail> {
     const inFlight = this.resumingSessions.get(id)
     if (inFlight) {
       // Two resumes would each find no owner and each build one, leaving two
@@ -2373,14 +2417,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Draining now keeps the queue in the order it was written: left for
     // whatever happens to finish next, a message sent after the resume would
     // go first.
+    //
+    // The dispatch hold stays on until the queue has been claimed. Clearing
+    // the suspended flag is what reopens sending, and without this a message
+    // arriving in that gap starts a turn ahead of the prompt that was already
+    // waiting, or beside it.
     if (resumed.queuedPrompts?.length) {
-      const drain =
-        this.store.backend(id) === 'terminal'
-          ? this.drainTerminalQueue(id)
-          : this.drainSdkQueue(id)
-      await drain.catch((error: unknown) => {
-        this.publishError(id, error)
-      })
+      const releaseDispatch = this.holdDispatch(id)
+      try {
+        const drain =
+          this.store.backend(id) === 'terminal'
+            ? this.drainTerminalQueue(id)
+            : this.drainSdkQueue(id)
+        await drain.catch((error: unknown) => {
+          this.publishError(id, error)
+        })
+      } finally {
+        releaseDispatch()
+      }
     }
     return resumed
   }
@@ -2804,11 +2858,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Held for the whole dispatch, not just the checks. Detection, pane
     // capture and delivery are all awaited, and a suspension finishing during
     // any of them would put the runtime down under a turn already on its way.
-    this.dispatchingSessions.add(sessionId)
+    const releaseDispatch = this.holdDispatch(sessionId)
     try {
       return await this.dispatchMessage(sessionId, content, enqueue)
     } finally {
-      this.dispatchingSessions.delete(sessionId)
+      releaseDispatch()
     }
   }
 
@@ -3134,6 +3188,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // that was validated before it got here: a folder whose name holds two
     // spaces became a different folder, or none at all.
     const argument = body.slice(name.length).replace(/^\s/, '')
+    // A command reaches the same runtime as a message and takes just as long
+    // to get there, so it holds the session for the whole of it.
+    const releaseDispatch = this.holdDispatch(sessionId)
+    try {
+      return await this.dispatchCommand(sessionId, name, argument, enqueue)
+    } finally {
+      releaseDispatch()
+    }
+  }
+
+  private async dispatchCommand(
+    sessionId: string,
+    name: string,
+    argument: string,
+    enqueue: boolean,
+  ): Promise<SessionDetail> {
     const catalog = await this.sessionCommandCatalog(sessionId)
     const commandInfo = catalog.commands.find(
       (candidate) =>

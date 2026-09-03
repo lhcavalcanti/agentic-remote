@@ -153,6 +153,28 @@ export class ClaudeAgentService
   private models: RuntimeModelOption[] = []
   /** Sessions being put down, which nothing may start a query into. */
   private readonly suspendingSessions = new Set<string>()
+  private readonly dispatchingSessions = new Map<string, number>()
+
+  /** Marks a session as having a prompt on its way, and gives back the undo. */
+  private holdDispatch(sessionId: string): () => void {
+    this.dispatchingSessions.set(
+      sessionId,
+      (this.dispatchingSessions.get(sessionId) || 0) + 1,
+    )
+    let released = false
+    return () => {
+      if (released) {
+        return
+      }
+      released = true
+      const held = (this.dispatchingSessions.get(sessionId) || 1) - 1
+      if (held > 0) {
+        this.dispatchingSessions.set(sessionId, held)
+      } else {
+        this.dispatchingSessions.delete(sessionId)
+      }
+    }
+  }
 
   private readonly active = new Map<string, ActiveClaudeQuery>()
   private readonly permissions = new Map<string, PendingClaudePermission>()
@@ -517,13 +539,18 @@ export class ClaudeAgentService
       // The drain requeues and rethrows when authentication, persistence or
       // sending fails. Discarded, that rejection has nowhere to go and takes
       // the process with it.
-      await this.drainQueue(id).catch((error: unknown) => {
-        this.emit('event', {
-          type: 'error',
-          sessionId: id,
-          message: error instanceof Error ? error.message : String(error),
+      const releaseDispatch = this.holdDispatch(id)
+      try {
+        await this.drainQueue(id).catch((error: unknown) => {
+          this.emit('event', {
+            type: 'error',
+            sessionId: id,
+            message: error instanceof Error ? error.message : String(error),
+          })
         })
-      })
+      } finally {
+        releaseDispatch()
+      }
     }
     return resumed
   }
@@ -617,13 +644,24 @@ export class ClaudeAgentService
       // Both entries go back out together. Refusing the send while keeping
       // them leaves the prompt in the transcript and an assistant reply that
       // is blank for good, and the client restores the draft on top of it.
+      let repaired = true
       await this.store
         .update(sessionId, (stored) => {
           stored.messages = stored.messages.filter(
             (message) => message.id !== userId && message.id !== assistantId,
           )
         })
-        .catch(() => undefined)
+        .catch(() => {
+          repaired = false
+        })
+      if (!repaired) {
+        // Saying only that the send was refused would describe a transcript
+        // that is still holding a prompt and a reply that stays blank as
+        // though it had been put back the way it was found.
+        throw new Error(
+          'Resume the session before sending to it. The message could not be taken back out of the transcript.',
+        )
+      }
       throw new Error('Resume the session before sending to it')
     }
     const running = await this.store.update(sessionId, (stored) => {
@@ -1295,6 +1333,11 @@ export class ClaudeAgentService
   private requireIdle(id: string): SessionDetail {
     const session = this.requireSession(id)
     if (session.status !== 'idle') {
+      throw new Error('Session must be idle')
+    }
+    if (this.dispatchingSessions.has(id)) {
+      // A prompt is already on its way. The status only turns to running once
+      // the turn is recorded, so without this a second one starts beside it.
       throw new Error('Session must be idle')
     }
     return session

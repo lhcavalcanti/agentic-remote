@@ -5524,6 +5524,9 @@ function App() {
   )
   // The exact text that was handed back, so an untouched recovery can be told
   // from one the reader has since edited.
+  // Which uncertain failure the reader has already been warned about, so the
+  // warning is repeated when the text comes back but not on every render.
+  const warnedUncertain = useRef(new Map<string, string>())
   const restoredDraftContents = useRef<Record<string, string>>(
     readStoredOrder('agentic-remote:composer-draft-recovered', {}),
   )
@@ -7442,6 +7445,7 @@ function App() {
     for (const session of sessions) {
       const key = sessionKey(session)
       const failed = session.failedPrompt
+      const stamped = failed?.failedAt || failed?.content || ''
       if (failed?.content) {
         // A different failure from the one this client is holding. The one it
         // was handed has been answered by somebody, and leaving that text on
@@ -7464,6 +7468,16 @@ function App() {
           restoredFailures.current.delete(key)
         }
         restoreFailedPromptRef.current(key, failed.content, failed.failedAt)
+        // Said again every time the text comes back. A reload, a reconnect or
+        // switching away and back leaves an ordinary-looking draft, and
+        // sending it puts a second copy beside whatever is already in the
+        // terminal's prompt.
+        if (failed.uncertain && warnedUncertain.current.get(key) !== stamped) {
+          warnedUncertain.current.set(key, stamped)
+          setError(
+            'This message may still be in the terminal. Check there before sending it again.',
+          )
+        }
         continue
       }
       // Gone, so somebody has answered for it -- another tab, another device,
@@ -8360,9 +8374,14 @@ function App() {
     }
     if (command?.name === 'clear') {
       setComposer('')
-      focusComposer(await clearSelectedConversation())
+      // The session this became. Everything the recovery was carrying has just
+      // moved here, and offering it against the key that is gone left the
+      // replacement holding an empty, already-answered recovery while its
+      // marker went on holding the queue.
+      const replacementKey = await clearSelectedConversation()
+      focusComposer(replacementKey)
       settleSubmission()
-      reofferFailedPrompt(targetKey)
+      reofferFailedPrompt(replacementKey ?? targetKey)
       return
     }
     if (command?.name === 'restart') {

@@ -205,7 +205,19 @@ export interface SessionSummary {
    * it survives a disconnected socket and reaches the next snapshot, rather
    * than only being announced once to whoever happened to be listening.
    */
-  failedPrompt?: { content: string; failedAt: string }
+  failedPrompt?: {
+    content: string
+    failedAt: string
+    /**
+     * Set when the text may still be sitting in the terminal's prompt.
+     *
+     * A paste tmux accepted but that was never seen to arrive is not known to
+     * have failed, so sending again can put a second copy beside the first.
+     * Carried with the text so the warning survives a reload or a reconnect,
+     * where a bare draft looks like anything else waiting to be sent.
+     */
+    uncertain?: boolean
+  }
   activity?: string
   runtime?: SessionRuntimeInfo
 }

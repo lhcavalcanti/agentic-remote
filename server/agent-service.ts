@@ -1492,6 +1492,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly answeredFailures = new Set<string>()
   /** Marker clearances still outstanding after an accepted send. */
   private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
+  /** Set when the service is shutting down, so retries stop with it. */
+  private stopped = false
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
@@ -1630,6 +1632,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true
     if (this.discoveryTimer) {
       clearInterval(this.discoveryTimer)
       this.discoveryTimer = undefined
@@ -2553,7 +2556,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const claim = this.claimFailure(sessionId, content, before, acknowledgedFailure)
     let sent: SessionDetail
     try {
-      sent = await this.sendAdmitted(sessionId, content, enqueue)
+      sent = await this.sendAdmitted(sessionId, content, enqueue, before)
     } catch (error) {
       claim?.release()
       throw error
@@ -2606,17 +2609,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Asked first, and whatever the store now says. A window still showing a
     // recovered prompt reaches this after another has answered for it, finds
     // no marker left to reserve, and would send the prompt a second time.
-    if (acknowledged && this.answeredFailures.has(`${sessionId}:${acknowledged}`)) {
+    //
+    // Both the reservation and the record of one already answered, because
+    // clearing the marker changes memory before it reaches disk: a resend
+    // arriving inside that window saw neither a marker nor an answer.
+    if (acknowledged) {
+      const token = `${sessionId}:${acknowledged}`
+      if (this.claimedFailures.has(token) || this.answeredFailures.has(token)) {
+        throw Object.assign(
+          new Error('This message has already been sent from another window.'),
+          { statusCode: 409 },
+        )
+      }
+    }
+    const stored = this.store.get(sessionId)?.failedPrompt
+    if (acknowledged && stored?.failedAt !== acknowledged) {
+      // Naming a failure that is not the one waiting. It has been answered, or
+      // replaced by a newer one, and this text is not the answer to either.
       throw Object.assign(
-        new Error('This message has already been sent from another window.'),
+        new Error(
+          'That message has already been dealt with. Check the conversation before sending it again.',
+        ),
         { statusCode: 409 },
       )
     }
-    if (!failedAt) {
-      return undefined
-    }
-    const stored = this.store.get(sessionId)?.failedPrompt
-    if (!stored) {
+    if (!failedAt || !stored) {
       return undefined
     }
     // The same rule the acknowledgement uses. Reserving on the words alone
@@ -2678,25 +2695,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.pendingAcknowledgements.has(sessionId)) {
       return
     }
-    const attempt = async (remaining: number): Promise<void> => {
-      if (!this.store.get(sessionId)?.failedPrompt) {
-        return
-      }
-      try {
-        await this.acknowledgeFailedPrompt(sessionId, submitted, acknowledged)
-      } catch (error) {
-        if (remaining <= 0) {
-          console.warn(
-            `Gave up clearing the recovery marker for ${sessionId}:`,
-            error,
-          )
+    // Kept up until it works or the service stops. Giving up after a few
+    // tries left the marker holding the queue with its own resend refused,
+    // and nothing to start it again once storage came back.
+    const attempt = async (wait: number): Promise<void> => {
+      while (!this.stopped) {
+        if (!this.store.get(sessionId)?.failedPrompt) {
           return
         }
-        await new Promise((resolve) => setTimeout(resolve, 500))
-        await attempt(remaining - 1)
+        try {
+          await this.acknowledgeFailedPrompt(sessionId, submitted, acknowledged)
+          return
+        } catch (error) {
+          console.warn(
+            `Still could not clear the recovery marker for ${sessionId}:`,
+            error,
+          )
+          await new Promise((resolve) => setTimeout(resolve, wait))
+          // Backed off, so an outage costs one attempt a minute rather than
+          // two a second.
+          wait = Math.min(wait * 2, 60_000)
+        }
       }
     }
-    const running = attempt(5).finally(() => {
+    const running = attempt(500).finally(() => {
       this.pendingAcknowledgements.delete(sessionId)
     })
     this.pendingAcknowledgements.set(sessionId, running)
@@ -2706,6 +2728,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     enqueue: boolean,
+    // The failure this send answers, so a prompt that goes on the queue and
+    // the marker it answers are written together rather than one after the
+    // other with a crash possible in between.
+    answers?: string,
   ): Promise<SessionDetail> {
     const terminalBacked = await this.terminalController.has(sessionId)
     if (terminalBacked) {
@@ -2731,7 +2757,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       terminalBacked &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, content)
+      return this.enqueueTerminalPrompt(sessionId, content, false, answers)
     }
     const nativeEnqueue = this.shouldUseNativeTerminalQueue(sessionId, enqueue)
     const dispatchedAt = new Date().toISOString()
@@ -2766,7 +2792,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!enqueue) {
         throw new Error('This session is already responding')
       }
-      return this.enqueuePrompt(sessionId, content)
+      return this.enqueuePrompt(sessionId, content, false, answers)
     }
 
     return this.startMessage(sessionId, content)
@@ -2793,6 +2819,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     command = false,
+    answers?: string,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
@@ -2801,7 +2828,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...(command ? { command: true } : {}),
     }
     return this.serializeQueue(sessionId, async () => {
-      const queued = await this.store.enqueuePrompt(sessionId, prompt)
+      // One write when this is the answer to a failure. Queued first and the
+      // marker let go of afterwards, a crash in between leaves both on disk,
+      // and after a restart the reader is handed the text again while the
+      // copy they already sent is still waiting to go.
+      const queued = answers
+        ? await this.store.enqueueAnsweringPrompt(sessionId, prompt, answers)
+        : await this.store.enqueuePrompt(sessionId, prompt)
       this.publish(queued)
       return queued
     })
@@ -2811,9 +2844,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     command = false,
+    answers?: string,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content, command)
+    const queued = await this.enqueuePrompt(sessionId, content, command, answers)
     if (!wasIdle) {
       return queued
     }
@@ -4997,6 +5031,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             sessionId,
             next.id,
             next.content,
+            // tmux may have taken the paste even though it was never seen to
+            // arrive, so this is not known to have failed. Carried with the
+            // text, because after a reload a bare draft looks like anything
+            // else waiting to be sent.
+            /may still be in the prompt/.test(
+              error instanceof Error ? error.message : String(error),
+            ),
           )
         } catch {
           session = undefined

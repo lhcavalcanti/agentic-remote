@@ -447,6 +447,7 @@ export class SessionStore {
     sessionId: string,
     promptId: string,
     content: string,
+    uncertain = false,
   ): Promise<SessionDetail> {
     // Put back if the write does not land. The caller reports the send as
     // unrecovered when this rejects, but the queue entry had already gone from
@@ -469,7 +470,11 @@ export class SessionStore {
         const queue = stored.queuedPrompts || []
         stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
         stored.queuedCount = stored.queuedPrompts.length
-        stored.failedPrompt = { content, failedAt: new Date().toISOString() }
+        stored.failedPrompt = {
+          content,
+          failedAt: new Date().toISOString(),
+          ...(uncertain ? { uncertain: true } : {}),
+        }
         applied = stored.failedPrompt
         appliedQueue = stored.queuedPrompts
       })
@@ -495,6 +500,31 @@ export class SessionStore {
       }
       throw error
     }
+  }
+
+  /**
+   * Queues a prompt and lets go of the failure it answers, in one write.
+   *
+   * Done as two, a crash in between leaves the retry on the queue and the
+   * marker still on disk, and after a restart the reader is handed the text
+   * again while the first copy is still waiting to go.
+   */
+  async enqueueAnsweringPrompt(
+    sessionId: string,
+    prompt: QueuedPrompt,
+    answers: string | undefined,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const queue = session.queuedPrompts || []
+      session.queuedPrompts = [...queue, prompt]
+      session.queuedCount = session.queuedPrompts.length
+      if (
+        session.failedPrompt &&
+        (answers === undefined || session.failedPrompt.failedAt === answers)
+      ) {
+        session.failedPrompt = undefined
+      }
+    })
   }
 
   async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {

@@ -2034,11 +2034,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored) {
       throw new Error('Session not found')
     }
-    if (this.externalSessionIds.has(id)) {
-      await this.terminalController.rename?.(id, title)
-    } else {
-      const session = await this.ensureLoaded(id)
-      await session.rpc.name.set({ name: title })
+    // A suspended session is renamed where it is: the name is ours to keep,
+    // and telling a runtime about it would mean starting the one that
+    // suspending put down. It is carried over whenever the session next runs.
+    if (!this.store.get(id)?.suspended && !this.suspendingSessions.has(id)) {
+      if (this.externalSessionIds.has(id)) {
+        await this.terminalController.rename?.(id, title)
+      } else {
+        const session = await this.ensureLoaded(id)
+        await session.rpc.name.set({ name: title })
+      }
     }
     const renamed = await this.store.renameSession(id, title)
     this.publish(renamed)
@@ -3119,7 +3124,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async startMessage(
     sessionId: string,
     content: string,
+    fromQueue = false,
   ): Promise<SessionDetail> {
+    // Anything already waiting goes first. A resume whose drain failed leaves
+    // the prompt back on the queue, and a message written afterwards would
+    // otherwise start straight away and run ahead of one written before it.
+    if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
+      return this.enqueuePrompt(sessionId, content)
+    }
     const sdkSession = await this.ensureLoaded(sessionId)
     const createdAt = new Date().toISOString()
     await this.store.addMessage(sessionId, {
@@ -5117,7 +5129,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publish(queued)
         if (next) {
           try {
-            await this.startMessage(sessionId, next.content)
+            await this.startMessage(sessionId, next.content, true)
           } catch (error) {
             const restored = await this.serializeQueue(
               sessionId,

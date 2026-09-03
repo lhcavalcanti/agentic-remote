@@ -645,12 +645,24 @@ export class ClaudeAgentService
     sessionId: string,
     content: string,
     enqueue = false,
+    fromQueue = false,
   ): Promise<SessionDetail> {
     if (
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
     ) {
       throw new Error('Resume the session before sending to it')
+    }
+    // Anything already waiting goes first. A resume whose drain failed puts
+    // the prompt back, and a message written after it must not overtake it.
+    if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
+      const queued = await this.store.enqueuePrompt(sessionId, {
+        id: randomUUID(),
+        content,
+        createdAt: new Date().toISOString(),
+      })
+      this.publish(queued)
+      return queued
     }
     await this.refreshAuthentication()
     // Suspending may have finished while authentication was being refreshed,
@@ -1359,7 +1371,7 @@ export class ClaudeAgentService
       // goes past that gate rather than into it. Sending through the public
       // path refused it on the very flag that exists to keep newer work out
       // until this has gone in, so resume finished having sent nothing.
-      await this.dispatchQueued(sessionId, next.content)
+      await this.dispatchQueued(sessionId, next.content, false, true)
     } catch (error) {
       // The prompt is off the queue and was never sent, so it goes back where
       // it was rather than disappearing.

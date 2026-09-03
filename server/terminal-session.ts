@@ -305,7 +305,7 @@ export class TmuxTerminalSessionController
         // suspended while its terminal was still running. tmux is asked
         // directly, and only a server that is not there, or a pane list that
         // holds nothing for this session, settles it.
-        return this.noPaneRemains(sessionId)
+        return this.noPaneRemains()
       }
       // Confirmation is the last thing awaited. Anything after it -- even
       // looking the owner up again -- is another moment in which somebody at
@@ -326,36 +326,22 @@ export class TmuxTerminalSessionController
       // else. The root would still match and the kill would take work that has
       // nothing to do with this session.
       //
-      // So the process that *is* the session is asked about too, and the
-      // question is put to tmux in the same request as the kill. Sampling it
-      // here and killing on the strength of it leaves a gap in which Copilot
-      // exits and its shell starts something else, and the root would still
-      // match.
+      // Ended by signalling the process that is the session, not by naming a
+      // pane. No arrangement of tmux commands is atomic here -- a target is
+      // expanded before the condition runs, and the condition finishes before
+      // the consequent begins -- so any of them can act on a pane that has
+      // been respawned or handed to something else in between.
       //
-      // `if-shell` without `-F` runs a shell, so the shell decides: the kill
-      // happens only if the pane's root is still what it was *and* the process
-      // that is the session is still there. `kill -0` asks the kernel and
-      // says nothing on success.
-      if (!processIsAlive(owner.pid)) {
-        // Already stopped. The exact pane is asked about rather than the world
-        // in general.
-        return this.paneStopped(owner)
-      }
+      // A signal has no such gap. The kernel either delivers it to that exact
+      // process or reports that it is gone, and nothing else can inherit its
+      // identity. A pane whose root this was ends with it; one that was only
+      // hosting it carries on, which is somebody's shell and not ours to
+      // close.
       try {
-        await execFileAsync('tmux', [
-          'if-shell',
-          '-t',
-          owner.target,
-          `[ "$(tmux display-message -p -t ${owner.target} '#{pane_pid}')" = "${owner.rootPid}" ] && kill -0 ${owner.pid} 2>/dev/null`,
-          `kill-pane -t ${owner.target}`,
-        ])
+        process.kill(owner.pid, 'SIGTERM')
       } catch (error) {
-        // The pane can end on its own while confirmation is running, and the
-        // last pane ending takes the server with it. tmux then refuses to
-        // address a pane that is not there, and reporting that as failure left
-        // a session that had genuinely stopped never recorded as suspended.
-        // Anything else is a real failure and is not swallowed.
-        if (!noTmuxServer(error) && !missingTmuxTarget(error)) {
+        // Already gone, which is the outcome being asked for.
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
           throw error
         }
       }
@@ -390,32 +376,17 @@ export class TmuxTerminalSessionController
     pid: number
     target: string
   }): Promise<boolean> {
-    try {
-      const listed = (
-        await execFileAsync('tmux', [
-          'display-message',
-          '-p',
-          '-t',
-          owner.target,
-          '#{pane_id}',
-        ])
-      ).stdout.trim()
-      if (listed !== owner.target) {
-        // Answered about a different pane, which means this one is not there.
-        return true
-      }
-    } catch (error) {
-      // Gone, along with the server if it was the last one.
-      if (noTmuxServer(error) || missingTmuxTarget(error)) {
-        return true
-      }
-      // A look that failed says nothing.
+    // The process first, and always. A pane that has gone says nothing about a
+    // process that outlived it or was moved out of it, and reporting that as
+    // stopped recorded a suspension over a runtime that was still going --
+    // after which a resume started a second owner for the same session.
+    if (processIsAlive(owner.pid)) {
       return false
     }
-    // The pane is still there, so the session has only stopped if the process
-    // that is the session has. A shell that outlives what it ran is a stopped
-    // session; a live process is not.
-    return !processIsAlive(owner.pid)
+    // The process has gone. Whether its pane is still there or not, the
+    // session has stopped: a shell that outlives what it ran is not this
+    // session running.
+    return true
   }
 
   async restart(sessionId: string, cwd: string): Promise<boolean> {
@@ -946,7 +917,7 @@ export class TmuxTerminalSessionController
    * it answers with nothing when it cannot look. This asks the one thing that
    * can say for certain, and refuses when even that cannot be reached.
    */
-  private async noPaneRemains(sessionId: string): Promise<boolean> {
+  private async noPaneRemains(): Promise<boolean> {
     let listed = ''
     try {
       listed = (
@@ -970,18 +941,15 @@ export class TmuxTerminalSessionController
     // it again here read that as absence: no owner found, so reported stopped,
     // while the pane was still running. The pane list is asked instead, and it
     // has already been read successfully above.
-    // The cache is dropped so this is a fresh look rather than the same empty
-    // answer a failed one left behind.
-    this.activeProcessCache = undefined
-    const processes = await this.activeProcesses().catch(() => undefined)
-    if (!processes || !processes.length) {
-      // Panes are running but not one Copilot process was found among them.
-      // A moment ago this session had one, so this is a look that failed
-      // rather than a session that has stopped, and reporting success here
-      // recorded it as suspended while its terminal carried on.
-      return false
-    }
-    return !processes.some((candidate) => candidate.sessionId === sessionId)
+    // Panes are running, and the only thing that could say this session is not
+    // among them is process discovery -- which can succeed in part, finding one
+    // session while a transient failure hides another. A list that is missing
+    // this session is therefore not proof, so nothing here settles it.
+    //
+    // Refusing costs a suspension that has to be asked for again. Accepting
+    // recorded a session as suspended while its terminal carried on, and a
+    // resume then started a second owner for it.
+    return false
   }
 
   private async owner(
@@ -1832,18 +1800,6 @@ async function waitForPaneText(
 }
 
 /** Whether a tmux command failed because there is no server left to ask. */
-/** Whether tmux refused because the pane named is no longer there. */
-function missingTmuxTarget(error: unknown): boolean {
-  const message = `${(error as { stderr?: string }).stderr || ''}${
-    error instanceof Error ? error.message : ''
-  }`
-  return (
-    /can't find pane/i.test(message) ||
-    /can't find window/i.test(message) ||
-    /can't find session/i.test(message) ||
-    /pane not found/i.test(message)
-  )
-}
 
 function noTmuxServer(error: unknown): boolean {
   const failure = error as { stderr?: unknown }

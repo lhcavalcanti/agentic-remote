@@ -5184,6 +5184,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.drainingSessions.has(sessionId)) {
       return
     }
+    if (
+      this.suspendingSessions.has(sessionId) ||
+      this.store.get(sessionId)?.suspended
+    ) {
+      // As above: a drain starting beside a suspension marks the session as
+      // working after the runtime has gone.
+      return
+    }
     this.drainingSessions.add(sessionId)
     try {
       if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
@@ -5214,6 +5222,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async drainTerminalQueue(sessionId: string): Promise<void> {
     if (this.drainingSessions.has(sessionId)) {
+      return
+    }
+    if (
+      this.suspendingSessions.has(sessionId) ||
+      this.store.get(sessionId)?.suspended
+    ) {
+      // A drain starting now would wait behind the teardown and then mark the
+      // session as working, which the last idleness check reads as a turn
+      // having begun -- the pane already killed, and the suspension abandoned
+      // with nothing running it.
       return
     }
     this.drainingSessions.add(sessionId)

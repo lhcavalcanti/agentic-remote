@@ -1572,6 +1572,18 @@ export class ClaudeAgentService
     // with an empty queue, started a turn of its own beside this one, and the
     // later registration hid the first from cancellation.
     this.admissionClosed.add(sessionId)
+    // The drain's own prompt is a send too, and it goes straight to the
+    // dispatch rather than through the public path. Deletion looked only at
+    // sends that came in that way, so a drain between taking its prompt off
+    // the queue and registering its turn was invisible to it.
+    let drained = () => {}
+    const draining = new Promise<void>((resolve) => {
+      drained = resolve
+    })
+    this.admittingSends.set(sessionId, [
+      ...(this.admittingSends.get(sessionId) || []),
+      draining,
+    ])
     try {
       // The queue's own prompt is the one admission is being held for, so it
       // goes past that gate rather than into it. Sending through the public
@@ -1593,6 +1605,13 @@ export class ClaudeAgentService
         await starting.catch(() => undefined)
       }
       this.admissionClosed.delete(sessionId)
+      drained()
+      this.admittingSends.set(
+        sessionId,
+        (this.admittingSends.get(sessionId) || []).filter(
+          (entry) => entry !== draining,
+        ),
+      )
     }
   }
 

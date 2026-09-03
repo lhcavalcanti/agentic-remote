@@ -1171,6 +1171,20 @@ export function backgroundTasksFromEvents(
           )
           current.status =
             eventString(kind, 'status') === 'queued' ? 'queued' : 'running'
+          // The call that started this shell may already have a task of its
+          // own, projected before any shell id was known. Left alone it stays
+          // beside the reported one, so the same command is counted twice and
+          // the older half never finishes.
+          const startedBy = eventString(kind, 'toolCallId') || eventString(data, 'toolCallId')
+          if (startedBy) {
+            const existing = taskIdAlias(aliases, startedBy)
+            if (existing !== shellId && tasks.has(existing)) {
+              tasks.delete(existing)
+              assumedBackground.delete(existing)
+              assumedOwners.delete(existing)
+            }
+            aliases.set(startedBy, shellId)
+          }
           tasks.set(shellId, current)
           aliases.set(shellId, shellId)
           // Reported by the CLI itself, so nothing about this shell is being
@@ -1572,6 +1586,10 @@ export function backgroundTasksFromEvents(
     for (const task of tasks.values()) {
       if (
         (task.status === 'running' || task.status === 'queued') &&
+        // A detached shell is deliberately not the session's to end: it was
+        // put outside it precisely so it would carry on, and its own process
+        // may still be running long after the session has gone.
+        task.attachmentMode !== 'detached' &&
         task.startedAt < sessionEndedAt
       ) {
         task.status = 'failed'

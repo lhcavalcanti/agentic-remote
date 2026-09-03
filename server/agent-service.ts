@@ -2884,6 +2884,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       nativeEnqueue || busy || this.store.get(sessionId)?.status === 'running'
         ? undefined
         : await this.terminalController.capture?.(sessionId)
+    // Capturing the pane is awaited, and another reader's prompt can start a
+    // turn while it is. The keystrokes themselves are serialized, but that
+    // only orders them: it does not stop this one being typed into a turn
+    // that began after the check above said there was none.
+    if (!nativeEnqueue && !enqueue && !commandInfo?.allowDuringAgentExecution) {
+      const now = this.store.get(sessionId)
+      if (
+        this.activePrompts.has(sessionId) ||
+        this.drainingSessions.has(sessionId) ||
+        now?.status === 'running' ||
+        now?.status === 'waiting'
+      ) {
+        throw new Error(`/${name} must be queued while the agent is running`)
+      }
+    }
     if (
       await this.terminalController.send(
         sessionId,

@@ -1543,4 +1543,54 @@ describe('background task adapter', () => {
     expect(tasks.filter((task) => task.status === 'running')).toEqual([])
   })
 
+
+  it('lets a detached shell outlive the session it was started from', () => {
+    // Detaching is what puts a shell outside the session on purpose. Its
+    // process can still be running long after the session has gone, so the
+    // shutdown cannot be taken as its ending.
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'call-1',
+          toolName: 'bash',
+          arguments: { command: 'pnpm dev', async: true },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'handoff',
+        parentId: 'start',
+        timestamp: '2026-09-02T08:00:01.000Z',
+        data: {
+          toolCallId: 'call-1',
+          success: true,
+          toolTelemetry: {
+            properties: { executionMode: 'async', detached: 'true' },
+          },
+          result: {
+            content: '<command started in detached background with shellId: 9>',
+          },
+        },
+      },
+      {
+        type: 'session.shutdown',
+        id: 'gone',
+        parentId: null,
+        timestamp: '2026-09-02T08:05:00.000Z',
+        data: {},
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '9')).toMatchObject({
+      status: 'running',
+      attachmentMode: 'detached',
+    })
+  })
+
 })

@@ -6172,6 +6172,78 @@ describe('App', () => {
     await waitFor(() => expect(textarea).toHaveValue(''))
   })
 
+  it('takes back an untouched recovery once another client answers for it', async () => {
+    // The marker is gone, so somebody has answered for the prompt. Leaving the
+    // text this client was handed on screen reads as something still waiting
+    // to be sent, and sending it delivers the prompt a second time.
+    const failed: ManagedSession = {
+      ...session,
+      failedPrompt: {
+        content: 'the one that failed',
+        failedAt: '2026-09-03T00:00:00.000Z',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed, secondSession])
+    vi.mocked(getSession).mockResolvedValue(failed)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(textarea).toHaveValue('the one that failed'))
+
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, revision: (session.revision || 0) + 3 },
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() => expect(textarea).toHaveValue(''))
+  })
+
+  it('keeps an edited recovery answering for its failure', async () => {
+    // A reader who edits what they were handed is still answering that
+    // failure. Requiring the words to match meant the edited draft no longer
+    // acknowledged it, so the prompt came back and went on holding the queue.
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'the one that failed, edited' }),
+    )
+    localStorage.setItem(
+      'agentic-remote:composer-draft-failures',
+      JSON.stringify({ 'computer-1:session-1': '2026-09-03T00:00:00.000Z' }),
+    )
+    const failed: ManagedSession = {
+      ...session,
+      failedPrompt: {
+        content: 'the one that failed',
+        failedAt: '2026-09-03T00:00:00.000Z',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed, secondSession])
+    vi.mocked(getSession).mockResolvedValue(failed)
+    vi.mocked(sendMessage).mockResolvedValue(session)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() =>
+      expect(textarea).toHaveValue('the one that failed, edited'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        expect.objectContaining({
+          acknowledgesFailure: '2026-09-03T00:00:00.000Z',
+        }),
+      ),
+    )
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',

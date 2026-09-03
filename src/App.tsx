@@ -5522,6 +5522,11 @@ function App() {
   const restoredDraftStamps = useRef<Record<string, string>>(
     readStoredOrder('agentic-remote:composer-draft-failures', {}),
   )
+  // The exact text that was handed back, so an untouched recovery can be told
+  // from one the reader has since edited.
+  const restoredDraftContents = useRef<Record<string, string>>(
+    readStoredOrder('agentic-remote:composer-draft-recovered', {}),
+  )
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -7379,14 +7384,15 @@ function App() {
       return
     }
     updateComposerDrafts([key], (current) => {
-      if (
-        current[key] === content &&
-        restoredDraftStamps.current[key] === stamp
-      ) {
-        // Already back in the composer, from before a reload, and recorded as
-        // this failure's own text when it was put there. Matching on the words
-        // alone gave somebody's newer writing this failure's token, and
-        // sending it answered for a message that was never handed back.
+      if (restoredDraftStamps.current[key] === stamp) {
+        // This failure's own text was put in the composer, and recorded as
+        // such when it was. The words are deliberately not compared: a reader
+        // who edits what they were handed is still answering this failure, and
+        // requiring them to match meant an edited draft no longer acknowledged
+        // it -- the prompt came back and went on holding the queue.
+        //
+        // Matching on the words alone was the opposite mistake: newer writing
+        // that happened to be identical took this failure's token.
         handledFailures.current.set(key, stamp)
         unshownFailures.current.delete(key)
         restoredFailures.current.set(key, stamp)
@@ -7402,7 +7408,7 @@ function App() {
       handledFailures.current.set(key, stamp)
       unshownFailures.current.delete(key)
       restoredFailures.current.set(key, stamp)
-      rememberRestoredDraft(key, stamp)
+      rememberRestoredDraft(key, stamp, content)
       return { ...current, [key]: content }
     })
   }
@@ -7422,6 +7428,23 @@ function App() {
       // or this one. What was remembered about it here goes with it, or a
       // submission from this client would carry a token for a failure that no
       // longer exists and let go of whichever one has taken its place.
+      // The draft this client was handed goes too, but only while it is still
+      // the text that was handed over. Left on screen it reads as something
+      // waiting to be sent, and sending it delivers the prompt a second time.
+      // Anything the reader has written since is theirs and stays.
+      // Read now, not inside the updater: React runs that later, by which
+      // time the records below have already been cleared and the draft would
+      // be left on screen for good.
+      const handed = restoredDraftContents.current[key]
+      if (handed !== undefined) {
+        updateComposerDrafts([], (current) => {
+          if (current[key] !== handed) {
+            return current
+          }
+          const { [key]: _removed, ...remaining } = current
+          return remaining
+        })
+      }
       handledFailures.current.delete(key)
       restoredFailures.current.delete(key)
       unshownFailures.current.delete(key)
@@ -7442,14 +7465,22 @@ function App() {
     }
   }, [composerDrafts])
 
-  function rememberRestoredDraft(key: string, stamp: string) {
+  function rememberRestoredDraft(key: string, stamp: string, content: string) {
     restoredDraftStamps.current = {
       ...restoredDraftStamps.current,
       [key]: stamp,
     }
+    restoredDraftContents.current = {
+      ...restoredDraftContents.current,
+      [key]: content,
+    }
     localStorage.setItem(
       'agentic-remote:composer-draft-failures',
       JSON.stringify(restoredDraftStamps.current),
+    )
+    localStorage.setItem(
+      'agentic-remote:composer-draft-recovered',
+      JSON.stringify(restoredDraftContents.current),
     )
   }
 
@@ -7457,12 +7488,45 @@ function App() {
     if (!(key in restoredDraftStamps.current)) {
       return
     }
-    const { [key]: _removed, ...remaining } = restoredDraftStamps.current
-    restoredDraftStamps.current = remaining
+    const { [key]: _stamp, ...remainingStamps } = restoredDraftStamps.current
+    const { [key]: _content, ...remainingContents } =
+      restoredDraftContents.current
+    restoredDraftStamps.current = remainingStamps
+    restoredDraftContents.current = remainingContents
     localStorage.setItem(
       'agentic-remote:composer-draft-failures',
-      JSON.stringify(remaining),
+      JSON.stringify(remainingStamps),
     )
+    localStorage.setItem(
+      'agentic-remote:composer-draft-recovered',
+      JSON.stringify(remainingContents),
+    )
+  }
+
+  /** Carries a recovery's identity to the session that replaced it. */
+  function moveRestoredDraft(fromKey: string, toKey: string) {
+    const stamp = restoredDraftStamps.current[fromKey]
+    if (stamp === undefined) {
+      return
+    }
+    const content = restoredDraftContents.current[fromKey]
+    forgetRestoredDraft(fromKey)
+    rememberRestoredDraft(toKey, stamp, content ?? '')
+    const handled = handledFailures.current.get(fromKey)
+    const restored = restoredFailures.current.get(fromKey)
+    const unshown = unshownFailures.current.get(fromKey)
+    handledFailures.current.delete(fromKey)
+    restoredFailures.current.delete(fromKey)
+    unshownFailures.current.delete(fromKey)
+    if (handled !== undefined) {
+      handledFailures.current.set(toKey, handled)
+    }
+    if (restored !== undefined) {
+      restoredFailures.current.set(toKey, restored)
+    }
+    if (unshown !== undefined) {
+      unshownFailures.current.set(toKey, unshown)
+    }
   }
 
   function updateComposerDrafts(
@@ -7645,6 +7709,11 @@ function App() {
       return
     }
     moveComposerDraft(fromKey, toKey)
+    // The draft moves, so what it is answering has to move with it. Left
+    // behind, an edited recovery arrived under the replacement with no
+    // identity, could not clear the marker the replacement still carries, and
+    // the prompt it was answering came back.
+    moveRestoredDraft(fromKey, toKey)
     moveKnowledgePosition(fromKey, toKey)
     if (mutedSessionsRef.current.includes(fromKey)) {
       recordMuteChange(fromKey, toKey)

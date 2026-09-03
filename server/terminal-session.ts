@@ -767,7 +767,11 @@ export class TmuxTerminalSessionController
         // the paste arrive late, so one look at this instant would miss it and
         // leave the text to be concatenated with the retry. It is given a
         // further moment to appear.
-        const landedLate = await waitForComposerPaste(
+        // Waited for anyway. The clear that follows refuses to touch a
+        // composer holding anything this paste did not put there, and giving
+        // the paste time to appear is what lets it be recognised as ours
+        // rather than mistaken for somebody else's writing.
+        await waitForComposerPaste(
           target,
           paneBeforePaste,
           confirmation,
@@ -788,26 +792,22 @@ export class TmuxTerminalSessionController
         // something, or because somebody has typed since, the text is still
         // sitting there and the sender must be told to look rather than to
         // send again.
-        let restored = !landedLate
-        if (
-          landedLate &&
-          !composerWasHolding &&
-          !composerHoldsOtherText(
-            paneBeforePaste,
-            await capturePane(target),
-            content,
-          )
-        ) {
-          // The reading and the clear are kept back to back so the composer
-          // has the least chance to change between them, and the clear is
-          // confirmed rather than assumed.
+        // tmux accepted the paste either way, and a loaded CLI can draw it
+        // after this has stopped looking. Never having seen it arrive is not
+        // the same as knowing it did not, so an unconfirmed send stays
+        // uncertain: only a clear that confirmed says the prompt is as it was
+        // found, and everything else sends the reader to look at the terminal.
+        let restored = false
+        if (!composerWasHolding) {
+          // The clear takes its own reading first and refuses if the composer
+          // is holding anything this paste did not put there.
           restored = await clearPastedPrompt(target, paneBeforePaste, content)
         }
         throw Object.assign(
           new Error(
             restored
               ? 'The terminal did not receive the message. Please try again.'
-              : 'The terminal did not receive the message. Check the terminal before sending it again.',
+              : 'The terminal did not receive the message, and the text may still be in the prompt. Check the terminal before sending it again.',
           ),
           { statusCode: 409 },
         )
@@ -1707,49 +1707,29 @@ export async function clearPastedPrompt(
   paneBefore: string,
   pasted: string,
 ): Promise<boolean> {
-  // The reading that authorises this clear and the clear itself go to tmux as
-  // one command list, so no other tmux command can run between them. Taken
-  // separately, someone could type in the gap and Ctrl+U would take it.
+  // The latest state is read first and the clear only follows if it is safe.
+  // Sending Ctrl+U first and looking afterwards destroys whatever arrived in
+  // the meantime, and what the pane draws cannot be typed back: wrapping,
+  // newlines, prompt markers and a large paste shown as a placeholder are all
+  // normalised away, so the reconstruction would be a different message.
   //
+  // A composer holding somebody's writing is left exactly as it is, and the
+  // caller reports that the prompt was not put back, which sends the reader to
+  // look at the terminal rather than to send again.
+  const authorising = await capturePane(target).catch(() => undefined)
+  if (authorising === undefined) {
+    return false
+  }
+  if (composerHoldsOtherText(paneBefore, authorising, pasted)) {
+    return false
+  }
   // Ctrl+U clears the composer. Escape is deliberately not sent: it would
   // dismiss whatever dialog the agent has open behind the paste.
-  let authorising = ''
   try {
-    authorising = (
-      await execFileAsync('tmux', [
-        'capture-pane',
-        '-p',
-        '-t',
-        target,
-        '-S',
-        '-30',
-        ';',
-        'send-keys',
-        '-t',
-        target,
-        'C-u',
-      ])
-    ).stdout
+    await execFileAsync('tmux', ['send-keys', '-t', target, 'C-u'])
   } catch {
     // Saying the prompt was put back when the keystroke never arrived is what
     // leaves the paste to be concatenated with the retry.
-    return false
-  }
-  // What the composer held at the instant it was cleared. Anything beyond this
-  // paste was somebody's writing, and it is put straight back rather than
-  // left destroyed -- the caller is told the clear did not hold, so the reader
-  // is sent to look at the terminal instead of sending again.
-  if (composerHoldsOtherText(paneBefore, authorising, pasted)) {
-    const strayed = composerText(authorising)
-    if (strayed) {
-      await execFileAsync('tmux', [
-        'send-keys',
-        '-t',
-        target,
-        '-l',
-        strayed,
-      ]).catch(() => undefined)
-    }
     return false
   }
   // The composer is read again because the reading that authorised this clear

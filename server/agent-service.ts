@@ -2548,11 +2548,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // whatever comes back from clearing it is what the caller is given. Left
     // as it was, the browser dropped its own copy while every reader went on
     // being told the prompt was still waiting to be handed back.
+    // The send has already been delivered or queued by this point, so a write
+    // that fails here is not a failed send. Reporting it as one had the
+    // browser put the accepted text back as a draft, while the rollback
+    // restored the marker that invites it to be sent a second time.
     const settled = await this.acknowledgeFailedPrompt(
       sessionId,
       content,
       acknowledgedFailure,
-    )
+    ).catch((error: unknown) => {
+      console.warn(
+        `Could not clear the recovery marker for ${sessionId} after an accepted send:`,
+        error,
+      )
+      return undefined
+    })
     return settled ?? sent
   }
 

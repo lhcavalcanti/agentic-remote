@@ -1486,6 +1486,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly hydratingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly activePrompts = new Map<string, ActivePrompt>()
   private readonly drainingSessions = new Set<string>()
+  /** Failures whose resend has been admitted, so a second cannot be. */
+  private readonly claimedFailures = new Set<string>()
+  /** Failures whose resend was accepted, so a later copy cannot follow it. */
+  private readonly answeredFailures = new Set<string>()
+  /**
+   * Sessions whose current send has reached the runtime.
+   *
+   * Anything that fails after this point leaves a send that may well have
+   * arrived, whatever kind of failure it is.
+   */
+  private readonly deliveredSends = new Set<string>()
+  /** What a cleared session became, so outstanding work can follow it. */
+  private readonly replacedInto = new Map<string, string>()
+  /** Sleeping acknowledgement retries, cleared when the service stops. */
+  private readonly acknowledgementTimers = new Set<NodeJS.Timeout>()
+  /** Marker clearances still outstanding after an accepted send. */
+  private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
+  /** Set when the service is shutting down, so retries stop with it. */
+  private stopped = false
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
@@ -1693,6 +1712,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true
+    for (const timer of this.acknowledgementTimers) {
+      clearTimeout(timer)
+    }
+    this.acknowledgementTimers.clear()
     if (this.discoveryTimer) {
       clearInterval(this.discoveryTimer)
       this.discoveryTimer = undefined
@@ -2866,6 +2890,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         id,
         replacementId,
       )
+      // Anything still waiting to be done for the old session has to follow it
+      // here. A recovery marker moves across with the conversation, and a
+      // clearance still being retried would otherwise look for a session that
+      // is gone and give up, leaving the accepted prompt recoverable again.
+      this.replacedInto.set(id, replacementId)
       this.emit('event', {
         type: 'session.removed',
         sessionId: id,
@@ -2991,6 +3020,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     rawContent: string,
     enqueue = false,
+    acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
     const content = rawContent.trim()
     if (!content) {
@@ -3017,21 +3047,259 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
-    // Held for the whole dispatch, not just the checks. Detection, pane
-    // capture and delivery are all awaited, and a suspension finishing during
-    // any of them would put the runtime down under a turn already on its way.
-    const releaseDispatch = this.holdDispatch(sessionId)
+    // Let go of the recovered text only once this has actually been taken.
+    // Clearing on the way in meant a retry that then failed left the reader
+    // with an empty composer and the server with no copy either.
+    // What was waiting to be handed back before this went out. A send that is
+    // drained straight away can fail and record a new one, and acknowledging
+    // afterwards would clear the failure this very call just created.
+    const before = this.store.get(sessionId)?.failedPrompt?.failedAt
+    // Claimed before it is delivered, not after. Two readers handed the same
+    // recovered prompt both passed the check and both sends were accepted,
+    // and with queueing both copies went in and drained once the first
+    // acknowledgement cleared the marker.
+    const claim = this.claimFailure(sessionId, content, before, acknowledgedFailure)
+    let sent: SessionDetail
     try {
-      return await this.dispatchMessage(sessionId, content, enqueue)
-    } finally {
-      releaseDispatch()
+      // The failure this send is answering, and only when it is answering
+      // one. Passing the current marker for every send let an unrelated
+      // message take it with it on its way to the queue.
+      // Held for the whole dispatch, not just the checks. Detection, pane
+      // capture and delivery are all awaited, and a suspension finishing
+      // during any of them would put the runtime down under a turn already on
+      // its way.
+      const releaseDispatch = this.holdDispatch(sessionId)
+      try {
+        sent = await this.sendAdmitted(
+          sessionId,
+          content,
+          enqueue,
+          claim ? before : undefined,
+        )
+      } finally {
+        releaseDispatch()
+      }
+      this.deliveredSends.delete(sessionId)
+    } catch (error) {
+      // A send that failed after the terminal had already taken the text is
+      // not a send that can be repeated. Letting go of the reservation invited
+      // exactly the second copy it exists to prevent.
+      //
+      // Delivery is what decides, not the kind of error. A perfectly ordinary
+      // persistence failure after the text has gone in leaves the same
+      // ambiguity, so anything thrown once the send is known to have gone out
+      // keeps the reservation.
+      if (this.deliveredSends.has(sessionId)) {
+        this.deliveredSends.delete(sessionId)
+        claim?.release(true)
+        // The failure this answered has been dealt with as far as anyone can
+        // tell, so the marker must not go on offering it -- refused by the
+        // record of an answered failure, it would block the queue for good.
+        await this.acknowledgeFailedPrompt(
+          sessionId,
+          content,
+          acknowledgedFailure,
+        ).catch(() => {
+          this.scheduleFailureAcknowledgement(
+            sessionId,
+            content,
+            acknowledgedFailure,
+          )
+        })
+      } else {
+        claim?.release()
+      }
+      throw error
+    }
+    if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
+      claim?.release()
+      return sent
+    }
+    // The snapshot above still carries the failure that this send answers, so
+    // whatever comes back from clearing it is what the caller is given. Left
+    // as it was, the browser dropped its own copy while every reader went on
+    // being told the prompt was still waiting to be handed back.
+    // The send has already been delivered or queued by this point, so a write
+    // that fails here is not a failed send. Reporting it as one had the
+    // browser put the accepted text back as a draft, while the rollback
+    // restored the marker that invites it to be sent a second time.
+    const settled = await this.acknowledgeFailedPrompt(
+      sessionId,
+      content,
+      acknowledgedFailure,
+    ).catch((error: unknown) => {
+      // The send has already been delivered or queued, so this is not a failed
+      // send and must not be reported as one. It is not forgotten either: the
+      // marker is still on disk holding the queue, so clearing it is left
+      // outstanding and tried again rather than logged and abandoned.
+      console.warn(
+        `Could not clear the recovery marker for ${sessionId} after an accepted send:`,
+        error,
+      )
+      this.scheduleFailureAcknowledgement(sessionId, content, acknowledgedFailure)
+      return undefined
+    })
+    claim?.release(true)
+    return settled ?? sent
+  }
+
+  /**
+   * Reserves a failure so only one resend of it can be admitted.
+   *
+   * Two readers can be holding the same recovered prompt, and the marker is
+   * only cleared once the send has gone out. Both passed that check and both
+   * were accepted, so the prompt was delivered twice.
+   */
+  private claimFailure(
+    sessionId: string,
+    submitted: string,
+    failedAt: string | undefined,
+    acknowledged?: string,
+  ): { release: (accepted?: boolean) => void } | undefined {
+    // Asked first, and whatever the store now says. A window still showing a
+    // recovered prompt reaches this after another has answered for it, finds
+    // no marker left to reserve, and would send the prompt a second time.
+    //
+    // Both the reservation and the record of one already answered, because
+    // clearing the marker changes memory before it reaches disk: a resend
+    // arriving inside that window saw neither a marker nor an answer.
+    if (acknowledged) {
+      const token = `${sessionId}:${acknowledged}`
+      if (this.claimedFailures.has(token) || this.answeredFailures.has(token)) {
+        throw Object.assign(
+          new Error('This message has already been sent from another window.'),
+          { statusCode: 409 },
+        )
+      }
+    }
+    const stored = this.store.get(sessionId)?.failedPrompt
+    if (acknowledged && stored?.failedAt !== acknowledged) {
+      // Naming a failure that is not the one waiting. It has been answered, or
+      // replaced by a newer one, and this text is not the answer to either.
+      throw Object.assign(
+        new Error(
+          'That message has already been dealt with. Check the conversation before sending it again.',
+        ),
+        { statusCode: 409 },
+      )
+    }
+    if (!failedAt || !stored) {
+      return undefined
+    }
+    // The same rule the acknowledgement uses. Reserving on the words alone
+    // let an independently written message that happens to read the same take
+    // the reservation, and the real resend was then refused.
+    const isResend =
+      acknowledged === stored.failedAt ||
+      (stored.failedAt === undefined &&
+        stored.content.trim() === submitted.trim())
+    if (!isResend) {
+      // Not a resend of the failure at all, so there is nothing to reserve.
+      return undefined
+    }
+    const key = `${sessionId}:${failedAt}`
+    if (this.claimedFailures.has(key) || this.answeredFailures.has(key)) {
+      throw Object.assign(
+        new Error('This message has already been sent from another window.'),
+        { statusCode: 409 },
+      )
+    }
+    this.claimedFailures.add(key)
+    let released = false
+    return {
+      release: (accepted = false) => {
+        if (released) {
+          return
+        }
+        released = true
+        this.claimedFailures.delete(key)
+        if (accepted) {
+          // Remembered after the marker has gone. A second window still
+          // holding the same recovered text reached the check after the first
+          // had cleared it, found nothing to reserve, and sent the prompt
+          // again.
+          this.answeredFailures.add(key)
+          if (this.answeredFailures.size > 200) {
+            const oldest = this.answeredFailures.values().next().value
+            if (oldest !== undefined) {
+              this.answeredFailures.delete(oldest)
+            }
+          }
+        }
+      },
     }
   }
 
-  private async dispatchMessage(
+  /**
+   * Keeps trying to clear a marker whose send has already been accepted.
+   *
+   * The marker holds the queue, and is offered again after a reload and to
+   * every other reader, so leaving it behind invites the accepted prompt to be
+   * sent a second time.
+   */
+  private scheduleFailureAcknowledgement(
+    sessionId: string,
+    submitted: string,
+    acknowledged?: string,
+  ): void {
+    if (this.pendingAcknowledgements.has(sessionId)) {
+      return
+    }
+    // Kept up until it works or the service stops. Giving up after a few
+    // tries left the marker holding the queue with its own resend refused,
+    // and nothing to start it again once storage came back.
+    const attempt = async (wait: number): Promise<void> => {
+      let current = sessionId
+      while (!this.stopped) {
+        if (!this.store.get(current)) {
+          // Cleared while this was sleeping. The replacement inherits the
+          // marker, so the retry follows it rather than giving up and leaving
+          // the accepted prompt recoverable all over again.
+          const successor = this.replacedInto.get(current)
+          if (!successor) {
+            return
+          }
+          current = successor
+          continue
+        }
+        if (!this.store.get(current)?.failedPrompt) {
+          return
+        }
+        try {
+          await this.acknowledgeFailedPrompt(current, submitted, acknowledged)
+          return
+        } catch (error) {
+          console.warn(
+            `Still could not clear the recovery marker for ${current}:`,
+            error,
+          )
+          await new Promise((resolve) => {
+            // Unreferenced so a retry that is sleeping cannot hold the process
+            // open after everything else has finished shutting down.
+            const timer = setTimeout(resolve, wait)
+            timer.unref?.()
+            this.acknowledgementTimers.add(timer)
+          })
+          // Backed off, so an outage costs one attempt a minute rather than
+          // two a second.
+          wait = Math.min(wait * 2, 60_000)
+        }
+      }
+    }
+    const running = attempt(500).finally(() => {
+      this.pendingAcknowledgements.delete(sessionId)
+    })
+    this.pendingAcknowledgements.set(sessionId, running)
+  }
+
+  private async sendAdmitted(
     sessionId: string,
     content: string,
     enqueue: boolean,
+    // The failure this send answers, so a prompt that goes on the queue and
+    // the marker it answers are written together rather than one after the
+    // other with a crash possible in between.
+    answers?: string,
   ): Promise<SessionDetail> {
     const terminalBacked = await this.terminalController.has(sessionId)
     // Detection is awaited, and suspending can finish while it is: the guard
@@ -3070,11 +3338,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       terminalBacked &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, content)
+      return this.enqueueTerminalPrompt(sessionId, content, false, answers)
     }
     const nativeEnqueue = this.shouldUseNativeTerminalQueue(sessionId, enqueue)
     const dispatchedAt = new Date().toISOString()
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
+      // The terminal has it. Anything that fails from here leaves a send that
+      // went out, however ordinary the failure.
+      this.deliveredSends.add(sessionId)
       if (nativeEnqueue) {
         const queued = await this.store.update(sessionId, (session) => {
           session.activity = 'Queued in terminal'
@@ -3105,7 +3376,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!enqueue) {
         throw new Error('This session is already responding')
       }
-      return this.enqueuePrompt(sessionId, content)
+      return this.enqueuePrompt(sessionId, content, false, answers)
     }
 
     return this.startMessage(sessionId, content)
@@ -3132,6 +3403,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     command = false,
+    answers?: string,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
@@ -3140,7 +3412,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...(command ? { command: true } : {}),
     }
     return this.serializeQueue(sessionId, async () => {
-      const queued = await this.store.enqueuePrompt(sessionId, prompt)
+      // One write when this is the answer to a failure. Queued first and the
+      // marker let go of afterwards, a crash in between leaves both on disk,
+      // and after a restart the reader is handed the text again while the
+      // copy they already sent is still waiting to go.
+      const queued = answers
+        ? await this.store.enqueueAnsweringPrompt(sessionId, prompt, answers)
+        : await this.store.enqueuePrompt(sessionId, prompt)
       this.publish(queued)
       return queued
     })
@@ -3150,9 +3428,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     command = false,
+    answers?: string,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content, command)
+    const queued = await this.enqueuePrompt(sessionId, content, command, answers)
     if (!wasIdle) {
       return queued
     }
@@ -3352,12 +3631,121 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return { commands: result.commands, session }
   }
 
+  /**
+   * Marks a prompt handed back to the reader as dealt with.
+   *
+   * Submitting again is them saying they have it, whether it goes out as a
+   * message or as the slash command it was. Left set, the next snapshot puts
+   * the text they have just sent back into the composer.
+   */
+  private async acknowledgeFailedPrompt(
+    sessionId: string,
+    submitted: string,
+    acknowledged?: string,
+  ): Promise<SessionDetail | undefined> {
+    const failed = this.store.get(sessionId)?.failedPrompt
+    if (!failed) {
+      return undefined
+    }
+    // Only when this is the text going back out. A reader whose composer
+    // already held something newer never saw the failed prompt, so it lives
+    // only here; clearing it because they sent that other thing would delete
+    // the one copy without ever showing it to them.
+    // The text going back out, or the reader saying outright that they have
+    // it. Matching alone held the marker for good when they edited or
+    // abandoned the recovered draft, and the marker stops the queue draining.
+    // The reader saying outright which failure they are answering, or -- only
+    // where there is nothing to say it with -- the text itself.
+    //
+    // A failure the browser never saw is one it cannot acknowledge, and it
+    // deliberately does not attach a stamp to writing of its own. Taking the
+    // words alone as proof cleared that unseen failure when an identical draft
+    // was sent, and one of the two intended messages was never delivered.
+    if (
+      acknowledged !== failed.failedAt &&
+      (failed.failedAt !== undefined ||
+        failed.content.trim() !== submitted.trim())
+    ) {
+      return undefined
+    }
+    // The store changes memory before it writes, so swallowing a failed write
+    // would report a marker as cleared that is still on disk, and start
+    // draining a queue a restart would find blocked again.
+    const cleared = await this.store.clearFailedPrompt(sessionId)
+    this.publish(cleared)
+    // The marker was holding the queue shut. Nothing else will come back to
+    // it, so the prompts it was blocking are started here.
+    if (cleared.queuedPrompts?.length) {
+      void this.drainTerminalQueue(sessionId).catch(() => undefined)
+    }
+    return cleared
+  }
+
   async executeCommand(
     sessionId: string,
     rawCommand: string,
     enqueue = false,
+    acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
     const command = rawCommand.trim()
+    // Answered only once the command has actually been taken, like a message,
+    // and reserved before it is taken for the same reason.
+    const before = this.store.get(sessionId)?.failedPrompt?.failedAt
+    const claim = this.claimFailure(sessionId, command, before, acknowledgedFailure)
+    let ran: SessionDetail
+    try {
+      ran = await this.runCommand(
+        sessionId,
+        command,
+        enqueue,
+        claim ? before : undefined,
+      )
+    } catch (error) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'uncertainDelivery' in error
+      ) {
+        // Already taken by the terminal, so this cannot simply be run again.
+        claim?.release(true)
+      } else {
+        claim?.release()
+      }
+      throw error
+    }
+    if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
+      claim?.release()
+      return ran
+    }
+    // The command has already run or been queued, so a marker that will not
+    // clear is not a failed command. Rejecting here had the browser hand back
+    // a command that had already been carried out, and running some of them
+    // twice changes the session.
+    const settled = await this.acknowledgeFailedPrompt(
+      sessionId,
+      command,
+      acknowledgedFailure,
+    ).catch((error: unknown) => {
+      console.warn(
+        `Could not clear the recovery marker for ${sessionId} after an accepted command:`,
+        error,
+      )
+      this.scheduleFailureAcknowledgement(sessionId, command, acknowledgedFailure)
+      return undefined
+    })
+    claim?.release(true)
+    return settled ?? ran
+  }
+
+  private async runCommand(
+    sessionId: string,
+    command: string,
+    enqueue: boolean,
+    // The failure this command answers, so a queued one and the marker it
+    // answers are written together rather than one after the other.
+    answers?: string,
+  ): Promise<SessionDetail> {
+
     if (!command.startsWith('/')) {
       throw new Error('Slash command must start with /')
     }
@@ -3396,7 +3784,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // to get there, so it holds the session for the whole of it.
     const releaseDispatch = this.holdDispatch(sessionId)
     try {
-      return await this.dispatchCommand(sessionId, name, argument, enqueue)
+      return await this.dispatchCommand(
+        sessionId,
+        name,
+        argument,
+        enqueue,
+        answers,
+      )
     } finally {
       releaseDispatch()
     }
@@ -3407,6 +3801,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     name: string,
     argument: string,
     enqueue: boolean,
+    // The failure this command answers, so a queued one and the marker it
+    // answers are written together rather than one after the other.
+    answers?: string,
   ): Promise<SessionDetail> {
     const catalog = await this.sessionCommandCatalog(sessionId)
     const commandInfo = catalog.commands.find(
@@ -3444,7 +3841,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, canonicalCommand, true)
+      return this.enqueueTerminalPrompt(
+        sessionId,
+        canonicalCommand,
+        true,
+        answers,
+      )
     }
     const nativeEnqueue =
       !catalog.session &&
@@ -5327,6 +5729,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!next || stored.status !== 'idle') {
         return false
       }
+      // One unacknowledged failure at a time. Sending the next prompt while
+      // the previous one is still waiting to be handed back would overwrite
+      // it, and the first would be gone with nothing holding it.
+      if (stored.failedPrompt) {
+        return false
+      }
       const dispatchedAt = new Date().toISOString()
       // A command reports what it printed instead of starting a turn, so its
       // pane is captured before the keystrokes go in, exactly as it would be
@@ -5334,8 +5742,81 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const before = next.command
         ? await this.terminalController.capture?.(sessionId)
         : undefined
-      if (!(await this.terminalController.send(sessionId, next.content, false))) {
-        throw new Error('External terminal is no longer available')
+      try {
+        if (
+          !(await this.terminalController.send(sessionId, next.content, false))
+        ) {
+          throw new Error('External terminal is no longer available')
+        }
+      } catch (error) {
+        // The queue drains again whenever the session next falls idle, so a
+        // prompt left on it after a failed send is sent a second time without
+        // anyone asking. It is taken off and reported instead, which is what
+        // the reader can act on.
+        // Recorded on the session before the queue entry goes, so the text is
+        // never absent from both at once. A snapshot carries it to a browser
+        // that was not listening when it failed, which a one-off event
+        // cannot.
+        // One write: the prompt leaves the queue and is recorded as needing
+        // recovery together. Done separately, a restart between them finds
+        // both copies on disk, and the prompt is delivered again while the
+        // reader has already been handed the text back.
+        let session: SessionDetail | undefined
+        try {
+          session = await this.store.setFailedPrompt(
+            sessionId,
+            next.id,
+            next.content,
+            // tmux may have taken the paste even though it was never seen to
+            // arrive, so this is not known to have failed. Carried with the
+            // text, because after a reload a bare draft looks like anything
+            // else waiting to be sent.
+            Boolean(
+              error &&
+                typeof error === 'object' &&
+                'uncertainDelivery' in error,
+            ),
+          )
+        } catch {
+          session = undefined
+        }
+        const recovered = Boolean(session)
+        if (session) {
+          // The queue changed, and a browser told only about the error would
+          // go on showing a prompt that is no longer waiting for anything.
+          this.publish(session)
+        }
+        // Announced only when it was actually recorded. Saying the text is
+        // being held while the write that holds it failed hands a browser a
+        // draft the server cannot answer for, and leaves the queued copy on
+        // disk to be delivered again after a restart.
+        if (!recovered) {
+          throw new Error(
+            `${
+              error instanceof Error ? error.message : String(error)
+            } The prompt could not be set aside for recovery, so it may still be queued.`,
+          )
+        }
+        this.emit('event', {
+          type: 'error',
+          sessionId,
+          message: error instanceof Error ? error.message : String(error),
+          failedPrompt: next.content,
+          // The same identity the snapshot uses, so a client that sees both
+          // knows they are one failure rather than two.
+          failedPromptAt: session?.failedPrompt?.failedAt,
+        })
+        if (!recovered) {
+          // Saying the prompt was taken off the queue while it may still be on
+          // disk would let a restart deliver it again beside the draft the
+          // reader has been handed back.
+          throw new Error(
+            `${
+              error instanceof Error ? error.message : String(error)
+            } The prompt could not be set aside for recovery, so it may still be queued.`,
+          )
+        }
+        throw error
       }
       const { prompt } = await this.store.removeQueuedPrompt(sessionId, next.id)
       if (!prompt) {

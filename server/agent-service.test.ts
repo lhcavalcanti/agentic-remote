@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -4112,6 +4112,251 @@ describe('AgentService deletion', () => {
       activity: 'Sent to terminal',
     })
     expect(sent.queuedCount ?? 0).toBe(0)
+    await service.stop()
+  })
+
+  it('keeps a failure the reader has not been shown', async () => {
+    // The browser already had a newer draft, so the failed prompt was never
+    // put in front of anyone. Sending that other text must not delete the one
+    // copy of what failed.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-keep-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    const failedAt = new Date().toISOString()
+    await service.store.update(client.session.sessionId, (stored) => {
+      stored.failedPrompt = {
+        content: 'the one that failed',
+        failedAt,
+      }
+    })
+
+    await service.sendMessage(client.session.sessionId, 'something else', false)
+    expect(
+      service.store.get(client.session.sessionId)?.failedPrompt?.content,
+    ).toBe('the one that failed')
+
+    // Saying which failure is being answered is what settles it. The words
+    // alone are not proof: a reader who never saw this failure can have
+    // written the same thing themselves, and clearing it then would deliver
+    // one of the two intended messages and silently drop the other.
+    await service.sendMessage(
+      client.session.sessionId,
+      'the one that failed',
+      false,
+      failedAt,
+    )
+    expect(
+      service.store.get(client.session.sessionId)?.failedPrompt,
+    ).toBeUndefined()
+    await service.stop()
+  })
+
+  it('admits only one resend of the same failure', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-claim-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const failedAt = new Date().toISOString()
+    await service.store.update(created.id, (stored) => {
+      stored.failedPrompt = { content: 'the one that failed', failedAt }
+    })
+
+    // Two readers handed the same recovered prompt. The marker is only
+    // cleared once a send has gone out, so both passed the check and both
+    // were accepted, and with queueing both copies were delivered.
+    const results = await Promise.allSettled([
+      service.sendMessage(created.id, 'the one that failed', true, failedAt),
+      service.sendMessage(created.id, 'the one that failed', true, failedAt),
+    ])
+    const accepted = results.filter((result) => result.status === 'fulfilled')
+    expect(accepted).toHaveLength(1)
+  })
+
+  it('refuses a second window still holding a failure that was answered', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-late-ack-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const failedAt = new Date().toISOString()
+    await service.store.update(created.id, (stored) => {
+      stored.failedPrompt = { content: 'the one that failed', failedAt }
+    })
+
+    await service.sendMessage(created.id, 'the one that failed', true, failedAt)
+    expect(service.store.get(created.id)?.failedPrompt).toBeUndefined()
+
+    // A second window was still showing the same recovered text. Reaching the
+    // check after the marker had gone, it found nothing to reserve and sent
+    // the prompt a second time.
+    await expect(
+      service.sendMessage(created.id, 'the one that failed', true, failedAt),
+    ).rejects.toThrow(/already been sent/)
+  })
+
+  it('does not clear a failure the sender never said they had', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-same-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (stored) => {
+      stored.failedPrompt = {
+        content: 'ship it',
+        failedAt: new Date().toISOString(),
+      }
+    })
+
+    // A failure this browser never saw, and writing of its own that happens to
+    // read the same. Taking the words as proof delivered one of the two
+    // intended messages and dropped the other without saying so.
+    await service.sendMessage(created.id, 'ship it', true)
+
+    expect(service.store.get(created.id)?.failedPrompt?.content).toBe('ship it')
+  })
+
+  it('gives back a queued prompt whose send failed', async () => {
+    // The browser cleared its draft the moment the queue accepted this, so the
+    // text only exists on the queue. Taking it off without handing it back
+    // loses what the reader wrote.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    let eventVersion: string | undefined = 'events-v0'
+    let events: SessionEvent[] = []
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        throw Object.assign(
+          new Error('The terminal did not receive the message.'),
+          { statusCode: 409 },
+        )
+      }),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => eventVersion,
+      terminal,
+    )
+    await service.start()
+    await service.store.updateStatus(client.session.sessionId, 'running')
+    const errors: { message: string; failedPrompt?: string }[] = []
+    service.on('event', (event) => {
+      if (event.type === 'error') {
+        errors.push(event)
+      }
+    })
+
+    const queued = await service.sendMessage(
+      client.session.sessionId,
+      'work the queue lost',
+      true,
+    )
+    const queuedAt = queued.queuedPrompts?.[0]?.createdAt
+    expect(queuedAt).toBeDefined()
+    events = JSON.parse(
+      JSON.stringify([
+        {
+          type: 'session.idle',
+          id: 'idle-event',
+          parentId: null,
+          timestamp: queuedAt,
+          data: {},
+        },
+      ]),
+    ) as SessionEvent[]
+    eventVersion = 'events-v1'
+    await service.refreshTranscripts()
+
+    // Off the retryable queue, so nothing sends it a second time by itself.
+    expect(
+      service.store
+        .get(client.session.sessionId)
+        ?.queuedPrompts?.map((prompt) => prompt.content) ?? [],
+    ).not.toContain('work the queue lost')
+    // ...and handed back, so the draft can be restored.
+    expect(
+      errors.map((event) => event.failedPrompt),
+    ).toContain('work the queue lost')
+    // Also recorded on the session, so a browser that was not listening when
+    // it failed still finds it in the next snapshot it reads.
+    expect(
+      service.store.get(client.session.sessionId)?.failedPrompt?.content,
+    ).toBe('work the queue lost')
+
+    // Recorded and dequeued in one write, so a restart can never find both.
+    const onDisk = JSON.parse(
+      await readFile(
+        path.join(directory, 'state', 'state.json'),
+        'utf8',
+      ),
+    ) as { sessions: Record<string, { queuedPrompts?: unknown[]; failedPrompt?: unknown }> }
+    const persisted = onDisk.sessions[client.session.sessionId]
+    expect(persisted?.failedPrompt).toBeTruthy()
+    expect(persisted?.queuedPrompts ?? []).toHaveLength(0)
     await service.stop()
   })
 

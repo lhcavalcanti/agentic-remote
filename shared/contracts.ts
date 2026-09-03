@@ -197,6 +197,27 @@ export interface SessionSummary {
   isOpen?: boolean
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
+  /**
+   * A prompt the queue accepted and then could not deliver.
+   *
+   * The browser cleared its draft the moment the queue took the prompt, and a
+   * failure afterwards leaves the text nowhere else. Carried on the session so
+   * it survives a disconnected socket and reaches the next snapshot, rather
+   * than only being announced once to whoever happened to be listening.
+   */
+  failedPrompt?: {
+    content: string
+    failedAt: string
+    /**
+     * Set when the text may still be sitting in the terminal's prompt.
+     *
+     * A paste tmux accepted but that was never seen to arrive is not known to
+     * have failed, so sending again can put a second copy beside the first.
+     * Carried with the text so the warning survives a reload or a reconnect,
+     * where a bare draft looks like anything else waiting to be sent.
+     */
+    uncertain?: boolean
+  }
   activity?: string
   runtime?: SessionRuntimeInfo
   /**
@@ -276,7 +297,20 @@ export type ServerEvent =
       runningCount: number
       supported: boolean
     }
-  | { type: 'error'; sessionId?: string; message: string }
+  | {
+      type: 'error'
+      sessionId?: string
+      message: string
+      /**
+       * A prompt the reader had already handed over and can no longer see. The
+       * browser cleared its draft when the queue accepted it, so a send that
+       * fails afterwards has to give the text back for the draft to be
+       * restored.
+       */
+      failedPrompt?: string
+      /** Identifies the same failure the session snapshot carries. */
+      failedPromptAt?: string
+    }
 
 export type HubEvent =
   | { type: 'session.upserted'; session: ManagedSession }
@@ -297,7 +331,16 @@ export type HubEvent =
     }
   | { type: 'computer.updated'; computer: ComputerSummary }
   | { type: 'computer.removed'; computerId: string }
-  | { type: 'error'; computerId?: string; sessionId?: string; message: string }
+  | {
+      type: 'error'
+      computerId?: string
+      sessionId?: string
+      message: string
+      /** See the node event above. */
+      failedPrompt?: string
+      /** See the node event above. */
+      failedPromptAt?: string
+    }
 
 export interface CreateSessionInput {
   cwd: string
@@ -312,6 +355,14 @@ export interface CreateSessionInput {
 export interface SendMessageInput {
   content: string
   enqueue?: boolean
+  /**
+   * The failure this submission is the reader's answer to.
+   *
+   * Carries the `failedAt` of the prompt they were handed back, so an edited
+   * or abandoned one can be let go of. Matching on the text alone held the
+   * marker for good, and the marker stops the queue draining.
+   */
+  acknowledgesFailure?: string
 }
 
 export interface AudioTranscription {
@@ -364,6 +415,8 @@ export interface SlashCommand {
 export interface ExecuteCommandInput {
   command: string
   enqueue?: boolean
+  /** See `SendMessageInput`. */
+  acknowledgesFailure?: string
 }
 
 export interface DirectoryListing {

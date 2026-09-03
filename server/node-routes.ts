@@ -46,6 +46,7 @@ const renameSessionSchema = z.object({
 })
 
 const sendMessageSchema = z.object({
+  acknowledgesFailure: z.string().max(64).optional(),
   content: z.string().trim().min(1).max(200_000),
   enqueue: z.boolean().optional(),
 })
@@ -70,6 +71,7 @@ const userInputReplySchema = z.object({
 })
 
 const executeCommandSchema = z.object({
+  acknowledgesFailure: z.string().max(64).optional(),
   command: z.string().trim().startsWith('/').max(10_000),
   enqueue: z.boolean().optional(),
 })
@@ -409,6 +411,7 @@ export async function registerNodeRoutes(
               request.params.sessionId,
               input.content,
               input.enqueue,
+              input.acknowledgesFailure,
             ),
           })
         },
@@ -423,6 +426,7 @@ export async function registerNodeRoutes(
               request.params.sessionId,
               input.command,
               input.enqueue,
+              input.acknowledgesFailure,
             ),
           }
         },

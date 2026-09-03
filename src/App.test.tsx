@@ -6183,6 +6183,107 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('gives back a prompt that failed while another send was in flight', async () => {
+    // The composer is busy, so the failure is held back rather than shown. The
+    // send it was waiting on then answers with a record older than the failure
+    // and is rejected -- and dropping the held text on the strength of that
+    // answer left it invisible for good, with the marker on the server still
+    // holding the queue.
+    let answerSend: ((value: ManagedSession) => void) | undefined
+    vi.mocked(sendMessage).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerSend = resolve
+        }),
+    )
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'first thing' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(answerSend).toBeDefined())
+
+    const failed: ManagedSession = {
+      ...session,
+      revision: (session.revision || 0) + 5,
+      failedPrompt: {
+        content: 'the queued one that failed',
+        failedAt: '2026-09-03T00:00:00.000Z',
+      },
+    }
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: failed }),
+      } as MessageEvent)
+    })
+
+    // Older than the failure, so the session rejects it.
+    await act(async () => {
+      answerSend?.({ ...session, revision: session.revision || 0 })
+    })
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue('the queued one that failed'),
+    )
+  })
+
+  it('does not hand back a failed prompt the send it answered has cleared', async () => {
+    // The HTTP answer can arrive before the event that clears the marker, and
+    // with the socket down it never arrives at all. Offering whatever the
+    // session still shows put the prompt that was just sent straight back in
+    // the composer, ready to be sent a second time.
+    const failed: ManagedSession = {
+      ...session,
+      failedPrompt: {
+        content: 'the one that failed',
+        failedAt: '2026-09-03T00:00:00.000Z',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed, secondSession])
+    vi.mocked(getSession).mockResolvedValue(failed)
+    // Answers with the session exactly as it was: the marker is still there.
+    vi.mocked(sendMessage).mockResolvedValue(failed)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(textarea).toHaveValue('the one that failed'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalled())
+    await waitFor(() => expect(textarea).toHaveValue(''))
+  })
+
+  it('takes back an untouched recovery once another client answers for it', async () => {
+    // The marker is gone, so somebody has answered for the prompt. Leaving the
+    // text this client was handed on screen reads as something still waiting
+    // to be sent, and sending it delivers the prompt a second time.
+    const failed: ManagedSession = {
+      ...session,
+      failedPrompt: {
+        content: 'the one that failed',
+        failedAt: '2026-09-03T00:00:00.000Z',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed, secondSession])
+    vi.mocked(getSession).mockResolvedValue(failed)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(textarea).toHaveValue('the one that failed'))
+
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...session, revision: (session.revision || 0) + 3 },
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() => expect(textarea).toHaveValue(''))
+  })
+
   it('waits for the promised replacement instead of opening another session', async () => {
     // The address names a session that is cleared while the first list request
     // is still in flight. The response cannot contain the replacement yet, so
@@ -6724,6 +6825,48 @@ describe('App', () => {
       expect(getSession).toHaveBeenCalledWith('computer-1', 'session-2-c'),
     )
     window.history.replaceState({}, '', '/')
+  })
+
+  it('keeps an edited recovery answering for its failure', async () => {
+    // A reader who edits what they were handed is still answering that
+    // failure. Requiring the words to match meant the edited draft no longer
+    // acknowledged it, so the prompt came back and went on holding the queue.
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'the one that failed, edited' }),
+    )
+    localStorage.setItem(
+      'agentic-remote:composer-draft-failures',
+      JSON.stringify({ 'computer-1:session-1': '2026-09-03T00:00:00.000Z' }),
+    )
+    const failed: ManagedSession = {
+      ...session,
+      failedPrompt: {
+        content: 'the one that failed',
+        failedAt: '2026-09-03T00:00:00.000Z',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed, secondSession])
+    vi.mocked(getSession).mockResolvedValue(failed)
+    vi.mocked(sendMessage).mockResolvedValue(session)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() =>
+      expect(textarea).toHaveValue('the one that failed, edited'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        expect.objectContaining({
+          acknowledgesFailure: '2026-09-03T00:00:00.000Z',
+        }),
+      ),
+    )
   })
 
   it('keeps waiting when the node that owns a replacement did not answer', async () => {

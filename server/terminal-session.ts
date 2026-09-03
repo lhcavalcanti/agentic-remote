@@ -836,10 +836,7 @@ export class TmuxTerminalSessionController
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
-      const alreadyShown = paneEvidenceCount(
-        await capturePane(target),
-        confirmation,
-      )
+      const paneBeforePaste = await capturePane(target)
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -857,15 +854,98 @@ export class TmuxTerminalSessionController
         '-t',
         target,
       ])
-      if (!(await waitForPaneText(target, confirmation, alreadyShown))) {
-        // The prompt never showed the message, so pressing Enter would send
-        // whatever it does hold and still be reported as delivered. The text
-        // is left where the reader can see it and send it again.
+      // From here on tmux has the text. Anything that goes wrong afterwards --
+      // reading the pane, the tty, the terminal settings, or the Enter itself
+      // -- leaves a send that may well have arrived, so it is reported as
+      // uncertain rather than as a plain failure the reader should simply
+      // retry.
+      try {
+        return await this.finishSend(
+          target,
+          content,
+          confirmation,
+          paneBeforePaste,
+          enqueue,
+        )
+      } catch (error) {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'uncertainDelivery' in error
+        ) {
+          throw error
+        }
         throw Object.assign(
           new Error(
-            'The terminal did not receive the message. Please try again.',
+            'The terminal may not have received the message, and the text may still be in the prompt. Check the terminal before sending it again.',
           ),
-          { statusCode: 409 },
+          { statusCode: 409, uncertainDelivery: true, cause: error },
+        )
+      }
+    })
+  }
+
+  private async finishSend(
+    target: string,
+    content: string,
+    confirmation: string,
+    paneBeforePaste: string,
+    enqueue: boolean,
+  ): Promise<boolean> {
+      if (
+        !(await waitForComposerPaste(
+          target,
+          paneBeforePaste,
+          confirmation,
+          content,
+        ))
+      ) {
+        // The prompt never showed the message, so pressing Enter would send
+        // whatever it does hold and still be reported as delivered.
+        //
+        // The paste itself may still have landed, and saying so while leaving
+        // it there is what puts a second copy in the prompt when the message
+        // is sent again — which the queue does on its own, without anyone
+        // deciding to. The prompt is put back the way it was found, so
+        // sending again is sending once.
+        //
+        // The load that makes a send look failed is the same load that makes
+        // the paste arrive late, so one look at this instant would miss it and
+        // leave the text to be concatenated with the retry. It is given a
+        // further moment to appear.
+        // Waited for anyway. The clear that follows refuses to touch a
+        // composer holding anything this paste did not put there, and giving
+        // the paste time to appear is what lets it be recognised as ours
+        // rather than mistaken for somebody else's writing.
+        await waitForComposerPaste(
+          target,
+          paneBeforePaste,
+          confirmation,
+          content,
+          20,
+        )
+        // Nothing is cleared here any more.
+        //
+        // Reading the composer and then clearing it cannot be made one act:
+        // whatever is read, a person at the terminal can type between the
+        // reading and the keystroke, and Ctrl+U takes the whole composer.
+        // Putting their text back is not possible either -- the pane shows a
+        // wrapped, marker-prefixed rendering, and a large paste as a
+        // placeholder, so what could be typed back is a different message.
+        //
+        // tmux accepted the paste whether or not it was ever seen to arrive,
+        // and a loaded CLI can draw it after this has stopped looking, so the
+        // text may well be sitting in the prompt. That is said plainly instead:
+        // a message left behind is recoverable by the person looking at it,
+        // and their own unsent writing destroyed by us is not.
+        throw Object.assign(
+          new Error(
+            'The terminal did not receive the message, and the text may still be in the prompt. Check the terminal before sending it again.',
+          ),
+          // Said outright rather than left to be read back out of the wording.
+          // Every failure after the buffer was accepted is uncertain in the
+          // same way, and matching on the message recognised only this one.
+          { statusCode: 409, uncertainDelivery: true },
         )
       }
       let paneTty = ''
@@ -903,7 +983,6 @@ export class TmuxTerminalSessionController
         }
       }
       return true
-    })
   }
 
   private async target(sessionId: string): Promise<string | undefined> {
@@ -1732,7 +1811,11 @@ async function copilotCommand(
  * fall inside a word. The composer also adds a border to each wrapped line.
  * Strip those line edges and whitespace before comparing the visible text.
  */
-export function paneEvidenceCount(pane: string, expected: string): number {
+export function paneEvidenceCount(
+  pane: string,
+  expected: string,
+  pasted = expected,
+): number {
   const compact = (value: string) => value.replace(/\s+/g, '')
   const wanted = compact(expected)
   if (!wanted) {
@@ -1751,7 +1834,19 @@ export function paneEvidenceCount(pane: string, expected: string): number {
     found += 1
     index = at + wanted.length
   }
-  // Copilot collapses a large paste into a placeholder instead of echoing it.
+  // Copilot collapses a large paste into a placeholder instead of echoing it,
+  // so one is evidence only for a send big enough to have produced one.
+  // Counting them for every send let an attached user's own paste stand in for
+  // this one, and Enter would then submit whatever they had written.
+  //
+  // Measured against the whole send rather than the line being matched. Only
+  // the final line is looked for on the pane, and a long multi-line paste can
+  // end in a short one: judged by that line alone, the placeholder it really
+  // did produce went unrecognised and the paste was left behind to be sent
+  // twice.
+  if (pasted.length <= PASTE_ECHO_LIMIT) {
+    return found
+  }
   return found + (pane.match(/\[Pasted text/g) || []).length
 }
 
@@ -1766,11 +1861,12 @@ export function paneShowsText(
   pane: string,
   expected: string,
   before = 0,
+  pasted = expected,
 ): boolean {
   if (!expected.replace(/\s+/g, '')) {
     return true
   }
-  return paneEvidenceCount(pane, expected) > before
+  return paneEvidenceCount(pane, expected, pasted) > before
 }
 
 /**
@@ -1779,19 +1875,242 @@ export function paneShowsText(
  * prompt happened to hold, and report a message as delivered that the
  * terminal never received.
  */
+
+/**
+ * Whether the composer is holding anything of its own.
+ *
+ * Ctrl+U takes the whole composer, so it may only be used once the composer is
+ * known to have been empty before the paste. Anything unreadable counts as
+ * holding text: leaving a paste behind is recoverable, and typing over
+ * someone's unsent message is not.
+ */
+/**
+ * What the CLI writes into an empty composer.
+ *
+ * Only these exact forms count as empty. Anything else is someone's message.
+ */
+const COMPOSER_PLACEHOLDERS = [
+  /^Message agent on .+(?:\u2026|\.\.\.)$/iu,
+  /^Type a message(?:\u2026|\.\.\.)$/iu,
+  // What the CLI writes into an empty composer instead of a placeholder: a
+  // reminder of what the prefixes do. Read as somebody's message, it stopped
+  // a paste ever being taken back.
+  /^Type @ to mention files, # for issues\/PRs, \/ for commands$/iu,
+]
+
+/**
+ * Whether the composer is holding anything other than the paste being taken
+ * back.
+ *
+ * Ctrl+U takes the whole composer, so the only safe moment to use it is when
+ * nothing has arrived beside the text it is meant to remove.
+ */
+export function composerHoldsOtherText(
+  paneBefore: string,
+  paneAfter: string,
+  pasted: string,
+): boolean {
+  if (!composerHoldsText(paneAfter)) {
+    return false
+  }
+  // Compared the way the evidence count compares: the composer wraps inside
+  // words, so `deployment-orches` / `tration-controller` is one line rendered
+  // as two, and a line-by-line comparison never finds what was pasted.
+  const compact = (value: string) => value.replace(/\s+/gu, '')
+  const after = composerText(paneAfter)
+  if (after === undefined) {
+    // The same rule as before the paste: a composer that cannot be read is
+    // treated as holding somebody's message, because Ctrl+U takes all of it.
+    return true
+  }
+  const before = compact(composerText(paneBefore) || '')
+  let remainder = compact(after)
+  // A paste too large to echo is shown as `[Pasted text #3]` rather than its
+  // own text, so removing the lines that were sent leaves the placeholder
+  // behind and reads as somebody else's writing.
+  //
+  // Exactly one placeholder is discounted, and only if exactly one appeared.
+  // Someone pasting at the terminal during the wait adds one too, and there
+  // is no way to tell which is which, so nothing is taken back in that case.
+  // A placeholder is this paste's only if the paste is large enough to have
+  // produced one. A short send that never landed, beside a terminal user's own
+  // large paste, was being credited with their placeholder and taking it away.
+  // The raw payload, not the compacted rendering. The CLI decides by what it
+  // received, and compaction removes every space and newline: hundreds of
+  // one-character lines are a large paste that measures small once joined, and
+  // the placeholder it produced was then refused as evidence.
+  const couldHavePlaceholder = pasted.length > PASTE_ECHO_LIMIT
+  if (
+    couldHavePlaceholder &&
+    pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1
+  ) {
+    remainder = remainder.replace(PASTED_PLACEHOLDER, ' ')
+  }
+  // Likewise for the text itself, and at most once per line. This paste put
+  // each line there once, so a second copy is somebody else typing the same
+  // thing and is not this paste's to take away.
+  for (const line of pasted.split('\n').map((entry) => compact(entry))) {
+    if (!line) {
+      continue
+    }
+    if (occurrences(remainder, line) > occurrences(before, line)) {
+      remainder = remainder.replace(line, ' ')
+    }
+  }
+  // Only the prompt marker and the placeholder are discounted here. Stray
+  // punctuation is somebody's writing: a composer holding nothing but `...`
+  // is still holding something, and Ctrl+U would take it.
+  // Only the composer's own leading marker is dropped. Removing every one of
+  // these characters read a quote marker somebody typed as nothing at all.
+  return remainder.replace(/^[>\u276f]/u, '').replace(/\s/gu, '').length > 0
+}
+
+// Matched against composer text with its whitespace removed, because the
+// composer wraps inside words and the placeholder is no exception.
+// Roughly where the CLI stops echoing a paste and shows a placeholder for it
+// instead. Only a send past this size can account for one.
+const PASTE_ECHO_LIMIT = 800
+
+const PASTED_PLACEHOLDER = /\[Pastedtext[^\]]*\]/u
+
+function occurrences(text: string, needle: string): number {
+  if (!needle) {
+    return 0
+  }
+  return text.split(needle).length - 1
+}
+
+function pastedPlaceholderCount(text: string): number {
+  return (text.match(/\[Pastedtext[^\]]*\]/gu) || []).length
+}
+
+/** The composer's contents, or nothing when the pane cannot be read. */
+function composerText(pane: string): string | undefined {
+  const lines = pane.split('\n').map((line) => line.trimEnd())
+  const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
+  if (top < 0) {
+    return undefined
+  }
+  const body: string[] = []
+  for (const line of lines.slice(top + 1)) {
+    if (COMPOSER_EDGE.test(line)) {
+      break
+    }
+    body.push(
+      line
+        .replace(/^\s*[\u2502\u2503\u257d\u257f]\s?/u, '')
+        .replace(/[\u2502\u2503\u257d\u257f]\s*$/u, '')
+        .trim(),
+    )
+  }
+  return body.join(' ').trim()
+}
+
+export function composerHoldsText(pane: string): boolean {
+  const text = composerText(pane)
+  if (text === undefined) {
+    return true
+  }
+  if (!text) {
+    return false
+  }
+  // An empty composer still draws its prompt marker and the placeholder the
+  // CLI writes into it. Matched exactly: treating anything that opens with
+  // "Message" as empty reads a real message about to be sent -- "Message the
+  // team about the deploy" -- as nothing at all, and Ctrl+U then takes it.
+  const bare = text.replace(/^[>\u276f]\s*/u, '').trim()
+  if (!bare) {
+    return false
+  }
+  return !COMPOSER_PLACEHOLDERS.some((pattern) => pattern.test(bare))
+}
+
 async function capturePane(target: string): Promise<string> {
   return (
     await execFileAsync('tmux', ['capture-pane', '-p', '-t', target, '-S', '-30'])
   ).stdout
 }
 
-async function waitForPaneText(
-  target: string,
+/**
+ * Whether the composer has taken this paste, judged by what changed in it.
+ *
+ * Counting occurrences across the whole pane credits chrome the CLI was
+ * already drawing. The empty-composer hint names files and commands, so a
+ * prompt sharing a word with it was found before it had arrived -- and
+ * replacing that hint with the paste left the count where it was, so the send
+ * was reported as never landing while the text sat in the prompt.
+ */
+export function composerTookPaste(
+  paneBefore: string,
+  paneAfter: string,
   expected: string,
-  before: number,
+  pasted = expected,
+): boolean {
+  const compact = (value: string) => value.replace(/\s+/gu, '')
+  const wanted = compact(expected)
+  if (!wanted) {
+    return true
+  }
+  const drawnAfter = composerText(paneAfter)
+  const drawnBefore = composerText(paneBefore)
+  if (drawnAfter === undefined && drawnBefore === undefined) {
+    // No composer to read. Not every pane draws one -- an agent mid-dialog, or
+    // something that is not the CLI at all -- and the pane itself is then the
+    // only evidence there is.
+    return (
+      paneEvidenceCount(paneAfter, expected, pasted) >
+      paneEvidenceCount(paneBefore, expected, pasted)
+    )
+  }
+  // The CLI's own hint is not anybody's text, on either side of the paste.
+  // Read as content it made a composer that is empty look like one holding
+  // the very words being waited for.
+  const after = composerHoldsText(paneAfter) ? compact(drawnAfter || '') : ''
+  if (!after) {
+    return false
+  }
+  // A composer holding only the CLI's own hint is holding nothing of anyone's,
+  // and the hint names files and commands. Counted as text that was already
+  // there, a paste of exactly one of those words looked like no change at all,
+  // and the send was reported as never landing.
+  const before = composerHoldsText(paneBefore) ? compact(drawnBefore || '') : ''
+  // A paste too large to echo is shown as a placeholder instead of its text,
+  // and only a send big enough to have produced one may claim it.
+  if (pasted.length > PASTE_ECHO_LIMIT) {
+    const drawn = (after.match(/\[Pastedtext/gu) || []).length
+    const had = (before.match(/\[Pastedtext/gu) || []).length
+    if (drawn > had) {
+      return true
+    }
+  }
+  const occurrences = (haystack: string, needle: string) => {
+    let found = 0
+    let index = 0
+    for (;;) {
+      const at = haystack.indexOf(needle, index)
+      if (at < 0) {
+        return found
+      }
+      found += 1
+      index = at + needle.length
+    }
+  }
+  // One more than the composer already held. The same text may have been
+  // typed there and left, and its mere presence would prove nothing.
+  return occurrences(after, wanted) > occurrences(before, wanted)
+}
+
+async function waitForComposerPaste(
+  target: string,
+  paneBefore: string,
+  expected: string,
+  pasted: string,
+  attempts = 40,
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (paneShowsText(await capturePane(target), expected, before)) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (
+      composerTookPaste(paneBefore, await capturePane(target), expected, pasted)
+    ) {
       return true
     }
     await new Promise((resolve) => setTimeout(resolve, 50))

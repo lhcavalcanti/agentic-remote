@@ -9,6 +9,9 @@ import {
   isTerminalAgentWorking,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
+  composerHoldsOtherText,
+  composerHoldsText,
+  composerTookPaste,
   paneEvidenceCount,
   paneShowsText,
   parseTerminalFormActiveField,
@@ -572,9 +575,63 @@ describe('paneShowsText', () => {
   })
 
   it('recognises a paste Copilot replaced with a placeholder', () => {
+    // Only a send too large to echo can account for a placeholder.
+    const huge = 'a very long message '.repeat(60)
+    expect(paneShowsText('> [Pasted text #1 +40 lines]', huge)).toBe(true)
+  })
+
+  it('recognises a placeholder for a long paste ending in a short line', () => {
+    // Only the final line is looked for on the pane, and a long paste can end
+    // in a short one. Judged by that line alone the placeholder this send
+    // really did produce went unrecognised, the paste was left behind, and the
+    // retry put a second copy in the prompt.
+    const content = `${'a very long message '.repeat(60)}\nok`
     expect(
-      paneShowsText('> [Pasted text #1 +40 lines]', 'a very long message'),
+      paneShowsText('> [Pasted text #1 +40 lines]', 'ok', 0, content),
     ).toBe(true)
+  })
+
+  it('measures a paste by what the CLI received, not by what it renders', () => {
+    // Hundreds of one-character lines are a large paste that all but vanishes
+    // once whitespace is removed. Judged by the compacted text, the
+    // placeholder the CLI really did draw was refused as evidence, the paste
+    // was left in the prompt, and the retry put a second copy beside it.
+    const content = Array.from({ length: 500 }, () => 'q').join('\n')
+    expect(content.length).toBeGreaterThan(800)
+    expect(content.replace(/\s+/gu, '').length).toBeLessThan(800)
+    expect(
+      paneShowsText('> [Pasted text #1 +500 lines]', 'q', 0, content),
+    ).toBe(true)
+  })
+
+  it('does not read the CLI\'s own hint as the paste arriving', () => {
+    // The empty-composer hint names files and commands. A prompt sharing a
+    // word with it was found on the pane before it had arrived, and replacing
+    // the hint with the paste left the count where it was -- so the send was
+    // reported as never landing while the text sat in the prompt.
+    const hint =
+      '\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n' +
+      '\u2502 Type @ to mention files, # for issues/PRs, / for commands\n' +
+      '\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f'
+    // Nothing has changed in the composer, so nothing has arrived.
+    expect(composerTookPaste(hint, hint, 'files')).toBe(false)
+
+    // And the other way round: the hint is not text that was already there,
+    // so a paste of one of its own words is still the paste arriving.
+    const pasted = hint.replace(
+      'Type @ to mention files, # for issues/PRs, / for commands',
+      '> files',
+    )
+    expect(composerTookPaste(hint, pasted, 'files')).toBe(true)
+  })
+
+  it('does not read a terminal user\'s placeholder as a short send landing', () => {
+    // The send is small enough that Copilot would have echoed it, so the
+    // placeholder on the pane is somebody else's paste. Treating it as this
+    // send arriving pressed Enter on whatever they had written.
+    expect(
+      paneShowsText('> [Pasted text #1 +40 lines]', 'ship it'),
+    ).toBe(false)
   })
 
   it('does not accept the same message sent earlier as this one arriving', () => {
@@ -1048,4 +1105,178 @@ describe('terminalChecklistState', () => {
     expect(terminalChecklistState(pane, 3)).toBeUndefined()
     expect(terminalChecklistState('❯ \n', 4)).toBeUndefined()
   })
+})
+
+describe('composerHoldsText', () => {
+  const framed = (body: string[]) =>
+    ['transcript line', '╭──────────────╮', ...body, '╰──────────────╯'].join(
+      '\n',
+    )
+
+  it('reads an empty composer as empty', () => {
+    expect(
+      composerHoldsText(framed(['│ > Message agent on development\u2026 │'])),
+    ).toBe(false)
+    expect(composerHoldsText(framed(['│                   │']))).toBe(false)
+  })
+
+  it('reads typed input as held text', () => {
+    expect(composerHoldsText(framed(['│ > half a thought  │']))).toBe(true)
+  })
+
+  it('treats an unreadable pane as holding text', () => {
+    // Ctrl+U takes the whole composer, so anything that cannot be read has to
+    // count as someone's unsent message rather than be typed over.
+    expect(composerHoldsText('no composer drawn here')).toBe(true)
+  })
+
+  it('reads a real message that opens with the placeholder word', () => {
+    // "Message the team about the deploy" is someone's message, not an empty
+    // composer, and Ctrl+U would take it.
+    expect(
+      composerHoldsText(framed(['│ > Message the team about the deploy │'])),
+    ).toBe(true)
+    // The placeholder must end in an ellipsis, or every draft opening with
+    // one of these words reads as an empty composer.
+    expect(composerHoldsText(framed(['│ > Ask the team first │']))).toBe(true)
+    expect(
+      composerHoldsText(framed(['│ > Message agent on development\u2026 │'])),
+    ).toBe(false)
+  })
+
+  it('reads the prefix reminder as an empty composer', () => {
+    // What the CLI actually writes into an empty composer. Taken for
+    // somebody's message, a paste could never be taken back.
+    expect(
+      composerHoldsText(
+        framed(['│ Type @ to mention files, # for issues/PRs, / for commands │']),
+      ),
+    ).toBe(false)
+  })
+
+})
+
+describe('composerHoldsOtherText', () => {
+  const framed = (body: string[]) =>
+    ['transcript line', '╭──────────────╮', ...body, '╰──────────────╯'].join(
+      '\n',
+    )
+
+  it('ignores the paste it is about to take back', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deploy the thing │']),
+        'deploy the thing',
+      ),
+    ).toBe(false)
+  })
+
+  it('sees text typed beside the paste', () => {
+    // Cleanup can happen seconds after the send, which is long enough for
+    // someone to have started writing next to it.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deploy the thing and also this │']),
+        'deploy the thing',
+      ),
+    ).toBe(true)
+  })
+
+
+  it('takes back a paste too large to echo', () => {
+    // A large paste is shown as its placeholder, not its text, so removing the
+    // lines that were sent leaves the placeholder looking like someone else's
+    // writing and the paste is never taken back.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Pasted text #3] │']),
+        'a very long message '.repeat(60),
+      ),
+    ).toBe(false)
+  })
+
+  it('keeps a placeholder that was already there', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ > [Pasted text #2] │']),
+        framed(['│ > [Pasted text #2] [Pasted text #3] │']),
+        'a very long message '.repeat(60),
+      ),
+    ).toBe(true)
+  })
+
+
+  it('leaves the composer alone when someone else pasted too', () => {
+    // Two placeholders appeared during the wait and there is no telling which
+    // belongs to this paste, so nothing is taken back.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Pasted text #3] [Pasted text #4] │']),
+        'a very long message '.repeat(60),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not discount text the composer already showed', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ > deploy │']),
+        framed(['│ > deploy deploy │']),
+        'deploy',
+      ),
+    ).toBe(true)
+  })
+
+
+  it('recognizes a paste the composer wrapped inside a word', () => {
+    // The composer wraps mid-word, so a single pasted line can be rendered as
+    // two. Compared line by line the paste is never found, cleanup is skipped
+    // and retrying leaves a second copy.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deployment-orches │', '│ tration-controller │']),
+        'deployment-orchestration-controller',
+      ),
+    ).toBe(false)
+  })
+
+  it('keeps punctuation somebody typed beside the paste', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deploy ... │']),
+        'deploy',
+      ),
+    ).toBe(true)
+  })
+
+  it('discounts one copy of the paste, not a second someone typed', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deploy deploy │']),
+        'deploy',
+      ),
+    ).toBe(true)
+  })
+
+
+  it('does not claim a placeholder a short send cannot have made', () => {
+    // The send never landed and a terminal user made a large paste of their
+    // own during the wait. Crediting this send with their placeholder takes
+    // it away with the cleanup.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Pasted text #7] │']),
+        'short',
+      ),
+    ).toBe(true)
+  })
+
 })

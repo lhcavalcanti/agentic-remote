@@ -5508,6 +5508,34 @@ function App() {
     }
     setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
   }, [selectedKey])
+  // The socket is bound once, so it reaches the restore through a ref.
+  const restoreFailedPromptRef = useRef<
+    (key: string, content: string, failedAt?: string) => void
+  >(() => {})
+  // Which failure each session has already had handed back, and when the
+  // reader last submitted, so a stale one is not put back on top of it.
+  const handledFailures = useRef(new Map<string, string>())
+  const submissionsInFlight = useRef(new Set<string>())
+  // Failures that could not be shown because newer text was in the way, and
+  // the stamp of the one a session's composer is currently holding.
+  const unshownFailures = useRef(
+    new Map<string, { content: string; stamp: string }>(),
+  )
+  const restoredFailures = useRef(new Map<string, string>())
+  // Which draft was put in the composer by a recovery, and for which failure.
+  // Survives a reload beside the draft itself, because after one the text is
+  // all that is left and identical text is not proof of where it came from.
+  const restoredDraftStamps = useRef<Record<string, string>>(
+    readStoredOrder('agentic-remote:composer-draft-failures', {}),
+  )
+  // The exact text that was handed back, so an untouched recovery can be told
+  // from one the reader has since edited.
+  // Which uncertain failure the reader has already been warned about, so the
+  // warning is repeated when the text comes back but not on every render.
+  const warnedUncertain = useRef(new Map<string, string>())
+  const restoredDraftContents = useRef<Record<string, string>>(
+    readStoredOrder('agentic-remote:composer-draft-recovered', {}),
+  )
   // The history listener is bound once, so it reads the resolver through a ref
   // rather than closing over the first one.
   const followReplacementsRef = useRef<(key: string) => string>((key) => key)
@@ -5993,7 +6021,7 @@ function App() {
   // a no-op in a browser, so the badge never needs a capability check here.
   useEffect(() => {
     setShellBadge(attentionCount(sessions))
-  }, [sessions])
+  }, [sessions, selectedKey])
   // An embedded webview gets no Web Push, so inside the shell the app raises
   // its own notifications from the live session stream. A browser keeps using
   // the hub's Web Push and must not double-notify, hence the shell check.
@@ -6494,6 +6522,7 @@ function App() {
     forgetKnowledgeSessionRef.current = forgetKnowledgeSession
     moveKnowledgeSessionRef.current = moveKnowledgePosition
     migrateSessionStateRef.current = migrateSessionState
+    restoreFailedPromptRef.current = restoreFailedPrompt
     followReplacementsRef.current = followReplacements
     loadKnowledgeFolderRef.current = loadKnowledgeFolder
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
@@ -7620,6 +7649,13 @@ function App() {
           const { [removedKey]: _removed, ...remaining } = current
           return remaining
           })
+          // The session is gone, so nothing here can ever be settled against
+          // it again. Left behind, the text of a prompt that failed stayed in
+          // this browser's storage for good.
+          forgetRestoredDraft(removedKey)
+          handledFailures.current.delete(removedKey)
+          restoredFailures.current.delete(removedKey)
+          unshownFailures.current.delete(removedKey)
         } else if (event.type === 'session.tasks.updated') {
           const key = `${event.computerId}:${event.sessionId}`
           eventSequenceRef.current += 1
@@ -7651,6 +7687,17 @@ function App() {
             event.computerId,
             eventSequenceRef.current,
           )
+          // Its sessions go with it, so nothing held for them can ever be
+          // settled again. Left behind, the text of a prompt that failed
+          // stayed in this browser's storage for good.
+          for (const key of Object.keys(restoredDraftStamps.current)) {
+            if (key.slice(0, key.indexOf(':')) === event.computerId) {
+              forgetRestoredDraft(key)
+              handledFailures.current.delete(key)
+              restoredFailures.current.delete(key)
+              unshownFailures.current.delete(key)
+            }
+          }
           setComputers((current) =>
             current.filter((computer) => computer.id !== event.computerId),
           )
@@ -7683,6 +7730,16 @@ function App() {
             ),
           )
         } else {
+          // A prompt that was handed over and then failed to send is gone from
+          // the queue and was never in the composer, so the text comes back
+          // here or nowhere. Anything typed since is newer and is left alone.
+          if (event.type === 'error' && event.failedPrompt && event.sessionId) {
+            restoreFailedPromptRef.current(
+              `${event.computerId || ''}:${event.sessionId}`,
+              event.failedPrompt,
+              event.failedPromptAt,
+            )
+          }
           setError(event.message)
         }
       }
@@ -7821,6 +7878,249 @@ function App() {
   // tracking, so navigating afterwards would overwrite text the user never
   // typed here and could not recover. Editing a queued prompt, dictation,
   // uploads, and path insertion all reach the composer by different routes.
+  /**
+   * Puts a prompt the queue could not deliver back in the composer.
+   *
+   * Written through the same path as every other composer write, so history
+   * navigation is invalidated with it: left tracking the empty draft it had
+   * before, an ArrowUp and ArrowDown afterwards would replace the recovered
+   * text with that empty draft, losing the only copy there is.
+   */
+  /**
+   * Puts a failure back on offer after the composer was emptied without it
+   * having been sent anywhere.
+   *
+   * The browser-only commands answer in the page and never reach the server,
+   * so the marker is still waiting and the text has just been cleared from
+   * under it. Forgetting it was handled lets the next pass hand it back.
+   */
+  function failureStampFor(key: string): string | undefined {
+    const current = selectedRef.current
+    return current && sessionKey(current) === key
+      ? current.failedPrompt?.failedAt || current.failedPrompt?.content
+      : undefined
+  }
+
+  function reofferFailedPrompt(key: string) {
+    const current = selectedRef.current
+    const failed =
+      current && sessionKey(current) === key ? current.failedPrompt : undefined
+    if (!failed?.content) {
+      return
+    }
+    // The token stays. A reader who edits what they were handed and then
+    // fails to send it still has that failure's text in front of them, and
+    // dropping the token means no later submission can be recognised as the
+    // answer to it, because the words no longer match.
+    handledFailures.current.delete(key)
+    restoreFailedPrompt(key, failed.content, failed.failedAt)
+  }
+
+  function restoreFailedPrompt(key: string, content: string, failedAt?: string) {
+    const stamp = failedAt || content
+    if (handledFailures.current.get(key) === stamp) {
+      return
+    }
+    // Sending empties the composer before the request is answered, so an
+    // empty composer during one is no evidence that nothing newer was
+    // written. The server clears the marker when that send is accepted, which
+    // is what settles the question; nothing here compares the two clocks.
+    if (submissionsInFlight.current.has(key)) {
+      // Kept rather than dropped: if that submission then fails, nothing else
+      // comes back to this, and the text would stay invisible while its
+      // marker holds the queue.
+      unshownFailures.current.set(key, { content, stamp })
+      return
+    }
+    updateComposerDrafts([key], (current) => {
+      if (restoredDraftStamps.current[key] === stamp) {
+        // This failure's own text was put in the composer, and recorded as
+        // such when it was. The words are deliberately not compared: a reader
+        // who edits what they were handed is still answering this failure, and
+        // requiring them to match meant an edited draft no longer acknowledged
+        // it -- the prompt came back and went on holding the queue.
+        //
+        // Matching on the words alone was the opposite mistake: newer writing
+        // that happened to be identical took this failure's token.
+        handledFailures.current.set(key, stamp)
+        unshownFailures.current.delete(key)
+        restoredFailures.current.set(key, stamp)
+        // Unless the composer is empty. A recovery edited into a command that
+        // this app answers by itself is cleared without anything being sent,
+        // and leaving the record in place meant the text was never offered
+        // again -- invisible, with the marker still holding the queue.
+        return current[key] ? current : { ...current, [key]: content }
+      }
+      if (current[key]) {
+        // Something newer is already there, so this has not been given back
+        // to anyone. Remembered rather than dropped: the composer can empty
+        // again, and until then the marker on the server holds the queue.
+        unshownFailures.current.set(key, { content, stamp })
+        return current
+      }
+      handledFailures.current.set(key, stamp)
+      unshownFailures.current.delete(key)
+      restoredFailures.current.set(key, stamp)
+      rememberRestoredDraft(key, stamp, content)
+      return { ...current, [key]: content }
+    })
+  }
+
+  // A browser that was not listening when the send failed learns about it from
+  // the session itself. The event covers the connected case; this covers the
+  // reconnect, and doing both means neither has to be relied on alone.
+  useEffect(() => {
+    for (const session of sessions) {
+      const key = sessionKey(session)
+      const failed = session.failedPrompt
+      const stamped = failed?.failedAt || failed?.content || ''
+      if (failed?.content) {
+        // A different failure from the one this client is holding. The one it
+        // was handed has been answered by somebody, and leaving that text on
+        // screen has an offline tab resending it when it comes back.
+        const held = restoredDraftStamps.current[key]
+        const stamp = failed.failedAt || failed.content
+        if (held !== undefined && held !== stamp) {
+          const handed = restoredDraftContents.current[key]
+          if (handed !== undefined) {
+            updateComposerDrafts([], (current) =>
+              current[key] === handed
+                ? Object.fromEntries(
+                    Object.entries(current).filter(([entry]) => entry !== key),
+                  )
+                : current,
+            )
+          }
+          forgetRestoredDraft(key)
+          handledFailures.current.delete(key)
+          restoredFailures.current.delete(key)
+        }
+        restoreFailedPromptRef.current(key, failed.content, failed.failedAt)
+        // Said again every time the text comes back. A reload, a reconnect or
+        // switching away and back leaves an ordinary-looking draft, and
+        // sending it puts a second copy beside whatever is already in the
+        // terminal's prompt.
+        // Only for the conversation the reader is looking at. Said for one
+        // they are not, it was consumed on their behalf: selecting that
+        // session cleared the banner, and this would not say it again.
+        if (
+          failed.uncertain &&
+          selectedRef.current &&
+          sessionKey(selectedRef.current) === key &&
+          warnedUncertain.current.get(key) !== stamped
+        ) {
+          warnedUncertain.current.set(key, stamped)
+          setError(
+            'This message may still be in the terminal. Check there before sending it again.',
+          )
+        }
+        continue
+      }
+      // Gone, so somebody has answered for it -- another tab, another device,
+      // or this one. What was remembered about it here goes with it, or a
+      // submission from this client would carry a token for a failure that no
+      // longer exists and let go of whichever one has taken its place.
+      // The draft this client was handed goes too, but only while it is still
+      // the text that was handed over. Left on screen it reads as something
+      // waiting to be sent, and sending it delivers the prompt a second time.
+      // Anything the reader has written since is theirs and stays.
+      // Read now, not inside the updater: React runs that later, by which
+      // time the records below have already been cleared and the draft would
+      // be left on screen for good.
+      const handed = restoredDraftContents.current[key]
+      if (handed !== undefined) {
+        updateComposerDrafts([], (current) => {
+          if (current[key] !== handed) {
+            return current
+          }
+          const { [key]: _removed, ...remaining } = current
+          return remaining
+        })
+      }
+      handledFailures.current.delete(key)
+      restoredFailures.current.delete(key)
+      unshownFailures.current.delete(key)
+      forgetRestoredDraft(key)
+    }
+  }, [sessions])
+
+  // A failure that had to wait is offered again as soon as the composer it
+  // was meant for is free. Without this it stayed invisible while its marker
+  // went on holding the queue.
+  useEffect(() => {
+    for (const [key, pending] of unshownFailures.current) {
+      if (composerDrafts[key]) {
+        continue
+      }
+      handledFailures.current.delete(key)
+      restoreFailedPromptRef.current(key, pending.content, pending.stamp)
+    }
+  }, [composerDrafts])
+
+  function rememberRestoredDraft(key: string, stamp: string, content: string) {
+    restoredDraftStamps.current = {
+      ...restoredDraftStamps.current,
+      [key]: stamp,
+    }
+    restoredDraftContents.current = {
+      ...restoredDraftContents.current,
+      [key]: content,
+    }
+    localStorage.setItem(
+      'agentic-remote:composer-draft-failures',
+      JSON.stringify(restoredDraftStamps.current),
+    )
+    localStorage.setItem(
+      'agentic-remote:composer-draft-recovered',
+      JSON.stringify(restoredDraftContents.current),
+    )
+  }
+
+  function forgetRestoredDraft(key: string) {
+    if (!(key in restoredDraftStamps.current)) {
+      return
+    }
+    const { [key]: _stamp, ...remainingStamps } = restoredDraftStamps.current
+    const { [key]: _content, ...remainingContents } =
+      restoredDraftContents.current
+    restoredDraftStamps.current = remainingStamps
+    restoredDraftContents.current = remainingContents
+    localStorage.setItem(
+      'agentic-remote:composer-draft-failures',
+      JSON.stringify(remainingStamps),
+    )
+    localStorage.setItem(
+      'agentic-remote:composer-draft-recovered',
+      JSON.stringify(remainingContents),
+    )
+  }
+
+  /** Carries a recovery's identity to the session that replaced it. */
+  function moveRestoredDraft(fromKey: string, toKey: string) {
+    const stamp = restoredDraftStamps.current[fromKey]
+    if (stamp === undefined) {
+      return
+    }
+    const content = restoredDraftContents.current[fromKey]
+    forgetRestoredDraft(fromKey)
+    rememberRestoredDraft(toKey, stamp, content ?? '')
+    const handled = handledFailures.current.get(fromKey)
+    const restored = restoredFailures.current.get(fromKey)
+    const unshown = unshownFailures.current.get(fromKey)
+    handledFailures.current.delete(fromKey)
+    restoredFailures.current.delete(fromKey)
+    unshownFailures.current.delete(fromKey)
+    if (handled !== undefined) {
+      handledFailures.current.set(toKey, handled)
+    }
+    if (restored !== undefined) {
+      restoredFailures.current.set(toKey, restored)
+    }
+    if (unshown !== undefined) {
+      unshownFailures.current.set(toKey, unshown)
+    }
+  }
+
   function updateComposerDrafts(
     invalidateKeys: string[],
     update: (current: Record<string, string>) => Record<string, string>,
@@ -8070,6 +8370,11 @@ function App() {
       return
     }
     moveComposerDraft(fromKey, toKey)
+    // The draft moves, so what it is answering has to move with it. Left
+    // behind, an edited recovery arrived under the replacement with no
+    // identity, could not clear the marker the replacement still carries, and
+    // the prompt it was answering came back.
+    moveRestoredDraft(fromKey, toKey)
     moveKnowledgePosition(fromKey, toKey)
     // The ref is moved on here rather than left to the effect that refreshes
     // it. Two clears in a row -- A to B, then B to C, both arriving before that
@@ -8645,6 +8950,13 @@ function App() {
       return
     }
     const targetKey = sessionKey(selected)
+    // Sending clears the composer before the request is answered, so a failure
+    // that arrives during it must not be put back on top of what was just
+    // sent. The mark is cleared once the request settles.
+    submissionsInFlight.current.add(targetKey)
+    const settleSubmission = () => {
+      submissionsInFlight.current.delete(targetKey)
+    }
 
     const isCommand = content.startsWith('/')
     const commandName = isCommand
@@ -8670,17 +8982,28 @@ function App() {
         setStatuslineOpen(true)
       }
       setComposer('')
+      settleSubmission()
+      reofferFailedPrompt(targetKey)
       return
     }
     if (command?.name === 'clear') {
       setComposer('')
-      focusComposer(await clearSelectedConversation())
+      // The session this became. Everything the recovery was carrying has just
+      // moved here, and offering it against the key that is gone left the
+      // replacement holding an empty, already-answered recovery while its
+      // marker went on holding the queue.
+      const replacementKey = await clearSelectedConversation()
+      focusComposer(replacementKey)
+      settleSubmission()
+      reofferFailedPrompt(replacementKey ?? targetKey)
       return
     }
     if (command?.name === 'restart') {
       setComposer('')
       await restartSelectedSession()
       focusComposer(targetKey)
+      settleSubmission()
+      reofferFailedPrompt(targetKey)
       return
     }
     if (
@@ -8689,6 +9012,8 @@ function App() {
     ) {
       setComposer('')
       setCwdOpen(true)
+      settleSubmission()
+      reofferFailedPrompt(targetKey)
       return
     }
     const shouldEnqueue =
@@ -8699,22 +9024,67 @@ function App() {
     setSending(true)
     setError(undefined)
     setComposer('')
+    // Which failure this send is answering, so the recovery that runs after it
+    // can tell that one from a failure it has not answered.
+    let acknowledgedStamp: string | undefined
     try {
       const updated = isCommand
         ? await executeCommand(selected.computerId, selected.id, {
+            // A restored prompt can be a slash command, and it answers the
+            // failure just as a message does.
+            acknowledgesFailure: restoredFailures.current.get(targetKey),
             command: content,
             enqueue: shouldEnqueue,
           })
         : await sendMessage(selected.computerId, selected.id, {
+            // Whatever they were handed back is answered by this, whether
+            // they sent it as it was, edited it, or replaced it outright.
+            acknowledgesFailure: restoredFailures.current.get(targetKey),
             content,
             enqueue: shouldEnqueue,
           })
+      const acknowledged = restoredFailures.current.get(targetKey)
+      acknowledgedStamp = acknowledged
+      restoredFailures.current.delete(targetKey)
+      forgetRestoredDraft(targetKey)
+      // Only the failure this send was answering. A prompt that failed while
+      // this one was in flight was held back precisely because the composer
+      // was busy, and this answer is older than it: the session rejects the
+      // stale record, so dropping the deferred text here left it invisible
+      // for good, with the marker on the server still holding the queue.
+      const deferred = unshownFailures.current.get(targetKey)
+      if (!deferred || deferred.stamp === acknowledged) {
+        unshownFailures.current.delete(targetKey)
+      }
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
       prependComposerForKey(targetKey, content)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
+      settleSubmission()
       setSending(false)
+      // The composer is free again, so anything held back while it was busy
+      // is offered now. Waiting for the next draft change left a failure
+      // holding the queue with nothing on screen to answer it.
+      const stillDeferred = unshownFailures.current.get(targetKey)
+      if (stillDeferred) {
+        handledFailures.current.delete(targetKey)
+        restoreFailedPromptRef.current(
+          targetKey,
+          stillDeferred.content,
+          stillDeferred.stamp,
+        )
+      } else if (
+        // Only a failure this send did not answer. The session on hand may
+        // still be the one from before the send -- the answer can arrive
+        // before the event that clears the marker, and with the socket down it
+        // never arrives at all -- so offering whatever it still shows put the
+        // prompt that was just sent back in the composer, ready to go twice.
+        acknowledgedStamp === undefined ||
+        failureStampFor(targetKey) !== acknowledgedStamp
+      ) {
+        reofferFailedPrompt(targetKey)
+      }
       focusComposer(targetKey)
     }
   }

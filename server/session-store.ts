@@ -477,6 +477,162 @@ export class SessionStore {
     return { session, prompt: removed }
   }
 
+  /**
+   * Takes a prompt off the queue and records it as needing recovery, together.
+   *
+   * Two writes would leave a window where both copies are on disk: a restart
+   * between them delivers the prompt again while the reader has already been
+   * handed the text back, so it arrives twice.
+   */
+  async setFailedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+    uncertain = false,
+  ): Promise<SessionDetail> {
+    // Put back if the write does not land. The caller reports the send as
+    // unrecovered when this rejects, but the queue entry had already gone from
+    // memory and the prompt was already recorded as needing recovery, so the
+    // snapshot handed back described a prompt the reader owned while the copy
+    // on disk was still queued -- and a restart delivered it beside the draft.
+    const existing = this.state.sessions[sessionId]
+    if (!existing) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    const previousQueue = existing.queuedPrompts
+    const previousCount = existing.queuedCount
+    const previousFailed = existing.failedPrompt
+    const previousRevision = existing.revision
+    // Held so the rollback can tell this call's own values from anybody's.
+    let applied: StoredSession['failedPrompt']
+    let appliedQueue: StoredSession['queuedPrompts']
+    try {
+      return await this.mutate(sessionId, (stored) => {
+        const queue = stored.queuedPrompts || []
+        stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
+        stored.queuedCount = stored.queuedPrompts.length
+        stored.failedPrompt = {
+          content,
+          failedAt: new Date().toISOString(),
+          ...(uncertain ? { uncertain: true } : {}),
+        }
+        applied = stored.failedPrompt
+        appliedQueue = stored.queuedPrompts
+      })
+    } catch (error) {
+      // Only the fields this call changed, and only where they are still what
+      // it left. Another mutation can land while the write is outstanding, and
+      // that write covers this change too: putting everything back would undo
+      // theirs, while putting nothing back leaves a change in memory that
+      // never reached disk -- a draft handed to a reader whose queued copy a
+      // restart still finds.
+      const current = this.state.sessions[sessionId]
+      if (current) {
+        if (current.failedPrompt === applied) {
+          current.failedPrompt = previousFailed
+        }
+        if (current.queuedPrompts === appliedQueue) {
+          current.queuedPrompts = previousQueue
+          current.queuedCount = previousCount
+        }
+        if (current.revision === (previousRevision ?? 0) + 1) {
+          current.revision = previousRevision
+        }
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Queues a prompt and lets go of the failure it answers, in one write.
+   *
+   * Done as two, a crash in between leaves the retry on the queue and the
+   * marker still on disk, and after a restart the reader is handed the text
+   * again while the first copy is still waiting to go.
+   */
+  async enqueueAnsweringPrompt(
+    sessionId: string,
+    prompt: QueuedPrompt,
+    answers: string | undefined,
+  ): Promise<SessionDetail> {
+    const existing = this.state.sessions[sessionId]
+    if (!existing) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    const previousQueue = existing.queuedPrompts
+    const previousCount = existing.queuedCount
+    const previousFailed = existing.failedPrompt
+    const previousRevision = existing.revision
+    let appliedQueue: StoredSession['queuedPrompts']
+    let clearedFailure = false
+    try {
+      return await this.mutate(sessionId, (session) => {
+        const queue = session.queuedPrompts || []
+        session.queuedPrompts = [...queue, prompt]
+        session.queuedCount = session.queuedPrompts.length
+        appliedQueue = session.queuedPrompts
+        if (
+          session.failedPrompt &&
+          (answers === undefined || session.failedPrompt.failedAt === answers)
+        ) {
+          session.failedPrompt = undefined
+          clearedFailure = true
+        }
+      })
+    } catch (error) {
+      // Put back what this call changed, and only where it is still what this
+      // call left. Without it the caller reported a failure while memory held
+      // an unblocked queued copy that never reached disk.
+      const current = this.state.sessions[sessionId]
+      if (current) {
+        if (current.queuedPrompts === appliedQueue) {
+          current.queuedPrompts = previousQueue
+          current.queuedCount = previousCount
+        }
+        if (clearedFailure && current.failedPrompt === undefined) {
+          current.failedPrompt = previousFailed
+        }
+        if (current.revision === (previousRevision ?? 0) + 1) {
+          current.revision = previousRevision
+        }
+      }
+      throw error
+    }
+  }
+
+  async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {
+    // Put back if the write does not land, for the same reason as recording
+    // one. A submission that had already succeeded was reported as failed and
+    // handed back as a draft, while the marker stayed on disk to be found
+    // again after a restart and delivered a second time.
+    const existing = this.state.sessions[sessionId]
+    if (!existing) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    const previousFailed = existing.failedPrompt
+    const previousRevision = existing.revision
+    try {
+      return await this.mutate(sessionId, (stored) => {
+        stored.failedPrompt = undefined
+      })
+    } catch (error) {
+      // As above: put back only this call's own change, and leave anything
+      // written since alone. Skipping the rollback outright left the marker
+      // cleared in memory and still on disk, to reappear after a restart and
+      // invite the accepted prompt to be sent again.
+      const current = this.state.sessions[sessionId]
+      if (current) {
+        if (current.failedPrompt === undefined) {
+          current.failedPrompt = previousFailed
+        }
+        if (current.revision === (previousRevision ?? 0) + 1) {
+          current.revision = previousRevision
+        }
+      }
+      throw error
+    }
+  }
+
   async shiftQueuedPrompt(
     sessionId: string,
   ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {

@@ -67,12 +67,14 @@ export interface SessionService {
     sessionId: string,
     content: string,
     enqueue?: boolean,
+    acknowledgesFailure?: string,
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
   executeCommand(
     sessionId: string,
     command: string,
     enqueue?: boolean,
+    acknowledgesFailure?: string,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>

@@ -675,6 +675,21 @@ describe('ClaudeAgentService', () => {
     await service.store.flush()
   })
 
+  it('refuses a send while the session is being deleted', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+
+    // Deleting takes several awaits, and a send starting inside any of them
+    // ran a turn against a conversation on its way out.
+    const deleting = service as unknown as { deletingSessions: Set<string> }
+    deleting.deletingSessions.add(session.id)
+
+    await expect(
+      service.sendMessage(session.id, 'lost to a deletion'),
+    ).rejects.toThrow(/not found/)
+    deleting.deletingSessions.delete(session.id)
+  })
+
   it('refuses a restart that a suspension has already claimed', async () => {
     const { directory, service } = await fixture(async function* () {})
     const session = await service.createSession(directory, false, true, 'claude')

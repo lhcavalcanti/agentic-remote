@@ -218,7 +218,11 @@ export class ClaudeAgentService
    * register, and work that only looks at `active` read that gap as nothing
    * running.
    */
-  private readonly startingQueries = new Set<string>()
+  private readonly startingQueries = new Map<string, Promise<void>>()
+  /** Sessions being deleted, closed to new work from before the first await. */
+  private readonly deletingSessions = new Set<string>()
+  /** Settles the matching `startingQueries` entry once a turn has registered. */
+  private readonly startedQuery = new Map<string, () => void>()
   /** Sessions whose queue is being drained, so two drains cannot overlap. */
   private readonly drainingSessions = new Set<string>()
   private readonly permissions = new Map<string, PendingClaudePermission>()
@@ -667,8 +671,14 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
   ): Promise<SessionDetail> {
+    if (this.deletingSessions.has(sessionId)) {
+      // Deleting takes several awaits, and a send starting inside any of them
+      // ran a turn against a conversation on its way out.
+      throw new Error('Session not found')
+    }
     if (this.admissionClosed.has(sessionId)) {
-      // Resuming, and the prompt already queued has not been claimed yet.
+      // Resuming, and the prompt already queued has not been claimed yet, or a
+      // drain has taken its prompt off and not yet marked the session running.
       // Only the idle check consulted this, which a send can reach past.
       throw new Error('The session is still resuming')
     }
@@ -806,7 +816,14 @@ export class ClaudeAgentService
     // session left a window in which a delete found nothing running, took the
     // conversation away, and the turn then started against a session that no
     // longer existed.
-    this.startingQueries.add(sessionId)
+    let started = () => {}
+    this.startingQueries.set(
+      sessionId,
+      new Promise<void>((resolve) => {
+        started = resolve
+      }),
+    )
+    this.startedQuery.set(sessionId, started)
     void this.runQuery(sessionId, content, assistantId).catch((error) => {
       console.warn(
         `Claude turn for ${sessionId} ended in an unreported failure:`,
@@ -862,15 +879,28 @@ export class ClaudeAgentService
 
   private async deleteSerialized(sessionId: string): Promise<void> {
     const session = this.requireSession(sessionId)
+    // Marked before anything is awaited. Deleting takes several awaits, and a
+    // send starting inside any of them ran a turn against a conversation that
+    // was on its way out.
+    this.deletingSessions.add(sessionId)
+    try {
+      await this.deleteClaimed(sessionId, session)
+    } finally {
+      this.deletingSessions.delete(sessionId)
+    }
+  }
+
+  private async deleteClaimed(
+    sessionId: string,
+    session: SessionDetail,
+  ): Promise<void> {
     // A turn started a moment ago may not have registered its query yet. It is
-    // given long enough to appear, so the abort below has something to abort
-    // rather than the turn starting against a conversation already taken away.
-    for (
-      let attempt = 0;
-      attempt < 50 && this.startingQueries.has(sessionId);
-      attempt += 1
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 20))
+    // waited for rather than polled for a while: a provider that is slow to
+    // answer outlasted the polling and the turn then started against a
+    // conversation already taken away.
+    const starting = this.startingQueries.get(sessionId)
+    if (starting) {
+      await starting.catch(() => undefined)
     }
     this.active.get(sessionId)?.abortController.abort()
     const settling = this.active.get(sessionId)?.done
@@ -1088,6 +1118,8 @@ export class ClaudeAgentService
       }
       owned = entry
       this.active.set(sessionId, entry)
+      this.startedQuery.get(sessionId)?.()
+      this.startedQuery.delete(sessionId)
       this.startingQueries.delete(sessionId)
       for await (const message of activeQuery) {
         if (!this.store.get(sessionId)) {
@@ -1158,6 +1190,8 @@ export class ClaudeAgentService
         this.active.delete(sessionId)
       }
       owned?.finish()
+      this.startedQuery.get(sessionId)?.()
+      this.startedQuery.delete(sessionId)
       this.startingQueries.delete(sessionId)
       this.resolvePending(sessionId, 'Claude Agent stopped')
       if (!aborted) {
@@ -1493,6 +1527,11 @@ export class ClaudeAgentService
       return
     }
     await this.store.removeQueuedPrompt(sessionId, next.id)
+    // Held from the moment the prompt leaves the queue until its turn has
+    // registered. Without it a send arriving in between saw an idle session
+    // with an empty queue, started a turn of its own beside this one, and the
+    // later registration hid the first from cancellation.
+    this.admissionClosed.add(sessionId)
     try {
       // The queue's own prompt is the one admission is being held for, so it
       // goes past that gate rather than into it. Sending through the public
@@ -1506,6 +1545,14 @@ export class ClaudeAgentService
         .enqueuePrompt(sessionId, next, true)
         .catch(() => undefined)
       throw error
+    } finally {
+      // Let go of only once the turn is registered, or once it has failed and
+      // its prompt is back where it was.
+      const starting = this.startingQueries.get(sessionId)
+      if (starting) {
+        await starting.catch(() => undefined)
+      }
+      this.admissionClosed.delete(sessionId)
     }
   }
 

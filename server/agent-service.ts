@@ -2306,7 +2306,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error('Session can only be suspended while idle')
       }
     }
-    if (this.externalSessionIds.has(id)) {
+    // The stored backend as well as the discovery set. Discovery can miss a
+    // live terminal for a pass, and taking that as an SDK session found no
+    // runtime to put down and recorded the session as suspended with its pane
+    // still running. The controller proves absence, or does the teardown.
+    if (this.externalSessionIds.has(id) || this.store.backend(id) === 'terminal') {
       if (!this.terminalController.stop) {
         throw new Error('Terminal session suspend is not available')
       }

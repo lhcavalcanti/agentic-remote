@@ -328,8 +328,8 @@ export class TmuxTerminalSessionController
       //
       // So the process that *is* the session is checked as well. If it has
       // gone, the session has already stopped and there is nothing to kill.
-      if (!(await processIsAlive(owner.pid))) {
-        return !(await this.owner(sessionId))
+      if (!processIsAlive(owner.pid)) {
+        return this.noPaneRemains(sessionId)
       }
       try {
         await execFileAsync('tmux', [
@@ -896,8 +896,9 @@ export class TmuxTerminalSessionController
    * can say for certain, and refuses when even that cannot be reached.
    */
   private async noPaneRemains(sessionId: string): Promise<boolean> {
+    let listed = ''
     try {
-      const listed = (
+      listed = (
         await execFileAsync('tmux', [
           'list-panes',
           '-a',
@@ -905,15 +906,31 @@ export class TmuxTerminalSessionController
           '#{pane_pid}',
         ])
       ).stdout
-      if (!listed.trim()) {
-        return true
-      }
     } catch (error) {
       // No server at all means no pane, which is the ordinary way a
       // suspension finishes. Anything else is a look that failed.
       return noTmuxServer(error)
     }
-    return !(await this.owner(sessionId))
+    if (!listed.trim()) {
+      return true
+    }
+    // Panes exist, so the question is whether one of them is this session's.
+    // Process discovery answers with nothing when it cannot look, and asking
+    // it again here read that as absence: no owner found, so reported stopped,
+    // while the pane was still running. The pane list is asked instead, and it
+    // has already been read successfully above.
+    // The cache is dropped so this is a fresh look rather than the same empty
+    // answer a failed one left behind.
+    this.activeProcessCache = undefined
+    const processes = await this.activeProcesses().catch(() => undefined)
+    if (!processes || !processes.length) {
+      // Panes are running but not one Copilot process was found among them.
+      // A moment ago this session had one, so this is a look that failed
+      // rather than a session that has stopped, and reporting success here
+      // recorded it as suspended while its terminal carried on.
+      return false
+    }
+    return !processes.some((candidate) => candidate.sessionId === sessionId)
   }
 
   private async owner(
@@ -1843,13 +1860,21 @@ async function tmuxTargetForPid(
   return undefined
 }
 
-/** Whether a process is still there to be ended. */
-async function processIsAlive(pid: number): Promise<boolean> {
+/**
+ * Whether a process is still there to be ended.
+ *
+ * Signal 0 asks the kernel directly and returns without waiting, so this adds
+ * no moment between the last check and the teardown. Reading `/proc` here
+ * instead put an await after confirmation, and a turn started at the terminal
+ * inside it went down with the pane.
+ */
+function processIsAlive(pid: number): boolean {
   try {
-    await readFile(`/proc/${pid}/stat`, 'utf8')
+    process.kill(pid, 0)
     return true
-  } catch {
-    return false
+  } catch (error) {
+    // Alive but not ours to signal is still alive.
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
 

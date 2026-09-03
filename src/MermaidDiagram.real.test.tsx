@@ -10,7 +10,15 @@ import { MermaidDiagram } from './MermaidDiagram.js'
  * parse it draws a syntax-error diagram into the document and rejects without
  * taking it away again. A mocked rejection cannot show whether that happened.
  */
-describe('MermaidDiagram against the real Mermaid', () => {
+// Importing the real Mermaid costs more than the runner's own patience on a
+// slow filesystem: the worker never answers and the whole run is reported as
+// `Timeout waiting for worker to respond`, with every other test passing. That
+// takes the release gate down over a library's size, so this asks for the real
+// thing only when it is asked for. `MermaidDiagram.test.tsx` covers the
+// component itself on every run.
+const realMermaid = import.meta.env.AGENTIC_REMOTE_TEST_REAL_MERMAID === '1'
+
+describe.runIf(realMermaid)('MermaidDiagram against the real Mermaid', () => {
   // Vitest globals are off, so React Testing Library cannot install this
   // itself, and a render left mounted leaks into the next test.
   afterEach(() => {

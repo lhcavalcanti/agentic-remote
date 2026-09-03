@@ -755,7 +755,15 @@ export class TmuxTerminalSessionController
         // is sent again — which the queue does on its own, without anyone
         // deciding to. The prompt is put back the way it was found, so
         // sending again is sending once.
-        await clearPastedPrompt(target)
+        // Only what this paste put there is taken back. If the prompt never
+        // gained it, the composer holds whatever was typed at the terminal
+        // instead, and clearing would throw that away.
+        if (
+          paneEvidenceCount(await capturePane(target), confirmation) >
+          alreadyShown
+        ) {
+          await clearPastedPrompt(target)
+        }
         throw Object.assign(
           new Error(
             'The terminal did not receive the message. Please try again.',
@@ -1634,17 +1642,15 @@ export function paneShowsText(
  * Takes back a paste that was never sent.
  *
  * A message reported as undelivered has to leave nothing behind, or sending
- * it again lands beside the first copy rather than instead of it. Ctrl+U
- * clears the composer, and Escape first closes the paste placeholder the CLI
- * shows for a large one, which would otherwise survive it.
+ * it again lands beside the first copy rather than instead of it.
  */
 async function clearPastedPrompt(target: string): Promise<void> {
-  for (const keys of [['Escape'], ['C-u']]) {
-    await execFileAsync('tmux', ['send-keys', '-t', target, ...keys]).catch(
-      () => undefined,
-    )
-    await new Promise((resolve) => setTimeout(resolve, 30))
-  }
+  // Ctrl+U clears the composer. Escape is deliberately not sent: it would
+  // dismiss whatever dialog the agent has open behind the paste.
+  await execFileAsync('tmux', ['send-keys', '-t', target, 'C-u']).catch(
+    () => undefined,
+  )
+  await new Promise((resolve) => setTimeout(resolve, 30))
 }
 
 async function capturePane(target: string): Promise<string> {

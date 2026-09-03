@@ -7160,12 +7160,18 @@ function App() {
       // A replacement confirmed by a snapshot is no longer pending, even if
       // its own arrival event was never seen. Left pending for good, selection
       // cleanup goes on treating it as expected and can leave nothing open.
-      // An authoritative list settles every replacement it was waiting on, not
-      // only the ones it happens to contain. A replacement announced, never
-      // delivered and then deleted appears in no snapshot at all, and waiting
-      // for it forever leaves selection treating it as still on its way.
-      pendingReplacements.current.clear()
-      void reconciledForClaim
+      // A list can only speak for what it was asked after. A replacement
+      // announced while this request was already in flight cannot be in the
+      // answer, so its absence says nothing; one announced before it and
+      // still missing has genuinely gone, and waiting for it forever leaves
+      // selection treating it as on its way.
+      const present = new Set(reconciledForClaim.map((s) => sessionKey(s)))
+      for (const key of [...pendingReplacements.current]) {
+        const announcedAt = sessionEventSequenceRef.current.get(key) || 0
+        if (present.has(key) || announcedAt <= startedAtSequence) {
+          pendingReplacements.current.delete(key)
+        }
+      }
       claimReplacedSessions(reconciledForClaim)
       // Whichever load arrives first is the one that has to answer the
       // address. The socket opening starts a refresh of its own, and when it

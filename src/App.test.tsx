@@ -1807,6 +1807,45 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument()
   })
 
+  it('does not carry an expanded transcript into the next session', async () => {
+    // The window is what bounds rendering cost. It belongs to the session being
+    // read, so expanding one must not hand the next session an open transcript.
+    const longMessages = (prefix: string) =>
+      Array.from({ length: 400 }, (_, index) => ({
+        id: `${prefix}-${index}`,
+        role: 'assistant' as const,
+        content: `${prefix} line ${index}`,
+        createdAt: new Date(Date.UTC(2026, 6, 22, 0, 0, index)).toISOString(),
+      }))
+    const longFirst = { ...session, messages: longMessages('first') }
+    const longSecond = { ...secondSession, messages: longMessages('second') }
+    vi.mocked(listSessions).mockResolvedValue([longFirst, longSecond])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === longSecond.id ? longSecond : longFirst,
+    )
+    render(<App />)
+
+    const expand = await screen.findByRole('button', {
+      name: /Show \d+ earlier messages/,
+    })
+    fireEvent.click(expand)
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /earlier messages/ }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getByText('first line 0')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+
+    // Back to a bounded transcript: the oldest message is behind the control
+    // again rather than already on screen.
+    expect(
+      await screen.findByRole('button', { name: /Show \d+ earlier messages/ }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('second line 0')).not.toBeInTheDocument()
+  })
+
   it('preserves a separate composer draft for each session', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>

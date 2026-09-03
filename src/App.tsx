@@ -9053,6 +9053,7 @@ function App() {
           ) : (
             <ConversationMessages
               currentToolId={currentTool?.id}
+              key={selected.id}
               messages={selected.messages}
             />
           )}

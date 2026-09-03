@@ -6101,6 +6101,69 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('follows a clear when the reader goes back to the old session', async () => {
+    // The clear happens while another session is open, so nothing moves the
+    // selection at the time. Back then reaches an address naming a session
+    // that no longer exists, and selecting that id opens nothing.
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      title: 'Followed on',
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === replacement.id
+        ? replacement
+        : sessionId === secondSession.id
+          ? secondSession
+          : session,
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+
+    // Read a different conversation, so the clear does not move the selection.
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item--active')?.textContent,
+      ).toContain('Second chat'),
+    )
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    await screen.findAllByText('Followed on')
+
+    // An older history entry still names the session that was cleared.
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item--active')?.textContent,
+      ).toContain('Followed on'),
+    )
+  })
+
   it('claims state from a clear that happened while it was away', async () => {
     localStorage.setItem(
       'agentic-remote:composer-drafts',

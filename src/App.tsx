@@ -5502,6 +5502,9 @@ function App() {
     }
     setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
   }, [selectedKey])
+  // The history listener is bound once, so it reads the resolver through a ref
+  // rather than closing over the first one.
+  const followReplacementsRef = useRef<(key: string) => string>((key) => key)
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -5697,8 +5700,29 @@ function App() {
    * old session was holding is claimed from the snapshot alone instead of
    * being stranded under an id that is gone.
    */
-  const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {
-    for (const session of loaded) {
+  /**
+   * Follows a session key through every clear it has been through.
+   *
+   * Clears chain: a session cleared twice leaves a link from the first id to
+   * the second and from the second to the third, and a browser that was away
+   * is holding the first. Answering with the next step alone opens a session
+   * that is itself gone.
+   */
+  const followReplacements = useCallback((key: string) => {
+    const seen = new Set<string>()
+    let current = key
+    while (!seen.has(current)) {
+      seen.add(current)
+      const next = replacedInto.current.get(current)
+      if (!next) {
+        break
+      }
+      current = next
+    }
+    return current
+  }, [])
+
+  const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {    for (const session of loaded) {
       const replacement = sessionKey(session)
       // Oldest first, so that when several ancestors held something the most
       // recent one is what the conversation ends up with.
@@ -5707,12 +5731,15 @@ function App() {
           computerId: session.computerId,
           id: ancestorId,
         })
-        if (adoptedReplacements.current.has(ancestor)) {
-          continue
-        }
-        adoptedReplacements.current.add(ancestor)
+        // The link is recorded every time. Only moving state across is once:
+        // a second pass would overwrite the replacement's own newer state with
+        // what the ancestor had, while the link is still needed to answer a
+        // later Back or deep link to the session that is gone.
         replacedInto.current.set(ancestor, replacement)
-        migrateSessionStateRef.current(ancestor, replacement)
+        if (!adoptedReplacements.current.has(ancestor)) {
+          adoptedReplacements.current.add(ancestor)
+          migrateSessionStateRef.current(ancestor, replacement)
+        }
         setSelectedKey((current) =>
           current === ancestor ? replacement : current,
         )
@@ -6221,7 +6248,11 @@ function App() {
         syncSelectionAddressRef.current()
         return
       }
-      setSelectedKey(sessionKey({ computerId, id: sessionId }))
+      // Going back to a session that has since been cleared should open what
+      // it became rather than nothing.
+      setSelectedKey(
+        followReplacementsRef.current(sessionKey({ computerId, id: sessionId })),
+      )
     }
     window.addEventListener('popstate', followHistory)
     return () => window.removeEventListener('popstate', followHistory)
@@ -6342,6 +6373,7 @@ function App() {
     forgetKnowledgeSessionRef.current = forgetKnowledgeSession
     moveKnowledgeSessionRef.current = moveKnowledgePosition
     migrateSessionStateRef.current = migrateSessionState
+    followReplacementsRef.current = followReplacements
     loadKnowledgeFolderRef.current = loadKnowledgeFolder
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
       const rootId = position.rootId
@@ -6841,7 +6873,13 @@ function App() {
         setSessions(reconcile)
         claimReplacedSessions(reconcile(sessionsRef.current))
         setComputers(loadedComputers)
+        // A live removal can arrive before this list does, so the address may
+        // name a session that has already been replaced, possibly more than
+        // once. Falling through to `sessions[0]` would open something the
+        // reader never asked for.
         const requestedKey = initialUrlSelection.current
+          ? followReplacements(initialUrlSelection.current)
+          : undefined
         const requested = loadedSessions.find(
           (session) => sessionKey(session) === requestedKey,
         )

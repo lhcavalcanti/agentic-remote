@@ -359,6 +359,34 @@ describe('SessionStore', () => {
     await expect(stat(second.path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('keeps the whole ancestry of a session cleared many times', async () => {
+    // A browser that was away long enough to miss dozens of clears is exactly
+    // the one still holding the oldest id, and what it is holding has no
+    // expiry of its own. Forgetting the far end of the lineage is what leaves
+    // that draft with no way back to the session it belongs to.
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-0',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+
+    for (let index = 0; index < 40; index += 1) {
+      await store.replaceWithClearedSession(
+        `session-${index}`,
+        `session-${index + 1}`,
+      )
+    }
+
+    const latest = store.get('session-40')
+    expect(latest?.replacedSessionIds).toHaveLength(40)
+    // The very first id is still reachable from the newest session.
+    expect(latest?.replacedSessionIds?.[0]).toBe('session-0')
+  })
+
   it('resets interrupted transient state when reloaded', async () => {
     const { directory, store } = await createStore()
     await store.create({

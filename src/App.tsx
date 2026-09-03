@@ -148,7 +148,6 @@ import {
   readKnowledgeFile,
   listDirectories,
   validateSessionDirectory,
-  listSessions,
   listSessionListing,
   listWorkspace,
   moveSessionToTmux,
@@ -5512,6 +5511,8 @@ function App() {
   // one simply because it finished last.
   const snapshotGeneration = useRef(0)
   const snapshotApplied = useRef(0)
+  // The newest refresh that actually reached each computer.
+  const computerSnapshotApplied = useRef(new Map<string, number>())
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -5735,25 +5736,37 @@ function App() {
    * Startup and the socket's own refresh race, and either can be the one that
    * lands first, so both have to be able to honour a link.
    */
-  const applyInitialSelection = useCallback((loaded: ManagedSession[]) => {
-    const requestedKey = initialUrlSelection.current
-      ? followReplacementsRef.current(initialUrlSelection.current)
-      : undefined
-    const requested = loaded.find(
-      (session) => sessionKey(session) === requestedKey,
-    )
-    setSelectedKey(
-      (current) =>
-        current ||
-        (requested
-          ? sessionKey(requested)
-          : requestedKey && pendingReplacements.current.has(requestedKey)
-            ? requestedKey
-            : loaded[0]
-              ? sessionKey(loaded[0])
-              : undefined),
-    )
-  }, [])
+  const applyInitialSelection = useCallback(
+    (loaded: ManagedSession[], answeredFor?: Set<string>) => {
+      const requestedKey = initialUrlSelection.current
+        ? followReplacementsRef.current(initialUrlSelection.current)
+        : undefined
+      const requested = loaded.find(
+        (session) => sessionKey(session) === requestedKey,
+      )
+      // A computer that did not answer has said nothing about the session the
+      // address names. Falling through to whatever sorted first took the
+      // reader somewhere they never asked for, and the replacement arriving
+      // later only redirects a reader still sitting on the ancestor.
+      const unanswered =
+        requestedKey !== undefined &&
+        answeredFor !== undefined &&
+        !answeredFor.has(requestedKey.slice(0, requestedKey.indexOf(':')))
+      setSelectedKey(
+        (current) =>
+          current ||
+          (requested
+            ? sessionKey(requested)
+            : requestedKey &&
+                (pendingReplacements.current.has(requestedKey) || unanswered)
+              ? requestedKey
+              : loaded[0]
+                ? sessionKey(loaded[0])
+                : undefined),
+      )
+    },
+    [],
+  )
 
   /**
    * Records what a session says it replaced, and nothing else.
@@ -6925,12 +6938,16 @@ function App() {
     // applies last and reinstates whatever the newer one already replaced.
     const asked = ++snapshotGeneration.current
     const startedAtSequence = eventSequenceRef.current
-    void Promise.all([listSessions(), listComputers()])
-      .then(([loadedSessions, loadedComputers]) => {
+    void Promise.all([listSessionListing(), listComputers()])
+      .then(([listing, loadedComputers]) => {
         if (!active || asked <= snapshotApplied.current) {
           return
         }
         snapshotApplied.current = asked
+        const loadedSessions = listing.sessions
+        for (const id of listing.answeredComputerIds) {
+          computerSnapshotApplied.current.set(id, asked)
+        }
         // Events that arrived while this was in flight describe those sessions
         // more recently than it does. A session cleared again in that window
         // is only still here because the answer predates its removal, and
@@ -6968,7 +6985,10 @@ function App() {
         // A clear announced while this request was in flight leaves the
         // replacement out of the response entirely, and searching the stale
         // list finds nothing and falls through to an unrelated conversation.
-        applyInitialSelection(reconciled)
+        applyInitialSelection(
+          reconciled,
+          new Set(listing.answeredComputerIds),
+        )
       })
       .catch((caught: unknown) => {
         if (active) {
@@ -7142,12 +7162,23 @@ function App() {
       // load that succeeded, and one that stalls cannot overwrite an answer
       // that was asked for after it.
       const asked = ++snapshotGeneration.current
-      const claimGeneration = () => {
-        if (asked <= snapshotApplied.current) {
-          return 0
+      // Authority is per computer, so being overtaken is too. A newer refresh
+      // that could not reach a node has said nothing about it, and discarding
+      // this answer wholesale threw away the only word anyone had -- a
+      // replacement it had just discovered was never in the browser at all, so
+      // reconciliation could not keep it either.
+      const claimGeneration = (answeredIds: string[]) => {
+        const mine = answeredIds.filter(
+          (id) => asked > (computerSnapshotApplied.current.get(id) || 0),
+        )
+        for (const id of mine) {
+          computerSnapshotApplied.current.set(id, asked)
         }
-        snapshotApplied.current = asked
-        return asked
+        if (asked > snapshotApplied.current) {
+          snapshotApplied.current = asked
+          return { generation: asked, whole: true, speaksFor: new Set(mine) }
+        }
+        return { generation: asked, whole: false, speaksFor: new Set(mine) }
       }
       const startedAtSequence = eventSequenceRef.current
       const startedAtMuteRevision = muteRevisionRef.current
@@ -7159,10 +7190,12 @@ function App() {
           return undefined
         }),
       ])
-      const generation = claimGeneration()
-      if (!generation) {
+      const claim = claimGeneration(listing.answeredComputerIds)
+      if (!claim.whole && !claim.speaksFor.size) {
+        // Overtaken, and it reached nothing the newer answer did not.
         return
       }
+      const generation = claim.generation
       const loadedSessions = listing.sessions
       const snapshotSessions = loadedSessions.filter(
         (session) =>
@@ -7179,6 +7212,21 @@ function App() {
           startedAtSequence,
       )
       const answeredFor = new Set(listing.answeredComputerIds)
+      if (!claim.whole) {
+        // Only the computers this answer reached that the newer one did not.
+        // Everything else in it has already been spoken for more recently.
+        setSessions((current) => {
+          let merged = current
+          for (const session of snapshotSessions) {
+            if (claim.speaksFor.has(session.computerId)) {
+              merged = upsertSession(merged, session)
+            }
+          }
+          sessionsRef.current = merged
+          return merged
+        })
+        return
+      }
       const reconcile = (existingSessions: ManagedSession[]) => {
         let reconciled = sortSessions(snapshotSessions)
         for (const existing of existingSessions) {
@@ -7245,7 +7293,7 @@ function App() {
       // link the reader followed is replaced by whichever session sorts
       // first. Selection is only set when nothing has been chosen yet, so
       // this never moves a reader who is already somewhere.
-      applyInitialSelection(reconciledForClaim)
+      applyInitialSelection(reconciledForClaim, answeredFor)
       setComputers((current) => {
         let reconciled = snapshotComputers
         for (const existing of current) {
@@ -7285,7 +7333,12 @@ function App() {
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
         ) ||
           changedSinceRefresh(sessionKey(selectedAtRefresh)) ||
-          pendingReplacements.current.has(sessionKey(selectedAtRefresh)))
+          pendingReplacements.current.has(sessionKey(selectedAtRefresh)) ||
+          // Its computer said nothing about it, so its absence is not news.
+          // Reconciliation keeps it in the list for the same reason, and
+          // moving the reader off a session that is still there is worse than
+          // leaving them on one that has gone.
+          !answeredFor.has(selectedAtRefresh.computerId))
       // The whole chain, not one step of it. A session cleared twice while the
       // selection was still catching up leaves the first link pointing at an
       // id that is itself gone, and selecting that opens nothing.
@@ -8761,46 +8814,38 @@ function App() {
       // that no longer exists.
       const clearedKey = sessionKey(cleared)
       replacedInto.current.set(targetKey, clearedKey)
-      adoptedReplacements.current.add(targetKey)
-      migrateSessionState(targetKey, clearedKey)
-      // This answer can be overtaken. The replacement it names may itself have
-      // been cleared while the request was in flight, and putting it back
-      // would resurrect a session that is gone and take the reader off the one
-      // that replaced it.
+      // Where this session's things actually belong. The replacement this
+      // answer names may itself have been cleared while the request was in
+      // flight, and moving the draft, the reading position and the mute into
+      // it left them under a session that is gone -- the one that took its
+      // place had already been told there was nothing to claim.
       const liveKey = followReplacementsRef.current(clearedKey)
-      if (liveKey !== clearedKey) {
-        setSelectedKey((current) =>
-          current === targetKey || current === clearedKey ? liveKey : current,
-        )
-        return liveKey
-      }
-      // The answer speaks for both sessions, so nothing older may speak for
-      // either of them afterwards. Written before the list is touched, and
-      // into the ref as well, so a snapshot already in flight cannot put the
-      // cleared session back or drop the replacement it has never heard of.
+      adoptedReplacements.current.add(targetKey)
+      migrateSessionState(targetKey, liveKey)
+      // The session that was cleared is gone either way, and nothing older may
+      // speak for it or for what it became. Written before the list is
+      // touched, and into the ref as well, so a snapshot already in flight
+      // cannot put it back or drop a replacement it has never heard of.
       eventSequenceRef.current += 1
       sessionEventSequenceRef.current.set(targetKey, eventSequenceRef.current)
       sessionEventSequenceRef.current.set(clearedKey, eventSequenceRef.current)
-      sessionsRef.current = upsertSession(
-        sessionsRef.current.filter(
+      const retire = (sessions: ManagedSession[]) => {
+        const without = sessions.filter(
           (session) =>
             session.id !== target.id ||
             session.computerId !== target.computerId,
-        ),
-        cleared,
+        )
+        // The replacement is only put back while it is still the live one.
+        return liveKey === clearedKey ? upsertSession(without, cleared) : without
+      }
+      sessionsRef.current = retire(sessionsRef.current)
+      setSessions(retire)
+      setSelectedKey((current) =>
+        current === undefined || current === targetKey || current === clearedKey
+          ? liveKey
+          : current,
       )
-      setSessions((current) =>
-        upsertSession(
-          current.filter(
-            (session) =>
-              session.id !== target.id ||
-              session.computerId !== target.computerId,
-          ),
-          cleared,
-        ),
-      )
-      setSelectedKey(clearedKey)
-      return clearedKey
+      return liveKey
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
       return sessionKey(target)

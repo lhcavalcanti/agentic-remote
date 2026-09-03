@@ -126,12 +126,14 @@ export async function listSessionListing(): Promise<SessionListing> {
   }>('/api/sessions')
   return {
     sessions: response.sessions,
-    // An older hub says nothing about authority, and reading that silence as
-    // "nobody answered" would leave every replacement pending for good.
-    answeredComputerIds:
-      response.answeredComputerIds ?? [
-        ...new Set(response.sessions.map((session) => session.computerId)),
-      ],
+    // An older hub says nothing about authority, and it answers for a node it
+    // could not reach out of its own cache -- so the computers named in the
+    // list are not the computers that were asked. Inferring authority from
+    // them let a cached row settle a replacement that nothing had looked for.
+    // Silence is read as silence: absence settles nothing and evicts nothing,
+    // and a replacement is still settled by its own arrival or by an explicit
+    // removal.
+    answeredComputerIds: response.answeredComputerIds ?? [],
   }
 }
 

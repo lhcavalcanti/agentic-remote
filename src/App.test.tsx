@@ -6787,6 +6787,51 @@ describe('App', () => {
     expect(await screen.findAllByText('Project chat')).not.toHaveLength(0)
   })
 
+  it('moves a cleared session\'s things to the session that is really live', async () => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'Half-written thought' }),
+    )
+    let answerClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerClear = resolve
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(answerClear).toBeDefined())
+
+    // B is cleared into C before A's answer names B. Moving the draft into B
+    // left it under a session that is gone, and C had already been told there
+    // was nothing left to claim.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-1-b',
+          replacedBy: 'session-1-c',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerClear?.({ ...session, id: 'session-1-b', messages: [] })
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1-c': 'Half-written thought' }),
+    )
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',

@@ -6884,10 +6884,12 @@ function App() {
     // The first load takes a generation like every other refresh: the socket
     // opening starts one of its own, and without this the slower of the two
     // applies last and reinstates whatever the newer one already replaced.
-    const generation = ++snapshotGeneration.current
     const startedAtSequence = eventSequenceRef.current
     void Promise.all([listSessions(), listComputers()])
       .then(([loadedSessions, loadedComputers]) => {
+        // Taken here rather than at the start, so a refresh that began after
+        // this one and then failed cannot cancel an answer that arrived.
+        const generation = ++snapshotGeneration.current
         if (!active || generation !== snapshotGeneration.current) {
           return
         }
@@ -7091,7 +7093,11 @@ function App() {
       // start one. Without a generation the slower response applies last and
       // reinstates whatever the newer one already replaced, including a
       // session that has since been cleared away.
-      const generation = ++snapshotGeneration.current
+      //
+      // Claimed only once the answers are actually in hand. Claiming it up
+      // front let a refresh that then failed cancel a load that succeeded,
+      // and the client finished with nothing open and the address forgotten.
+      const claimGeneration = () => ++snapshotGeneration.current
       const startedAtSequence = eventSequenceRef.current
       const startedAtMuteRevision = muteRevisionRef.current
       const [loadedSessions, loadedComputers, pushSettings] = await Promise.all([
@@ -7102,9 +7108,7 @@ function App() {
           return undefined
         }),
       ])
-      if (generation !== snapshotGeneration.current) {
-        return
-      }
+      const generation = claimGeneration()
       const snapshotSessions = loadedSessions.filter(
         (session) =>
           (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) <=

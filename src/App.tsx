@@ -5846,7 +5846,7 @@ function App() {
   // a no-op in a browser, so the badge never needs a capability check here.
   useEffect(() => {
     setShellBadge(attentionCount(sessions))
-  }, [sessions])
+  }, [sessions, selectedKey])
   // An embedded webview gets no Web Push, so inside the shell the app raises
   // its own notifications from the live session stream. A browser keeps using
   // the hub's Web Push and must not double-notify, hence the shell check.
@@ -7472,7 +7472,15 @@ function App() {
         // switching away and back leaves an ordinary-looking draft, and
         // sending it puts a second copy beside whatever is already in the
         // terminal's prompt.
-        if (failed.uncertain && warnedUncertain.current.get(key) !== stamped) {
+        // Only for the conversation the reader is looking at. Said for one
+        // they are not, it was consumed on their behalf: selecting that
+        // session cleared the banner, and this would not say it again.
+        if (
+          failed.uncertain &&
+          selectedRef.current &&
+          sessionKey(selectedRef.current) === key &&
+          warnedUncertain.current.get(key) !== stamped
+        ) {
           warnedUncertain.current.set(key, stamped)
           setError(
             'This message may still be in the terminal. Check there before sending it again.',

@@ -1490,6 +1490,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly claimedFailures = new Set<string>()
   /** Failures whose resend was accepted, so a later copy cannot follow it. */
   private readonly answeredFailures = new Set<string>()
+  /**
+   * Sessions whose current send has reached the runtime.
+   *
+   * Anything that fails after this point leaves a send that may well have
+   * arrived, whatever kind of failure it is.
+   */
+  private readonly deliveredSends = new Set<string>()
+  /** What a cleared session became, so outstanding work can follow it. */
+  private readonly replacedInto = new Map<string, string>()
+  /** Sleeping acknowledgement retries, cleared when the service stops. */
+  private readonly acknowledgementTimers = new Set<NodeJS.Timeout>()
   /** Marker clearances still outstanding after an accepted send. */
   private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
   /** Set when the service is shutting down, so retries stop with it. */
@@ -1633,6 +1644,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async stop(): Promise<void> {
     this.stopped = true
+    for (const timer of this.acknowledgementTimers) {
+      clearTimeout(timer)
+    }
+    this.acknowledgementTimers.clear()
     if (this.discoveryTimer) {
       clearInterval(this.discoveryTimer)
       this.discoveryTimer = undefined
@@ -2411,6 +2426,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         id,
         replacementId,
       )
+      // Anything still waiting to be done for the old session has to follow it
+      // here. A recovery marker moves across with the conversation, and a
+      // clearance still being retried would otherwise look for a session that
+      // is gone and give up, leaving the accepted prompt recoverable again.
+      this.replacedInto.set(id, replacementId)
       this.emit('event', {
         type: 'session.removed',
         sessionId: id,
@@ -2565,17 +2585,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         enqueue,
         claim ? before : undefined,
       )
+      this.deliveredSends.delete(sessionId)
     } catch (error) {
       // A send that failed after the terminal had already taken the text is
       // not a send that can be repeated. Letting go of the reservation invited
-      // exactly the second copy it exists to prevent, so it is kept and
-      // recorded as answered.
-      if (
-        error &&
-        typeof error === 'object' &&
-        'uncertainDelivery' in error
-      ) {
+      // exactly the second copy it exists to prevent.
+      //
+      // Delivery is what decides, not the kind of error. A perfectly ordinary
+      // persistence failure after the text has gone in leaves the same
+      // ambiguity, so anything thrown once the send is known to have gone out
+      // keeps the reservation.
+      if (this.deliveredSends.has(sessionId)) {
+        this.deliveredSends.delete(sessionId)
         claim?.release(true)
+        // The failure this answered has been dealt with as far as anyone can
+        // tell, so the marker must not go on offering it -- refused by the
+        // record of an answered failure, it would block the queue for good.
+        await this.acknowledgeFailedPrompt(
+          sessionId,
+          content,
+          acknowledgedFailure,
+        ).catch(() => {
+          this.scheduleFailureAcknowledgement(
+            sessionId,
+            content,
+            acknowledgedFailure,
+          )
+        })
       } else {
         claim?.release()
       }
@@ -2719,19 +2755,37 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // tries left the marker holding the queue with its own resend refused,
     // and nothing to start it again once storage came back.
     const attempt = async (wait: number): Promise<void> => {
+      let current = sessionId
       while (!this.stopped) {
-        if (!this.store.get(sessionId)?.failedPrompt) {
+        if (!this.store.get(current)) {
+          // Cleared while this was sleeping. The replacement inherits the
+          // marker, so the retry follows it rather than giving up and leaving
+          // the accepted prompt recoverable all over again.
+          const successor = this.replacedInto.get(current)
+          if (!successor) {
+            return
+          }
+          current = successor
+          continue
+        }
+        if (!this.store.get(current)?.failedPrompt) {
           return
         }
         try {
-          await this.acknowledgeFailedPrompt(sessionId, submitted, acknowledged)
+          await this.acknowledgeFailedPrompt(current, submitted, acknowledged)
           return
         } catch (error) {
           console.warn(
-            `Still could not clear the recovery marker for ${sessionId}:`,
+            `Still could not clear the recovery marker for ${current}:`,
             error,
           )
-          await new Promise((resolve) => setTimeout(resolve, wait))
+          await new Promise((resolve) => {
+            // Unreferenced so a retry that is sleeping cannot hold the process
+            // open after everything else has finished shutting down.
+            const timer = setTimeout(resolve, wait)
+            timer.unref?.()
+            this.acknowledgementTimers.add(timer)
+          })
           // Backed off, so an outage costs one attempt a minute rather than
           // two a second.
           wait = Math.min(wait * 2, 60_000)
@@ -2782,6 +2836,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const nativeEnqueue = this.shouldUseNativeTerminalQueue(sessionId, enqueue)
     const dispatchedAt = new Date().toISOString()
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
+      // The terminal has it. Anything that fails from here leaves a send that
+      // went out, however ordinary the failure.
+      this.deliveredSends.add(sessionId)
       if (nativeEnqueue) {
         const queued = await this.store.update(sessionId, (session) => {
           session.activity = 'Queued in terminal'

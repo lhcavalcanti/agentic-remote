@@ -514,17 +514,49 @@ export class SessionStore {
     prompt: QueuedPrompt,
     answers: string | undefined,
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
-      const queue = session.queuedPrompts || []
-      session.queuedPrompts = [...queue, prompt]
-      session.queuedCount = session.queuedPrompts.length
-      if (
-        session.failedPrompt &&
-        (answers === undefined || session.failedPrompt.failedAt === answers)
-      ) {
-        session.failedPrompt = undefined
+    const existing = this.state.sessions[sessionId]
+    if (!existing) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    const previousQueue = existing.queuedPrompts
+    const previousCount = existing.queuedCount
+    const previousFailed = existing.failedPrompt
+    const previousRevision = existing.revision
+    let appliedQueue: StoredSession['queuedPrompts']
+    let clearedFailure = false
+    try {
+      return await this.mutate(sessionId, (session) => {
+        const queue = session.queuedPrompts || []
+        session.queuedPrompts = [...queue, prompt]
+        session.queuedCount = session.queuedPrompts.length
+        appliedQueue = session.queuedPrompts
+        if (
+          session.failedPrompt &&
+          (answers === undefined || session.failedPrompt.failedAt === answers)
+        ) {
+          session.failedPrompt = undefined
+          clearedFailure = true
+        }
+      })
+    } catch (error) {
+      // Put back what this call changed, and only where it is still what this
+      // call left. Without it the caller reported a failure while memory held
+      // an unblocked queued copy that never reached disk.
+      const current = this.state.sessions[sessionId]
+      if (current) {
+        if (current.queuedPrompts === appliedQueue) {
+          current.queuedPrompts = previousQueue
+          current.queuedCount = previousCount
+        }
+        if (clearedFailure && current.failedPrompt === undefined) {
+          current.failedPrompt = previousFailed
+        }
+        if (current.revision === (previousRevision ?? 0) + 1) {
+          current.revision = previousRevision
+        }
       }
-    })
+      throw error
+    }
   }
 
   async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {

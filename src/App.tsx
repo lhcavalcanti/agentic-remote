@@ -7212,8 +7212,11 @@ function App() {
         ) ||
           changedSinceRefresh(sessionKey(selectedAtRefresh)) ||
           pendingReplacements.current.has(sessionKey(selectedAtRefresh)))
+      // The whole chain, not one step of it. A session cleared twice while the
+      // selection was still catching up leaves the first link pointing at an
+      // id that is itself gone, and selecting that opens nothing.
       const followedSelection = selectedAtRefresh
-        ? replacedInto.current.get(sessionKey(selectedAtRefresh))
+        ? followReplacements(sessionKey(selectedAtRefresh))
         : undefined
       if (
         selectedAtRefresh &&
@@ -7271,6 +7274,14 @@ function App() {
             eventSequenceRef.current,
           )
           pendingReplacements.current.delete(sessionKey(event.session))
+          // Written straight through as well as scheduled. The ref is assigned
+          // during render, so a request that finishes before React commits
+          // would reconcile against a list this event is not in yet and drop
+          // the replacement it is announcing.
+          sessionsRef.current = upsertSession(
+            sessionsRef.current,
+            event.session,
+          )
           setSessions((current) => upsertSession(current, event.session))
           // The arrival is the newest word on its own ancestry, and the loads
           // only ever see what the server last listed. Without this, state
@@ -7678,22 +7689,34 @@ function App() {
     if (fromKey === toKey) {
       return
     }
+    // The reading position decides the rest. If the replacement already has
+    // one of its own, the ancestor's markers stay where they are: moving them
+    // across would point the replacement's own document at a place it never
+    // came from, and the position that gets written back would overwrite what
+    // the reader actually has open.
+    const takesPosition =
+      knowledgePositionsRef.current[fromKey] !== undefined &&
+      knowledgePositionsRef.current[toKey] === undefined
     const offset = knowledgeScrollTops.current[fromKey]
     delete knowledgeScrollTops.current[fromKey]
-    if (offset !== undefined && knowledgeScrollTops.current[toKey] === undefined) {
+    if (
+      takesPosition &&
+      offset !== undefined &&
+      knowledgeScrollTops.current[toKey] === undefined
+    ) {
       knowledgeScrollTops.current[toKey] = offset
     }
     if (knowledgeRestoredKey.current === fromKey) {
-      knowledgeRestoredKey.current = toKey
+      knowledgeRestoredKey.current = takesPosition ? toKey : undefined
     }
     if (knowledgeViewOwnerKey.current === fromKey) {
       // Without this the replacement treats the document already on screen as
       // another session's, clears it, and fetches it again — and loses it
       // entirely if the root has become unreachable.
-      knowledgeViewOwnerKey.current = toKey
+      knowledgeViewOwnerKey.current = takesPosition ? toKey : undefined
     }
     if (knowledgeOwnerKey.current === fromKey) {
-      knowledgeOwnerKey.current = toKey
+      knowledgeOwnerKey.current = takesPosition ? toKey : undefined
     }
     setKnowledgePositions((current) => {
       const position = current[fromKey]

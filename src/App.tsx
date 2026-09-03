@@ -7178,12 +7178,20 @@ function App() {
           (computerEventSequenceRef.current.get(computer.id) || 0) <=
           startedAtSequence,
       )
+      const answeredFor = new Set(listing.answeredComputerIds)
       const reconcile = (existingSessions: ManagedSession[]) => {
         let reconciled = sortSessions(snapshotSessions)
         for (const existing of existingSessions) {
           const changedAt =
             sessionEventSequenceRef.current.get(sessionKey(existing)) || 0
-          if (changedAt > startedAtSequence) {
+          // A computer that did not answer is not saying its sessions are
+          // gone; nothing looked for them. Reading a cached answer as the
+          // whole truth evicted sessions the browser already had, and after a
+          // hub restart the cache is empty, so it removed all of them.
+          if (
+            changedAt > startedAtSequence ||
+            !answeredFor.has(existing.computerId)
+          ) {
             reconciled = upsertSession(reconciled, existing)
           }
         }
@@ -7215,7 +7223,6 @@ function App() {
       // nobody left to redirect. A computer that is merely offline is a
       // different thing from one whose list was never fetched, and the hub is
       // the only one that knows which happened.
-      const answeredFor = new Set(listing.answeredComputerIds)
       for (const key of [...pendingReplacements.current]) {
         const announcedAt = sessionEventSequenceRef.current.get(key) || 0
         if (present.has(key)) {
@@ -7356,6 +7363,12 @@ function App() {
           claimReplacedSessions([event.session])
         } else if (event.type === 'session.removed') {
           const removedKey = `${event.computerId}:${event.sessionId}`
+          // Whatever this session was itself promised as, it is not on its way
+          // any more. Left pending, selection cleanup went on preserving a
+          // session that had been deleted and the reader sat on a blank
+          // conversation, with the overlapping snapshot unable to settle it
+          // because this very removal moved its watermark on.
+          pendingReplacements.current.delete(removedKey)
           eventSequenceRef.current += 1
           sessionEventSequenceRef.current.set(
             removedKey,
@@ -7438,6 +7451,12 @@ function App() {
           setComputers((current) =>
             current.filter((computer) => computer.id !== event.computerId),
           )
+          // Nothing on a computer that has gone is still on its way.
+          for (const key of [...pendingReplacements.current]) {
+            if (key.slice(0, key.indexOf(':')) === event.computerId) {
+              pendingReplacements.current.delete(key)
+            }
+          }
           setSessions((current) =>
             current.filter((session) => session.computerId !== event.computerId),
           )
@@ -8736,6 +8755,40 @@ function App() {
     setError(undefined)
     try {
       const cleared = await clearConversation(target.computerId, target.id)
+      // Registered here, not only from the live removal. The response is
+      // proof enough on its own, and a missed event would otherwise leave a
+      // late write, a Back entry or a deep link still pointing at a session
+      // that no longer exists.
+      const clearedKey = sessionKey(cleared)
+      replacedInto.current.set(targetKey, clearedKey)
+      adoptedReplacements.current.add(targetKey)
+      migrateSessionState(targetKey, clearedKey)
+      // This answer can be overtaken. The replacement it names may itself have
+      // been cleared while the request was in flight, and putting it back
+      // would resurrect a session that is gone and take the reader off the one
+      // that replaced it.
+      const liveKey = followReplacementsRef.current(clearedKey)
+      if (liveKey !== clearedKey) {
+        setSelectedKey((current) =>
+          current === targetKey || current === clearedKey ? liveKey : current,
+        )
+        return liveKey
+      }
+      // The answer speaks for both sessions, so nothing older may speak for
+      // either of them afterwards. Written before the list is touched, and
+      // into the ref as well, so a snapshot already in flight cannot put the
+      // cleared session back or drop the replacement it has never heard of.
+      eventSequenceRef.current += 1
+      sessionEventSequenceRef.current.set(targetKey, eventSequenceRef.current)
+      sessionEventSequenceRef.current.set(clearedKey, eventSequenceRef.current)
+      sessionsRef.current = upsertSession(
+        sessionsRef.current.filter(
+          (session) =>
+            session.id !== target.id ||
+            session.computerId !== target.computerId,
+        ),
+        cleared,
+      )
       setSessions((current) =>
         upsertSession(
           current.filter(
@@ -8746,14 +8799,6 @@ function App() {
           cleared,
         ),
       )
-      // Registered here, not only from the live removal. The response is
-      // proof enough on its own, and a missed event would otherwise leave a
-      // late write, a Back entry or a deep link still pointing at a session
-      // that no longer exists.
-      const clearedKey = sessionKey(cleared)
-      replacedInto.current.set(targetKey, clearedKey)
-      adoptedReplacements.current.add(targetKey)
-      migrateSessionState(targetKey, clearedKey)
       setSelectedKey(clearedKey)
       return clearedKey
     } catch (caught) {

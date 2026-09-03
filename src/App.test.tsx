@@ -6723,6 +6723,70 @@ describe('App', () => {
     expect(getSession).not.toHaveBeenCalledWith('computer-1', 'session-2')
   })
 
+  it('does not put back a replacement that was cleared again while answering', async () => {
+    // A -> B finishes on the server, then B -> C is announced here before A's
+    // answer arrives. Putting B back would resurrect a session that is gone
+    // and take the reader off the one that replaced it.
+    let answerClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerClear = resolve
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(answerClear).toBeDefined())
+
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-1-b',
+          replacedBy: 'session-1-c',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerClear?.({ ...session, id: 'session-1-b', messages: [] })
+    })
+
+    // B is gone, so it must not be in the list, and the reader belongs on C.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /session-1-b/ }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(getSession).not.toHaveBeenCalledWith('computer-1', 'session-1-b')
+  })
+
+  it('keeps sessions a computer was never asked about', async () => {
+    // The hub answers for a paired computer out of its own cache when the node
+    // does not reply, and after a restart that cache is empty. Reading it as
+    // the whole truth removed every session the browser already had.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    vi.mocked(listSessionListing).mockResolvedValue({
+      sessions: [],
+      answeredComputerIds: [],
+    })
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(await screen.findAllByText('Project chat')).not.toHaveLength(0)
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',

@@ -748,8 +748,14 @@ export class TmuxTerminalSessionController
       ])
       if (!(await waitForPaneText(target, confirmation, alreadyShown))) {
         // The prompt never showed the message, so pressing Enter would send
-        // whatever it does hold and still be reported as delivered. The text
-        // is left where the reader can see it and send it again.
+        // whatever it does hold and still be reported as delivered.
+        //
+        // The paste itself may still have landed, and saying so while leaving
+        // it there is what puts a second copy in the prompt when the message
+        // is sent again — which the queue does on its own, without anyone
+        // deciding to. The prompt is put back the way it was found, so
+        // sending again is sending once.
+        await clearPastedPrompt(target)
         throw Object.assign(
           new Error(
             'The terminal did not receive the message. Please try again.',
@@ -1624,6 +1630,23 @@ export function paneShowsText(
  * prompt happened to hold, and report a message as delivered that the
  * terminal never received.
  */
+/**
+ * Takes back a paste that was never sent.
+ *
+ * A message reported as undelivered has to leave nothing behind, or sending
+ * it again lands beside the first copy rather than instead of it. Ctrl+U
+ * clears the composer, and Escape first closes the paste placeholder the CLI
+ * shows for a large one, which would otherwise survive it.
+ */
+async function clearPastedPrompt(target: string): Promise<void> {
+  for (const keys of [['Escape'], ['C-u']]) {
+    await execFileAsync('tmux', ['send-keys', '-t', target, ...keys]).catch(
+      () => undefined,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+  }
+}
+
 async function capturePane(target: string): Promise<string> {
   return (
     await execFileAsync('tmux', ['capture-pane', '-p', '-t', target, '-S', '-30'])

@@ -4699,8 +4699,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const before = next.command
         ? await this.terminalController.capture?.(sessionId)
         : undefined
-      if (!(await this.terminalController.send(sessionId, next.content, false))) {
-        throw new Error('External terminal is no longer available')
+      try {
+        if (
+          !(await this.terminalController.send(sessionId, next.content, false))
+        ) {
+          throw new Error('External terminal is no longer available')
+        }
+      } catch (error) {
+        // The queue drains again whenever the session next falls idle, so a
+        // prompt left on it after a failed send is sent a second time without
+        // anyone asking. It is taken off and reported instead, which is what
+        // the reader can act on.
+        await this.store.removeQueuedPrompt(sessionId, next.id).catch(
+          () => undefined,
+        )
+        throw error
       }
       const { prompt } = await this.store.removeQueuedPrompt(sessionId, next.id)
       if (!prompt) {

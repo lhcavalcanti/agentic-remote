@@ -42,6 +42,7 @@ import {
   readKnowledgeFile,
   addKnowledgeRoot,
   listSessions,
+  listSessionListing,
   listWorkspace,
   validateSessionDirectory,
   moveSessionToTmux,
@@ -62,6 +63,7 @@ import { PWA_UPDATE_EVENT } from './pwa'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
+  listSessionListing: vi.fn(),
   listBackgroundTasks: vi.fn(),
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
@@ -322,6 +324,18 @@ describe('App', () => {
     // one test's deep link selects a session in the next.
     window.history.replaceState({}, '', '/')
     vi.mocked(listSessions).mockResolvedValue([session])
+    // The snapshot asks for the list and for which computers answered for
+    // their own sessions. Every test that sets up a list means it to be an
+    // answer from everything it names.
+    vi.mocked(listSessionListing).mockImplementation(async () => {
+      const sessions = await vi.mocked(listSessions)()
+      return {
+        sessions,
+        answeredComputerIds: [
+          ...new Set(sessions.map((entry) => entry.computerId)),
+        ],
+      }
+    })
     vi.mocked(listBackgroundTasks).mockResolvedValue({
       tasks: [],
       runningCount: 0,
@@ -6642,6 +6656,71 @@ describe('App', () => {
       expect(getSession).toHaveBeenCalledWith('computer-1', 'session-2-c'),
     )
     window.history.replaceState({}, '', '/')
+  })
+
+  it('keeps waiting when the node that owns a replacement did not answer', async () => {
+    // The hub answers for a paired computer out of its own cache when the node
+    // request fails, and a failed request does not have to mean the computer
+    // is offline. The replacement is missing from that answer because nothing
+    // looked for it, not because it has gone.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listSessionListing).mockImplementation(async () => ({
+      sessions: [session, secondSession],
+      // `computer-1` is still reported online; its list simply was not fetched.
+      answeredComputerIds: [],
+    }))
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The removal comes first, so the snapshot that follows starts after the
+    // replacement was announced -- its absence is no longer explained by the
+    // request predating the announcement, and this is the answer that settles
+    // the claim.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-1',
+          replacedBy: 'session-1-next',
+        }),
+      } as MessageEvent)
+    })
+    vi.mocked(getSession).mockClear()
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-next',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    vi.mocked(getSession).mockResolvedValue(replacement)
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: replacement,
+        }),
+      } as MessageEvent)
+    })
+
+    // The replacement was still expected, so the reader is on it rather than
+    // on whatever an unanswered list happened to sort first.
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1-next'),
+    )
+    // Never taken back to the session that was cleared, nor to anything else
+    // the unanswered list happened to still be carrying.
+    expect(getSession).not.toHaveBeenCalledWith('computer-1', 'session-1')
+    expect(getSession).not.toHaveBeenCalledWith('computer-1', 'session-2')
   })
 
   it('retries a knowledge restore that failed', async () => {

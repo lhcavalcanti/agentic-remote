@@ -149,6 +149,7 @@ import {
   listDirectories,
   validateSessionDirectory,
   listSessions,
+  listSessionListing,
   listWorkspace,
   moveSessionToTmux,
   removeComputer,
@@ -7150,8 +7151,8 @@ function App() {
       }
       const startedAtSequence = eventSequenceRef.current
       const startedAtMuteRevision = muteRevisionRef.current
-      const [loadedSessions, loadedComputers, pushSettings] = await Promise.all([
-        listSessions(),
+      const [listing, loadedComputers, pushSettings] = await Promise.all([
+        listSessionListing(),
         listComputers(),
         getPushSettings().catch((caught: unknown) => {
           console.warn('Unable to refresh notification mute settings:', caught)
@@ -7162,6 +7163,7 @@ function App() {
       if (!generation) {
         return
       }
+      const loadedSessions = listing.sessions
       const snapshotSessions = loadedSessions.filter(
         (session) =>
           (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) <=
@@ -7206,16 +7208,14 @@ function App() {
       // selection treating it as on its way.
       const present = new Set(reconciledForClaim.map((s) => sessionKey(s)))
       // A hub answers for a paired computer out of its own cache when the node
-      // does not reply, and it reports the computer as offline when that
-      // happens. Such an answer has not looked at the node at all, so a
-      // replacement missing from it has not been shown to be missing: settling
-      // on that let selection cleanup move to an unrelated session, and the
-      // upsert that arrived afterwards had nobody left to redirect.
-      const answeredFor = new Set(
-        snapshotComputers
-          .filter((computer) => computer.online)
-          .map((computer) => computer.id),
-      )
+      // does not reply, and says so alongside the list. Such an answer has not
+      // looked at the node at all, so a replacement missing from it has not
+      // been shown to be missing: settling on that let selection cleanup move
+      // to an unrelated session, and the upsert that arrived afterwards had
+      // nobody left to redirect. A computer that is merely offline is a
+      // different thing from one whose list was never fetched, and the hub is
+      // the only one that knows which happened.
+      const answeredFor = new Set(listing.answeredComputerIds)
       for (const key of [...pendingReplacements.current]) {
         const announcedAt = sessionEventSequenceRef.current.get(key) || 0
         if (present.has(key)) {

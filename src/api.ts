@@ -103,9 +103,36 @@ export async function removeComputer(computerId: string): Promise<void> {
   })
 }
 
+export interface SessionListing {
+  sessions: ManagedSession[]
+  /**
+   * Which computers answered for their own sessions.
+   *
+   * A hub answers for a paired computer out of its cache when the node does
+   * not reply, so a session missing from the list is only known to be missing
+   * for a computer named here.
+   */
+  answeredComputerIds: string[]
+}
+
 export async function listSessions(): Promise<ManagedSession[]> {
-  const response = await request<{ sessions: ManagedSession[] }>('/api/sessions')
-  return response.sessions
+  return (await listSessionListing()).sessions
+}
+
+export async function listSessionListing(): Promise<SessionListing> {
+  const response = await request<{
+    sessions: ManagedSession[]
+    answeredComputerIds?: string[]
+  }>('/api/sessions')
+  return {
+    sessions: response.sessions,
+    // An older hub says nothing about authority, and reading that silence as
+    // "nobody answered" would leave every replacement pending for good.
+    answeredComputerIds:
+      response.answeredComputerIds ?? [
+        ...new Set(response.sessions.map((session) => session.computerId)),
+      ],
+  }
 }
 
 export async function listHistory(): Promise<ManagedSession[]> {

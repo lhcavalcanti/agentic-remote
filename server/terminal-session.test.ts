@@ -1049,7 +1049,7 @@ describe('composerHoldsOtherText', () => {
       composerHoldsOtherText(
         framed(['│ >  │']),
         framed(['│ > [Pasted text #3] │']),
-        'a very long message',
+        'a very long message '.repeat(60),
       ),
     ).toBe(false)
   })
@@ -1059,7 +1059,7 @@ describe('composerHoldsOtherText', () => {
       composerHoldsOtherText(
         framed(['│ > [Pasted text #2] │']),
         framed(['│ > [Pasted text #2] [Pasted text #3] │']),
-        'a very long message',
+        'a very long message '.repeat(60),
       ),
     ).toBe(true)
   })
@@ -1072,7 +1072,7 @@ describe('composerHoldsOtherText', () => {
       composerHoldsOtherText(
         framed(['│ >  │']),
         framed(['│ > [Pasted text #3] [Pasted text #4] │']),
-        'a very long message',
+        'a very long message '.repeat(60),
       ),
     ).toBe(true)
   })
@@ -1117,6 +1117,20 @@ describe('composerHoldsOtherText', () => {
         framed(['│ >  │']),
         framed(['│ > deploy deploy │']),
         'deploy',
+      ),
+    ).toBe(true)
+  })
+
+
+  it('does not claim a placeholder a short send cannot have made', () => {
+    // The send never landed and a terminal user made a large paste of their
+    // own during the wait. Crediting this send with their placeholder takes
+    // it away with the cleanup.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Pasted text #7] │']),
+        'short',
       ),
     ).toBe(true)
   })

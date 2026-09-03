@@ -379,6 +379,8 @@ export interface SlashCommand {
 export interface ExecuteCommandInput {
   command: string
   enqueue?: boolean
+  /** See `SendMessageInput`. */
+  acknowledgesFailure?: string
 }
 
 export interface DirectoryListing {

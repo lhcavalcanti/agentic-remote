@@ -72,6 +72,7 @@ export interface SessionService {
     sessionId: string,
     command: string,
     enqueue?: boolean,
+    acknowledgesFailure?: string,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>

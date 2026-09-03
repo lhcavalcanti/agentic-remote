@@ -2860,15 +2860,32 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     await this.store.clearFailedPrompt(sessionId).catch(() => undefined)
+    // The marker was holding the queue shut. Nothing else will come back to
+    // it, so the prompts it was blocking are started here.
+    if (this.store.get(sessionId)?.queuedPrompts?.length) {
+      void this.drainTerminalQueue(sessionId).catch(() => undefined)
+    }
   }
 
   async executeCommand(
     sessionId: string,
     rawCommand: string,
     enqueue = false,
+    acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
     const command = rawCommand.trim()
-    await this.acknowledgeFailedPrompt(sessionId, command)
+    // Answered only once the command has actually been taken, like a message.
+    const ran = await this.runCommand(sessionId, command, enqueue)
+    await this.acknowledgeFailedPrompt(sessionId, command, acknowledgedFailure)
+    return ran
+  }
+
+  private async runCommand(
+    sessionId: string,
+    command: string,
+    enqueue: boolean,
+  ): Promise<SessionDetail> {
+
     if (!command.startsWith('/')) {
       throw new Error('Slash command must start with /')
     }

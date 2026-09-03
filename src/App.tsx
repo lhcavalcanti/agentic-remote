@@ -7335,6 +7335,10 @@ function App() {
     // written. The server clears the marker when that send is accepted, which
     // is what settles the question; nothing here compares the two clocks.
     if (submissionsInFlight.current.has(key)) {
+      // Kept rather than dropped: if that submission then fails, nothing else
+      // comes back to this, and the text would stay invisible while its
+      // marker holds the queue.
+      unshownFailures.current.set(key, { content, stamp })
       return
     }
     updateComposerDrafts([key], (current) => {
@@ -8195,6 +8199,9 @@ function App() {
     try {
       const updated = isCommand
         ? await executeCommand(selected.computerId, selected.id, {
+            // A restored prompt can be a slash command, and it answers the
+            // failure just as a message does.
+            acknowledgesFailure: restoredFailures.current.get(targetKey),
             command: content,
             enqueue: shouldEnqueue,
           })

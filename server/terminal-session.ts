@@ -1727,7 +1727,12 @@ export function composerHoldsOtherText(
   // Exactly one placeholder is discounted, and only if exactly one appeared.
   // Someone pasting at the terminal during the wait adds one too, and there
   // is no way to tell which is which, so nothing is taken back in that case.
+  // A placeholder is this paste's only if the paste is large enough to have
+  // produced one. A short send that never landed, beside a terminal user's own
+  // large paste, was being credited with their placeholder and taking it away.
+  const couldHavePlaceholder = compact(pasted).length > PASTE_ECHO_LIMIT
   if (
+    couldHavePlaceholder &&
     pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1
   ) {
     remainder = remainder.replace(PASTED_PLACEHOLDER, ' ')
@@ -1751,6 +1756,10 @@ export function composerHoldsOtherText(
 
 // Matched against composer text with its whitespace removed, because the
 // composer wraps inside words and the placeholder is no exception.
+// Roughly where the CLI stops echoing a paste and shows a placeholder for it
+// instead. Only a send past this size can account for one.
+const PASTE_ECHO_LIMIT = 800
+
 const PASTED_PLACEHOLDER = /\[Pastedtext[^\]]*\]/u
 
 function occurrences(text: string, needle: string): number {

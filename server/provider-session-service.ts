@@ -179,8 +179,14 @@ export class ProviderSessionService
     sessionId: string,
     content: string,
     enqueue?: boolean,
+    acknowledgesFailure?: string,
   ): Promise<SessionDetail> {
-    return this.serviceFor(sessionId).sendMessage(sessionId, content, enqueue)
+    return this.serviceFor(sessionId).sendMessage(
+      sessionId,
+      content,
+      enqueue,
+      acknowledgesFailure,
+    )
   }
 
   listCommands(sessionId: string): Promise<SlashCommand[]> {
@@ -191,11 +197,13 @@ export class ProviderSessionService
     sessionId: string,
     command: string,
     enqueue?: boolean,
+    acknowledgesFailure?: string,
   ): Promise<SessionDetail> {
     return this.serviceFor(sessionId).executeCommand(
       sessionId,
       command,
       enqueue,
+      acknowledgesFailure,
     )
   }
 

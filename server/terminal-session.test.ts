@@ -13,6 +13,9 @@ import {
   paneShowsText,
   parseTerminalFormActiveField,
   parseTerminalPermission,
+  terminalChecklistState,
+  submitTerminalForm,
+  terminalFormCommitKeys,
   parseTerminalUpdateNotice,
   parseTerminalUserInput,
   terminalCommandOutput,
@@ -901,5 +904,70 @@ describe('terminal form identity', () => {
 
   it('reports no focus for a pane that is not this form', () => {
     expect(parseTerminalFormActiveField('nothing here', form)).toBeUndefined()
+  })
+})
+
+describe('terminalFormCommitKeys', () => {
+  it('moves between fields with Tab and accepts once at the end', () => {
+    // The CLI prints its own contract: `enter accept · tab next`. Enter
+    // between fields would accept the form with every field after it left at
+    // whatever it opened with.
+    expect(terminalFormCommitKeys(3)).toEqual(['Tab', 'Tab', 'Enter'])
+  })
+
+  it('accepts immediately when the form has one field', () => {
+    expect(terminalFormCommitKeys(1)).toEqual(['Enter'])
+  })
+})
+
+describe('submitTerminalForm', () => {
+  const openForm = [
+    ' Copilot needs information.',
+    ' Which sessions get the button',
+    ' enter accept · esc cancel',
+  ].join('\n')
+  const closed = '❯ \n'
+
+  it('reports the form closing', async () => {
+    await expect(
+      submitTerminalForm(async () => closed, async () => {}),
+    ).resolves.toBe(true)
+  })
+
+  it('gives up on a form that will not close', async () => {
+    await expect(
+      submitTerminalForm(async () => openForm, async () => {}, 10),
+    ).resolves.toBe(false)
+  })
+})
+
+describe('terminalChecklistState', () => {
+  // Captured from a real Copilot CLI checklist, cursor on the ticked row.
+  const pane = [
+    ' Wiki operations to authorize:',
+    ' Confirm both page updates, or select only one operation.',
+    ' ❯ ✓ Confirm all (Recommended)',
+    '   • Upsert experiment child page and upload charts',
+    '   • Upsert Experiments parent index',
+    '   • Cancel',
+    '   • Other (type your answer)',
+    '',
+    ' ↑/↓ select · space toggle · enter accept · esc cancel',
+  ].join('\n')
+
+  it('reads which rows the list is showing as ticked', () => {
+    // The freeform row is one of them, so a four-option list has five rows.
+    expect(terminalChecklistState(pane, 5)).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+    ])
+  })
+
+  it('refuses a screen that is not showing a list of that size', () => {
+    expect(terminalChecklistState(pane, 3)).toBeUndefined()
+    expect(terminalChecklistState('❯ \n', 4)).toBeUndefined()
   })
 })

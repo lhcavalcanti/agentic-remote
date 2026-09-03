@@ -15,12 +15,16 @@ const execFileAsync = promisify(execFile)
 
 /**
  * One field of the agent's structured form. Fields are tabs: a select is
- * driven by moving the cursor and committing it, a text field by replacing
- * its contents. Committing a field advances to the next one, and committing
- * the last field submits the form.
+ * driven by moving the cursor, a text field by replacing its contents. Moving
+ * between them is Tab, and Enter accepts the whole form, so Enter is pressed
+ * once, at the end.
  */
 export type TerminalFormStep =
   | { kind: 'select'; optionCount: number; index: number }
+  // A checklist is not chosen but toggled, and what it is already showing is
+  // the only thing that says which rows have to change. So it carries what was
+  // chosen, and the rows to press are worked out against the screen.
+  | { kind: 'checklist'; optionCount: number; selected: number[] }
   | { kind: 'text'; value: string }
 
 /**
@@ -531,8 +535,49 @@ export class TmuxTerminalSessionController
       if (parseTerminalFormActiveField(pane, form) !== 0) {
         return false
       }
-      for (const step of steps) {
-        if (step.kind === 'select') {
+      const commitKeys = terminalFormCommitKeys(steps.length)
+      for (const [position, step] of steps.entries()) {
+        if (step.kind === 'checklist') {
+          const ticked = terminalChecklistState(await capture(), step.optionCount)
+          if (!ticked) {
+            // Without knowing what the checklist is showing, pressing space
+            // over it would turn the wrong rows on and off. An attached
+            // terminal can have changed any of them since the reader chose.
+            return false
+          }
+          // Normalising to the top makes the walk independent of wherever the
+          // cursor happens to be sitting.
+          for (let index = 0; index <= step.optionCount; index += 1) {
+            await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Up'])
+            await new Promise((resolve) => setTimeout(resolve, 25))
+          }
+          const wanted = new Set(step.selected)
+          const lastChange = ticked.reduce(
+            (furthest, isTicked, index) =>
+              wanted.has(index) === isTicked ? furthest : index,
+            -1,
+          )
+          for (let index = 0; index <= lastChange; index += 1) {
+            if (wanted.has(index) !== ticked[index]) {
+              await execFileAsync('tmux', [
+                'send-keys',
+                '-t',
+                owner.target,
+                'Space',
+              ])
+              await new Promise((resolve) => setTimeout(resolve, 35))
+            }
+            if (index < lastChange) {
+              await execFileAsync('tmux', [
+                'send-keys',
+                '-t',
+                owner.target,
+                'Down',
+              ])
+              await new Promise((resolve) => setTimeout(resolve, 35))
+            }
+          }
+        } else if (step.kind === 'select') {
           // Normalising to the top first makes the move independent of
           // whichever option the field currently holds.
           for (let index = 0; index <= step.optionCount; index += 1) {
@@ -579,27 +624,38 @@ export class TmuxTerminalSessionController
             await new Promise((resolve) => setTimeout(resolve, 45))
           }
         }
-        // Committing a field advances to the next; the last one submits.
-        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
+        // Tab moves to the next field. Enter does not: it accepts the whole
+        // form, leaving every field after this one at whatever it opened with,
+        // so it is pressed once and only when there is nothing left to fill.
+        await execFileAsync('tmux', [
+          'send-keys',
+          '-t',
+          owner.target,
+          commitKeys[position],
+        ])
         await new Promise((resolve) => setTimeout(resolve, 90))
-      }
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const settled = (
-          await execFileAsync('tmux', [
-            'capture-pane',
-            '-p',
-            '-t',
-            owner.target,
-            '-S',
-            '-40',
-          ])
-        ).stdout
-        if (!parseTerminalFormPrompt(settled)) {
-          return true
+        if (commitKeys[position] === 'Tab') {
+          // The next field is filled from what is on screen, so waiting a
+          // fixed moment for the repaint is not enough: a slow one leaves the
+          // field just left still showing, and it would be answered again with
+          // the next field's values.
+          let arrived = false
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            pane = await capture()
+            if (parseTerminalFormActiveField(pane, form) === position + 1) {
+              arrived = true
+              break
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+          if (!arrived) {
+            return false
+          }
         }
-        await new Promise((resolve) => setTimeout(resolve, 150))
       }
-      return false
+      return submitTerminalForm(capture, (ms) =>
+        new Promise((resolve) => setTimeout(resolve, ms)),
+      )
     })
   }
 
@@ -1084,6 +1140,45 @@ export function terminalCommandOutput(
  * CLI prints above the field tabs, and the key hints are what it prints
  * below them.
  */
+/**
+ * Waits for a filled form to close, activating its Submit row if it has one.
+ *
+ * Committing the last field closes a form whose fields are all there is, and
+ * leaves focus on Submit in a form that ends with one. Nothing on screen says
+ * which kind is open, so the form is given time to close on its own and only
+ * then offered an Enter. That Enter is sent while the form is still showing,
+ * so one that closed itself never receives a stray keystroke into whatever
+ * replaced it.
+ */
+/**
+ * The key that ends each field, in order.
+ *
+ * The CLI prints its own contract along the bottom of the form — `enter
+ * accept · tab next` — so Enter is not a way of moving on. Sending it between
+ * fields submits the form with every field after it at whatever it opened
+ * with, which is how a confirmation nobody agreed to gets answered.
+ */
+export function terminalFormCommitKeys(fieldCount: number): string[] {
+  return Array.from({ length: fieldCount }, (_, index) =>
+    index === fieldCount - 1 ? 'Enter' : 'Tab',
+  )
+}
+
+/** Waits for a filled form to close, reporting whether it ever did. */
+export async function submitTerminalForm(
+  capture: () => Promise<string>,
+  settle: (ms: number) => Promise<void>,
+  attempts = 24,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!parseTerminalFormPrompt(await capture())) {
+      return true
+    }
+    await settle(150)
+  }
+  return false
+}
+
 export function parseTerminalFormPrompt(pane: string): boolean {
   const lines = pane.split('\n').map(cleanDialogLine)
   const header = lines.findLastIndex((line) =>
@@ -1139,6 +1234,36 @@ function terminalFormTabsIndex(
 /**
  * Whether the form on screen is the one these fields describe.
  */
+/**
+ * Which rows of the checklist on screen are ticked, or undefined when the
+ * screen does not show a checklist of that size.
+ *
+ * The CLI marks a ticked row with a check and an unticked one with a bullet,
+ * and the cursor sits to the left of either. What the reader chose in the app
+ * says nothing about what the list is showing: an attached terminal can have
+ * changed any of it since, and the schema's defaults describe how the list
+ * opened rather than how it stands.
+ */
+export function terminalChecklistState(
+  pane: string,
+  optionCount: number,
+): boolean[] | undefined {
+  const marks: boolean[] = []
+  for (const raw of pane.split('\n').map(cleanDialogLine)) {
+    const marked = /^(?:❯\s*)?([✓✔•·])\s+\S/u.exec(raw)
+    if (marked) {
+      marks.push(marked[1] === '✓' || marked[1] === '✔')
+      continue
+    }
+    if (marks.length > 0 && marks.length !== optionCount) {
+      // A run that does not match the list being answered says the screen is
+      // showing something else, so the next run is looked at instead.
+      marks.length = 0
+    }
+  }
+  return marks.length === optionCount ? marks : undefined
+}
+
 export function terminalFormShowsFields(
   pane: string,
   form: TerminalFormIdentity,

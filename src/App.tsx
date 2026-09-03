@@ -7550,6 +7550,18 @@ function App() {
       if (/[\r\n]/.test(target)) {
         throw new Error('Folder paths cannot contain line breaks')
       }
+      // Validation is a round trip to the owning computer, and a turn can
+      // start while it is in flight -- from another reader, or from the
+      // terminal itself. `/cwd` is sent rather than queued, so checking only
+      // before the wait would type into a pane that is now working.
+      const nowBusy = selectedRef.current
+      if (
+        nowBusy &&
+        sessionKey(nowBusy) === sessionKey(selected) &&
+        (nowBusy.status === 'running' || nowBusy.status === 'waiting')
+      ) {
+        throw new Error('Wait for the current agent turn to finish')
+      }
       const updated = await executeCommand(selected.computerId, selected.id, {
         command: `/cwd ${target}`,
       })

@@ -630,6 +630,25 @@ function shellTaskMode(
   }
 }
 
+/** Tools that report on a shell somebody else started. */
+function isShellObserverTool(name: string | undefined): boolean {
+  if (!name) {
+    // A completion that does not say what produced it is not taken as
+    // speaking for a shell it never opened.
+    return false
+  }
+  const tool = name.toLowerCase()
+  return (
+    tool === 'read_bash' ||
+    tool === 'read_shell' ||
+    tool === 'stop_bash' ||
+    tool === 'stop_shell' ||
+    tool === 'list_bash' ||
+    tool === 'bash_output' ||
+    isShellTool(tool)
+  )
+}
+
 function isShellTool(name: string): boolean {
   return (
     name === 'bash' ||
@@ -806,7 +825,12 @@ function shellTaskOutput(
     textFromValue(record.stdout) ||
     textFromValue(record.stderr) ||
     textFromValue(record.detailedContent) ||
-    textFromValue(record.outputPreview)
+    textFromValue(record.outputPreview) ||
+    // The plain shapes too: a result that is just a string, or carries its
+    // text under `content`, is how a completion reported as a footer arrives,
+    // and reading neither left the finished task with no output at all.
+    textFromValue(record.content) ||
+    (typeof value === 'string' ? value : '')
   if (!output) {
     return
   }
@@ -881,10 +905,13 @@ function backgroundHandoff(
           : 'attached',
     }
   }
+  // The raw tail, for the same reason completions use it: the text prepared
+  // for display is truncated and prefers a summary field, so a command that
+  // printed enough before its footer loses the footer itself.
   const message =
-    textFromValue(result) ||
-    textFromValue(recordValue(result.structuredContent)) ||
-    textFromValue(data)
+    rawTailText(result) ||
+    rawTailText(recordValue(result.structuredContent)) ||
+    rawTailText(data)
   // Ordinary output can describe a background command without one existing,
   // and an agent quoting the transport's own wording would otherwise promote
   // a task out of reach of the turn-end sweep. Only the footer counts, and
@@ -921,7 +948,10 @@ function backgroundHandoff(
 function lastForegroundCompletionAt(events: SessionEvent[]): string | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
-    if (event.agentId) {
+    // The owning agent can be named on the envelope or in the payload, and
+    // reading only the envelope took an agent's own completion for the
+    // foreground turn ending.
+    if (event.agentId || eventString(recordValue(event.data), 'agentId')) {
       continue
     }
     if (
@@ -967,6 +997,9 @@ export function backgroundTasksFromEvents(
   // agent outlives the foreground turn, so work it owns cannot be ended by
   // one; only its own agent finishing can.
   const assumedOwners = new Map<string, string>()
+  // Which tool a call belongs to. Only the start event says so, and the
+  // completion has to know whether it came from something that reads shells.
+  const toolNames = new Map<string, string>()
   const assumed = { flags: assumedBackground, owners: assumedOwners }
   const aliases = new Map<string, string>()
   const shellStarts = new Map<
@@ -1210,6 +1243,10 @@ export function backgroundTasksFromEvents(
         continue
       }
       const args = taskArguments(data)
+      const startedCallId = eventString(data, 'toolCallId')
+      if (startedCallId) {
+        toolNames.set(startedCallId, toolName)
+      }
       if (isShellTool(toolName)) {
         const mode = shellTaskMode(data, args, assumeBackground)
         const toolCallId = eventString(data, 'toolCallId')
@@ -1345,8 +1382,15 @@ export function backgroundTasksFromEvents(
       // collision this is meant to remove. Only an observer such as
       // `read_bash`, which owns no start, may resolve one that way.
       const ownsShellStart = Boolean(shellStartFor(toolCallId))
+      // ...and only a tool that reads shells. Any other tool can return
+      // content that happens to end with a completion footer -- a file being
+      // read, an agent quoting a transcript -- and matching on the id would
+      // close whichever live shell holds that recycled number.
+      const observesShells = isShellObserverTool(
+        eventString(data, 'toolName') || toolNames.get(toolCallId),
+      )
       let current = tasks.get(id)
-      if (!current && !ownsShellStart && namedShellId) {
+      if (!current && !ownsShellStart && observesShells && namedShellId) {
         current = tasks.get(taskIdAlias(aliases, namedShellId))
       }
       const start = shellStartFor(toolCallId) || shellStartFor(shellId)
@@ -1459,13 +1503,12 @@ export function backgroundTasksFromEvents(
   // shell whose mode the transport never reported, which is treated as
   // background on the chance that it is.
   const lastTurnEndAt = lastForegroundCompletionAt(events)
-  // The session itself stopping is the end of everything in it, agents
-  // included.
+  // Only the session shutting down ends everything in it, agents included. An
+  // abort stops the turn and an error ends it, but neither disconnects the
+  // session, and background work explicitly put there is meant to outlive
+  // both -- which is why the foreground status treats them the same way.
   const sessionEndedAt = events.findLast(
-    (event) =>
-      event.type === 'session.shutdown' ||
-      event.type === 'abort' ||
-      event.type === 'session.error',
+    (event) => event.type === 'session.shutdown',
   )?.timestamp
   for (const task of tasks.values()) {
     if (

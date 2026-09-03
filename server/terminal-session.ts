@@ -775,6 +775,9 @@ export class TmuxTerminalSessionController
         // empty to begin with; the one now says nothing has been typed into it
         // in the seconds since, which is long enough for someone to have
         // started a message while this was waiting.
+        // Nothing was left behind unless a clear was attempted and did not
+        // confirm. A paste that never landed leaves the prompt as it was.
+        let restored = true
         if (
           landedLate &&
           !composerWasHolding &&
@@ -784,11 +787,16 @@ export class TmuxTerminalSessionController
             content,
           )
         ) {
-          await clearPastedPrompt(target)
+          // The reading and the clear are kept back to back so the composer
+          // has the least chance to change between them, and the clear is
+          // confirmed rather than assumed.
+          restored = await clearPastedPrompt(target, paneBeforePaste, content)
         }
         throw Object.assign(
           new Error(
-            'The terminal did not receive the message. Please try again.',
+            restored
+              ? 'The terminal did not receive the message. Please try again.'
+              : 'The terminal did not receive the message. Check the terminal before sending it again.',
           ),
           { statusCode: 409 },
         )
@@ -1632,7 +1640,13 @@ export function paneEvidenceCount(pane: string, expected: string): number {
     found += 1
     index = at + wanted.length
   }
-  // Copilot collapses a large paste into a placeholder instead of echoing it.
+  // Copilot collapses a large paste into a placeholder instead of echoing it,
+  // so one is evidence only for a send big enough to have produced one.
+  // Counting them for every send let an attached user's own paste stand in for
+  // this one, and Enter would then submit whatever they had written.
+  if (compact(expected).length <= PASTE_ECHO_LIMIT) {
+    return found
+  }
   return found + (pane.match(/\[Pasted text/g) || []).length
 }
 
@@ -1666,13 +1680,30 @@ export function paneShowsText(
  * A message reported as undelivered has to leave nothing behind, or sending
  * it again lands beside the first copy rather than instead of it.
  */
-async function clearPastedPrompt(target: string): Promise<void> {
+export async function clearPastedPrompt(
+  target: string,
+  paneBefore: string,
+  pasted: string,
+): Promise<boolean> {
   // Ctrl+U clears the composer. Escape is deliberately not sent: it would
   // dismiss whatever dialog the agent has open behind the paste.
-  await execFileAsync('tmux', ['send-keys', '-t', target, 'C-u']).catch(
-    () => undefined,
-  )
+  try {
+    await execFileAsync('tmux', ['send-keys', '-t', target, 'C-u'])
+  } catch {
+    // Saying the prompt was put back when the keystroke never arrived is what
+    // leaves the paste to be concatenated with the retry.
+    return false
+  }
   await new Promise((resolve) => setTimeout(resolve, 30))
+  // The composer is read once more because the reading that authorised this
+  // clear is a moment old, and a terminal user can type inside that moment.
+  // A composer that did not come back empty is holding something this clear
+  // did not account for, and the caller must not report it as put back.
+  const after = await capturePane(target).catch(() => '')
+  if (!after) {
+    return false
+  }
+  return !composerHoldsOtherText(paneBefore, after, pasted)
 }
 
 /**

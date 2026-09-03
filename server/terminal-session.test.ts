@@ -11,6 +11,7 @@ import {
   isTerminalSessionInUsePrompt,
   composerHoldsOtherText,
   composerHoldsText,
+  clearPastedPrompt,
   paneEvidenceCount,
   paneShowsText,
   parseTerminalFormActiveField,
@@ -496,9 +497,27 @@ describe('paneShowsText', () => {
   })
 
   it('recognises a paste Copilot replaced with a placeholder', () => {
+    // Only a send too large to echo can account for a placeholder.
+    const huge = 'a very long message '.repeat(60)
+    expect(paneShowsText('> [Pasted text #1 +40 lines]', huge)).toBe(true)
+  })
+
+  it('does not report the prompt put back when the keystroke never arrived', async () => {
+    // tmux cannot deliver to a pane that is not there. Swallowing that and
+    // reporting the paste taken back is what left it to be concatenated with
+    // the retry the queue sends on its own.
+    await expect(
+      clearPastedPrompt('agentic-remote-missing:0.0', '', 'hello'),
+    ).resolves.toBe(false)
+  })
+
+  it('does not read a terminal user\'s placeholder as a short send landing', () => {
+    // The send is small enough that Copilot would have echoed it, so the
+    // placeholder on the pane is somebody else's paste. Treating it as this
+    // send arriving pressed Enter on whatever they had written.
     expect(
-      paneShowsText('> [Pasted text #1 +40 lines]', 'a very long message'),
-    ).toBe(true)
+      paneShowsText('> [Pasted text #1 +40 lines]', 'ship it'),
+    ).toBe(false)
   })
 
   it('does not accept the same message sent earlier as this one arriving', () => {

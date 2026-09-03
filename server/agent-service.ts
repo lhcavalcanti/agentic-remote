@@ -2527,12 +2527,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     rawContent: string,
     enqueue = false,
+    acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
     const content = rawContent.trim()
     if (!content) {
       throw new Error('Message cannot be empty')
     }
-    await this.acknowledgeFailedPrompt(sessionId, content)
+    // Let go of the recovered text only once this has actually been taken.
+    // Clearing on the way in meant a retry that then failed left the reader
+    // with an empty composer and the server with no copy either.
+    const sent = await this.sendAdmitted(sessionId, content, enqueue)
+    await this.acknowledgeFailedPrompt(sessionId, content, acknowledgedFailure)
+    return sent
+  }
+
+  private async sendAdmitted(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+  ): Promise<SessionDetail> {
     const terminalBacked = await this.terminalController.has(sessionId)
     if (terminalBacked) {
       // A full-screen view takes the keyboard, so a prompt sent now is typed
@@ -2827,6 +2840,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async acknowledgeFailedPrompt(
     sessionId: string,
     submitted: string,
+    acknowledged?: string,
   ): Promise<void> {
     const failed = this.store.get(sessionId)?.failedPrompt
     if (!failed) {
@@ -2836,7 +2850,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // already held something newer never saw the failed prompt, so it lives
     // only here; clearing it because they sent that other thing would delete
     // the one copy without ever showing it to them.
-    if (failed.content.trim() !== submitted.trim()) {
+    // The text going back out, or the reader saying outright that they have
+    // it. Matching alone held the marker for good when they edited or
+    // abandoned the recovered draft, and the marker stops the queue draining.
+    if (
+      failed.content.trim() !== submitted.trim() &&
+      acknowledged !== failed.failedAt
+    ) {
       return
     }
     await this.store.clearFailedPrompt(sessionId).catch(() => undefined)

@@ -496,6 +496,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             sessionId,
             input.content,
             input.enqueue,
+            input.acknowledgesFailure,
           )
         : await this.requireClient(computerId).sendMessage(sessionId, input)
     return managedSession(session, computer)

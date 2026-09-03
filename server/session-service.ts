@@ -65,6 +65,7 @@ export interface SessionService {
     sessionId: string,
     content: string,
     enqueue?: boolean,
+    acknowledgesFailure?: string,
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
   executeCommand(

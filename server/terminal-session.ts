@@ -1712,8 +1712,14 @@ export function composerHoldsOtherText(
   // words, so `deployment-orches` / `tration-controller` is one line rendered
   // as two, and a line-by-line comparison never finds what was pasted.
   const compact = (value: string) => value.replace(/\s+/gu, '')
+  const after = composerText(paneAfter)
+  if (after === undefined) {
+    // The same rule as before the paste: a composer that cannot be read is
+    // treated as holding somebody's message, because Ctrl+U takes all of it.
+    return true
+  }
   const before = compact(composerText(paneBefore) || '')
-  let remainder = compact(composerText(paneAfter) || '')
+  let remainder = compact(after)
   // A paste too large to echo is shown as `[Pasted text #3]` rather than its
   // own text, so removing the lines that were sent leaves the placeholder
   // behind and reads as somebody else's writing.

@@ -5510,6 +5510,12 @@ function App() {
   // reader last submitted, so a stale one is not put back on top of it.
   const handledFailures = useRef(new Map<string, string>())
   const submissionsInFlight = useRef(new Set<string>())
+  // Failures that could not be shown because newer text was in the way, and
+  // the stamp of the one a session's composer is currently holding.
+  const unshownFailures = useRef(
+    new Map<string, { content: string; stamp: string }>(),
+  )
+  const restoredFailures = useRef(new Map<string, string>())
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -7333,12 +7339,15 @@ function App() {
     }
     updateComposerDrafts([key], (current) => {
       if (current[key]) {
-        // Something newer is already there. This is deliberately not recorded
-        // as handled: the text has not been given back to anyone yet, and
-        // marking it so would let the next submission clear the only copy.
+        // Something newer is already there, so this has not been given back
+        // to anyone. Remembered rather than dropped: the composer can empty
+        // again, and until then the marker on the server holds the queue.
+        unshownFailures.current.set(key, { content, stamp })
         return current
       }
       handledFailures.current.set(key, stamp)
+      unshownFailures.current.delete(key)
+      restoredFailures.current.set(key, stamp)
       return { ...current, [key]: content }
     })
   }
@@ -7358,6 +7367,19 @@ function App() {
       }
     }
   }, [sessions])
+
+  // A failure that had to wait is offered again as soon as the composer it
+  // was meant for is free. Without this it stayed invisible while its marker
+  // went on holding the queue.
+  useEffect(() => {
+    for (const [key, pending] of unshownFailures.current) {
+      if (composerDrafts[key]) {
+        continue
+      }
+      handledFailures.current.delete(key)
+      restoreFailedPromptRef.current(key, pending.content, pending.stamp)
+    }
+  }, [composerDrafts])
 
   function updateComposerDrafts(
     invalidateKeys: string[],
@@ -8177,9 +8199,14 @@ function App() {
             enqueue: shouldEnqueue,
           })
         : await sendMessage(selected.computerId, selected.id, {
+            // Whatever they were handed back is answered by this, whether
+            // they sent it as it was, edited it, or replaced it outright.
+            acknowledgesFailure: restoredFailures.current.get(targetKey),
             content,
             enqueue: shouldEnqueue,
           })
+      restoredFailures.current.delete(targetKey)
+      unshownFailures.current.delete(targetKey)
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
       prependComposerForKey(targetKey, content)

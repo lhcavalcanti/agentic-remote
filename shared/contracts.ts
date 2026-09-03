@@ -319,6 +319,14 @@ export interface CreateSessionInput {
 export interface SendMessageInput {
   content: string
   enqueue?: boolean
+  /**
+   * The failure this submission is the reader's answer to.
+   *
+   * Carries the `failedAt` of the prompt they were handed back, so an edited
+   * or abandoned one can be let go of. Matching on the text alone held the
+   * marker for good, and the marker stops the queue draining.
+   */
+  acknowledgesFailure?: string
 }
 
 export interface AudioTranscription {

@@ -1691,6 +1691,10 @@ async function clearPastedPrompt(target: string): Promise<void> {
 const COMPOSER_PLACEHOLDERS = [
   /^Message agent on .+(?:\u2026|\.\.\.)$/iu,
   /^Type a message(?:\u2026|\.\.\.)$/iu,
+  // What the CLI writes into an empty composer instead of a placeholder: a
+  // reminder of what the prefixes do. Read as somebody's message, it stopped
+  // a paste ever being taken back.
+  /^Type @ to mention files, # for issues\/PRs, \/ for commands$/iu,
 ]
 
 /**

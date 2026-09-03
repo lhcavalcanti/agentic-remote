@@ -7341,8 +7341,11 @@ function App() {
     if (!failed?.content) {
       return
     }
+    // The token stays. A reader who edits what they were handed and then
+    // fails to send it still has that failure's text in front of them, and
+    // dropping the token means no later submission can be recognised as the
+    // answer to it, because the words no longer match.
     handledFailures.current.delete(key)
-    restoredFailures.current.delete(key)
     restoreFailedPrompt(key, failed.content, failed.failedAt)
   }
 
@@ -8259,7 +8262,6 @@ function App() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       settleSubmission()
-      reofferFailedPrompt(targetKey)
       setSending(false)
       focusComposer(targetKey)
     }

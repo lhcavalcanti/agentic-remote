@@ -1010,6 +1010,17 @@ describe('composerHoldsText', () => {
       composerHoldsText(framed(['│ > Message agent on development\u2026 │'])),
     ).toBe(false)
   })
+
+  it('reads the prefix reminder as an empty composer', () => {
+    // What the CLI actually writes into an empty composer. Taken for
+    // somebody's message, a paste could never be taken back.
+    expect(
+      composerHoldsText(
+        framed(['│ Type @ to mention files, # for issues/PRs, / for commands │']),
+      ),
+    ).toBe(false)
+  })
+
 })
 
 describe('composerHoldsOtherText', () => {

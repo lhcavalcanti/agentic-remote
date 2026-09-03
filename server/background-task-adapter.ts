@@ -1173,6 +1173,11 @@ export function backgroundTasksFromEvents(
             eventString(kind, 'status') === 'queued' ? 'queued' : 'running'
           tasks.set(shellId, current)
           aliases.set(shellId, shellId)
+          // Reported by the CLI itself, so nothing about this shell is being
+          // assumed any more. Left set, a turn ending could close a shell the
+          // CLI had just described.
+          assumedBackground.delete(shellId)
+          assumedOwners.delete(shellId)
         }
       }
       if (
@@ -1264,8 +1269,13 @@ export function backgroundTasksFromEvents(
           const current = shellTask(shellId, event.timestamp, data, mode)
           if (mode?.assumed) {
             assumedBackground.add(current.id)
-            if (event.agentId) {
-              assumedOwners.set(current.id, event.agentId)
+            // The owning agent can be named on the envelope or in the payload,
+            // and a persisted event uses the second. Reading only the first
+            // left the shell with no owner, so a foreground turn ending closed
+            // work a background agent was still doing.
+            const owner = event.agentId || eventString(data, 'agentId')
+            if (owner) {
+              assumedOwners.set(current.id, owner)
             }
           }
           tasks.set(shellId, current)

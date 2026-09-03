@@ -2848,9 +2848,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const canonicalCommand = `/${canonicalName}${
       argument ? ` ${argument}` : ''
     }`
+    const stored = this.store.get(sessionId)
     const busy =
       this.activePrompts.has(sessionId) ||
-      this.drainingSessions.has(sessionId)
+      this.drainingSessions.has(sessionId) ||
+      // A terminal the CLI owns is worked in directly, so a turn can be
+      // running that this process never dispatched. Its recorded status is
+      // the only account of that, and a command sent rather than queued would
+      // otherwise be typed straight into it.
+      ((this.externalSessionIds.has(sessionId) ||
+        this.store.backend(sessionId) === 'terminal') &&
+        (stored?.status === 'running' || stored?.status === 'waiting'))
     if (
       !enqueue &&
       busy &&

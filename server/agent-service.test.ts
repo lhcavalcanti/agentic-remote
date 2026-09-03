@@ -847,6 +847,38 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('leaves a suspended task panel alone instead of starting the session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-panel-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'resting-sdk',
+        cwd: '/tmp/project',
+        title: 'Resting project',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    await store.setSuspended('resting-sdk', true)
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+
+    // The panel asks for every session as the app loads, so asking must not
+    // be what starts the runtime up again.
+    await expect(
+      service.listBackgroundTasks('resting-sdk'),
+    ).resolves.toMatchObject({ tasks: [] })
+  })
+
   it('refuses to suspend a session that still owns background work', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-busy-'))
     directories.push(directory)

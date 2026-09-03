@@ -151,6 +151,9 @@ export class ClaudeAgentService
   private available = false
   private unavailableReason = 'Claude Agent is not initialized'
   private models: RuntimeModelOption[] = []
+  /** Sessions being put down, which nothing may start a query into. */
+  private readonly suspendingSessions = new Set<string>()
+
   private readonly active = new Map<string, ActiveClaudeQuery>()
   private readonly permissions = new Map<string, PendingClaudePermission>()
   private readonly userInputs = new Map<string, PendingClaudeInput>()
@@ -477,6 +480,9 @@ export class ClaudeAgentService
       return stored
     }
     this.requireIdle(id)
+    // Claimed before anything is awaited: a message that got past the check on
+    // its way in would otherwise start a query into a session on its way down.
+    this.suspendingSessions.add(id)
     // The conversation is held on disk and a query is started again for the
     // next message, so letting go of it costs nothing but starting one.
     const active = this.active.get(id)
@@ -484,9 +490,13 @@ export class ClaudeAgentService
       active.abortController.abort()
       this.active.delete(id)
     }
-    const suspended = await this.store.setSuspended(id, true)
-    this.publish(suspended)
-    return suspended
+    try {
+      const suspended = await this.store.setSuspended(id, true)
+      this.publish(suspended)
+      return suspended
+    } finally {
+      this.suspendingSessions.delete(id)
+    }
   }
 
   async resumeSession(id: string): Promise<SessionDetail> {
@@ -533,10 +543,17 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
   ): Promise<SessionDetail> {
-    if (this.store.get(sessionId)?.suspended) {
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
       throw new Error('Resume the session before sending to it')
     }
     await this.refreshAuthentication()
+    // Suspending may have finished while authentication was being refreshed.
+    if (this.store.get(sessionId)?.suspended) {
+      throw new Error('Resume the session before sending to it')
+    }
     const session = this.requireSession(sessionId)
     if (session.status === 'running' || session.status === 'waiting') {
       if (!enqueue) {

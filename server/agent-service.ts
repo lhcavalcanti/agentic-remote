@@ -1503,6 +1503,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
   >()
+  /** Sessions being put down, which nothing may start a turn into. */
+  private readonly suspendingSessions = new Set<string>()
   private readonly answeredTerminalInputs = new Map<
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
@@ -2170,6 +2172,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (stored.suspended) {
       return stored
     }
+    if (this.suspendingSessions.has(id)) {
+      throw new Error('Session is already being suspended')
+    }
+    // Claimed before anything is awaited, so a message arriving while the
+    // background tasks are being read cannot start a turn into a session that
+    // is on its way down.
+    this.suspendingSessions.add(id)
+    try {
+      return await this.suspendClaimedSession(id, stored)
+    } finally {
+      this.suspendingSessions.delete(id)
+    }
+  }
+
+  private async suspendClaimedSession(
+    id: string,
+    stored: SessionDetail,
+  ): Promise<SessionDetail> {
     if (
       stored.status === 'running' ||
       stored.status === 'waiting' ||
@@ -2181,7 +2201,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // idle session can still own live work. Suspending ends the owner, which
     // either abandons that work or leaves it running behind a session that
     // says nothing is.
-    const tasks = await this.syncBackgroundTasks(id).catch(() =>
+    // Asked for the way the panel asks, because a terminal session's tasks
+    // are projected from its event log rather than owned over RPC: the sync
+    // path sees nothing for one and would report it as having no work.
+    const tasks = await this.listBackgroundTasks(id).catch(() =>
       this.backgroundTaskTracker.get(id),
     )
     if (
@@ -2655,7 +2678,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!content) {
       throw new Error('Message cannot be empty')
     }
-    if (this.store.get(sessionId)?.suspended) {
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
       throw new Error('Resume the session before sending to it')
     }
     const terminalBacked = await this.terminalController.has(sessionId)
@@ -3205,6 +3231,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         { assumeBackground: true },
       )
       return this.replaceBackgroundTasks(sessionId, projected, true)
+    }
+    if (stored.suspended) {
+      // Attaching to find out would start the runtime that suspending just
+      // put down, and the panel asks for every session as the app loads.
+      return this.backgroundTaskTracker.get(sessionId)
     }
     return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
   }

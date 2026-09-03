@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MermaidDiagram } from './MermaidDiagram.js'
 
 const render_ = vi.hoisted(() => vi.fn())
@@ -9,6 +9,10 @@ vi.mock('mermaid', () => ({
 }))
 
 describe('MermaidDiagram', () => {
+  beforeEach(() => {
+    render_.mockReset()
+  })
+
   it('shows the diagram once it has been drawn', async () => {
     render_.mockResolvedValue({ svg: '<svg><title>Flow</title></svg>' })
 
@@ -46,6 +50,59 @@ describe('MermaidDiagram', () => {
     expect(wrapper.getAttribute('role')).toBeNull()
     // The SVG's own title stays reachable rather than being flattened away.
     expect(wrapper.querySelector('title')?.textContent).toBe('Flow')
+  })
+
+
+  it('does not show a drawn diagram under a newer source', async () => {
+    // A diagram streamed in a message is redrawn as it grows. Leaving the
+    // previous drawing up while the newer source is still parsing shows one
+    // revision of the diagram under another revision's text.
+    render_.mockResolvedValue({ svg: '<svg><title>First</title></svg>' })
+    const { container, rerender, unmount } = render(
+      <MermaidDiagram source={'graph TD; A-->B;'} />,
+    )
+    await waitFor(() =>
+      expect(container.querySelector('.mermaid-diagram')).not.toBeNull(),
+    )
+
+    // The next revision never settles.
+    render_.mockReturnValue(new Promise(() => {}))
+    rerender(<MermaidDiagram source={'graph TD; A-->B; B-->C;'} />)
+
+    expect(container.querySelector('.mermaid-diagram')).toBeNull()
+    expect(container.querySelector('.mermaid-source')?.textContent).toContain(
+      'B-->C',
+    )
+    // The revision that never settles has a timer waiting on it.
+    unmount()
+  })
+
+  it('draws only the source a streaming diagram settles on', async () => {
+    // Mermaid renders one request after another, so a diagram arriving a few
+    // characters at a time would put the finished drawing at the back of a
+    // queue of its own discarded drafts.
+    render_.mockResolvedValue({ svg: '<svg><title>Settled</title></svg>' })
+    const { rerender } = render(<MermaidDiagram source={'graph TD;'} />)
+    rerender(<MermaidDiagram source={'graph TD; A'} />)
+    rerender(<MermaidDiagram source={'graph TD; A--'} />)
+    rerender(<MermaidDiagram source={'graph TD; A-->B;'} />)
+
+    await waitFor(() => expect(render_).toHaveBeenCalled())
+    expect(render_).toHaveBeenCalledTimes(1)
+    expect(render_.mock.calls[0]?.[1]).toBe('graph TD; A-->B;')
+  })
+
+  it('gives every attempt an id of its own', async () => {
+    // Cleaning up after a failed render must not reach the render that
+    // followed it, which a shared id would.
+    render_.mockResolvedValue({ svg: '<svg></svg>' })
+    const { rerender } = render(<MermaidDiagram source={'graph TD; A-->B;'} />)
+    await waitFor(() => expect(render_).toHaveBeenCalledTimes(1))
+    rerender(<MermaidDiagram source={'graph TD; A-->C;'} />)
+    await waitFor(() => expect(render_).toHaveBeenCalledTimes(2))
+
+    const [first, second] = render_.mock.calls.map((call) => call[0])
+    expect(first).not.toBe(second)
   })
 
 })

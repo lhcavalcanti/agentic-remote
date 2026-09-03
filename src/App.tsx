@@ -5513,6 +5513,9 @@ function App() {
   const snapshotApplied = useRef(0)
   // The newest refresh that actually reached each computer.
   const computerSnapshotApplied = useRef(new Map<string, number>())
+  // Computers that have answered for their own sessions at least once. Until
+  // one has, its sessions being absent says nothing.
+  const answeredComputers = useRef(new Set<string>())
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -6940,13 +6943,48 @@ function App() {
     const startedAtSequence = eventSequenceRef.current
     void Promise.all([listSessionListing(), listComputers()])
       .then(([listing, loadedComputers]) => {
-        if (!active || asked <= snapshotApplied.current) {
+        if (!active) {
           return
         }
-        snapshotApplied.current = asked
+        // Overtaken as a whole is not overtaken for every computer. A refresh
+        // that came back first without reaching a node has said nothing about
+        // it, and discarding this answer threw away the only word anyone had
+        // -- the returning client's own sessions, on first load.
+        const mine = listing.answeredComputerIds.filter(
+          (id) => asked > (computerSnapshotApplied.current.get(id) || 0),
+        )
+        if (asked <= snapshotApplied.current && !mine.length) {
+          return
+        }
+        const whole = asked > snapshotApplied.current
+        if (whole) {
+          snapshotApplied.current = asked
+        }
         const loadedSessions = listing.sessions
         for (const id of listing.answeredComputerIds) {
+          answeredComputers.current.add(id)
+        }
+        for (const id of mine) {
           computerSnapshotApplied.current.set(id, asked)
+        }
+        if (!whole) {
+          // Only the computers nobody newer reached.
+          const speaksFor = new Set(mine)
+          const merge = (current: ManagedSession[]) => {
+            let merged = current
+            for (const session of loadedSessions) {
+              if (speaksFor.has(session.computerId)) {
+                merged = upsertSession(merged, session)
+              }
+            }
+            return merged
+          }
+          const merged = merge(sessionsRef.current)
+          sessionsRef.current = merged
+          setSessions(merge)
+          recordReplacementLinks(loadedSessions)
+          claimReplacedSessions(merged)
+          return
         }
         // Events that arrived while this was in flight describe those sessions
         // more recently than it does. A session cleared again in that window
@@ -7012,7 +7050,12 @@ function App() {
     setSelectedKey((current) =>
       current &&
       (sessions.some((session) => sessionKey(session) === current) ||
-        pendingReplacements.current.has(current))
+        pendingReplacements.current.has(current) ||
+        // Its computer has never answered for it, so nobody has said it is
+        // not there. Moving the reader off it sends them somewhere they never
+        // asked for, and the session arriving later only redirects a reader
+        // still sitting where the address put them.
+        !answeredComputers.current.has(current.slice(0, current.indexOf(':'))))
         ? current
         : sessions[0]
           ? sessionKey(sessions[0])
@@ -7171,6 +7214,9 @@ function App() {
         const mine = answeredIds.filter(
           (id) => asked > (computerSnapshotApplied.current.get(id) || 0),
         )
+        for (const id of answeredIds) {
+          answeredComputers.current.add(id)
+        }
         for (const id of mine) {
           computerSnapshotApplied.current.set(id, asked)
         }
@@ -7215,20 +7261,49 @@ function App() {
       if (!claim.whole) {
         // Only the computers this answer reached that the newer one did not.
         // Everything else in it has already been spoken for more recently.
-        setSessions((current) => {
-          let merged = current
+        //
+        // A proper reconciliation for those computers, not just an addition:
+        // a session it does not list is one it looked for and did not find, so
+        // leaving it in place kept a cleared conversation beside the one that
+        // replaced it, with the draft and reading position still underneath it.
+        const speaksForKeys = new Set(
+          snapshotSessions
+            .filter((session) => claim.speaksFor.has(session.computerId))
+            .map((session) => sessionKey(session)),
+        )
+        const merge = (current: ManagedSession[]) => {
+          let merged = current.filter(
+            (session) =>
+              !claim.speaksFor.has(session.computerId) ||
+              speaksForKeys.has(sessionKey(session)) ||
+              (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) >
+                startedAtSequence,
+          )
           for (const session of snapshotSessions) {
             if (claim.speaksFor.has(session.computerId)) {
               merged = upsertSession(merged, session)
             }
           }
-          sessionsRef.current = merged
           return merged
-        })
+        }
+        const merged = merge(sessionsRef.current)
+        sessionsRef.current = merged
+        setSessions(merge)
+        // What these sessions say they replaced is true whoever else answered.
+        recordReplacementLinks(loadedSessions)
+        claimReplacedSessions(merged)
         return
       }
       const reconcile = (existingSessions: ManagedSession[]) => {
-        let reconciled = sortSessions(snapshotSessions)
+        // Only rows from computers that were actually asked. A hub answers for
+        // an unreachable node out of its own cache, and an in-flight node list
+        // can refill that cache after a live removal, so a cached row here put
+        // a cleared session back and gave stale lineage a say in selection.
+        let reconciled = sortSessions(
+          snapshotSessions.filter((session) =>
+            answeredFor.has(session.computerId),
+          ),
+        )
         for (const existing of existingSessions) {
           const changedAt =
             sessionEventSequenceRef.current.get(sessionKey(existing)) || 0
@@ -7904,7 +7979,16 @@ function App() {
     }
     moveComposerDraft(fromKey, toKey)
     moveKnowledgePosition(fromKey, toKey)
+    // The ref is moved on here rather than left to the effect that refreshes
+    // it. Two clears in a row -- A to B, then B to C, both arriving before that
+    // effect runs -- read the same stale list twice, so C was never marked as
+    // changed and a settings answer asked for before either clear went on to
+    // speak for it and took the silence away.
     if (mutedSessionsRef.current.includes(fromKey)) {
+      mutedSessionsRef.current = [
+        ...mutedSessionsRef.current.filter((key) => key !== fromKey),
+        toKey,
+      ]
       recordMuteChange(fromKey, toKey)
     }
     setMutedSessions((current) =>

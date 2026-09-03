@@ -1708,8 +1708,12 @@ export function composerHoldsOtherText(
   if (!composerHoldsText(paneAfter)) {
     return false
   }
-  const before = composerText(paneBefore) || ''
-  let remainder = composerText(paneAfter) || ''
+  // Compared the way the evidence count compares: the composer wraps inside
+  // words, so `deployment-orches` / `tration-controller` is one line rendered
+  // as two, and a line-by-line comparison never finds what was pasted.
+  const compact = (value: string) => value.replace(/\s+/gu, '')
+  const before = compact(composerText(paneBefore) || '')
+  let remainder = compact(composerText(paneAfter) || '')
   // A paste too large to echo is shown as `[Pasted text #3]` rather than its
   // own text, so removing the lines that were sent leaves the placeholder
   // behind and reads as somebody else's writing.
@@ -1722,22 +1726,26 @@ export function composerHoldsOtherText(
   ) {
     remainder = remainder.replace(PASTED_PLACEHOLDER, ' ')
   }
-  // Likewise for the text itself: only the occurrences this paste added are
-  // discounted, not any the composer was already showing or that were typed
-  // beside it.
-  for (const line of pasted.split('\n').map((entry) => entry.trim())) {
+  // Likewise for the text itself, and at most once per line. This paste put
+  // each line there once, so a second copy is somebody else typing the same
+  // thing and is not this paste's to take away.
+  for (const line of pasted.split('\n').map((entry) => compact(entry))) {
     if (!line) {
       continue
     }
-    const added = occurrences(remainder, line) - occurrences(before, line)
-    for (let index = 0; index < added; index += 1) {
+    if (occurrences(remainder, line) > occurrences(before, line)) {
       remainder = remainder.replace(line, ' ')
     }
   }
-  return remainder.replace(/[>\u276f\s\u2026.]/gu, '').length > 0
+  // Only the prompt marker and the placeholder are discounted here. Stray
+  // punctuation is somebody's writing: a composer holding nothing but `...`
+  // is still holding something, and Ctrl+U would take it.
+  return remainder.replace(/[>\u276f\s]/gu, '').length > 0
 }
 
-const PASTED_PLACEHOLDER = /\[Pasted text[^\]]*\]/u
+// Matched against composer text with its whitespace removed, because the
+// composer wraps inside words and the placeholder is no exception.
+const PASTED_PLACEHOLDER = /\[Pastedtext[^\]]*\]/u
 
 function occurrences(text: string, needle: string): number {
   if (!needle) {
@@ -1747,7 +1755,7 @@ function occurrences(text: string, needle: string): number {
 }
 
 function pastedPlaceholderCount(text: string): number {
-  return (text.match(/\[Pasted text[^\]]*\]/gu) || []).length
+  return (text.match(/\[Pastedtext[^\]]*\]/gu) || []).length
 }
 
 /** The composer's contents, or nothing when the pane cannot be read. */

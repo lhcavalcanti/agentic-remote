@@ -3730,6 +3730,59 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('keeps a failure the reader has not been shown', async () => {
+    // The browser already had a newer draft, so the failed prompt was never
+    // put in front of anyone. Sending that other text must not delete the one
+    // copy of what failed.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-keep-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (stored) => {
+      stored.failedPrompt = {
+        content: 'the one that failed',
+        failedAt: new Date().toISOString(),
+      }
+    })
+
+    await service.sendMessage(client.session.sessionId, 'something else', false)
+    expect(
+      service.store.get(client.session.sessionId)?.failedPrompt?.content,
+    ).toBe('the one that failed')
+
+    // Sending it back is what settles it.
+    await service.sendMessage(
+      client.session.sessionId,
+      'the one that failed',
+      false,
+    )
+    expect(
+      service.store.get(client.session.sessionId)?.failedPrompt,
+    ).toBeUndefined()
+    await service.stop()
+  })
+
   it('gives back a queued prompt whose send failed', async () => {
     // The browser cleared its draft the moment the queue accepted this, so the
     // text only exists on the queue. Taking it off without handing it back

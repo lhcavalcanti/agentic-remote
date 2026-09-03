@@ -2532,7 +2532,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!content) {
       throw new Error('Message cannot be empty')
     }
-    await this.acknowledgeFailedPrompt(sessionId)
+    await this.acknowledgeFailedPrompt(sessionId, content)
     const terminalBacked = await this.terminalController.has(sessionId)
     if (terminalBacked) {
       // A full-screen view takes the keyboard, so a prompt sent now is typed
@@ -2824,8 +2824,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * message or as the slash command it was. Left set, the next snapshot puts
    * the text they have just sent back into the composer.
    */
-  private async acknowledgeFailedPrompt(sessionId: string): Promise<void> {
-    if (!this.store.get(sessionId)?.failedPrompt) {
+  private async acknowledgeFailedPrompt(
+    sessionId: string,
+    submitted: string,
+  ): Promise<void> {
+    const failed = this.store.get(sessionId)?.failedPrompt
+    if (!failed) {
+      return
+    }
+    // Only when this is the text going back out. A reader whose composer
+    // already held something newer never saw the failed prompt, so it lives
+    // only here; clearing it because they sent that other thing would delete
+    // the one copy without ever showing it to them.
+    if (failed.content.trim() !== submitted.trim()) {
       return
     }
     await this.store.clearFailedPrompt(sessionId).catch(() => undefined)
@@ -2837,7 +2848,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
   ): Promise<SessionDetail> {
     const command = rawCommand.trim()
-    await this.acknowledgeFailedPrompt(sessionId)
+    await this.acknowledgeFailedPrompt(sessionId, command)
     if (!command.startsWith('/')) {
       throw new Error('Slash command must start with /')
     }

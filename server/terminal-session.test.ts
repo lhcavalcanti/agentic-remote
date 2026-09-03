@@ -1087,4 +1087,38 @@ describe('composerHoldsOtherText', () => {
     ).toBe(true)
   })
 
+
+  it('recognizes a paste the composer wrapped inside a word', () => {
+    // The composer wraps mid-word, so a single pasted line can be rendered as
+    // two. Compared line by line the paste is never found, cleanup is skipped
+    // and retrying leaves a second copy.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deployment-orches │', '│ tration-controller │']),
+        'deployment-orchestration-controller',
+      ),
+    ).toBe(false)
+  })
+
+  it('keeps punctuation somebody typed beside the paste', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deploy ... │']),
+        'deploy',
+      ),
+    ).toBe(true)
+  })
+
+  it('discounts one copy of the paste, not a second someone typed', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deploy deploy │']),
+        'deploy',
+      ),
+    ).toBe(true)
+  })
+
 })

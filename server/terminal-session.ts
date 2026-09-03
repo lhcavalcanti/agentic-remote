@@ -1669,6 +1669,16 @@ async function waitForPaneText(
   return false
 }
 
+/** Whether a tmux command failed because there is no server left to ask. */
+function noTmuxServer(error: unknown): boolean {
+  const failure = error as { code?: unknown; stderr?: unknown }
+  if (typeof failure.stderr === 'string' && /no server running/i.test(failure.stderr)) {
+    return true
+  }
+  // tmux reports an ordinary "nothing to list" failure the same way.
+  return failure.code === 1
+}
+
 async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
   let output = ''
   try {
@@ -1682,6 +1692,14 @@ async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
     ).stdout
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined
+    }
+    // Killing the last pane in the last session ends tmux itself, and the
+    // next lookup then fails rather than reporting nothing. That is the
+    // ordinary way a suspension finishes, so it reads as absence: raising here
+    // reported failure for work that had already succeeded, leaving the
+    // session never recorded as suspended.
+    if (noTmuxServer(error)) {
       return undefined
     }
     throw error

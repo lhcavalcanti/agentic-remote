@@ -514,7 +514,16 @@ export class ClaudeAgentService
     // until some later query happens to finish, a message sent after the
     // resume would go first.
     if (resumed.queuedPrompts?.length) {
-      void this.drainQueue(id)
+      // The drain requeues and rethrows when authentication, persistence or
+      // sending fails. Discarded, that rejection has nowhere to go and takes
+      // the process with it.
+      await this.drainQueue(id).catch((error: unknown) => {
+        this.emit('event', {
+          type: 'error',
+          sessionId: id,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      })
     }
     return resumed
   }

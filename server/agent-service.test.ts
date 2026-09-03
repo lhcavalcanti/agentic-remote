@@ -940,19 +940,75 @@ describe('AgentService deletion', () => {
     // The session is not yet recorded as suspended: it is only reserved.
     expect(service.getSession(created.id)?.suspended).toBeFalsy()
 
-    await expect(service.restartSession(created.id)).rejects.toThrow(
-      /Resume the session/,
-    )
-    await expect(service.clearConversation(created.id)).rejects.toThrow(
-      /Resume the session/,
-    )
+    // A send is refused outright: it is not lifecycle work and must not start
+    // a turn into a session on its way down.
     await expect(
       service.sendMessage(created.id, 'slip through', false),
     ).rejects.toThrow(/Resume the session/)
 
+    // Lifecycle work waits its turn rather than interleaving with the
+    // teardown, and finds the session suspended when it gets there.
+    const restarting = service.restartSession(created.id)
+    const clearing = service.clearConversation(created.id)
+
     releaseTasks()
     await suspending
     expect(service.getSession(created.id)?.suspended).toBe(true)
+    await expect(restarting).rejects.toThrow(/Resume the session/)
+    await expect(clearing).rejects.toThrow(/Resume the session/)
+    await service.stop()
+  })
+
+  it('does not suspend out from under a prompt already on its way', async () => {
+    // The store still says idle until the turn is recorded, so a suspension
+    // that only reads the stored status can put the runtime down underneath a
+    // prompt that has already been handed to it.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-race2-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    let releaseSend: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseSend = resolve
+    })
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        await held
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const sending = service.sendMessage(
+      client.session.sessionId,
+      'already on its way',
+      false,
+    )
+    await vi.waitFor(() => expect(terminal.send).toHaveBeenCalled())
+
+    await expect(
+      service.suspendSession(client.session.sessionId),
+    ).rejects.toThrow(/only be suspended while idle/)
+
+    releaseSend()
+    await sending.catch(() => undefined)
     await service.stop()
   })
 

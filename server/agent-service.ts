@@ -3174,7 +3174,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // the prompt back on the queue, and a message written afterwards would
     // otherwise start straight away and run ahead of one written before it.
     if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
-      return this.enqueuePrompt(sessionId, content)
+      const queued = await this.enqueuePrompt(sessionId, content)
+      // A drain that failed put its prompt back and left nothing running to
+      // take it off again. Without this the queue stays where it is, and every
+      // message written afterwards joins it rather than starting anything.
+      void this.drainSdkQueue(sessionId).catch(() => undefined)
+      return queued
     }
     const sdkSession = await this.ensureLoaded(sessionId)
     const createdAt = new Date().toISOString()
@@ -3583,6 +3588,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // Attaching to find out would start the runtime that suspending just
       // put down, and the panel asks for every session as the app loads.
       return this.backgroundTaskTracker.get(sessionId)
+    }
+    if (!this.sessions.has(sessionId) && !this.loadingSessions.has(sessionId)) {
+      // Nothing is attached, and an SDK session's tasks belong to the runtime
+      // that is not there: no process, nothing it started still running.
+      // Attaching to ask would be starting the very process the caller is
+      // about to put down, and while a suspension is under way `ensureLoaded`
+      // refuses outright, so a session that had simply never been opened could
+      // not be suspended at all.
+      //
+      // Answered rather than left unknown. An unread list refuses a suspension
+      // on the grounds that something may be running, and here nothing can be.
+      return this.replaceBackgroundTasks(sessionId, [], true)
     }
     return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
   }

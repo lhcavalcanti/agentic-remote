@@ -619,7 +619,15 @@ export class ClaudeAgentService
   }
 
   async restartSession(id: string): Promise<SessionDetail> {
-    if (this.store.get(id)?.suspended) {
+    // In the same queue as suspend, resume and clear. Left outside it, a
+    // restart could report success after suspension had claimed the session
+    // but before the flag was written, and the suspension that finished
+    // afterwards wrote over it.
+    return this.serializeLifecycle(id, () => this.restartSerialized(id))
+  }
+
+  private async restartSerialized(id: string): Promise<SessionDetail> {
+    if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
       throw new Error('Resume the session before restarting it')
     }
     this.requireIdle(id)
@@ -774,7 +782,16 @@ export class ClaudeAgentService
       }
     })
     this.publish(running)
-    void this.runQuery(sessionId, content, assistantId)
+    // Nothing waits on this, so a rejection escaping it would be unhandled and
+    // could take the process down. The turn reports its own failures on the
+    // session; the queue drain that runs after it puts its prompt back and
+    // rethrows, and that has nowhere left to go but here.
+    void this.runQuery(sessionId, content, assistantId).catch((error) => {
+      console.warn(
+        `Claude turn for ${sessionId} ended in an unreported failure:`,
+        error,
+      )
+    })
     return running
   }
 
@@ -1105,7 +1122,20 @@ export class ClaudeAgentService
       owned?.finish()
       this.resolvePending(sessionId, 'Claude Agent stopped')
       if (!aborted) {
-        await this.drainQueue(sessionId)
+        // The drain puts its own prompt back before rethrowing, and there is
+        // nobody above this to tell. Reported rather than thrown out of a
+        // finally block, which would replace whatever this turn was already
+        // saying.
+        await this.drainQueue(sessionId).catch((drainError: unknown) => {
+          this.emit('event', {
+            type: 'error',
+            sessionId,
+            message:
+              drainError instanceof Error
+                ? drainError.message
+                : String(drainError),
+          })
+        })
       }
     }
   }

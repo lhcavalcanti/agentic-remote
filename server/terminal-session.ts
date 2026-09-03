@@ -301,26 +301,34 @@ export class TmuxTerminalSessionController
         // and nothing is.
         return true
       }
-      // The last word before anything is killed. Looking the owner up is
-      // awaited, and the pane belongs to somebody who may have started a turn
-      // in it while that happened.
+      // Confirmation is the last thing awaited. Anything after it -- even
+      // looking the owner up again -- is another moment in which somebody at
+      // the terminal can start a turn or detach a task, and the pane would
+      // then go down on the strength of a check that is already out of date.
       await confirm?.()
-      // Ownership is settled again now that confirmation has finished its own
-      // I/O. The pane may have gone in the meantime, or been respawned under a
-      // new process, and killing on the strength of the earlier reading would
-      // take whatever is there now.
-      const current = await this.owner(sessionId)
-      if (!current) {
-        return true
-      }
-      if (current.pid !== owner.pid) {
-        throw new Error('The terminal window changed hands while closing it')
-      }
-      // The target names a pane. Killing the window would take any pane
-      // beside it, which belongs to whoever split it there.
-      await execFileAsync('tmux', ['kill-pane', '-t', current.target])
+      // The pane is named by its id, and tmux is asked to compare the process
+      // itself before killing it, in one command. Reading the pid here and
+      // killing on the strength of it would put the same gap back: a pane
+      // respawned in between keeps its id, and the kill would take whatever
+      // is running in it now.
+      //
+      // Killing the window rather than the pane would take any pane beside
+      // it, which belongs to whoever split it there.
+      await execFileAsync('tmux', [
+        'if-shell',
+        '-F',
+        '-t',
+        owner.target,
+        `#{==:#{pane_pid},${owner.pid}}`,
+        `kill-pane -t ${owner.target}`,
+      ])
       // The pane is torn down asynchronously, and a resume that raced it would
       // find the old window and take it for the new one.
+      //
+      // This also answers a kill that tmux declined because the pane had
+      // changed hands: the owner is still there, the wait runs out, and the
+      // caller is told the window could not be closed rather than being told
+      // that somebody else's work was ended.
       for (let attempt = 0; attempt < 50; attempt += 1) {
         if (!(await this.owner(sessionId))) {
           return true

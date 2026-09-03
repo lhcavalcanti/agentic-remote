@@ -978,6 +978,68 @@ describe('AgentService deletion', () => {
     expect(suspended).toMatchObject({ suspended: true, isOpen: true })
   })
 
+  it('suspends a session that has never been opened', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-cold-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'cold-session',
+        cwd: directory,
+        title: 'Cold project',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+
+    // Nothing is attached, so there is no runtime holding background work and
+    // none to ask. Asking anyway reached `ensureLoaded`, which refuses while a
+    // suspension is under way, so the session could not be put down at all.
+    await expect(service.suspendSession('cold-session')).resolves.toMatchObject(
+      { id: 'cold-session', suspended: true },
+    )
+  })
+
+  it('restarts a queue left standing by a drain that failed', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-drain-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // A queue left standing by a drain that failed: the prompt is back on the
+    // queue and the session is idle, with nothing running to take it off.
+    await service.store.enqueuePrompt(created.id, {
+      id: 'waiting-1',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    // A drain that failed puts its prompt back and leaves nothing running to
+    // take it off again. Every message written afterwards joined the queue
+    // behind it, and all of them stayed there.
+    await service.sendMessage(created.id, 'written afterwards')
+
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('the one that was waiting')
+    })
+  })
+
   it('refuses competing lifecycle work while a suspension is under way', async () => {
     // Suspending reads background tasks and puts the runtime down, and both
     // are awaited. Only refusing other suspensions during that window lets a

@@ -7326,6 +7326,26 @@ function App() {
    * before, an ArrowUp and ArrowDown afterwards would replace the recovered
    * text with that empty draft, losing the only copy there is.
    */
+  /**
+   * Puts a failure back on offer after the composer was emptied without it
+   * having been sent anywhere.
+   *
+   * The browser-only commands answer in the page and never reach the server,
+   * so the marker is still waiting and the text has just been cleared from
+   * under it. Forgetting it was handled lets the next pass hand it back.
+   */
+  function reofferFailedPrompt(key: string) {
+    const current = selectedRef.current
+    const failed =
+      current && sessionKey(current) === key ? current.failedPrompt : undefined
+    if (!failed?.content) {
+      return
+    }
+    handledFailures.current.delete(key)
+    restoredFailures.current.delete(key)
+    restoreFailedPrompt(key, failed.content, failed.failedAt)
+  }
+
   function restoreFailedPrompt(key: string, content: string, failedAt?: string) {
     const stamp = failedAt || content
     if (handledFailures.current.get(key) === stamp) {
@@ -7371,14 +7391,19 @@ function App() {
   // reconnect, and doing both means neither has to be relied on alone.
   useEffect(() => {
     for (const session of sessions) {
+      const key = sessionKey(session)
       const failed = session.failedPrompt
       if (failed?.content) {
-        restoreFailedPromptRef.current(
-          sessionKey(session),
-          failed.content,
-          failed.failedAt,
-        )
+        restoreFailedPromptRef.current(key, failed.content, failed.failedAt)
+        continue
       }
+      // Gone, so somebody has answered for it -- another tab, another device,
+      // or this one. What was remembered about it here goes with it, or a
+      // submission from this client would carry a token for a failure that no
+      // longer exists and let go of whichever one has taken its place.
+      handledFailures.current.delete(key)
+      restoredFailures.current.delete(key)
+      unshownFailures.current.delete(key)
     }
   }, [sessions])
 
@@ -8173,12 +8198,14 @@ function App() {
         setStatuslineOpen(true)
       }
       setComposer('')
+      reofferFailedPrompt(targetKey)
       settleSubmission()
       return
     }
     if (command?.name === 'clear') {
       setComposer('')
       focusComposer(await clearSelectedConversation())
+      reofferFailedPrompt(targetKey)
       settleSubmission()
       return
     }
@@ -8186,6 +8213,7 @@ function App() {
       setComposer('')
       await restartSelectedSession()
       focusComposer(targetKey)
+      reofferFailedPrompt(targetKey)
       settleSubmission()
       return
     }
@@ -8195,6 +8223,7 @@ function App() {
     ) {
       setComposer('')
       setCwdOpen(true)
+      reofferFailedPrompt(targetKey)
       settleSubmission()
       return
     }
@@ -8229,6 +8258,7 @@ function App() {
       prependComposerForKey(targetKey, content)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
+      reofferFailedPrompt(targetKey)
       settleSubmission()
       setSending(false)
       focusComposer(targetKey)

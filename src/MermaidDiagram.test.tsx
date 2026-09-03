@@ -29,4 +29,23 @@ describe('MermaidDiagram', () => {
     expect(await screen.findByText('graph TD; A--')).toBeTruthy()
     expect(document.querySelector('.mermaid-source')).not.toBeNull()
   })
+
+  it('leaves the diagram its own accessibility information', async () => {
+    // An ARIA image is named by its author and flattens everything inside it,
+    // so a role on the wrapper would hide the title and description Mermaid
+    // writes into the SVG for screen readers.
+    render_.mockResolvedValue({ svg: '<svg><title>Flow</title></svg>' })
+
+    render(<MermaidDiagram source={'graph TD;\n A-->B;'} />)
+
+    const wrapper = await waitFor(() => {
+      const found = document.querySelector('.mermaid-diagram')
+      expect(found).not.toBeNull()
+      return found as HTMLElement
+    })
+    expect(wrapper.getAttribute('role')).toBeNull()
+    // The SVG's own title stays reachable rather than being flattened away.
+    expect(wrapper.querySelector('title')?.textContent).toBe('Flow')
+  })
+
 })

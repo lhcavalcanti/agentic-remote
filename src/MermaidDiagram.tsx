@@ -26,12 +26,22 @@ export function MermaidDiagram({ source }: { source: string }) {
           startOnLoad: false,
           theme: 'dark',
           securityLevel: 'strict',
+          // Mermaid otherwise draws a syntax-error diagram of its own into the
+          // document and leaves it there. A half-typed diagram in a message
+          // that is still streaming would put one on the page for every
+          // keystroke, on top of the source this falls back to.
+          suppressErrorRendering: true,
         })
         const rendered = await mermaid.render(id, source)
         if (active) {
           setSvg(rendered.svg)
         }
       } catch {
+        // Whatever Mermaid measured in is taken away now rather than at
+        // cleanup: a rejection leaves it in the document, and the next
+        // keystroke of a streaming diagram renders under a new id.
+        document.getElementById(id)?.remove()
+        document.getElementById(`d${id}`)?.remove()
         if (active) {
           setFailed(true)
         }
@@ -60,8 +70,11 @@ export function MermaidDiagram({ source }: { source: string }) {
       // Mermaid returns SVG markup, and it is rendered with `securityLevel`
       // strict, which strips scripts and foreign content from it.
       dangerouslySetInnerHTML={{ __html: svg }}
+      // Deliberately no `role`: an ARIA image is named by its author and its
+      // descendants are flattened away, which would hide the title, the
+      // description and the text Mermaid puts inside the SVG for exactly this
+      // purpose.
       ref={container}
-      role="img"
     />
   )
 }

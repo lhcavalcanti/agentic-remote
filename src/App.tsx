@@ -1,4 +1,5 @@
 import {
+  isValidElement,
   memo,
   useCallback,
   useEffect,
@@ -4482,23 +4483,57 @@ function fencedSource(children: ReactNode): string {
 }
 
 const mermaidComponents = {
+  // Replacing the fenced block at the `pre` level, not the `code` level: an
+  // override on `code` leaves React Markdown's own `<pre>` around the result,
+  // which boxes the diagram in a code block and doubles the one the source
+  // fallback draws for itself.
+  pre({
+    children,
+    node: _node,
+    ...rest
+  }: {
+    children?: ReactNode
+    node?: unknown
+  }) {
+    const source = mermaidFencedSource(children)
+    if (source === undefined) {
+      return <pre {...rest}>{children}</pre>
+    }
+    return <MermaidDiagram source={source} />
+  },
   code({
     children,
     className,
+    // React Markdown hands every custom component its own syntax tree node.
+    // Forwarding it would put an object on a DOM attribute.
+    node: _node,
     ...rest
   }: {
     children?: ReactNode
     className?: string
+    node?: unknown
   }) {
-    if (!/\blanguage-mermaid\b/.test(className || '')) {
-      return (
-        <code className={className} {...rest}>
-          {children}
-        </code>
-      )
-    }
-    return <MermaidDiagram source={fencedSource(children).trimEnd()} />
+    return (
+      <code className={className} {...rest}>
+        {children}
+      </code>
+    )
   },
+}
+
+/** The text of a fenced mermaid block, or nothing if that is not what it is. */
+function mermaidFencedSource(children: ReactNode): string | undefined {
+  const fence = Array.isArray(children)
+    ? children.find((child) => isValidElement(child))
+    : children
+  if (!isValidElement(fence)) {
+    return undefined
+  }
+  const props = fence.props as { className?: string; children?: ReactNode }
+  if (!/\blanguage-mermaid\b/.test(props.className || '')) {
+    return undefined
+  }
+  return fencedSource(props.children).trimEnd()
 }
 
 function markdownHeading(level: 1 | 2 | 3 | 4 | 5 | 6) {

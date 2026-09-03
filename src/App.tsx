@@ -7160,9 +7160,12 @@ function App() {
       // A replacement confirmed by a snapshot is no longer pending, even if
       // its own arrival event was never seen. Left pending for good, selection
       // cleanup goes on treating it as expected and can leave nothing open.
-      for (const session of reconciledForClaim) {
-        pendingReplacements.current.delete(sessionKey(session))
-      }
+      // An authoritative list settles every replacement it was waiting on, not
+      // only the ones it happens to contain. A replacement announced, never
+      // delivered and then deleted appears in no snapshot at all, and waiting
+      // for it forever leaves selection treating it as still on its way.
+      pendingReplacements.current.clear()
+      void reconciledForClaim
       claimReplacedSessions(reconciledForClaim)
       // Whichever load arrives first is the one that has to answer the
       // address. The socket opening starts a refresh of its own, and when it
@@ -7623,10 +7626,18 @@ function App() {
     })
   }
 
-  function appendComposerForKey(rawTargetKey: string, value: string) {
-    // Transcription and uploads start before they finish, and a clear during
-    // that wait leaves this key naming a session that is gone.
-    const targetKey = followReplacementsRef.current(rawTargetKey)
+  function appendComposerForKey(
+    rawTargetKey: string,
+    value: string,
+    // Text belongs to whoever is writing it, so it follows a clear. A path
+    // does not: an upload lives in the storage of the session it went to, and
+    // handing its name to the replacement names a file that session has no
+    // copy of.
+    followsLineage = true,
+  ) {
+    const targetKey = followsLineage
+      ? followReplacementsRef.current(rawTargetKey)
+      : rawTargetKey
     updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
@@ -8534,6 +8545,7 @@ function App() {
       appendComposerForKey(
         targetKey,
         `Attached file: \`${uploaded.path}\``,
+        false,
       )
       if (
         selectedRef.current &&

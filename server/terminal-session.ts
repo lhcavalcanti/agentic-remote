@@ -326,18 +326,27 @@ export class TmuxTerminalSessionController
       // else. The root would still match and the kill would take work that has
       // nothing to do with this session.
       //
-      // So the process that *is* the session is checked as well. If it has
-      // gone, the session has already stopped and there is nothing to kill.
+      // So the process that *is* the session is asked about too, and the
+      // question is put to tmux in the same request as the kill. Sampling it
+      // here and killing on the strength of it leaves a gap in which Copilot
+      // exits and its shell starts something else, and the root would still
+      // match.
+      //
+      // `if-shell` without `-F` runs a shell, so the shell decides: the kill
+      // happens only if the pane's root is still what it was *and* the process
+      // that is the session is still there. `kill -0` asks the kernel and
+      // says nothing on success.
       if (!processIsAlive(owner.pid)) {
-        return this.noPaneRemains(sessionId)
+        // Already stopped. The exact pane is asked about rather than the world
+        // in general.
+        return this.paneStopped(owner)
       }
       try {
         await execFileAsync('tmux', [
           'if-shell',
-          '-F',
           '-t',
           owner.target,
-          `#{==:#{pane_pid},${owner.rootPid}}`,
+          `[ "$(tmux display-message -p -t ${owner.target} '#{pane_pid}')" = "${owner.rootPid}" ] && kill -0 ${owner.pid} 2>/dev/null`,
           `kill-pane -t ${owner.target}`,
         ])
       } catch (error) {
@@ -358,13 +367,55 @@ export class TmuxTerminalSessionController
       // caller is told the window could not be closed rather than being told
       // that somebody else's work was ended.
       for (let attempt = 0; attempt < 50; attempt += 1) {
-        if (!(await this.owner(sessionId))) {
+        if (await this.paneStopped(owner)) {
           return true
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
       return false
     })
+  }
+
+  /**
+   * Whether this exact pane and this exact process are both gone.
+   *
+   * Asked of the two identities that were resolved before the teardown, not of
+   * the world in general. Process discovery answers with nothing when it fails
+   * as well as when there is nothing, and a surviving process that has become
+   * detached from its pane's ancestry drops out of it too -- either way a
+   * suspension was recorded while the runtime was still going, and a resume
+   * then started a second owner for the same session.
+   */
+  private async paneStopped(owner: {
+    pid: number
+    target: string
+  }): Promise<boolean> {
+    try {
+      const listed = (
+        await execFileAsync('tmux', [
+          'display-message',
+          '-p',
+          '-t',
+          owner.target,
+          '#{pane_id}',
+        ])
+      ).stdout.trim()
+      if (listed !== owner.target) {
+        // Answered about a different pane, which means this one is not there.
+        return true
+      }
+    } catch (error) {
+      // Gone, along with the server if it was the last one.
+      if (noTmuxServer(error) || missingTmuxTarget(error)) {
+        return true
+      }
+      // A look that failed says nothing.
+      return false
+    }
+    // The pane is still there, so the session has only stopped if the process
+    // that is the session has. A shell that outlives what it ran is a stopped
+    // session; a live process is not.
+    return !processIsAlive(owner.pid)
   }
 
   async restart(sessionId: string, cwd: string): Promise<boolean> {

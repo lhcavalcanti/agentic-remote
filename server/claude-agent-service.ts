@@ -221,6 +221,8 @@ export class ClaudeAgentService
   private readonly startingQueries = new Map<string, Promise<void>>()
   /** Sessions being deleted, closed to new work from before the first await. */
   private readonly deletingSessions = new Set<string>()
+  /** Sends that have been admitted but have not finished being admitted. */
+  private readonly admittingSends = new Map<string, Promise<void>[]>()
   /** Settles the matching `startingQueries` entry once a turn has registered. */
   private readonly startedQuery = new Map<string, () => void>()
   /** Sessions whose queue is being drained, so two drains cannot overlap. */
@@ -676,6 +678,37 @@ export class ClaudeAgentService
       // ran a turn against a conversation on its way out.
       throw new Error('Session not found')
     }
+    // Claimed here, before the first await. A send that got past the check
+    // above could then wait in authentication while deletion began, find its
+    // only synchronisation point empty, and register a query afterwards --
+    // provider work and tool side effects carrying on against a conversation
+    // that was gone.
+    let admitted = () => {}
+    const admission = new Promise<void>((resolve) => {
+      admitted = resolve
+    })
+    this.admittingSends.set(sessionId, [
+      ...(this.admittingSends.get(sessionId) || []),
+      admission,
+    ])
+    try {
+      return await this.admitSend(sessionId, content, enqueue)
+    } finally {
+      admitted()
+      this.admittingSends.set(
+        sessionId,
+        (this.admittingSends.get(sessionId) || []).filter(
+          (entry) => entry !== admission,
+        ),
+      )
+    }
+  }
+
+  private async admitSend(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+  ): Promise<SessionDetail> {
     if (this.admissionClosed.has(sessionId)) {
       // Resuming, and the prompt already queued has not been claimed yet, or a
       // drain has taken its prompt off and not yet marked the session running.
@@ -898,6 +931,13 @@ export class ClaudeAgentService
     // waited for rather than polled for a while: a provider that is slow to
     // answer outlasted the polling and the turn then started against a
     // conversation already taken away.
+    // Sends already inside admission, before whatever they are waiting on can
+    // let them through. Sampling only the registered turns found nothing and
+    // deleted the conversation out from under one that was still on its way.
+    const admitting = this.admittingSends.get(sessionId) || []
+    if (admitting.length) {
+      await Promise.allSettled(admitting)
+    }
     const starting = this.startingQueries.get(sessionId)
     if (starting) {
       await starting.catch(() => undefined)

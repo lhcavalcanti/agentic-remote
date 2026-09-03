@@ -167,4 +167,42 @@ describe('MermaidDiagram', () => {
     )
   })
 
+
+  it('does not start the next diagram before this one is bound', async () => {
+    // Mermaid keeps some interaction state in module scope and the next render
+    // replaces it, so a diagram has to attach its own before another starts.
+    const order: string[] = []
+    render_.mockImplementation(async (id: string) => ({
+      svg: '<svg></svg>',
+      bindFunctions: () => {
+        order.push(`bind:${id}`)
+      },
+    }))
+    const seen = new Set<string>()
+    render_.mockImplementation(async (id: string) => {
+      order.push(`render:${String(id).slice(-1)}`)
+      seen.add(String(id))
+      return {
+        svg: '<svg></svg>',
+        bindFunctions: () => {
+          order.push(`bind:${String(id).slice(-1)}`)
+        },
+      }
+    })
+
+    render(
+      <>
+        <MermaidDiagram source={'graph TD; A-->B;'} />
+        <MermaidDiagram source={'graph TD; C-->D;'} />
+      </>,
+    )
+
+    await waitFor(() => expect(order.filter((e) => e.startsWith('bind'))).toHaveLength(2))
+    // Each diagram binds before the next one renders.
+    expect(order[0]).toMatch(/^render:/)
+    expect(order[1]).toMatch(/^bind:/)
+    expect(order[2]).toMatch(/^render:/)
+    expect(order[3]).toMatch(/^bind:/)
+  })
+
 })

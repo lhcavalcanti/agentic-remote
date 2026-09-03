@@ -1,4 +1,10 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 
 /**
  * How long a source has to stop changing before it is worth drawing.
@@ -18,10 +24,29 @@ const SETTLE_MS = 120
  */
 let drawing: Promise<unknown> = Promise.resolve()
 
+/**
+ * How long a diagram is given to attach its own interactions.
+ *
+ * The queue is held open across that step, so an unmount that never gets to it
+ * must not stop every later diagram from drawing.
+ */
+const BIND_TIMEOUT_MS = 2_000
+
 function drawDiagram(
   id: string,
   source: string,
-): Promise<{ svg: string; bindFunctions?: (element: Element) => void }> {
+): Promise<{
+  svg: string
+  bindFunctions?: (element: Element) => void
+  bound: () => void
+}> {
+  let release = () => {}
+  // Mermaid keeps some of a diagram's interaction state in module scope, and
+  // the next render replaces it. The queue is therefore held until this one
+  // has attached its own, rather than released as soon as the markup exists.
+  const attached = new Promise<void>((resolve) => {
+    release = resolve
+  })
   const next = drawing.catch(() => undefined).then(async () => {
     const { default: mermaid } = await import('mermaid')
     mermaid.initialize({
@@ -33,9 +58,17 @@ function drawDiagram(
       // still being typed.
       suppressErrorRendering: true,
     })
-    return mermaid.render(id, source)
+    const result = await mermaid.render(id, source)
+    return { ...result, bound: release }
   })
-  drawing = next.catch(() => undefined)
+  drawing = next
+    .then(() =>
+      Promise.race([
+        attached,
+        new Promise<void>((resolve) => setTimeout(resolve, BIND_TIMEOUT_MS)),
+      ]),
+    )
+    .catch(() => undefined)
   return next
 }
 
@@ -56,6 +89,7 @@ export function MermaidDiagram({ source }: { source: string }) {
       source: string
       svg: string
       bind?: (element: Element) => void
+      bound?: () => void
     }
     | undefined
   >(undefined)
@@ -80,7 +114,14 @@ export function MermaidDiagram({ source }: { source: string }) {
             // links a `click ... href ...` line asks for, for instance -- once
             // the markup is in the document. Dropping the callback left those
             // diagrams drawn but inert.
-            setDrawn({ source, svg: result.svg, bind: result.bindFunctions })
+            setDrawn({
+              source,
+              svg: result.svg,
+              bind: result.bindFunctions,
+              bound: result.bound,
+            })
+          } else {
+            result.bound()
           }
         } catch {
           // Only this attempt's own elements, and now rather than at cleanup:
@@ -98,11 +139,15 @@ export function MermaidDiagram({ source }: { source: string }) {
 
   // Run once the markup is in the document, and only for the drawing it came
   // with, so a diagram's own links and handlers work.
-  useEffect(() => {
-    if (drawn?.source !== source || !host.current || !drawn.bind) {
+  useLayoutEffect(() => {
+    if (drawn?.source !== source) {
       return
     }
-    drawn.bind(host.current)
+    if (host.current && drawn.bind) {
+      drawn.bind(host.current)
+    }
+    // Lets the next diagram start, now that this one has what it needs.
+    drawn.bound?.()
   }, [drawn, source])
 
   // Shown only for the source that produced it, so a diagram never appears

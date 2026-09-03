@@ -1447,4 +1447,100 @@ describe('background task adapter', () => {
     })
   })
 
+
+  it('finds the footer past the length used for display', () => {
+    // The transport writes its footer last, and the text used for display is
+    // truncated, so a long result loses the one thing that says the shell is
+    // over and how it ended.
+    const noise = 'x'.repeat(30_000)
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'call-1',
+          toolName: 'bash',
+          arguments: { command: 'pnpm test', async: true },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'handoff',
+        parentId: 'start',
+        timestamp: '2026-09-02T08:00:01.000Z',
+        data: {
+          toolCallId: 'call-1',
+          success: true,
+          toolTelemetry: {
+            properties: { executionMode: 'async', detached: 'true' },
+          },
+          result: {
+            content: '<command started in detached background with shellId: 9>',
+          },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'observed',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:09.000Z',
+        data: {
+          toolCallId: 'read-call',
+          toolName: 'read_bash',
+          success: true,
+          result: {
+            content: [noise, '<shellId: 9 completed with exit code 1>'].join(
+              '\n',
+            ),
+          },
+        },
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '9')).toMatchObject({
+      status: 'failed',
+    })
+  })
+
+  it('ends agent work when the session itself stops', () => {
+    // Shutting the session down ends its agents, reported or not. Waiting for
+    // a completion that never comes leaves both running for good.
+    const events = [
+      {
+        type: 'subagent.started',
+        id: 'agent-start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: { agentId: 'agent-1', description: 'Review' },
+      },
+      {
+        type: 'tool.execution_start',
+        id: 'agent-shell',
+        parentId: null,
+        agentId: 'agent-1',
+        timestamp: '2026-09-02T08:00:10.000Z',
+        data: {
+          toolCallId: 'agent-call',
+          toolName: 'bash',
+          arguments: { command: 'pnpm test' },
+        },
+      },
+      {
+        type: 'session.shutdown',
+        id: 'gone',
+        parentId: null,
+        timestamp: '2026-09-02T08:01:00.000Z',
+        data: {},
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.filter((task) => task.status === 'running')).toEqual([])
+  })
+
 })

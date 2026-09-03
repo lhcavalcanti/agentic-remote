@@ -9126,12 +9126,18 @@ function App() {
           <div className="conversation-header__title">
             <strong>{selected?.title || 'Agentic Remote'}</strong>
             {selected ? (
-              <span>
-                {`${providerName(selected.provider)}${
-                  executionModeName(selected.executionMode)
-                    ? ` · ${executionModeName(selected.executionMode)}`
-                    : ''
-                } · ${selected.computerName} · `}
+              <span className="conversation-header__meta">
+                {/* The description shrinks; the folder does not. On a phone
+                    the icons leave little room, and letting this prefix take
+                    what it likes clipped the folder away entirely -- which is
+                    the only way into the workspace by touch. */}
+                <span className="conversation-header__describes">
+                  {`${providerName(selected.provider)}${
+                    executionModeName(selected.executionMode)
+                      ? ` · ${executionModeName(selected.executionMode)}`
+                      : ''
+                  } · ${selected.computerName} · `}
+                </span>
                 {/* The folder the session is in is also the way into it, so it
                     does not need a button of its own in the header. */}
                 <button

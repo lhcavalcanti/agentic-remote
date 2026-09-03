@@ -4155,3 +4155,25 @@ button {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+.conversation-header__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  min-width: 0;
+}
+
+/* Everything before the folder gives way first: the folder is the only way
+   into the workspace on a touch device, so it must never be the part that is
+   clipped off. */
+.conversation-header__describes {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.conversation-header__meta .conversation-header__cwd {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}

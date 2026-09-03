@@ -2825,10 +2825,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!command.startsWith('/')) {
       throw new Error('Slash command must start with /')
     }
-    const [name, ...parts] = command.slice(1).split(/\s+/)
+    const body = command.slice(1)
+    const name = body.split(/\s+/, 1)[0]
     if (!name) {
       throw new Error('Slash command name is required')
     }
+    // Kept exactly as it was written. Splitting on whitespace and rejoining
+    // with single spaces rewrote the argument, and `/cwd` carries a directory
+    // that was validated before it got here: a folder whose name holds two
+    // spaces became a different folder, or none at all.
+    const argument = body.slice(name.length).replace(/^\s/, '')
     const catalog = await this.sessionCommandCatalog(sessionId)
     const commandInfo = catalog.commands.find(
       (candidate) =>
@@ -2840,7 +2846,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
     const canonicalName = commandInfo?.name || name
     const canonicalCommand = `/${canonicalName}${
-      parts.length > 0 ? ` ${parts.join(' ')}` : ''
+      argument ? ` ${argument}` : ''
     }`
     const busy =
       this.activePrompts.has(sessionId) ||
@@ -2916,7 +2922,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } else {
       const result = await session.rpc.commands.invoke({
         name: canonicalName,
-        input: parts.join(' '),
+        input: argument,
       })
       if (result.kind === 'agent-prompt') {
         const notice = await this.store.addMessage(sessionId, {

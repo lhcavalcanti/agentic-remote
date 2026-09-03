@@ -386,6 +386,35 @@ const SHELL_FOOTERS = [
 const COMPLETION_FOOTER =
   /^<[^<>]*\bshell[_ ]?id\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)[^<>]*\bexit code\s+(-?\d+)[^<>]*>$/i
 
+/**
+ * The end of whatever text a value carries, without display limits.
+ *
+ * The transport writes its footer last, and the text used for display is
+ * truncated and prefers a summary field, so the one place the footer reliably
+ * is happens to be the one place that reading never reaches.
+ */
+function rawTailText(value: unknown, depth = 0): string {
+  if (depth > 4 || value === null || value === undefined) {
+    return ''
+  }
+  if (typeof value === 'string') {
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => rawTailText(entry, depth + 1)).join('\n')
+  }
+  if (typeof value !== 'object') {
+    return ''
+  }
+  const object = recordValue(value)
+  return (
+    ['content', 'detailedContent', 'text', 'output', 'stdout', 'result']
+      .map((key) => rawTailText(object[key], depth + 1))
+      .filter(Boolean)
+      .join('\n')
+  )
+}
+
 function shellExitFromFooter(
   text: string,
 ): { shellId: string; exitCode: number } | undefined {
@@ -1294,8 +1323,13 @@ export function backgroundTasksFromEvents(
         shellExitFromValue(data) ||
         // The transport can report the exit as its footer rather than as
         // structure, and that carries the code as well as the id.
-        shellExitFromFooter(textFromValue(recordValue(data.result)) || '') ||
-        shellExitFromFooter(textFromValue(data) || '')
+        //
+        // Read from the raw tail rather than through the display text, which
+        // is truncated and prefers a summary field: a long `read_bash` result
+        // loses its footer to that limit, and with it the fact that the shell
+        // is over and how it ended.
+        shellExitFromFooter(rawTailText(data.result)) ||
+        shellExitFromFooter(rawTailText(data))
       // A detached shell reports its exit through whichever call observed it,
       // and a follow-up read_bash/read_shell carries its own tool call id, so
       // the shell it names is consulted when the call itself owns no task.
@@ -1351,9 +1385,11 @@ export function backgroundTasksFromEvents(
         // ordinary command reports the same id when it finishes, and taking
         // that as its identity hands the completion to whichever unrelated
         // task already holds the id, which then never finishes.
-        const handoffShellId = handoffMode
-          ? shellExit?.shellId || shellId
-          : undefined
+        // A direct exit is this call's own completion and stays under it. Only
+        // a handoff creates a new shell worth renaming the task after, and
+        // renaming on an exit hands the task whatever recycled id the shell
+        // happened to be given.
+        const handoffShellId = handoffMode && !shellExit ? shellId : undefined
         if (handoffShellId && current.id !== handoffShellId) {
           current =
             rekeyTask(
@@ -1371,7 +1407,13 @@ export function backgroundTasksFromEvents(
             current.status === 'failed'
               ? `Shell exited with status ${shellExit.exitCode}`
               : undefined
+          // The footer form carries only an id and a code, so the command's
+          // own output is taken from the result it arrived with. Reading the
+          // synthesized exit alone threw away everything the task printed.
           shellTaskOutput(current, shellExit)
+          if (data.result !== undefined) {
+            shellTaskOutput(current, data.result)
+          }
           current.canCancel = false
         } else if (!data.success) {
           current.status = data.cancelled === true ? 'cancelled' : 'failed'
@@ -1417,6 +1459,14 @@ export function backgroundTasksFromEvents(
   // shell whose mode the transport never reported, which is treated as
   // background on the chance that it is.
   const lastTurnEndAt = lastForegroundCompletionAt(events)
+  // The session itself stopping is the end of everything in it, agents
+  // included.
+  const sessionEndedAt = events.findLast(
+    (event) =>
+      event.type === 'session.shutdown' ||
+      event.type === 'abort' ||
+      event.type === 'session.error',
+  )?.timestamp
   for (const task of tasks.values()) {
     if (
       task.status !== 'running' ||
@@ -1441,11 +1491,18 @@ export function backgroundTasksFromEvents(
         owner.status === 'running' ||
         owner.status === 'queued'
       ) {
-        // Either the agent is still going or its lifecycle was never seen,
-        // and neither is evidence that the work it started has stopped.
-        continue
+        // The session ending ends its agents too, whether or not each one
+        // reported finishing. Without this a missing completion leaves the
+        // agent and everything it started running for good.
+        if (!sessionEndedAt) {
+          // Either the agent is still going or its lifecycle was never seen,
+          // and neither is evidence that the work it started has stopped.
+          continue
+        }
+        endedAt = sessionEndedAt
+      } else {
+        endedAt = owner.completedAt
       }
-      endedAt = owner.completedAt
     }
     if (!endedAt || task.startedAt >= endedAt) {
       continue
@@ -1454,6 +1511,22 @@ export function backgroundTasksFromEvents(
     task.completedAt = endedAt
     task.error = task.error || 'Ended without reporting completion'
     task.canCancel = false
+  }
+  if (sessionEndedAt) {
+    // The session stopping ends everything it was running, agents included.
+    // Leaving an agent running because its completion was never reported also
+    // keeps alive every shell that is waiting on it.
+    for (const task of tasks.values()) {
+      if (
+        (task.status === 'running' || task.status === 'queued') &&
+        task.startedAt < sessionEndedAt
+      ) {
+        task.status = 'failed'
+        task.completedAt = sessionEndedAt
+        task.error = task.error || 'Ended without reporting completion'
+        task.canCancel = false
+      }
+    }
   }
   return [...tasks.values()]
     .sort(

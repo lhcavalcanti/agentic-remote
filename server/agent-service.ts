@@ -2556,9 +2556,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const claim = this.claimFailure(sessionId, content, before, acknowledgedFailure)
     let sent: SessionDetail
     try {
-      sent = await this.sendAdmitted(sessionId, content, enqueue, before)
+      // The failure this send is answering, and only when it is answering
+      // one. Passing the current marker for every send let an unrelated
+      // message take it with it on its way to the queue.
+      sent = await this.sendAdmitted(
+        sessionId,
+        content,
+        enqueue,
+        claim ? before : undefined,
+      )
     } catch (error) {
-      claim?.release()
+      // A send that failed after the terminal had already taken the text is
+      // not a send that can be repeated. Letting go of the reservation invited
+      // exactly the second copy it exists to prevent, so it is kept and
+      // recorded as answered.
+      if (
+        error &&
+        typeof error === 'object' &&
+        'uncertainDelivery' in error
+      ) {
+        claim?.release(true)
+      } else {
+        claim?.release()
+      }
       throw error
     }
     if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
@@ -3088,9 +3108,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const claim = this.claimFailure(sessionId, command, before, acknowledgedFailure)
     let ran: SessionDetail
     try {
-      ran = await this.runCommand(sessionId, command, enqueue)
+      ran = await this.runCommand(
+        sessionId,
+        command,
+        enqueue,
+        claim ? before : undefined,
+      )
     } catch (error) {
-      claim?.release()
+      if (
+        error &&
+        typeof error === 'object' &&
+        'uncertainDelivery' in error
+      ) {
+        // Already taken by the terminal, so this cannot simply be run again.
+        claim?.release(true)
+      } else {
+        claim?.release()
+      }
       throw error
     }
     if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
@@ -3121,6 +3155,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     command: string,
     enqueue: boolean,
+    // The failure this command answers, so a queued one and the marker it
+    // answers are written together rather than one after the other.
+    answers?: string,
   ): Promise<SessionDetail> {
 
     if (!command.startsWith('/')) {
@@ -3172,7 +3209,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, canonicalCommand, true)
+      return this.enqueueTerminalPrompt(
+        sessionId,
+        canonicalCommand,
+        true,
+        answers,
+      )
     }
     const nativeEnqueue =
       !catalog.session &&
@@ -5035,8 +5077,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             // arrive, so this is not known to have failed. Carried with the
             // text, because after a reload a bare draft looks like anything
             // else waiting to be sent.
-            /may still be in the prompt/.test(
-              error instanceof Error ? error.message : String(error),
+            Boolean(
+              error &&
+                typeof error === 'object' &&
+                'uncertainDelivery' in error,
             ),
           )
         } catch {

@@ -743,6 +743,44 @@ export class TmuxTerminalSessionController
         '-t',
         target,
       ])
+      // From here on tmux has the text. Anything that goes wrong afterwards --
+      // reading the pane, the tty, the terminal settings, or the Enter itself
+      // -- leaves a send that may well have arrived, so it is reported as
+      // uncertain rather than as a plain failure the reader should simply
+      // retry.
+      try {
+        return await this.finishSend(
+          target,
+          content,
+          confirmation,
+          paneBeforePaste,
+          enqueue,
+        )
+      } catch (error) {
+        if (
+          error &&
+          typeof error === 'object' &&
+          'uncertainDelivery' in error
+        ) {
+          throw error
+        }
+        throw Object.assign(
+          new Error(
+            'The terminal may not have received the message, and the text may still be in the prompt. Check the terminal before sending it again.',
+          ),
+          { statusCode: 409, uncertainDelivery: true, cause: error },
+        )
+      }
+    })
+  }
+
+  private async finishSend(
+    target: string,
+    content: string,
+    confirmation: string,
+    paneBeforePaste: string,
+    enqueue: boolean,
+  ): Promise<boolean> {
       if (
         !(await waitForComposerPaste(
           target,
@@ -793,7 +831,10 @@ export class TmuxTerminalSessionController
           new Error(
             'The terminal did not receive the message, and the text may still be in the prompt. Check the terminal before sending it again.',
           ),
-          { statusCode: 409 },
+          // Said outright rather than left to be read back out of the wording.
+          // Every failure after the buffer was accepted is uncertain in the
+          // same way, and matching on the message recognised only this one.
+          { statusCode: 409, uncertainDelivery: true },
         )
       }
       let paneTty = ''
@@ -831,7 +872,6 @@ export class TmuxTerminalSessionController
         }
       }
       return true
-    })
   }
 
   private async target(sessionId: string): Promise<string | undefined> {

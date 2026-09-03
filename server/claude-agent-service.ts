@@ -529,7 +529,12 @@ export class ClaudeAgentService
 
   private async clearSerialized(id: string): Promise<SessionDetail> {
     if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
-      throw new Error('Resume the session before clearing it')
+      throw Object.assign(new Error('Resume the session before clearing it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     const session = this.requireIdle(id)
     try {
@@ -644,7 +649,12 @@ export class ClaudeAgentService
 
   private async restartSerialized(id: string): Promise<SessionDetail> {
     if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
-      throw new Error('Resume the session before restarting it')
+      throw Object.assign(new Error('Resume the session before restarting it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     this.requireIdle(id)
     const restarted = await this.store.updateStatus(id, 'idle')
@@ -713,7 +723,12 @@ export class ClaudeAgentService
       // Resuming, and the prompt already queued has not been claimed yet, or a
       // drain has taken its prompt off and not yet marked the session running.
       // Only the idle check consulted this, which a send can reach past.
-      throw new Error('The session is still resuming')
+      throw Object.assign(new Error('The session is still resuming'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     return this.dispatchQueued(sessionId, content, enqueue)
   }
@@ -728,7 +743,12 @@ export class ClaudeAgentService
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
     ) {
-      throw new Error('Resume the session before sending to it')
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     // Anything already waiting goes first. A resume whose drain failed puts
     // the prompt back, and a message written after it must not overtake it.
@@ -750,7 +770,12 @@ export class ClaudeAgentService
     // Suspending may have finished while authentication was being refreshed,
     // and may still finish before the turn starts, so it is asked again there.
     if (this.store.get(sessionId)?.suspended) {
-      throw new Error('Resume the session before sending to it')
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     const session = this.requireSession(sessionId)
     if (session.status === 'running' || session.status === 'waiting') {
@@ -769,7 +794,12 @@ export class ClaudeAgentService
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
     ) {
-      throw new Error('Resume the session before sending to it')
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     const createdAt = new Date().toISOString()
     // Kept so a refused send can put it back. Both `addMessage` calls move the
@@ -829,7 +859,12 @@ export class ClaudeAgentService
           'Resume the session before sending to it. The message could not be taken back out of the transcript.',
         )
       }
-      throw new Error('Resume the session before sending to it')
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     const running = await this.store.update(sessionId, (stored) => {
       stored.status = 'running'
@@ -1656,7 +1691,12 @@ export class ClaudeAgentService
     const session = this.requireSession(id)
     if (this.admissionClosed.has(id)) {
       // Resuming, and the prompt already queued has not been claimed yet.
-      throw new Error('The session is still resuming')
+      throw Object.assign(new Error('The session is still resuming'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     if (session.status !== 'idle') {
       throw new Error('Session must be idle')

@@ -2249,7 +2249,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return stored
     }
     if (this.suspendingSessions.has(id)) {
-      throw new Error('Session is already being suspended')
+      throw Object.assign(new Error('Session is already being suspended'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     // Claimed before anything is awaited, so a message arriving while the
     // background tasks are being read cannot start a turn into a session that
@@ -2271,7 +2276,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       stored.status === 'waiting' ||
       this.drainingSessions.has(id)
     ) {
-      throw new Error('Session can only be suspended while idle')
+      throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     // A detached shell keeps running without holding the foreground, so an
     // idle session can still own live work. Suspending ends the owner, which
@@ -2303,7 +2313,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
       })
       if (statusFromEvents(events) !== 'idle') {
-        throw new Error('Session can only be suspended while idle')
+        throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
       }
     }
     // The stored backend as well as the discovery set. Discovery can miss a
@@ -2336,7 +2351,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           )
         })
         if (statusFromEvents(live) !== 'idle') {
-          throw new Error('Session can only be suspended while idle')
+          throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
         }
         const running = backgroundTasksFromEvents(live, {
           assumeBackground: true,
@@ -2352,7 +2372,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       this.discoveryGeneration += 1
       if (!closed) {
-        throw new Error('The terminal window could not be closed')
+        throw Object.assign(new Error('The terminal window could not be closed'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
       }
     } else {
       // An attachment already on its way would insert a live runtime after
@@ -2440,7 +2465,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // turn that has already started.
       this.dispatchingSessions.has(id)
     ) {
-      throw new Error('Session can only be suspended while idle')
+      throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
   }
 
@@ -2560,7 +2590,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // none, and for a terminal session leave a second owner behind it. A
       // suspension already under way counts: it is holding the session while
       // it reads background tasks and puts the runtime down.
-      throw new Error('Resume the session before restarting it')
+      throw Object.assign(new Error('Resume the session before restarting it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     if (
       stored.status === 'running' ||
@@ -2688,7 +2723,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (stored.suspended || this.suspendingSessions.has(id)) {
       // Clearing builds the replacement a session carries on in, which is a
       // live owner. A later resume would then build a second one beside it.
-      throw new Error('Resume the session before clearing it')
+      throw Object.assign(new Error('Resume the session before clearing it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     if (
       stored.status === 'running' ||
@@ -2960,12 +3000,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
     ) {
-      throw new Error('Resume the session before sending to it')
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     if (this.admissionClosed.has(sessionId)) {
       // Resuming, and the prompt that was already queued has not been claimed
       // yet. Starting a turn now would put this one in front of it.
-      throw new Error('The session is still resuming')
+      throw Object.assign(new Error('The session is still resuming'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     // Held for the whole dispatch, not just the checks. Detection, pane
     // capture and delivery are all awaited, and a suspension finishing during
@@ -2990,7 +3040,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
     ) {
-      throw new Error('Resume the session before sending to it')
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     if (terminalBacked) {
       // A full-screen view takes the keyboard, so a prompt sent now is typed
@@ -3315,12 +3370,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
     ) {
-      throw new Error('Resume the session before sending to it')
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     if (this.admissionClosed.has(sessionId)) {
       // Resuming, and the prompt already queued has not been claimed yet.
       // A command allowed during execution would otherwise slip past it.
-      throw new Error('The session is still resuming')
+      throw Object.assign(new Error('The session is still resuming'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     // Kept exactly as it was written. Splitting on whitespace and rejoining
     // with single spaces rewrote the argument, and `/cwd` carries a directory

@@ -6101,6 +6101,50 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('gives back a prompt that failed while another send was in flight', async () => {
+    // The composer is busy, so the failure is held back rather than shown. The
+    // send it was waiting on then answers with a record older than the failure
+    // and is rejected -- and dropping the held text on the strength of that
+    // answer left it invisible for good, with the marker on the server still
+    // holding the queue.
+    let answerSend: ((value: ManagedSession) => void) | undefined
+    vi.mocked(sendMessage).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerSend = resolve
+        }),
+    )
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'first thing' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(answerSend).toBeDefined())
+
+    const failed: ManagedSession = {
+      ...session,
+      revision: (session.revision || 0) + 5,
+      failedPrompt: {
+        content: 'the queued one that failed',
+        failedAt: '2026-09-03T00:00:00.000Z',
+      },
+    }
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: failed }),
+      } as MessageEvent)
+    })
+
+    // Older than the failure, so the session rejects it.
+    await act(async () => {
+      answerSend?.({ ...session, revision: session.revision || 0 })
+    })
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue('the queued one that failed'),
+    )
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',

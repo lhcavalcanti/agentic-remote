@@ -8254,8 +8254,17 @@ function App() {
             content,
             enqueue: shouldEnqueue,
           })
+      const acknowledged = restoredFailures.current.get(targetKey)
       restoredFailures.current.delete(targetKey)
-      unshownFailures.current.delete(targetKey)
+      // Only the failure this send was answering. A prompt that failed while
+      // this one was in flight was held back precisely because the composer
+      // was busy, and this answer is older than it: the session rejects the
+      // stale record, so dropping the deferred text here left it invisible
+      // for good, with the marker on the server still holding the queue.
+      const deferred = unshownFailures.current.get(targetKey)
+      if (!deferred || deferred.stamp === acknowledged) {
+        unshownFailures.current.delete(targetKey)
+      }
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
       prependComposerForKey(targetKey, content)
@@ -8263,6 +8272,20 @@ function App() {
     } finally {
       settleSubmission()
       setSending(false)
+      // The composer is free again, so anything held back while it was busy
+      // is offered now. Waiting for the next draft change left a failure
+      // holding the queue with nothing on screen to answer it.
+      const stillDeferred = unshownFailures.current.get(targetKey)
+      if (stillDeferred) {
+        handledFailures.current.delete(targetKey)
+        restoreFailedPromptRef.current(
+          targetKey,
+          stillDeferred.content,
+          stillDeferred.stamp,
+        )
+      } else {
+        reofferFailedPrompt(targetKey)
+      }
       focusComposer(targetKey)
     }
   }

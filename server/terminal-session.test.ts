@@ -513,6 +513,19 @@ describe('paneShowsText', () => {
     ).toBe(true)
   })
 
+  it('measures a paste by what the CLI received, not by what it renders', () => {
+    // Hundreds of one-character lines are a large paste that all but vanishes
+    // once whitespace is removed. Judged by the compacted text, the
+    // placeholder the CLI really did draw was refused as evidence, the paste
+    // was left in the prompt, and the retry put a second copy beside it.
+    const content = Array.from({ length: 500 }, () => 'q').join('\n')
+    expect(content.length).toBeGreaterThan(800)
+    expect(content.replace(/\s+/gu, '').length).toBeLessThan(800)
+    expect(
+      paneShowsText('> [Pasted text #1 +500 lines]', 'q', 0, content),
+    ).toBe(true)
+  })
+
   it('does not report the prompt put back when the keystroke never arrived', async () => {
     // tmux cannot deliver to a pane that is not there. Swallowing that and
     // reporting the paste taken back is what left it to be concatenated with

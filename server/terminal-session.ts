@@ -788,9 +788,13 @@ export class TmuxTerminalSessionController
         // empty to begin with; the one now says nothing has been typed into it
         // in the seconds since, which is long enough for someone to have
         // started a message while this was waiting.
-        // Nothing was left behind unless a clear was attempted and did not
-        // confirm. A paste that never landed leaves the prompt as it was.
-        let restored = true
+        // A paste that never landed leaves the prompt as it was found, so
+        // there is nothing to take back. One that landed late is only put back
+        // by a clear that confirmed: skipped because the composer was holding
+        // something, or because somebody has typed since, the text is still
+        // sitting there and the sender must be told to look rather than to
+        // send again.
+        let restored = !landedLate
         if (
           landedLate &&
           !composerWasHolding &&
@@ -1667,7 +1671,7 @@ export function paneEvidenceCount(
   // end in a short one: judged by that line alone, the placeholder it really
   // did produce went unrecognised and the paste was left behind to be sent
   // twice.
-  if (compact(pasted).length <= PASTE_ECHO_LIMIT) {
+  if (pasted.length <= PASTE_ECHO_LIMIT) {
     return found
   }
   return found + (pane.match(/\[Pasted text/g) || []).length
@@ -1807,7 +1811,11 @@ export function composerHoldsOtherText(
   // A placeholder is this paste's only if the paste is large enough to have
   // produced one. A short send that never landed, beside a terminal user's own
   // large paste, was being credited with their placeholder and taking it away.
-  const couldHavePlaceholder = compact(pasted).length > PASTE_ECHO_LIMIT
+  // The raw payload, not the compacted rendering. The CLI decides by what it
+  // received, and compaction removes every space and newline: hundreds of
+  // one-character lines are a large paste that measures small once joined, and
+  // the placeholder it produced was then refused as evidence.
+  const couldHavePlaceholder = pasted.length > PASTE_ECHO_LIMIT
   if (
     couldHavePlaceholder &&
     pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1

@@ -8198,23 +8198,23 @@ function App() {
         setStatuslineOpen(true)
       }
       setComposer('')
-      reofferFailedPrompt(targetKey)
       settleSubmission()
+      reofferFailedPrompt(targetKey)
       return
     }
     if (command?.name === 'clear') {
       setComposer('')
       focusComposer(await clearSelectedConversation())
-      reofferFailedPrompt(targetKey)
       settleSubmission()
+      reofferFailedPrompt(targetKey)
       return
     }
     if (command?.name === 'restart') {
       setComposer('')
       await restartSelectedSession()
       focusComposer(targetKey)
-      reofferFailedPrompt(targetKey)
       settleSubmission()
+      reofferFailedPrompt(targetKey)
       return
     }
     if (
@@ -8223,8 +8223,8 @@ function App() {
     ) {
       setComposer('')
       setCwdOpen(true)
-      reofferFailedPrompt(targetKey)
       settleSubmission()
+      reofferFailedPrompt(targetKey)
       return
     }
     const shouldEnqueue =
@@ -8258,8 +8258,8 @@ function App() {
       prependComposerForKey(targetKey, content)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      reofferFailedPrompt(targetKey)
       settleSubmission()
+      reofferFailedPrompt(targetKey)
       setSending(false)
       focusComposer(targetKey)
     }

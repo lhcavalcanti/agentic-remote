@@ -2536,7 +2536,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Let go of the recovered text only once this has actually been taken.
     // Clearing on the way in meant a retry that then failed left the reader
     // with an empty composer and the server with no copy either.
+    // What was waiting to be handed back before this went out. A send that is
+    // drained straight away can fail and record a new one, and acknowledging
+    // afterwards would clear the failure this very call just created.
+    const before = this.store.get(sessionId)?.failedPrompt?.failedAt
     const sent = await this.sendAdmitted(sessionId, content, enqueue)
+    if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
+      return sent
+    }
     // The snapshot above still carries the failure that this send answers, so
     // whatever comes back from clearing it is what the caller is given. Left
     // as it was, the browser dropped its own copy while every reader went on
@@ -2888,7 +2895,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<SessionDetail> {
     const command = rawCommand.trim()
     // Answered only once the command has actually been taken, like a message.
+    const before = this.store.get(sessionId)?.failedPrompt?.failedAt
     const ran = await this.runCommand(sessionId, command, enqueue)
+    if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
+      return ran
+    }
     const settled = await this.acknowledgeFailedPrompt(
       sessionId,
       command,
@@ -4821,8 +4832,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           // go on showing a prompt that is no longer waiting for anything.
           this.publish(session)
         }
-        // The event still carries it, so a browser that is listening restores
-        // the draft without waiting for a snapshot.
+        // Announced only when it was actually recorded. Saying the text is
+        // being held while the write that holds it failed hands a browser a
+        // draft the server cannot answer for, and leaves the queued copy on
+        // disk to be delivered again after a restart.
+        if (!recovered) {
+          throw new Error(
+            `${
+              error instanceof Error ? error.message : String(error)
+            } The prompt could not be set aside for recovery, so it may still be queued.`,
+          )
+        }
         this.emit('event', {
           type: 'error',
           sessionId,

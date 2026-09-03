@@ -6145,6 +6145,67 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('Half-written thought')
   })
 
+  it('claims ancestry from a replacement that arrives after the list', async () => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'Half-written thought' }),
+    )
+    const stale: ManagedSession = {
+      ...session,
+      id: 'session-1-b',
+      title: 'Cleared away',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    const current: ManagedSession = {
+      ...session,
+      id: 'session-1-c',
+      title: 'Carried on',
+      replacedSessionIds: ['session-1', 'session-1-b'],
+      messages: [],
+    }
+    let answerSessions: (() => void) | undefined
+    vi.mocked(listSessions).mockImplementation(
+      () =>
+        new Promise<ManagedSession[]>((resolve) => {
+          answerSessions = () => resolve([stale])
+        }),
+    )
+    vi.mocked(getSession).mockResolvedValue(current)
+
+    render(<App />)
+    await waitFor(() => expect(answerSessions).toBeDefined())
+
+    // The list is answered with the session that was already replaced, and
+    // rejected for it. The replacement arrives afterwards, and it is the only
+    // thing that still knows what the draft was left under.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1-b',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSessions?.()
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1-c': 'Half-written thought' }),
+    )
+  })
+
   it('does not bring back a session removed while the list was loading', async () => {
     const stale: ManagedSession = {
       ...session,

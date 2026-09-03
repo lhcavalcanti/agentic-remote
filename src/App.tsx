@@ -5512,6 +5512,9 @@ function App() {
   // Lineage is carried in every snapshot, so a replacement is claimed once
   // rather than again on each refresh.
   const adoptedReplacements = useRef(new Set<string>())
+  // What each claimed ancestor became, so a reader sitting on one can be taken
+  // to it rather than to whatever happens to sort first.
+  const replacedInto = useRef(new Map<string, string>())
   // The generation a root listing was last requested under, so a load
   // abandoned by a newer generation is retried instead of waited on.
   const knowledgeRootLoadGeneration = useRef(-1)
@@ -5708,6 +5711,7 @@ function App() {
           continue
         }
         adoptedReplacements.current.add(ancestor)
+        replacedInto.current.set(ancestor, replacement)
         migrateSessionStateRef.current(ancestor, replacement)
         setSelectedKey((current) =>
           current === ancestor ? replacement : current,
@@ -7088,7 +7092,19 @@ function App() {
         ) ||
           changedSinceRefresh(sessionKey(selectedAtRefresh)) ||
           pendingReplacements.current.has(sessionKey(selectedAtRefresh)))
-      if (selectedAtRefresh && selectedStillExists) {
+      const followedSelection = selectedAtRefresh
+        ? replacedInto.current.get(sessionKey(selectedAtRefresh))
+        : undefined
+      if (
+        selectedAtRefresh &&
+        followedSelection &&
+        followedSelection !== sessionKey(selectedAtRefresh)
+      ) {
+        // The session the reader was on was cleared, and its replacement is
+        // already here. Falling through would look for a session that no
+        // longer exists and then open an unrelated one.
+        setSelectedKey(followedSelection)
+      } else if (selectedAtRefresh && selectedStillExists) {
         const detailStartedAtSequence = eventSequenceRef.current
         const detail = await getSession(
           selectedAtRefresh.computerId,
@@ -7128,6 +7144,10 @@ function App() {
           )
           pendingReplacements.current.delete(sessionKey(event.session))
           setSessions((current) => upsertSession(current, event.session))
+          // The arrival is the newest word on its own ancestry, and the loads
+          // only ever see what the server last listed. Without this, state
+          // under an ancestor waits for a reload that may never come.
+          claimReplacedSessions([event.session])
         } else if (event.type === 'session.removed') {
           const removedKey = `${event.computerId}:${event.sessionId}`
           eventSequenceRef.current += 1

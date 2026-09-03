@@ -5386,6 +5386,15 @@ function App() {
   const [expandedTranscripts, setExpandedTranscripts] = useState<
     Record<string, boolean>
   >({})
+  // Stable per session. A fresh closure on every render defeats the memo the
+  // transcript relies on, so every keystroke in the composer would rebuild
+  // every row and walk the hidden history again.
+  const expandSelectedTranscript = useCallback(() => {
+    if (!selectedKey) {
+      return
+    }
+    setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
+  }, [selectedKey])
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -9096,12 +9105,7 @@ function App() {
           ) : (
             <ConversationMessages
               currentToolId={currentTool?.id}
-              onShowAll={() =>
-                setExpandedTranscripts((current) => ({
-                  ...current,
-                  [sessionKey(selected)]: true,
-                }))
-              }
+              onShowAll={expandSelectedTranscript}
               showAll={expandedTranscripts[sessionKey(selected)] === true}
               // Identity is the computer and the session together: two
               // computers can hand out the same provider session id, and

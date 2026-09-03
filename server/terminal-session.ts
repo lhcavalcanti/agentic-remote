@@ -505,6 +505,8 @@ export class TmuxTerminalSessionController
       ) {
         return false
       }
+      // Read from the form being answered, while it is certainly that form.
+      const submitsItself = !terminalFormHasSubmitRow(pane, form)
       // The steps are written from the first field onwards, but an attached
       // client can leave any field focused. Walking focus back with shift+tab
       // is what stops the answers landing one field over.
@@ -583,13 +585,14 @@ export class TmuxTerminalSessionController
         await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
         await new Promise((resolve) => setTimeout(resolve, 90))
       }
-      return submitTerminalForm(
-        capture,
-        async () => {
-          await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
-        },
-        (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-        (pane) => terminalFormShowsFields(pane, form),
+      if (!submitsItself) {
+        // Committing the last field left focus on the form's own Submit row.
+        // Pressed here, with no pause and nothing read in between, so there is
+        // no moment in which the form could have become another one.
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
+      }
+      return submitTerminalForm(capture, (ms) =>
+        new Promise((resolve) => setTimeout(resolve, ms)),
       )
     })
   }
@@ -1085,30 +1088,35 @@ export function terminalCommandOutput(
  * so one that closed itself never receives a stray keystroke into whatever
  * replaced it.
  */
+/**
+ * Whether the form on screen ends with a Submit row of its own.
+ *
+ * Committing the last field submits a form whose fields are all there is, and
+ * moves to Submit in a form that has one. Which of the two is open has to be
+ * read from the form being answered, before any answer is sent: afterwards the
+ * same question asked again is indistinguishable from it, and a form is named
+ * only by its question and its fields.
+ */
+export function terminalFormHasSubmitRow(
+  pane: string,
+  form: TerminalFormIdentity,
+): boolean {
+  const lines = pane.split('\n').map(cleanDialogLine)
+  const tabs = terminalFormTabsIndex(lines, form)
+  if (tabs < 0) {
+    return false
+  }
+  return lines.slice(tabs).some((line) => /^submit$/i.test(line))
+}
+
+/** Waits for a filled form to close, reporting whether it ever did. */
 export async function submitTerminalForm(
   capture: () => Promise<string>,
-  pressEnter: () => Promise<void>,
   settle: (ms: number) => Promise<void>,
-  showsAnsweredForm: (pane: string) => boolean,
   attempts = 24,
 ): Promise<boolean> {
-  // Committing the last field either closed the form or moved focus to its
-  // Submit row, and which one only shows in the frame right after. That is
-  // where Submit is pressed, and the only place it can be: a form is named by
-  // its question and its fields, so the same question asked again is
-  // indistinguishable from the one just answered, and an Enter held back for
-  // later would eventually be pressed into it.
-  await settle(200)
-  const afterFields = await capture()
-  if (!parseTerminalFormPrompt(afterFields)) {
-    return true
-  }
-  if (showsAnsweredForm(afterFields)) {
-    await pressEnter()
-  }
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const pane = await capture()
-    if (!parseTerminalFormPrompt(pane) || !showsAnsweredForm(pane)) {
+    if (!parseTerminalFormPrompt(await capture())) {
       return true
     }
     await settle(150)

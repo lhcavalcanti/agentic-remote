@@ -14,6 +14,7 @@ import {
   parseTerminalFormActiveField,
   parseTerminalPermission,
   submitTerminalForm,
+  terminalFormHasSubmitRow,
   parseTerminalUpdateNotice,
   parseTerminalUserInput,
   terminalCommandOutput,
@@ -905,6 +906,46 @@ describe('terminal form identity', () => {
   })
 })
 
+describe('terminalFormHasSubmitRow', () => {
+  const form = { question: 'Pick one', fields: ['Mode', 'Scope'] }
+  const withTabs = [
+    ' Copilot needs information.',
+    ' Pick one',
+    ' Mode    Scope',
+  ]
+
+  it('finds the Submit row a form ends with', () => {
+    const pane = [
+      ...withTabs,
+      ' Mode:',
+      ' Scope:',
+      ' Submit',
+      ' enter accept · esc cancel',
+    ].join('\n')
+    expect(terminalFormHasSubmitRow(pane, form)).toBe(true)
+  })
+
+  it('reports none when the fields are all there is', () => {
+    const pane = [
+      ...withTabs,
+      ' Mode:',
+      ' Scope:',
+      ' enter accept · esc cancel',
+    ].join('\n')
+    expect(terminalFormHasSubmitRow(pane, form)).toBe(false)
+  })
+
+  it('reports none when the form on screen is a different one', () => {
+    const pane = [
+      ' Copilot needs information.',
+      ' An entirely different question',
+      ' Something    Else',
+      ' Submit',
+    ].join('\n')
+    expect(terminalFormHasSubmitRow(pane, form)).toBe(false)
+  })
+})
+
 describe('submitTerminalForm', () => {
   const openForm = [
     ' Copilot needs information.',
@@ -913,91 +954,16 @@ describe('submitTerminalForm', () => {
     ' enter accept · esc cancel',
   ].join('\n')
   const closed = '❯ \n'
-  const answered = (pane: string) => pane === openForm
 
-  it('presses nothing when committing the last field closed the form', async () => {
-    const pressEnter = vi.fn(async () => {})
+  it('reports the form closing', async () => {
     await expect(
-      submitTerminalForm(
-        async () => closed,
-        pressEnter,
-        async () => {},
-        answered,
-      ),
+      submitTerminalForm(async () => closed, async () => {}),
     ).resolves.toBe(true)
-    expect(pressEnter).not.toHaveBeenCalled()
-  })
-
-  it('does not hold an Enter back for whatever is asked next', async () => {
-    // The same question asked again looks exactly like the one just answered,
-    // so an Enter that waits cannot tell them apart. Only the frame straight
-    // after the last field is safe, and by then the form has closed.
-    const pressEnter = vi.fn(async () => {})
-    let frames = 0
-    await expect(
-      submitTerminalForm(
-        async () => {
-          frames += 1
-          return frames > 1 ? openForm : closed
-        },
-        pressEnter,
-        async () => {},
-        answered,
-      ),
-    ).resolves.toBe(true)
-    expect(pressEnter).not.toHaveBeenCalled()
-  })
-
-  it('activates the Submit row a form is still waiting on', async () => {
-    let submitted = false
-    const pressEnter = vi.fn(async () => {
-      submitted = true
-    })
-    // The fields are all answered and the form is sitting on its Submit row,
-    // which is where committing the last field leaves it.
-    await expect(
-      submitTerminalForm(
-        async () => (submitted ? closed : openForm),
-        pressEnter,
-        async () => {},
-        answered,
-      ),
-    ).resolves.toBe(true)
-    expect(pressEnter).toHaveBeenCalledTimes(1)
   })
 
   it('gives up on a form that will not close', async () => {
-    const pressEnter = vi.fn(async () => {})
     await expect(
-      submitTerminalForm(
-        async () => openForm,
-        pressEnter,
-        async () => {},
-        answered,
-        10,
-      ),
+      submitTerminalForm(async () => openForm, async () => {}, 10),
     ).resolves.toBe(false)
-  })
-
-  it('never presses Enter on a form it did not answer', async () => {
-    const pressEnter = vi.fn(async () => {})
-    const replacement = [
-      ' Copilot needs information.',
-      ' An entirely different question',
-      ' Submit',
-      ' enter accept · esc cancel',
-    ].join('\n')
-
-    // The agent only reaches a second question by finishing the first, so the
-    // answer landed; pressing Enter here would submit the new form blind.
-    await expect(
-      submitTerminalForm(
-        async () => replacement,
-        pressEnter,
-        async () => {},
-        answered,
-      ),
-    ).resolves.toBe(true)
-    expect(pressEnter).not.toHaveBeenCalled()
   })
 })

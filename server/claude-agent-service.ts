@@ -211,6 +211,16 @@ export class ClaudeAgentService
   }
 
   private readonly active = new Map<string, ActiveClaudeQuery>()
+  /**
+   * Sessions whose turn has been started but has not registered its query yet.
+   *
+   * A turn asks the provider for its session before it has anything to
+   * register, and work that only looks at `active` read that gap as nothing
+   * running.
+   */
+  private readonly startingQueries = new Set<string>()
+  /** Sessions whose queue is being drained, so two drains cannot overlap. */
+  private readonly drainingSessions = new Set<string>()
   private readonly permissions = new Map<string, PendingClaudePermission>()
   private readonly userInputs = new Map<string, PendingClaudeInput>()
 
@@ -791,6 +801,12 @@ export class ClaudeAgentService
     // could take the process down. The turn reports its own failures on the
     // session; the queue drain that runs after it puts its prompt back and
     // rethrows, and that has nowhere left to go but here.
+    // Claimed before the turn is started, not once it has a query to show for
+    // itself. Registering only after the provider has been asked for its
+    // session left a window in which a delete found nothing running, took the
+    // conversation away, and the turn then started against a session that no
+    // longer existed.
+    this.startingQueries.add(sessionId)
     void this.runQuery(sessionId, content, assistantId).catch((error) => {
       console.warn(
         `Claude turn for ${sessionId} ended in an unreported failure:`,
@@ -846,8 +862,24 @@ export class ClaudeAgentService
 
   private async deleteSerialized(sessionId: string): Promise<void> {
     const session = this.requireSession(sessionId)
+    // A turn started a moment ago may not have registered its query yet. It is
+    // given long enough to appear, so the abort below has something to abort
+    // rather than the turn starting against a conversation already taken away.
+    for (
+      let attempt = 0;
+      attempt < 50 && this.startingQueries.has(sessionId);
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
     this.active.get(sessionId)?.abortController.abort()
+    const settling = this.active.get(sessionId)?.done
     this.resolvePending(sessionId, 'Session was deleted')
+    if (settling) {
+      // Waited for, so the turn is finished with the conversation before it is
+      // removed rather than writing into it afterwards.
+      await settling
+    }
     let cleanupError: unknown
     try {
       await this.sdk.deleteSession(sessionId, { dir: session.cwd })
@@ -1056,6 +1088,7 @@ export class ClaudeAgentService
       }
       owned = entry
       this.active.set(sessionId, entry)
+      this.startingQueries.delete(sessionId)
       for await (const message of activeQuery) {
         if (!this.store.get(sessionId)) {
           return
@@ -1125,6 +1158,7 @@ export class ClaudeAgentService
         this.active.delete(sessionId)
       }
       owned?.finish()
+      this.startingQueries.delete(sessionId)
       this.resolvePending(sessionId, 'Claude Agent stopped')
       if (!aborted) {
         // The drain puts its own prompt back before rethrowing, and there is
@@ -1429,6 +1463,22 @@ export class ClaudeAgentService
   }
 
   private async drainQueue(sessionId: string): Promise<void> {
+    // One drain at a time. Two sends reaching an idle session with a prompt
+    // already waiting each took a different head off the queue before either
+    // marked the session running, and started concurrent turns: the queue lost
+    // its order, and the second registration hid the first from cancellation.
+    if (this.drainingSessions.has(sessionId)) {
+      return
+    }
+    this.drainingSessions.add(sessionId)
+    try {
+      await this.drainSerialized(sessionId)
+    } finally {
+      this.drainingSessions.delete(sessionId)
+    }
+  }
+
+  private async drainSerialized(sessionId: string): Promise<void> {
     const session = this.store.get(sessionId)
     if (!session || session.status !== 'idle') {
       return

@@ -299,7 +299,13 @@ export class TmuxTerminalSessionController
       if (!owner) {
         // Already gone: the caller wanted nothing running for this session,
         // and nothing is.
-        return true
+        //
+        // Discovery answers with nothing when it fails as well as when there
+        // is nothing, and taking a failed look for proof recorded a session as
+        // suspended while its terminal was still running. tmux is asked
+        // directly, and only a server that is not there, or a pane list that
+        // holds nothing for this session, settles it.
+        return this.noPaneRemains(sessionId)
       }
       // Confirmation is the last thing awaited. Anything after it -- even
       // looking the owner up again -- is another moment in which somebody at
@@ -314,6 +320,17 @@ export class TmuxTerminalSessionController
       //
       // Killing the window rather than the pane would take any pane beside
       // it, which belongs to whoever split it there.
+      // The pane's root is what tmux can compare, but it is not always the
+      // session: Copilot can run beneath a persistent shell, exit while
+      // confirmation is running, and leave that same shell starting something
+      // else. The root would still match and the kill would take work that has
+      // nothing to do with this session.
+      //
+      // So the process that *is* the session is checked as well. If it has
+      // gone, the session has already stopped and there is nothing to kill.
+      if (!(await processIsAlive(owner.pid))) {
+        return !(await this.owner(sessionId))
+      }
       try {
         await execFileAsync('tmux', [
           'if-shell',
@@ -869,6 +886,34 @@ export class TmuxTerminalSessionController
 
   private async target(sessionId: string): Promise<string | undefined> {
     return (await this.owner(sessionId))?.target
+  }
+
+  /**
+   * Whether tmux itself says nothing is left running this session.
+   *
+   * Process discovery returning nothing is not the same as nothing running:
+   * it answers with nothing when it cannot look. This asks the one thing that
+   * can say for certain, and refuses when even that cannot be reached.
+   */
+  private async noPaneRemains(sessionId: string): Promise<boolean> {
+    try {
+      const listed = (
+        await execFileAsync('tmux', [
+          'list-panes',
+          '-a',
+          '-F',
+          '#{pane_pid}',
+        ])
+      ).stdout
+      if (!listed.trim()) {
+        return true
+      }
+    } catch (error) {
+      // No server at all means no pane, which is the ordinary way a
+      // suspension finishes. Anything else is a look that failed.
+      return noTmuxServer(error)
+    }
+    return !(await this.owner(sessionId))
   }
 
   private async owner(
@@ -1796,6 +1841,16 @@ async function tmuxTargetForPid(
     }
   }
   return undefined
+}
+
+/** Whether a process is still there to be ended. */
+async function processIsAlive(pid: number): Promise<boolean> {
+  try {
+    await readFile(`/proc/${pid}/stat`, 'utf8')
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function processAncestors(pid: number): Promise<Set<number>> {

@@ -645,6 +645,36 @@ describe('ClaudeAgentService', () => {
     await service.store.flush()
   })
 
+  it('drains a standing queue once however many sends arrive', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    await service.store.enqueuePrompt(session.id, {
+      id: 'waiting-1',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    // Two sends reaching an idle session with a prompt already waiting each
+    // took a different head off the queue before either marked the session
+    // running, and started concurrent turns.
+    await Promise.all([
+      service.sendMessage(session.id, 'first afterwards'),
+      service.sendMessage(session.id, 'second afterwards'),
+    ])
+
+    await vi.waitFor(() => {
+      expect(service.getSession(session.id)?.status).toBe('idle')
+    })
+    const messages = service.getSession(session.id)?.messages || []
+    const asked = messages
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content)
+    // Whatever ran, nothing ran twice.
+    expect(new Set(asked).size).toBe(asked.length)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await service.store.flush()
+  })
+
   it('refuses a restart that a suspension has already claimed', async () => {
     const { directory, service } = await fixture(async function* () {})
     const session = await service.createSession(directory, false, true, 'claude')

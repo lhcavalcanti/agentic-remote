@@ -584,4 +584,157 @@ describe('ClaudeAgentService', () => {
       }),
     ).rejects.toThrow('Unknown option: Telemetry')
   })
+
+  it('leaves no half-written turn when suspension wins the send', async () => {
+    // Recording the prompt is awaited, and a suspension can land while it is.
+    // Refusing the send afterwards while keeping what was written leaves the
+    // prompt in the transcript with an assistant reply that stays blank, and
+    // the client puts the draft back on top of it.
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    const before = service.getSession(session.id)?.messages.length ?? 0
+
+    // Suspension takes hold between the two writes.
+    const addMessage = service.store.addMessage.bind(service.store)
+    let writes = 0
+    vi.spyOn(service.store, 'addMessage').mockImplementation(
+      async (id, message) => {
+        const result = await addMessage(id, message)
+        writes += 1
+        if (writes === 2) {
+          await service.store.setSuspended(id, true)
+        }
+        return result
+      },
+    )
+
+    await expect(
+      service.sendMessage(session.id, 'lost to a suspension'),
+    ).rejects.toThrow(/Resume the session/)
+
+    // The transcript is as it was: no orphaned prompt, no blank reply.
+    expect(service.getSession(session.id)?.messages.length).toBe(before)
+  })
+
+  it('restarts a queue left standing by a drain that failed', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    // A queue left standing: the prompt is back on it and the session is idle,
+    // with no query running to take it off again.
+    await service.store.enqueuePrompt(session.id, {
+      id: 'waiting-1',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    await service.sendMessage(session.id, 'written afterwards')
+
+    await vi.waitFor(() => {
+      expect(
+        service.getSession(session.id)?.queuedPrompts?.map(
+          (prompt) => prompt.id,
+        ),
+      ).not.toContain('waiting-1')
+    })
+    // The drain starts a turn of its own, and the fixture removes the
+    // directory as soon as the test ends. It is left to finish first.
+    await vi.waitFor(() => {
+      expect(service.getSession(session.id)?.status).toBe('idle')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await service.store.flush()
+  })
+
+  it('drains a standing queue once however many sends arrive', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    await service.store.enqueuePrompt(session.id, {
+      id: 'waiting-1',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    // Two sends reaching an idle session with a prompt already waiting each
+    // took a different head off the queue before either marked the session
+    // running, and started concurrent turns.
+    await Promise.all([
+      service.sendMessage(session.id, 'first afterwards'),
+      service.sendMessage(session.id, 'second afterwards'),
+    ])
+
+    await vi.waitFor(() => {
+      expect(service.getSession(session.id)?.status).toBe('idle')
+    })
+    const messages = service.getSession(session.id)?.messages || []
+    const asked = messages
+      .filter((message) => message.role === 'user')
+      .map((message) => message.content)
+    // Whatever ran, nothing ran twice.
+    expect(new Set(asked).size).toBe(asked.length)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await service.store.flush()
+  })
+
+  it('refuses a send while the session is being deleted', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+
+    // Deleting takes several awaits, and a send starting inside any of them
+    // ran a turn against a conversation on its way out.
+    const deleting = service as unknown as { deletingSessions: Set<string> }
+    deleting.deletingSessions.add(session.id)
+
+    await expect(
+      service.sendMessage(session.id, 'lost to a deletion'),
+    ).rejects.toThrow(/not found/)
+    deleting.deletingSessions.delete(session.id)
+  })
+
+  it('refuses a restart that a suspension has already claimed', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+
+    // Suspension has claimed the session but has not written the flag yet.
+    // Reporting a restart on the strength of the stored flag alone let the
+    // suspension finish afterwards and write over it.
+    const suspending = service as unknown as {
+      suspendingSessions: Set<string>
+    }
+    suspending.suspendingSessions.add(session.id)
+
+    await expect(service.restartSession(session.id)).rejects.toThrow(
+      /Resume the session/,
+    )
+    suspending.suspendingSessions.delete(session.id)
+  })
+
+  it('leaves a suspended session where it was when the send is refused', async () => {
+    // The list is ordered by `updatedAt`, and both writes advance it. Putting
+    // only the messages back left the session at the top of the list for a
+    // send that was refused -- the opposite of keeping the place it had.
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    const before = service.getSession(session.id)?.updatedAt
+
+    const addMessage = service.store.addMessage.bind(service.store)
+    let writes = 0
+    vi.spyOn(service.store, 'addMessage').mockImplementation(
+      async (id, message) => {
+        const result = await addMessage(id, message)
+        writes += 1
+        if (writes === 2) {
+          await service.store.setSuspended(id, true)
+        }
+        return result
+      },
+    )
+
+    await expect(
+      service.sendMessage(session.id, 'lost to a suspension'),
+    ).rejects.toThrow(/Resume the session/)
+
+    expect(service.getSession(session.id)?.updatedAt).toBe(before)
+  })
+
+
 })

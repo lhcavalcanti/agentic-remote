@@ -220,6 +220,26 @@ export interface SessionSummary {
   }
   activity?: string
   runtime?: SessionRuntimeInfo
+  /**
+   * The sessions this one replaced, oldest first, as its conversation was
+   * cleared over and over.
+   *
+   * Clearing is announced as a removal and an arrival, which a client that is
+   * asleep or offline never sees. Carrying the lineage in the session itself
+   * means a client can still tell, from a snapshot alone, that what it is
+   * holding for a session that is gone belongs to this one. It is the whole
+   * ancestry rather than the last step because a client can miss several
+   * clears in a row, and the ones in between are gone with them.
+   */
+  replacedSessionIds?: string[]
+  /**
+   * Whether the session is being kept without anything running for it.
+   *
+   * The conversation is on disk, so the process holding it is the expendable
+   * part: a suspended session keeps its id, its history and its place in the
+   * list, and gives back the memory and CPU until it is wanted again.
+   */
+  suspended?: boolean
 }
 
 export interface SessionDetail extends SessionSummary {

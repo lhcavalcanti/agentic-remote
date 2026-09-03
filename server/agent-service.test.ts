@@ -847,6 +847,391 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('leaves a suspended task panel alone instead of starting the session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-panel-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'resting-sdk',
+        cwd: '/tmp/project',
+        title: 'Resting project',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    await store.setSuspended('resting-sdk', true)
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+
+    // The panel asks for every session as the app loads, so asking must not
+    // be what starts the runtime up again.
+    await expect(
+      service.listBackgroundTasks('resting-sdk'),
+    ).resolves.toMatchObject({ tasks: [] })
+  })
+
+  it('refuses to suspend a session that still owns background work', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-busy-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'shell',
+      id: 'shell-1',
+      description: 'pnpm dev',
+      status: 'running',
+      startedAt: '2026-09-02T00:00:00.000Z',
+      executionMode: 'background',
+    })
+
+    // A detached shell holds no foreground, so idle says nothing about it.
+    // Ending the owner would abandon it, or leave it running behind a session
+    // reporting that nothing is.
+    await expect(service.suspendSession(created.id)).rejects.toThrow(
+      /background tasks finish/,
+    )
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+  })
+
+  it('refuses to suspend when work is detached while the check is under way', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-late-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    // The runtime is asked for its tasks before the awaits that put it down,
+    // and a detached shell can be started inside those awaits. It holds no
+    // foreground, so the idleness check that follows does not see it, and the
+    // suspension used to go ahead and abandon it.
+    let asked = 0
+    const tasks = client.session.rpc.tasks
+    const originalList = tasks.list
+    tasks.list = async () => {
+      asked += 1
+      if (asked > 1) {
+        client.session.backgroundTasks.push({
+          type: 'shell',
+          id: 'shell-late',
+          description: 'pnpm build',
+          status: 'running',
+          startedAt: '2026-09-02T00:00:00.000Z',
+          executionMode: 'background',
+        })
+      }
+      return originalList()
+    }
+
+    await expect(service.suspendSession(created.id)).rejects.toThrow(
+      /background tasks finish/,
+    )
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+  })
+
+  it('leaves a suspended session listed even if the pane is seen to go first', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-open-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'closing-session',
+        cwd: '/tmp/project',
+        title: 'Closing project',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+
+    // Killing the pane is what a discovery pass reads as the session being
+    // gone, and it can land between the kill and the flag being written.
+    await store.setOpen('closing-session', false, true)
+    const suspended = await store.setSuspended('closing-session', true)
+
+    // Suspended is put down on purpose, not found missing. Left closed, it
+    // dropped out of the list with nothing able to bring it back.
+    expect(suspended).toMatchObject({ suspended: true, isOpen: true })
+  })
+
+  it('suspends a session that has never been opened', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-cold-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'cold-session',
+        cwd: directory,
+        title: 'Cold project',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'sdk' },
+    )
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+
+    // Nothing is attached, so there is no runtime holding background work and
+    // none to ask. Asking anyway reached `ensureLoaded`, which refuses while a
+    // suspension is under way, so the session could not be put down at all.
+    await expect(service.suspendSession('cold-session')).resolves.toMatchObject(
+      { id: 'cold-session', suspended: true },
+    )
+  })
+
+  it('restarts a queue left standing by a drain that failed', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-drain-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // A queue left standing by a drain that failed: the prompt is back on the
+    // queue and the session is idle, with nothing running to take it off.
+    await service.store.enqueuePrompt(created.id, {
+      id: 'waiting-1',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    // A drain that failed puts its prompt back and leaves nothing running to
+    // take it off again. Every message written afterwards joined the queue
+    // behind it, and all of them stayed there.
+    await service.sendMessage(created.id, 'written afterwards')
+
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('the one that was waiting')
+    })
+  })
+
+  it('refuses competing lifecycle work while a suspension is under way', async () => {
+    // Suspending reads background tasks and puts the runtime down, and both
+    // are awaited. Only refusing other suspensions during that window lets a
+    // restart or a clear attach a live runtime behind the suspension, or lets
+    // the suspension take down work that has only just started.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-race-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    let releaseTasks: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    const listBackgroundTasks = service.listBackgroundTasks.bind(service)
+    vi.spyOn(service, 'listBackgroundTasks').mockImplementation(async (id) => {
+      await held
+      return listBackgroundTasks(id)
+    })
+
+    const suspending = service.suspendSession(created.id)
+    // The session is not yet recorded as suspended: it is only reserved.
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+
+    // A send is refused outright: it is not lifecycle work and must not start
+    // a turn into a session on its way down.
+    await expect(
+      service.sendMessage(created.id, 'slip through', false),
+    ).rejects.toThrow(/Resume the session/)
+
+    // Lifecycle work waits its turn rather than interleaving with the
+    // teardown, and finds the session suspended when it gets there.
+    const restarting = service.restartSession(created.id)
+    const clearing = service.clearConversation(created.id)
+
+    releaseTasks()
+    await suspending
+    expect(service.getSession(created.id)?.suspended).toBe(true)
+    await expect(restarting).rejects.toThrow(/Resume the session/)
+    await expect(clearing).rejects.toThrow(/Resume the session/)
+    await service.stop()
+  })
+
+  it('does not suspend out from under a prompt already on its way', async () => {
+    // The store still says idle until the turn is recorded, so a suspension
+    // that only reads the stored status can put the runtime down underneath a
+    // prompt that has already been handed to it.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-race2-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    let releaseSend: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseSend = resolve
+    })
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        await held
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const sending = service.sendMessage(
+      client.session.sessionId,
+      'already on its way',
+      false,
+    )
+    await vi.waitFor(() => expect(terminal.send).toHaveBeenCalled())
+
+    await expect(
+      service.suspendSession(client.session.sessionId),
+    ).rejects.toThrow(/only be suspended while idle/)
+
+    releaseSend()
+    await sending.catch(() => undefined)
+    await service.stop()
+  })
+
+  it('keeps the reservation while a second send is still on its way', async () => {
+    // Two sends can overlap. Marked with a flag rather than counted, the first
+    // to finish cleared it while the second was still awaiting delivery, and
+    // suspension saw an idle session with nothing holding it.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-hold-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const gates: (() => void)[] = []
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async () =>
+          new Promise<boolean>((resolve) => {
+            gates.push(() => resolve(true))
+          }),
+      ),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const first = service.sendMessage(client.session.sessionId, 'one', false)
+    const second = service.sendMessage(client.session.sessionId, 'two', false)
+    await vi.waitFor(() => expect(gates.length).toBe(2))
+
+    // The first finishes; the second is still on its way.
+    gates[0]()
+    await first.catch(() => undefined)
+
+    await expect(
+      service.suspendSession(client.session.sessionId),
+    ).rejects.toThrow(/only be suspended while idle/)
+
+    gates[1]()
+    await second.catch(() => undefined)
+    await service.stop()
+  })
+
+  it('keeps a suspended terminal session when it is opened', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'resting-session',
+        cwd: '/tmp/project',
+        title: 'Resting project',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.setSuspended('resting-session', true)
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+
+    // A suspended session has no window on purpose. Taking that as proof it
+    // is gone would close it, drop it from recovery, and lose it for good.
+    await expect(service.openSession('resting-session')).resolves.toMatchObject(
+      { id: 'resting-session', suspended: true },
+    )
+    expect(store.get('resting-session')).toMatchObject({ isOpen: true })
+    expect(
+      store.terminalRecoverySessions().map((session) => session.id),
+    ).toEqual([])
+  })
+
   it('lists, updates, and cancels SDK background tasks independently of session status', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
     directories.push(directory)

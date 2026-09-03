@@ -42,6 +42,7 @@ import {
   readKnowledgeFile,
   addKnowledgeRoot,
   listSessions,
+  listSessionListing,
   listWorkspace,
   validateSessionDirectory,
   moveSessionToTmux,
@@ -49,6 +50,8 @@ import {
   renameSession,
   readWorkspaceFile,
   restartSession,
+  resumeSession,
+  suspendSession,
   replyUserInput,
   sendMessage,
   sendTestPushNotification,
@@ -62,6 +65,7 @@ import { PWA_UPDATE_EVENT } from './pwa'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
+  listSessionListing: vi.fn(),
   listBackgroundTasks: vi.fn(),
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
@@ -88,6 +92,8 @@ vi.mock('./api', () => ({
   getProviderRuntimeOptions: vi.fn(),
   clearConversation: vi.fn(),
   restartSession: vi.fn(),
+  resumeSession: vi.fn(),
+  suspendSession: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
   executeCommand: vi.fn(),
@@ -322,6 +328,18 @@ describe('App', () => {
     // one test's deep link selects a session in the next.
     window.history.replaceState({}, '', '/')
     vi.mocked(listSessions).mockResolvedValue([session])
+    // The snapshot asks for the list and for which computers answered for
+    // their own sessions. Every test that sets up a list means it to be an
+    // answer from everything it names.
+    vi.mocked(listSessionListing).mockImplementation(async () => {
+      const sessions = await vi.mocked(listSessions)()
+      return {
+        sessions,
+        answeredComputerIds: [
+          ...new Set(sessions.map((entry) => entry.computerId)),
+        ],
+      }
+    })
     vi.mocked(listBackgroundTasks).mockResolvedValue({
       tasks: [],
       runningCount: 0,
@@ -465,6 +483,8 @@ describe('App', () => {
       messages: [],
     })
     vi.mocked(restartSession).mockResolvedValue(session)
+    vi.mocked(suspendSession).mockResolvedValue({ ...session, suspended: true })
+    vi.mocked(resumeSession).mockResolvedValue({ ...session, suspended: false })
     vi.mocked(moveSessionToTmux).mockResolvedValue({
       ...session,
       executionMode: 'tmux',
@@ -2455,6 +2475,68 @@ describe('App', () => {
         'Original message\n\nTranscribed walking idea',
       ),
     )
+  })
+
+  it('keeps a suspended conversation readable and closed to writing', async () => {
+    // Suspending stops the process, not the conversation: the history and the
+    // name stay, and the way back is the button rather than the composer.
+    const resting = { ...session, suspended: true }
+    vi.mocked(listSessions).mockResolvedValue([resting])
+    vi.mocked(getSession).mockResolvedValue(resting)
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // Still readable.
+    expect(screen.getByText('Hello agent')).toBeInTheDocument()
+    // ...and visibly not running.
+    expect(document.querySelector('.session-item')?.className).toContain(
+      'session-item--suspended',
+    )
+    // Writing is what resuming is for.
+    const composer = screen.getByLabelText('Message')
+    expect(composer).toBeDisabled()
+    expect(composer).toHaveAttribute('placeholder', 'Suspended · resume to send')
+    expect(
+      screen.getByRole('button', { name: 'Resume session' }),
+    ).toBeInTheDocument()
+  })
+
+  it('suspends the selected session and offers to start it again', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend session' }))
+
+    await waitFor(() =>
+      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+    // The session is kept, so the way back has to be offered where the way
+    // out was.
+    const resume = await screen.findByRole('button', {
+      name: 'Resume session',
+    })
+    fireEvent.click(resume)
+    await waitFor(() =>
+      expect(resumeSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+  })
+
+  it('offers to start a suspended session even though it is not idle', async () => {
+    vi.mocked(listSessions).mockResolvedValue([
+      { ...session, suspended: true, status: 'error' },
+    ])
+    vi.mocked(getSession).mockResolvedValue({
+      ...session,
+      suspended: true,
+      status: 'error',
+    })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      await screen.findByRole('button', { name: 'Resume session' }),
+    ).toBeEnabled()
   })
 
   it('mutes notifications for the selected session from the header', async () => {
@@ -6202,6 +6284,549 @@ describe('App', () => {
     await waitFor(() => expect(textarea).toHaveValue(''))
   })
 
+  it('waits for the promised replacement instead of opening another session', async () => {
+    // The address names a session that is cleared while the first list request
+    // is still in flight. The response cannot contain the replacement yet, so
+    // searching it finds nothing; falling through opens an unrelated
+    // conversation the reader never asked for.
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-1',
+    )
+    const other: ManagedSession = {
+      ...session,
+      id: 'session-unrelated',
+      title: 'Unrelated chat',
+      messages: [],
+    }
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      title: 'Followed on',
+      messages: [],
+    }
+    let deliver: (value: ManagedSession[]) => void = () => {}
+    vi.mocked(listSessions).mockReturnValue(
+      new Promise<ManagedSession[]>((resolve) => {
+        deliver = resolve
+      }),
+    )
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === replacement.id ? replacement : other,
+    )
+
+    render(<App />)
+    await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+
+    // The clear is announced before the list arrives.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      // Only the unrelated session: the replacement has not been delivered.
+      deliver([other])
+    })
+    // Its arrival comes after the list has already settled.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item--active')?.textContent,
+      ).toContain('Followed on'),
+    )
+  })
+
+  it('follows a clear when the reader goes back to the old session', async () => {
+    // The clear happens while another session is open, so nothing moves the
+    // selection at the time. Back then reaches an address naming a session
+    // that no longer exists, and selecting that id opens nothing.
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      title: 'Followed on',
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === replacement.id
+        ? replacement
+        : sessionId === secondSession.id
+          ? secondSession
+          : session,
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+
+    // Read a different conversation, so the clear does not move the selection.
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item--active')?.textContent,
+      ).toContain('Second chat'),
+    )
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    await screen.findAllByText('Followed on')
+
+    // An older history entry still names the session that was cleared.
+    act(() => {
+      window.history.replaceState(
+        {},
+        '',
+        '/?computer=computer-1&session=session-1',
+      )
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item--active')?.textContent,
+      ).toContain('Followed on'),
+    )
+  })
+
+  it('opens the linked session when the socket refresh gets there first', async () => {
+    // The socket opens and starts a refresh of its own, which can overtake
+    // the first list because that request waits on paired nodes. Whichever
+    // arrives first has to be the one that answers the address.
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-wanted',
+    )
+    const other: ManagedSession = {
+      ...session,
+      id: 'session-first',
+      title: 'Unrelated chat',
+      messages: [],
+    }
+    const wanted: ManagedSession = {
+      ...session,
+      id: 'session-wanted',
+      title: 'Linked chat',
+      messages: [],
+    }
+    let deliverInitial: (value: ManagedSession[]) => void = () => {}
+    let call = 0
+    vi.mocked(listSessions).mockImplementation(() => {
+      call += 1
+      // The first list is held; the socket's refresh answers immediately.
+      return call === 1
+        ? new Promise<ManagedSession[]>((resolve) => {
+            deliverInitial = resolve
+          })
+        : Promise.resolve([other, wanted])
+    })
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === wanted.id ? wanted : other,
+    )
+
+    render(<App />)
+    await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+    act(() => {
+      MockWebSocket.instances[0]?.onopen?.()
+    })
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item--active')?.textContent,
+      ).toContain('Linked chat'),
+    )
+    await act(async () => {
+      deliverInitial([other, wanted])
+    })
+    expect(
+      document.querySelector('.session-item--active')?.textContent,
+    ).toContain('Linked chat')
+  })
+
+  it('takes the newest ancestor when several held something', async () => {
+    // Ancestors only fill what the replacement lacks, so the most recent has
+    // to be offered first. Oldest-first, the earliest draft takes the place
+    // the latest one should have had and the newer text is lost.
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({
+        'computer-1:session-a': 'oldest thought',
+        'computer-1:session-b': 'newest thought',
+      }),
+    )
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-c',
+      replacedSessionIds: ['session-a', 'session-b'],
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('newest thought'),
+    )
+  })
+
+  it('does not overwrite newer state under the replacement', async () => {
+    // This browser used the replacement before it learned what it replaced, so
+    // it already has newer writing there. Claiming the ancestor must fill a
+    // gap, not paint over it.
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({
+        'computer-1:session-1': 'older thought',
+        'computer-1:session-1-cleared': 'newer thought',
+      }),
+    )
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('newer thought'),
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+      ),
+    ).toEqual({ 'computer-1:session-1-cleared': 'newer thought' })
+  })
+
+  it('keeps a computer\'s sessions when only its status changed', async () => {
+    // A paired node going offline is an ordinary update. Treating it as
+    // reason to reject the snapshot discards every session it owns.
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'computer.updated',
+          computer: { ...computer, online: false },
+        }),
+      } as MessageEvent)
+    })
+
+    expect((await screen.findAllByText('Project chat')).length).toBeGreaterThan(
+      0,
+    )
+  })
+
+  it('claims state from a clear that happened while it was away', async () => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'Half-written thought' }),
+    )
+    localStorage.setItem(
+      'agentic-remote:knowledge-session-positions',
+      JSON.stringify({
+        'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
+      }),
+    )
+    // Another client cleared the session while this one was asleep, so the
+    // removal was announced to nobody here: only the replacement is left, and
+    // it is the one thing that says what it replaced.
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1-cleared': 'Half-written thought' }),
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:knowledge-session-positions') ||
+          '{}',
+      ),
+    ).toEqual({
+      'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
+    })
+    expect(screen.getByLabelText('Message')).toHaveValue('Half-written thought')
+  })
+
+  it('claims ancestry from a replacement that arrives after the list', async () => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'Half-written thought' }),
+    )
+    const stale: ManagedSession = {
+      ...session,
+      id: 'session-1-b',
+      title: 'Cleared away',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    const current: ManagedSession = {
+      ...session,
+      id: 'session-1-c',
+      title: 'Carried on',
+      replacedSessionIds: ['session-1', 'session-1-b'],
+      messages: [],
+    }
+    let answerSessions: (() => void) | undefined
+    vi.mocked(listSessions).mockImplementation(
+      () =>
+        new Promise<ManagedSession[]>((resolve) => {
+          answerSessions = () => resolve([stale])
+        }),
+    )
+    vi.mocked(getSession).mockResolvedValue(current)
+
+    render(<App />)
+    await waitFor(() => expect(answerSessions).toBeDefined())
+
+    // The list is answered with the session that was already replaced, and
+    // rejected for it. The replacement arrives afterwards, and it is the only
+    // thing that still knows what the draft was left under.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1-b',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSessions?.()
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1-c': 'Half-written thought' }),
+    )
+  })
+
+  it('does not bring back a session removed while the list was loading', async () => {
+    const stale: ManagedSession = {
+      ...session,
+      id: 'session-1-b',
+      title: 'Cleared away',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    const current: ManagedSession = {
+      ...session,
+      id: 'session-1-c',
+      title: 'Carried on',
+      replacedSessionIds: ['session-1', 'session-1-b'],
+      messages: [],
+    }
+    let answerSessions: (() => void) | undefined
+    vi.mocked(listSessions).mockImplementation(
+      () =>
+        new Promise<ManagedSession[]>((resolve) => {
+          answerSessions = () => resolve([stale])
+        }),
+    )
+    vi.mocked(getSession).mockResolvedValue(current)
+
+    render(<App />)
+    await waitFor(() => expect(answerSessions).toBeDefined())
+
+    // The list was already on its way when the clear happened, so its answer
+    // still describes the session that has since been replaced.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1-b',
+          replacedBy: 'session-1-c',
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSessions?.()
+    })
+
+    expect(await screen.findAllByText('Carried on')).not.toHaveLength(0)
+    // An answer that predates the removal is not evidence the session is back.
+    expect(screen.queryByText('Cleared away')).not.toBeInTheDocument()
+  })
+
+  it('claims state from a session cleared twice while it was away', async () => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'Half-written thought' }),
+    )
+    // Cleared twice over: the session in between is gone as well, so only the
+    // whole ancestry can lead back to what the draft was left under.
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-twice',
+      replacedSessionIds: ['session-1', 'session-1-once'],
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1-twice': 'Half-written thought' }),
+    )
+  })
+
+  it('opens what a linked session became after a clear it missed', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2',
+    )
+    const replacement: ManagedSession = {
+      ...secondSession,
+      id: 'session-2-cleared',
+      title: 'Second chat',
+      replacedSessionIds: ['session-2'],
+      messages: [],
+    }
+    // The link names a session that no longer exists, and an unrelated one is
+    // listed first, so falling back would open the wrong conversation.
+    vi.mocked(listSessions).mockResolvedValue([session, replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-2-cleared'),
+    )
+    window.history.replaceState({}, '', '/')
+  })
+
+  it('follows a link through a replacement the list could not speak for', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2',
+    )
+    // The link names A. The list that is about to answer holds B, which says
+    // it replaced A -- but B is cleared into C while that list is in flight,
+    // so reconciliation rejects B and its ancestry went with it. Without the
+    // link A -> B there is no route from the address to C, and an unrelated
+    // session sorts first and takes the reader's place for good.
+    const replacementB: ManagedSession = {
+      ...secondSession,
+      id: 'session-2-b',
+      title: 'Second chat',
+      replacedSessionIds: ['session-2'],
+      messages: [],
+    }
+    const replacementC: ManagedSession = {
+      ...secondSession,
+      id: 'session-2-c',
+      title: 'Second chat',
+      replacedSessionIds: ['session-2', 'session-2-b'],
+      messages: [],
+    }
+    let answerSessions: (() => void) | undefined
+    vi.mocked(listSessions).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerSessions = () => resolve([session, replacementB])
+        }),
+    )
+    vi.mocked(getSession).mockResolvedValue(replacementC)
+
+    render(<App />)
+    await waitFor(() => expect(answerSessions).toBeDefined())
+
+    // B is cleared into C while the list is still in flight.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-2-b',
+          replacedBy: 'session-2-c',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSessions?.()
+    })
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: replacementC,
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-2-c'),
+    )
+    window.history.replaceState({}, '', '/')
+  })
+
   it('keeps an edited recovery answering for its failure', async () => {
     // A reader who edits what they were handed is still answering that
     // failure. Requiring the words to match meant the edited draft no longer
@@ -6241,6 +6866,180 @@ describe('App', () => {
           acknowledgesFailure: '2026-09-03T00:00:00.000Z',
         }),
       ),
+    )
+  })
+
+  it('keeps waiting when the node that owns a replacement did not answer', async () => {
+    // The hub answers for a paired computer out of its own cache when the node
+    // request fails, and a failed request does not have to mean the computer
+    // is offline. The replacement is missing from that answer because nothing
+    // looked for it, not because it has gone.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(listSessionListing).mockImplementation(async () => ({
+      sessions: [session, secondSession],
+      // `computer-1` is still reported online; its list simply was not fetched.
+      answeredComputerIds: [],
+    }))
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The removal comes first, so the snapshot that follows starts after the
+    // replacement was announced -- its absence is no longer explained by the
+    // request predating the announcement, and this is the answer that settles
+    // the claim.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-1',
+          replacedBy: 'session-1-next',
+        }),
+      } as MessageEvent)
+    })
+    vi.mocked(getSession).mockClear()
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-next',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    vi.mocked(getSession).mockResolvedValue(replacement)
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: replacement,
+        }),
+      } as MessageEvent)
+    })
+
+    // The replacement was still expected, so the reader is on it rather than
+    // on whatever an unanswered list happened to sort first.
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-1-next'),
+    )
+    // Never taken back to the session that was cleared, nor to anything else
+    // the unanswered list happened to still be carrying.
+    expect(getSession).not.toHaveBeenCalledWith('computer-1', 'session-1')
+    expect(getSession).not.toHaveBeenCalledWith('computer-1', 'session-2')
+  })
+
+  it('does not put back a replacement that was cleared again while answering', async () => {
+    // A -> B finishes on the server, then B -> C is announced here before A's
+    // answer arrives. Putting B back would resurrect a session that is gone
+    // and take the reader off the one that replaced it.
+    let answerClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerClear = resolve
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(answerClear).toBeDefined())
+
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-1-b',
+          replacedBy: 'session-1-c',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerClear?.({ ...session, id: 'session-1-b', messages: [] })
+    })
+
+    // B is gone, so it must not be in the list, and the reader belongs on C.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /session-1-b/ }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(getSession).not.toHaveBeenCalledWith('computer-1', 'session-1-b')
+  })
+
+  it('keeps sessions a computer was never asked about', async () => {
+    // The hub answers for a paired computer out of its own cache when the node
+    // does not reply, and after a restart that cache is empty. Reading it as
+    // the whole truth removed every session the browser already had.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    vi.mocked(listSessionListing).mockResolvedValue({
+      sessions: [],
+      answeredComputerIds: [],
+    })
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(await screen.findAllByText('Project chat')).not.toHaveLength(0)
+  })
+
+  it('moves a cleared session\'s things to the session that is really live', async () => {
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({ 'computer-1:session-1': 'Half-written thought' }),
+    )
+    let answerClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerClear = resolve
+        }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(answerClear).toBeDefined())
+
+    // B is cleared into C before A's answer names B. Moving the draft into B
+    // left it under a session that is gone, and C had already been told there
+    // was nothing left to claim.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-1-b',
+          replacedBy: 'session-1-c',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerClear?.({ ...session, id: 'session-1-b', messages: [] })
+    })
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        ),
+      ).toEqual({ 'computer-1:session-1-c': 'Half-written thought' }),
     )
   })
 

@@ -325,6 +325,84 @@ Permission request (1 remaining)
     expect(cleared).toBe(true)
   })
 
+  it('kills only the owning pane when panes are renumbered while confirming', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-fake')
+    await writeFile(executable, '#!/usr/bin/env bash\nsleep 60\n')
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-kill-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    // A pane that is not the owner's, created first so it holds index 0.
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep 60',
+    ])
+    await execFileAsync('tmux', [
+      'split-window',
+      '-d',
+      '-t',
+      tmuxSession,
+      '--',
+      executable,
+    ])
+    const panes = (
+      await execFileAsync('tmux', [
+        'list-panes',
+        '-t',
+        tmuxSession,
+        '-F',
+        '#{pane_index}\t#{pane_pid}\t#{pane_id}',
+      ])
+    ).stdout
+      .trim()
+      .split('\n')
+      .map((line) => line.split('\t'))
+    const owner = panes[1]
+    const bystander = panes[0]
+    const sessionId = 'abcdef12-abcd-abcd-abcd-abcdef654321'
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(
+      path.join(sessionDirectory, `inuse.${owner[1]}.lock`),
+      `${owner[1]}\n`,
+    )
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+
+    // Confirmation does I/O, and the pane numbering can change underneath it.
+    // A target resolved beforehand as `session:window.pane` then names a
+    // different pane, and killing it takes somebody else's work.
+    const closed = await new TmuxTerminalSessionController().stop(
+      sessionId,
+      async () => {
+        await execFileAsync('tmux', [
+          'swap-pane',
+          '-d',
+          '-s',
+          bystander[2],
+          '-t',
+          owner[2],
+        ])
+      },
+    )
+
+    expect(closed).toBe(true)
+    const remaining = (
+      await execFileAsync('tmux', [
+        'list-panes',
+        '-t',
+        tmuxSession,
+        '-F',
+        '#{pane_id}',
+      ])
+    ).stdout.trim()
+    expect(remaining).toBe(bystander[2])
+  })
+
   it('delivers a prompt into the owning terminal pane', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)

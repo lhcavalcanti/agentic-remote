@@ -258,9 +258,7 @@ export async function registerHubRoutes(
     },
   )
 
-  app.get('/api/sessions', async () => ({
-    sessions: await manager.listSessions(),
-  }))
+  app.get('/api/sessions', async () => manager.listSessionsWithAuthority())
 
   app.get('/api/history', async () => ({
     sessions: await manager.listHistory(),
@@ -495,6 +493,26 @@ export async function registerHubRoutes(
       }
       return { session }
     },
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/suspend',
+    async (request) => ({
+      session: await manager.suspendSession(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/resume',
+    async (request) => ({
+      session: await manager.resumeSession(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
   )
 
   app.post<{ Params: SessionParams }>(

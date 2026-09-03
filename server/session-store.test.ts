@@ -26,6 +26,72 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it('keeps a suspended session in the list when nothing is running for it', async () => {
+    const { store } = await createStore()
+    await store.create(
+      {
+        id: 'resting-session',
+        cwd: '/tmp/resting-project',
+        title: 'Resting project',
+        updatedAt: '2026-07-22T00:00:01.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.setSuspended('resting-session', true)
+
+    // Discovery finds no process for it, which is the point. Reading that as
+    // closed would hide the session, and the only way to resume it is the
+    // button on the session itself.
+    await store.syncOpen([])
+
+    expect(store.get('resting-session')).toMatchObject({
+      isOpen: true,
+      suspended: true,
+    })
+  })
+
+  it('leaves a suspended session alone when recovering terminals', async () => {
+    const { directory, store } = await createStore()
+    await store.create(
+      {
+        id: 'terminal-session',
+        cwd: '/tmp/terminal-project',
+        title: 'Terminal project',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.create(
+      {
+        id: 'resting-session',
+        cwd: '/tmp/resting-project',
+        title: 'Resting project',
+        updatedAt: '2026-07-22T00:00:01.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.setSuspended('resting-session', true)
+
+    const restored = new SessionStore(directory)
+    await restored.initialize()
+
+    // Starting a suspended session back up at boot is the opposite of what
+    // suspending it asked for.
+    expect(restored.terminalRecoverySessions()).toEqual([
+      expect.objectContaining({ id: 'terminal-session' }),
+    ])
+    expect(restored.get('resting-session')).toMatchObject({ suspended: true })
+  })
+
   it('persists sessions and protects the state file', async () => {
     const { directory, store } = await createStore()
     await store.create({
@@ -357,6 +423,34 @@ describe('SessionStore', () => {
     )
     await store.remove('session-2')
     await expect(stat(second.path)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('keeps the whole ancestry of a session cleared many times', async () => {
+    // A browser that was away long enough to miss dozens of clears is exactly
+    // the one still holding the oldest id, and what it is holding has no
+    // expiry of its own. Forgetting the far end of the lineage is what leaves
+    // that draft with no way back to the session it belongs to.
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-0',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+
+    for (let index = 0; index < 40; index += 1) {
+      await store.replaceWithClearedSession(
+        `session-${index}`,
+        `session-${index + 1}`,
+      )
+    }
+
+    const latest = store.get('session-40')
+    expect(latest?.replacedSessionIds).toHaveLength(40)
+    // The very first id is still reachable from the newest session.
+    expect(latest?.replacedSessionIds?.[0]).toBe('session-0')
   })
 
   it('resets interrupted transient state when reloaded', async () => {

@@ -1522,6 +1522,71 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
   >()
+  /** Sessions being put down, which nothing may start a turn into. */
+  private readonly suspendingSessions = new Set<string>()
+  // Suspend, resume, restart, clear and migration each replace or remove a
+  // session's runtime, so only one may be doing so at a time. Checking a flag
+  // on the way in is not enough: they all await, and another can arrive while
+  // one is waiting.
+  private readonly lifecycleLocks = new Map<string, Promise<unknown>>()
+  // Sessions with a prompt on its way to a runtime. Suspending has to leave
+  // them alone: the store still says idle until the turn is recorded, and
+  // tearing the runtime down here kills a turn that has already started.
+  private readonly dispatchingSessions = new Map<string, number>()
+  // Sessions whose runtime is not open for new work yet. A resume clears the
+  // suspended flag before it has claimed the queue, and sending is reopened
+  // by that flag, so admission is held shut separately until the prompt that
+  // was already waiting has been taken.
+  private readonly admissionClosed = new Set<string>()
+
+  /** Marks a session as having a prompt on its way, and gives back the undo. */
+  private holdDispatch(sessionId: string): () => void {
+    // Counted rather than flagged: two sends can overlap, and the first to
+    // finish would otherwise clear the mark while the second is still
+    // awaiting delivery, leaving suspension free to tear it down.
+    this.dispatchingSessions.set(
+      sessionId,
+      (this.dispatchingSessions.get(sessionId) || 0) + 1,
+    )
+    let released = false
+    return () => {
+      if (released) {
+        return
+      }
+      released = true
+      const held = (this.dispatchingSessions.get(sessionId) || 1) - 1
+      if (held > 0) {
+        this.dispatchingSessions.set(sessionId, held)
+      } else {
+        this.dispatchingSessions.delete(sessionId)
+      }
+    }
+  }
+
+  /** Runs lifecycle work for a session one at a time, in arrival order. */
+  private serializeLifecycle<T>(
+    sessionId: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.lifecycleLocks.get(sessionId) ?? Promise.resolve()
+    const next = previous.catch(() => undefined).then(run)
+    // Only that it finished, never what it produced: holding the result keeps
+    // a whole cloned transcript alive for as long as the session does. The
+    // entry goes once nothing is waiting behind it.
+    const settled = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.lifecycleLocks.set(sessionId, settled)
+    void settled.then(() => {
+      if (this.lifecycleLocks.get(sessionId) === settled) {
+        this.lifecycleLocks.delete(sessionId)
+      }
+    })
+    return next
+  }
+  /** Resumes already under way, so a second one joins rather than repeats. */
+  private readonly resumingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly answeredTerminalInputs = new Map<
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
@@ -1628,6 +1693,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (session) =>
             session.isOpen &&
             session.queuedPrompts?.length &&
+            // A suspended session has nothing to run the queue in. The runtime
+            // guard refuses it anyway, but only after taking the head off and
+            // putting it back with an error nobody asked for.
+            !session.suspended &&
             !this.externalSessionIds.has(session.id),
         )
         .map((session) => this.drainSdkQueue(session.id)),
@@ -1883,6 +1952,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.hydratedSessions.has(id)) {
       return stored
     }
+    if (stored.suspended) {
+      // Having nothing running is what was asked for, not evidence that the
+      // session is gone. Closing it here would drop it from recovery and take
+      // the conversation with it.
+      return stored
+    }
     if (this.store.backend(id) === 'terminal') {
       const closed = await this.store.setOpen(id, false, true)
       this.publish(closed)
@@ -1983,11 +2058,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored) {
       throw new Error('Session not found')
     }
-    if (this.externalSessionIds.has(id)) {
-      await this.terminalController.rename?.(id, title)
-    } else {
-      const session = await this.ensureLoaded(id)
-      await session.rpc.name.set({ name: title })
+    // A suspended session is renamed where it is: the name is ours to keep,
+    // and telling a runtime about it would mean starting the one that
+    // suspending put down. It is carried over whenever the session next runs.
+    if (!this.store.get(id)?.suspended && !this.suspendingSessions.has(id)) {
+      if (this.externalSessionIds.has(id)) {
+        await this.terminalController.rename?.(id, title)
+      } else {
+        const session = await this.ensureLoaded(id)
+        await session.rpc.name.set({ name: title })
+      }
     }
     const renamed = await this.store.renameSession(id, title)
     this.publish(renamed)
@@ -2173,10 +2253,373 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return reconciled
   }
 
-  async restartSession(id: string): Promise<SessionDetail> {
+  /**
+   * Keeps a session while giving back everything running for it.
+   *
+   * The conversation lives on disk, so the process holding it is the
+   * expendable part. Suspending ends it and keeps the session, its id and its
+   * history, which is what makes a machine full of sessions affordable.
+   */
+  async suspendSession(id: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, () => this.suspendSerialized(id))
+  }
+
+  private async suspendSerialized(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
+    }
+    if (stored.suspended) {
+      return stored
+    }
+    if (this.suspendingSessions.has(id)) {
+      throw Object.assign(new Error('Session is already being suspended'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+    // Claimed before anything is awaited, so a message arriving while the
+    // background tasks are being read cannot start a turn into a session that
+    // is on its way down.
+    this.suspendingSessions.add(id)
+    try {
+      return await this.suspendClaimedSession(id, stored)
+    } finally {
+      this.suspendingSessions.delete(id)
+    }
+  }
+
+  private async suspendClaimedSession(
+    id: string,
+    stored: SessionDetail,
+  ): Promise<SessionDetail> {
+    if (
+      stored.status === 'running' ||
+      stored.status === 'waiting' ||
+      this.drainingSessions.has(id)
+    ) {
+      throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+    // A detached shell keeps running without holding the foreground, so an
+    // idle session can still own live work. Suspending ends the owner, which
+    // either abandons that work or leaves it running behind a session that
+    // says nothing is.
+    // Asked for the way the panel asks, because a terminal session's tasks
+    // are projected from its event log rather than owned over RPC: the sync
+    // path sees nothing for one and would report it as having no work.
+    // Not knowing what is running is not the same as nothing running, and the
+    // cache is empty until something has been read once, so a failure here
+    // refuses rather than assumes.
+    await this.assertNoLiveBackgroundTasks(id)
+    // Reading the tasks was awaited, and a turn can start while it is. What
+    // was idle when this began may be working now, and putting the runtime
+    // down would take that work with it.
+    this.assertStillIdle(id)
+    // A terminal session's foreground status is only refreshed by the poll, so
+    // the store can still say idle while a turn typed straight into the pane
+    // is already running. The log is asked directly rather than trusted to
+    // have been read in the last fraction of a second.
+    if (this.externalSessionIds.has(id) || this.store.backend(id) === 'terminal') {
+      // An absent log already reads as an empty list, so anything thrown here
+      // is a log that could not be read. Carrying on would suspend on the
+      // strength of a status the poll may not have refreshed, and take a live
+      // turn down with it.
+      const events = await this.sessionEventReader(id).catch(() => {
+        throw new Error(
+          'Session cannot be suspended until its transcript can be read',
+        )
+      })
+      if (statusFromEvents(events) !== 'idle') {
+        throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+      }
+    }
+    // The stored backend as well as the discovery set. Discovery can miss a
+    // live terminal for a pass, and taking that as an SDK session found no
+    // runtime to put down and recorded the session as suspended with its pane
+    // still running. The controller proves absence, or does the teardown.
+    if (this.externalSessionIds.has(id) || this.store.backend(id) === 'terminal') {
+      if (!this.terminalController.stop) {
+        throw new Error('Terminal session suspend is not available')
+      }
+      // Checked again in there, immediately before the pane is killed.
+      // Finding the owner is awaited, and somebody working in tmux can start
+      // a turn while that happens, which this would otherwise take with it.
+      // Discovery that began before the pane was killed is holding an answer
+      // that predates the suspension, and would land afterwards and mark the
+      // session closed. Moving the generation on discards it, the same way
+      // resume discards an answer that predates the pane it started.
+      this.discoveryGeneration += 1
+      const closed = await this.terminalController.stop(id, async () => {
+        this.assertStillIdle(id)
+        // One reading answers both questions, and nothing is awaited after it.
+        // A terminal session's background tasks are projected from the same
+        // event log its foreground status comes from, so asking separately
+        // left a gap: a detached task started during the second read holds no
+        // turn, the status still said idle, and the pane went down underneath
+        // live work.
+        const live = await this.sessionEventReader(id).catch(() => {
+          throw new Error(
+            'Session cannot be suspended until its transcript can be read',
+          )
+        })
+        if (statusFromEvents(live) !== 'idle') {
+          throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+        }
+        const running = backgroundTasksFromEvents(live, {
+          assumeBackground: true,
+        }).filter(
+          (task) => task.status === 'running' || task.status === 'queued',
+        )
+        if (running.length) {
+          throw new Error(
+            'Session can only be suspended once its background tasks finish',
+          )
+        }
+        this.assertStillIdle(id)
+      })
+      this.discoveryGeneration += 1
+      if (!closed) {
+        throw Object.assign(new Error('The terminal window could not be closed'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+      }
+    } else {
+      // An attachment already on its way would insert a live runtime after
+      // this point, so it is waited for and then let go of rather than left
+      // to land behind the suspension.
+      const loading = this.loadingSessions.get(id)
+      if (loading) {
+        await loading.catch(() => undefined)
+      }
+      // The attachment above was awaited, and a detached task can be started
+      // inside that wait. Disconnecting would abandon it.
+      await this.assertNoLiveBackgroundTasks(id)
+      this.assertStillIdle(id)
+      const active = this.sessions.get(id)
+      if (active) {
+        await active.disconnect()
+        this.sessions.delete(id)
+      }
+      this.hydratedSessions.delete(id)
+    }
+    // Tearing the runtime down was awaited too. Recording a suspension over
+    // work that started meanwhile would describe a session as suspended while
+    // it is still running.
+    this.assertStillIdle(id)
+    const suspended = await this.store.setSuspended(id, true)
+    this.publish(suspended)
+    return suspended
+  }
+
+  /**
+   * Refuses unless the session is still doing nothing.
+   *
+   * Suspending awaits twice over, and the session is only reserved against
+   * other suspensions. Idleness is the whole precondition, so it is checked
+   * again after each wait rather than once at the start.
+   */
+  /**
+   * Refuses unless the session owns no live background work.
+   *
+   * Reading this is awaited, and a detached task can be started inside that
+   * wait, so it is asked again immediately before the runtime goes down rather
+   * than once on the way in. The idleness check beside it only refreshes
+   * foreground status and would not see a task that holds no turn.
+   *
+   * Asked for the way the panel asks, because a terminal session's tasks are
+   * projected from its event log rather than owned over RPC. Not knowing what
+   * is running is not the same as nothing running, so a failure here refuses
+   * rather than assumes.
+   */
+  private async assertNoLiveBackgroundTasks(id: string): Promise<void> {
+    const tasks = await this.listBackgroundTasks(id).catch(() => {
+      throw new Error(
+        'Session cannot be suspended until its background tasks can be read',
+      )
+    })
+    if (!tasks.supported) {
+      // An empty list because the runtime could not be asked is not the same
+      // as an empty list because nothing is running, and suspending on the
+      // strength of it disconnects a session that still owns live work.
+      throw new Error(
+        'Session cannot be suspended until its background tasks can be read',
+      )
+    }
+    if (
+      tasks.tasks.some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      throw new Error(
+        'Session can only be suspended once its background tasks finish',
+      )
+    }
+  }
+
+  private assertStillIdle(id: string): void {
+    const current = this.store.get(id)
+    if (
+      !current ||
+      current.status === 'running' ||
+      current.status === 'waiting' ||
+      this.drainingSessions.has(id) ||
+      this.activePrompts.has(id) ||
+      // A prompt already on its way to the runtime. The store still says idle
+      // until the turn is recorded, so without this the teardown lands on a
+      // turn that has already started.
+      this.dispatchingSessions.has(id)
+    ) {
+      throw Object.assign(new Error('Session can only be suspended while idle'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+  }
+
+  /** Gives a suspended session something to run in again. */
+  async resumeSession(id: string): Promise<SessionDetail> {
+    // In the same queue as suspend, restart, clear and migration. Reading the
+    // stored flag on the way in saw a session that suspension was still in
+    // the middle of putting down, and returned success for a resume the
+    // suspension then wrote over.
+    return this.serializeLifecycle(id, () => this.resumeQueued(id))
+  }
+
+  private async resumeQueued(id: string): Promise<SessionDetail> {
+    const inFlight = this.resumingSessions.get(id)
+    if (inFlight) {
+      // Two resumes would each find no owner and each build one, leaving two
+      // Copilot processes on the same session id.
+      return inFlight
+    }
+    const resuming = this.resumeClaimedSession(id).finally(() => {
+      this.resumingSessions.delete(id)
+    })
+    this.resumingSessions.set(id, resuming)
+    return resuming
+  }
+
+  private async resumeClaimedSession(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (!stored.suspended) {
+      return stored
+    }
+    if (this.store.backend(id) === 'terminal') {
+      if (!this.terminalController.create) {
+        throw new Error('Terminal session resume is not available')
+      }
+      if (!(await this.terminalController.has(id))) {
+        this.launchingTerminalSessionIds.add(id)
+        this.discoveryGeneration += 1
+        try {
+          // The same id is what brings the conversation back: Copilot reads
+          // its own record for it rather than starting from nothing.
+          await this.terminalController.create(
+            id,
+            stored.cwd,
+            stored.title,
+            stored.runtime?.allowAllPermissions ?? true,
+            stored.runtime,
+          )
+        } finally {
+          // Discovery that began while this was starting up saw no process
+          // and is holding an answer that predates the pane. Moving the
+          // generation on discards it, so it cannot land afterwards and mark
+          // the session closed again.
+          this.discoveryGeneration += 1
+          this.launchingTerminalSessionIds.delete(id)
+        }
+      }
+      this.externalSessionIds.add(id)
+    }
+    // An SDK session reconnects on its own when it is next spoken to, so
+    // there is nothing to start here.
+    // Closed before the flag is written, because clearing it is exactly what
+    // reopens sending, and the queue has not been claimed yet.
+    const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
+    if (hasQueue) {
+      this.admissionClosed.add(id)
+    }
+    const resumed = await this.store.setSuspended(id, false)
+    this.publish(resumed)
+    // A prompt queued before the suspension is waiting with nothing to run it.
+    // Draining now keeps the queue in the order it was written: left for
+    // whatever happens to finish next, a message sent after the resume would
+    // go first.
+    //
+    // The dispatch hold stays on until the queue has been claimed. Clearing
+    // the suspended flag is what reopens sending, and without this a message
+    // arriving in that gap starts a turn ahead of the prompt that was already
+    // waiting, or beside it.
+    if (resumed.queuedPrompts?.length) {
+      const releaseDispatch = this.holdDispatch(id)
+      try {
+        const drain =
+          this.store.backend(id) === 'terminal'
+            ? this.drainTerminalQueue(id)
+            : this.drainSdkQueue(id)
+        await drain.catch((error: unknown) => {
+          // The head prompt goes back on the queue when a drain fails. The
+          // door reopens so the session stays usable, and what is still
+          // waiting keeps its place because a send made while a queue exists
+          // joins the end of it rather than going straight out.
+          this.publishError(id, error)
+        })
+      } finally {
+        this.admissionClosed.delete(id)
+        releaseDispatch()
+      }
+    } else if (hasQueue) {
+      this.admissionClosed.delete(id)
+    }
+    return resumed
+  }
+
+  async restartSession(id: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, () => this.restartSerialized(id))
+  }
+
+  private async restartSerialized(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (stored.suspended || this.suspendingSessions.has(id)) {
+      // Restarting would start a runtime while the session still says it has
+      // none, and for a terminal session leave a second owner behind it. A
+      // suspension already under way counts: it is holding the session while
+      // it reads background tasks and puts the runtime down.
+      throw Object.assign(new Error('Resume the session before restarting it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     if (
       stored.status === 'running' ||
@@ -2198,7 +2641,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await active.disconnect()
         this.sessions.delete(id)
       }
-      await this.resumeSession(id)
+      await this.attachSdkSession(id)
     }
     const restarted = await this.store.update(id, (session) => {
       session.status = 'idle'
@@ -2211,12 +2654,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async moveToTerminal(id: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, () => this.moveToTerminalSerialized(id))
+  }
+
+  private async moveToTerminalSerialized(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
     }
     if (this.store.backend(id) === 'terminal') {
       return stored
+    }
+    if (stored.suspended || this.suspendingSessions.has(id)) {
+      throw new Error('Resume the session before moving it to tmux')
     }
     if (
       stored.status !== 'idle' ||
@@ -2286,9 +2736,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async clearConversation(id: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, () => this.clearSerialized(id))
+  }
+
+  private async clearSerialized(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
+    }
+    if (stored.suspended || this.suspendingSessions.has(id)) {
+      // Clearing builds the replacement a session carries on in, which is a
+      // live owner. A later resume would then build a second one beside it.
+      throw Object.assign(new Error('Resume the session before clearing it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
     }
     if (
       stored.status === 'running' ||
@@ -2562,6 +3026,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!content) {
       throw new Error('Message cannot be empty')
     }
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+    if (this.admissionClosed.has(sessionId)) {
+      // Resuming, and the prompt that was already queued has not been claimed
+      // yet. Starting a turn now would put this one in front of it.
+      throw Object.assign(new Error('The session is still resuming'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     // Let go of the recovered text only once this has actually been taken.
     // Clearing on the way in meant a retry that then failed left the reader
     // with an empty composer and the server with no copy either.
@@ -2579,12 +3064,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // The failure this send is answering, and only when it is answering
       // one. Passing the current marker for every send let an unrelated
       // message take it with it on its way to the queue.
-      sent = await this.sendAdmitted(
-        sessionId,
-        content,
-        enqueue,
-        claim ? before : undefined,
-      )
+      // Held for the whole dispatch, not just the checks. Detection, pane
+      // capture and delivery are all awaited, and a suspension finishing
+      // during any of them would put the runtime down under a turn already on
+      // its way.
+      const releaseDispatch = this.holdDispatch(sessionId)
+      try {
+        sent = await this.sendAdmitted(
+          sessionId,
+          content,
+          enqueue,
+          claim ? before : undefined,
+        )
+      } finally {
+        releaseDispatch()
+      }
       this.deliveredSends.delete(sessionId)
     } catch (error) {
       // A send that failed after the terminal had already taken the text is
@@ -2808,6 +3302,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     answers?: string,
   ): Promise<SessionDetail> {
     const terminalBacked = await this.terminalController.has(sessionId)
+    // Detection is awaited, and suspending can finish while it is: the guard
+    // above spoke for a session that was still running.
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     if (terminalBacked) {
       // A full-screen view takes the keyboard, so a prompt sent now is typed
       // into its search box: it filters a list, a stray Enter can pick from
@@ -2935,13 +3442,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async shouldEnqueueTerminalPrompt(
     sessionId: string,
   ): Promise<boolean> {
-    const status = this.store.get(sessionId)?.status
+    const stored = this.store.get(sessionId)
+    const status = stored?.status
     const eligible =
       status === 'idle' ||
       status === 'running' ||
       status === 'waiting' ||
       this.drainingSessions.has(sessionId)
-    return eligible && Boolean(await this.sessionEventVersion(sessionId))
+    if (!eligible) {
+      return false
+    }
+    // Anything already waiting goes first. Sending straight out past a queue
+    // that a failed drain left behind would put this message in front of one
+    // written before it.
+    if (stored?.queuedPrompts?.length) {
+      return true
+    }
+    return Boolean(await this.sessionEventVersion(sessionId))
   }
 
   private shouldUseNativeTerminalQueue(
@@ -2989,7 +3506,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async startMessage(
     sessionId: string,
     content: string,
+    fromQueue = false,
   ): Promise<SessionDetail> {
+    // Anything already waiting goes first. A resume whose drain failed leaves
+    // the prompt back on the queue, and a message written afterwards would
+    // otherwise start straight away and run ahead of one written before it.
+    if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
+      const queued = await this.enqueuePrompt(sessionId, content)
+      // A drain that failed put its prompt back and left nothing running to
+      // take it off again. Without this the queue stays where it is, and every
+      // message written afterwards joins it rather than starting anything.
+      void this.drainSdkQueue(sessionId).catch(() => undefined)
+      return queued
+    }
     const sdkSession = await this.ensureLoaded(sessionId)
     const createdAt = new Date().toISOString()
     await this.store.addMessage(sessionId, {
@@ -3225,11 +3754,57 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!name) {
       throw new Error('Slash command name is required')
     }
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+    if (this.admissionClosed.has(sessionId)) {
+      // Resuming, and the prompt already queued has not been claimed yet.
+      // A command allowed during execution would otherwise slip past it.
+      throw Object.assign(new Error('The session is still resuming'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     // Kept exactly as it was written. Splitting on whitespace and rejoining
     // with single spaces rewrote the argument, and `/cwd` carries a directory
     // that was validated before it got here: a folder whose name holds two
     // spaces became a different folder, or none at all.
     const argument = body.slice(name.length).replace(/^\s/, '')
+    // A command reaches the same runtime as a message and takes just as long
+    // to get there, so it holds the session for the whole of it.
+    const releaseDispatch = this.holdDispatch(sessionId)
+    try {
+      return await this.dispatchCommand(
+        sessionId,
+        name,
+        argument,
+        enqueue,
+        answers,
+      )
+    } finally {
+      releaseDispatch()
+    }
+  }
+
+  private async dispatchCommand(
+    sessionId: string,
+    name: string,
+    argument: string,
+    enqueue: boolean,
+    // The failure this command answers, so a queued one and the marker it
+    // answers are written together rather than one after the other.
+    answers?: string,
+  ): Promise<SessionDetail> {
     const catalog = await this.sessionCommandCatalog(sessionId)
     const commandInfo = catalog.commands.find(
       (candidate) =>
@@ -3480,6 +4055,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
       return this.replaceBackgroundTasks(sessionId, projected, true)
     }
+    if (stored.suspended) {
+      // Attaching to find out would start the runtime that suspending just
+      // put down, and the panel asks for every session as the app loads.
+      return this.backgroundTaskTracker.get(sessionId)
+    }
+    if (!this.sessions.has(sessionId) && !this.loadingSessions.has(sessionId)) {
+      // Nothing is attached, and an SDK session's tasks belong to the runtime
+      // that is not there: no process, nothing it started still running.
+      // Attaching to ask would be starting the very process the caller is
+      // about to put down, and while a suspension is under way `ensureLoaded`
+      // refuses outright, so a session that had simply never been opened could
+      // not be suspended at all.
+      //
+      // Answered rather than left unknown. An unread list refuses a suspension
+      // on the grounds that something may be running, and here nothing can be.
+      return this.replaceBackgroundTasks(sessionId, [], true)
+    }
     return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
   }
 
@@ -3513,6 +4105,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    // In the same queue as the rest. Deleting takes the runtime and the state
+    // with it, so a resume running beside it could build a new owner for a
+    // session whose files are already going.
+    return this.serializeLifecycle(sessionId, () =>
+      this.deleteSerialized(sessionId),
+    )
+  }
+
+  private async deleteSerialized(sessionId: string): Promise<void> {
     const stored = this.store.get(sessionId)
     if (!stored) {
       throw new Error('Session not found')
@@ -3890,11 +4491,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (active) {
       return active
     }
+    const alreadyLoading = this.loadingSessions.get(sessionId)
+    if (alreadyLoading) {
+      // Already on its way. Joining it rather than refusing keeps a read that
+      // started before the suspension from failing for a reason that was not
+      // true when it began.
+      return alreadyLoading
+    }
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      // Attaching would start the runtime this session was suspended to be
+      // rid of, so it is asked for rather than assumed. A suspension still
+      // under way counts: the pane is killed before the flag is written, and
+      // anything reaching here in that gap would attach an SDK owner that
+      // outlives the suspension.
+      throw new Error('Resume the session before using it')
+    }
     const inFlight = this.loadingSessions.get(sessionId)
     if (inFlight) {
       return inFlight
     }
-    const loading = this.resumeSession(sessionId)
+    const loading = this.attachSdkSession(sessionId)
     this.loadingSessions.set(sessionId, loading)
     try {
       return await loading
@@ -3903,7 +4522,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  private async resumeSession(sessionId: string): Promise<CopilotSessionLike> {
+  private async attachSdkSession(sessionId: string): Promise<CopilotSessionLike> {
     const stored = this.store.get(sessionId)
     if (!stored) {
       throw new Error('Session not found')
@@ -5032,6 +5651,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.drainingSessions.has(sessionId)) {
       return
     }
+    if (
+      this.suspendingSessions.has(sessionId) ||
+      this.store.get(sessionId)?.suspended
+    ) {
+      // As above: a drain starting beside a suspension marks the session as
+      // working after the runtime has gone.
+      return
+    }
     this.drainingSessions.add(sessionId)
     try {
       if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
@@ -5042,7 +5669,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publish(queued)
         if (next) {
           try {
-            await this.startMessage(sessionId, next.content)
+            await this.startMessage(sessionId, next.content, true)
           } catch (error) {
             const restored = await this.serializeQueue(
               sessionId,
@@ -5062,6 +5689,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async drainTerminalQueue(sessionId: string): Promise<void> {
     if (this.drainingSessions.has(sessionId)) {
+      return
+    }
+    if (
+      this.suspendingSessions.has(sessionId) ||
+      this.store.get(sessionId)?.suspended
+    ) {
+      // A drain starting now would wait behind the teardown and then mark the
+      // session as working, which the last idleness check reads as a turn
+      // having begun -- the pane already killed, and the suspension abandoned
+      // with nothing running it.
       return
     }
     this.drainingSessions.add(sessionId)

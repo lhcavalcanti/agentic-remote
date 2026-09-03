@@ -136,9 +136,26 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   }
 
   async listSessions(): Promise<ManagedSession[]> {
+    return (await this.listSessionsWithAuthority()).sessions
+  }
+
+  /**
+   * Sessions, and which computers actually answered for their own.
+   *
+   * A node that does not reply is answered for out of this cache, and such an
+   * answer has not looked at the node at all. A caller cannot tell the two
+   * apart from the list alone, and reading a cached answer as the whole truth
+   * makes a session that is merely unreported look deleted.
+   */
+  async listSessionsWithAuthority(): Promise<{
+    sessions: ManagedSession[]
+    answeredComputerIds: string[]
+  }> {
+    const localComputer = this.localComputer()
     const local = this.localService
       .listSessions()
-      .map((session) => managedSession(session, this.localComputer()))
+      .map((session) => managedSession(session, localComputer))
+    const answered = [localComputer.id]
     const remote = await Promise.all(
       this.registry.list().map(async (computer) => {
         const client = this.clients.get(computer.id)
@@ -150,15 +167,19 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             managedSession(session, computer),
           )
           this.sessionCache.set(computer.id, sessions)
+          answered.push(computer.id)
           return sessions
         } catch {
           return this.sessionCache.get(computer.id) ?? []
         }
       }),
     )
-    return [...local, ...remote.flat()].sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt),
-    )
+    return {
+      sessions: [...local, ...remote.flat()].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
+      answeredComputerIds: answered,
+    }
   }
 
   async listHistory(): Promise<ManagedSession[]> {
@@ -457,6 +478,30 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       computerId === this.identity.info.id
         ? await this.localService.clearConversation(sessionId)
         : await this.requireClient(computerId).clearConversation(sessionId)
+    return managedSession(session, computer)
+  }
+
+  async suspendSession(
+    computerId: string,
+    sessionId: string,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.suspendSession(sessionId)
+        : await this.requireClient(computerId).suspendSession(sessionId)
+    return managedSession(session, computer)
+  }
+
+  async resumeSession(
+    computerId: string,
+    sessionId: string,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.resumeSession(sessionId)
+        : await this.requireClient(computerId).resumeSession(sessionId)
     return managedSession(session, computer)
   }
 

@@ -301,6 +301,23 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
+  async suspendSession(id: string): Promise<SessionDetail> {
+    return this.setSuspended(id, true)
+  }
+
+  async resumeSession(id: string): Promise<SessionDetail> {
+    return this.setSuspended(id, false)
+  }
+
+  private setSuspended(id: string, suspended: boolean): SessionDetail {
+    const session = this.sessions.get(id)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.suspended = suspended
+    return session
+  }
+
   async restartSession(id: string): Promise<SessionDetail> {
     const session = this.sessions.get(id)
     if (!session) {

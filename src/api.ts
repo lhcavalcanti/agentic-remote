@@ -103,9 +103,38 @@ export async function removeComputer(computerId: string): Promise<void> {
   })
 }
 
+export interface SessionListing {
+  sessions: ManagedSession[]
+  /**
+   * Which computers answered for their own sessions.
+   *
+   * A hub answers for a paired computer out of its cache when the node does
+   * not reply, so a session missing from the list is only known to be missing
+   * for a computer named here.
+   */
+  answeredComputerIds: string[]
+}
+
 export async function listSessions(): Promise<ManagedSession[]> {
-  const response = await request<{ sessions: ManagedSession[] }>('/api/sessions')
-  return response.sessions
+  return (await listSessionListing()).sessions
+}
+
+export async function listSessionListing(): Promise<SessionListing> {
+  const response = await request<{
+    sessions: ManagedSession[]
+    answeredComputerIds?: string[]
+  }>('/api/sessions')
+  return {
+    sessions: response.sessions,
+    // An older hub says nothing about authority, and it answers for a node it
+    // could not reach out of its own cache -- so the computers named in the
+    // list are not the computers that were asked. Inferring authority from
+    // them let a cached row settle a replacement that nothing had looked for.
+    // Silence is read as silence: absence settles nothing and evicts nothing,
+    // and a replacement is still settled by its own arrival or by an explicit
+    // removal.
+    answeredComputerIds: response.answeredComputerIds ?? [],
+  }
 }
 
 export async function listHistory(): Promise<ManagedSession[]> {
@@ -322,6 +351,34 @@ export async function clearConversation(
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     `${sessionPath(computerId, sessionId)}/clear`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
+  return response.session
+}
+
+export async function suspendSession(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/suspend`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
+  return response.session
+}
+
+export async function resumeSession(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/resume`,
     {
       method: 'POST',
       body: '{}',

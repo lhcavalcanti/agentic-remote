@@ -197,6 +197,15 @@ export interface SessionSummary {
   isOpen?: boolean
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
+  /**
+   * A prompt the queue accepted and then could not deliver.
+   *
+   * The browser cleared its draft the moment the queue took the prompt, and a
+   * failure afterwards leaves the text nowhere else. Carried on the session so
+   * it survives a disconnected socket and reaches the next snapshot, rather
+   * than only being announced once to whoever happened to be listening.
+   */
+  failedPrompt?: { content: string; failedAt: string }
   activity?: string
   runtime?: SessionRuntimeInfo
 }

@@ -768,9 +768,18 @@ export class TmuxTerminalSessionController
           20,
         )
         // Only what this paste put there is taken back. If the prompt never
-        // gained it, or the composer was already holding something typed at
-        // the terminal, clearing would throw that away instead.
-        if (landedLate && !composerWasHolding) {
+        // gained it, or the composer was holding something typed at the
+        // terminal, clearing would throw that away instead.
+        //
+        // Both readings matter. The one before the paste says the composer was
+        // empty to begin with; the one now says nothing has been typed into it
+        // in the seconds since, which is long enough for someone to have
+        // started a message while this was waiting.
+        if (
+          landedLate &&
+          !composerWasHolding &&
+          !composerHoldsOtherText(await capturePane(target), content)
+        ) {
           await clearPastedPrompt(target)
         }
         throw Object.assign(
@@ -1670,11 +1679,44 @@ async function clearPastedPrompt(target: string): Promise<void> {
  * holding text: leaving a paste behind is recoverable, and typing over
  * someone's unsent message is not.
  */
-export function composerHoldsText(pane: string): boolean {
+/**
+ * What the CLI writes into an empty composer.
+ *
+ * Only these exact forms count as empty. Anything else is someone's message.
+ */
+const COMPOSER_PLACEHOLDERS = [
+  /^Message agent on [^\n]*[\u2026.]{0,3}$/iu,
+  /^Message [^\n]*agent[^\n]*[\u2026.]{0,3}$/iu,
+  /^Type a message[\u2026.]{0,3}$/iu,
+  /^Ask [^\n]*[\u2026.]{0,3}$/iu,
+]
+
+/**
+ * Whether the composer is holding anything other than the paste being taken
+ * back.
+ *
+ * Ctrl+U takes the whole composer, so the only safe moment to use it is when
+ * nothing has arrived beside the text it is meant to remove.
+ */
+export function composerHoldsOtherText(pane: string, pasted: string): boolean {
+  if (!composerHoldsText(pane)) {
+    return false
+  }
+  const held = composerText(pane) || ''
+  const lines = pasted.split('\n').map((line) => line.trim()).filter(Boolean)
+  let remainder = held
+  for (const line of lines) {
+    remainder = remainder.split(line).join(' ')
+  }
+  return remainder.replace(/[>\u276f\s\u2026.]/gu, '').length > 0
+}
+
+/** The composer's contents, or nothing when the pane cannot be read. */
+function composerText(pane: string): string | undefined {
   const lines = pane.split('\n').map((line) => line.trimEnd())
   const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
   if (top < 0) {
-    return true
+    return undefined
   }
   const body: string[] = []
   for (const line of lines.slice(top + 1)) {
@@ -1688,12 +1730,26 @@ export function composerHoldsText(pane: string): boolean {
         .trim(),
     )
   }
-  const text = body.join(' ').trim()
+  return body.join(' ').trim()
+}
+
+export function composerHoldsText(pane: string): boolean {
+  const text = composerText(pane)
+  if (text === undefined) {
+    return true
+  }
   if (!text) {
     return false
   }
-  // An empty composer still draws its prompt marker and placeholder.
-  return !/^[>\u276f]?\s*(?:message\b.*)?[\u2026.]{0,3}$/i.test(text)
+  // An empty composer still draws its prompt marker and the placeholder the
+  // CLI writes into it. Matched exactly: treating anything that opens with
+  // "Message" as empty reads a real message about to be sent -- "Message the
+  // team about the deploy" -- as nothing at all, and Ctrl+U then takes it.
+  const bare = text.replace(/^[>\u276f]\s*/u, '').trim()
+  if (!bare) {
+    return false
+  }
+  return !COMPOSER_PLACEHOLDERS.some((pattern) => pattern.test(bare))
 }
 
 async function capturePane(target: string): Promise<string> {

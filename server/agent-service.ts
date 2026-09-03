@@ -2532,6 +2532,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!content) {
       throw new Error('Message cannot be empty')
     }
+    // Writing again is the reader saying they have the earlier text back, or
+    // have given up on it. Either way it is no longer waiting to be returned.
+    if (this.store.get(sessionId)?.failedPrompt) {
+      await this.store
+        .update(sessionId, (stored) => {
+          stored.failedPrompt = undefined
+        })
+        .catch(() => undefined)
+    }
     const terminalBacked = await this.terminalController.has(sessionId)
     if (terminalBacked) {
       // A full-screen view takes the keyboard, so a prompt sent now is typed
@@ -4710,6 +4719,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // prompt left on it after a failed send is sent a second time without
         // anyone asking. It is taken off and reported instead, which is what
         // the reader can act on.
+        // Recorded on the session before the queue entry goes, so the text is
+        // never absent from both at once. A snapshot carries it to a browser
+        // that was not listening when it failed, which a one-off event
+        // cannot.
+        let recovered = false
+        try {
+          await this.store.update(sessionId, (stored) => {
+            stored.failedPrompt = {
+              content: next.content,
+              failedAt: new Date().toISOString(),
+            }
+          })
+          recovered = true
+        } catch {
+          recovered = false
+        }
         const { session } = await this.store
           .removeQueuedPrompt(sessionId, next.id)
           .catch(() => ({ session: undefined }))
@@ -4718,16 +4743,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           // go on showing a prompt that is no longer waiting for anything.
           this.publish(session)
         }
-        // Taking it off the queue is the only copy gone: the browser cleared
-        // its draft the moment the queue accepted it, and an idle enqueue
-        // swallows this error on the way out. The text goes back with the
-        // report so the draft can be restored, as failed sends must.
+        // The event still carries it, so a browser that is listening restores
+        // the draft without waiting for a snapshot.
         this.emit('event', {
           type: 'error',
           sessionId,
           message: error instanceof Error ? error.message : String(error),
           failedPrompt: next.content,
         })
+        if (!recovered) {
+          // Saying the prompt was taken off the queue while it may still be on
+          // disk would let a restart deliver it again beside the draft the
+          // reader has been handed back.
+          throw new Error(
+            `${
+              error instanceof Error ? error.message : String(error)
+            } The prompt could not be set aside for recovery, so it may still be queued.`,
+          )
+        }
         throw error
       }
       const { prompt } = await this.store.removeQueuedPrompt(sessionId, next.id)

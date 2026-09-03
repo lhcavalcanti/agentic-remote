@@ -5502,6 +5502,10 @@ function App() {
     }
     setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
   }, [selectedKey])
+  // The socket is bound once, so it reaches the restore through a ref.
+  const restoreFailedPromptRef = useRef<(key: string, content: string) => void>(
+    () => {},
+  )
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -6294,6 +6298,7 @@ function App() {
     forgetKnowledgeSessionRef.current = forgetKnowledgeSession
     moveKnowledgeSessionRef.current = moveKnowledgePosition
     migrateSessionStateRef.current = migrateSessionState
+    restoreFailedPromptRef.current = restoreFailedPrompt
     loadKnowledgeFolderRef.current = loadKnowledgeFolder
     restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
       const rootId = position.rootId
@@ -7159,11 +7164,9 @@ function App() {
           // the queue and was never in the composer, so the text comes back
           // here or nowhere. Anything typed since is newer and is left alone.
           if (event.type === 'error' && event.failedPrompt && event.sessionId) {
-            const failedKey = `${event.computerId || ''}:${event.sessionId}`
-            setComposerDrafts((current) =>
-              current[failedKey]
-                ? current
-                : { ...current, [failedKey]: event.failedPrompt as string },
+            restoreFailedPromptRef.current(
+              `${event.computerId || ''}:${event.sessionId}`,
+              event.failedPrompt,
             )
           }
           setError(event.message)
@@ -7304,6 +7307,33 @@ function App() {
   // tracking, so navigating afterwards would overwrite text the user never
   // typed here and could not recover. Editing a queued prompt, dictation,
   // uploads, and path insertion all reach the composer by different routes.
+  /**
+   * Puts a prompt the queue could not deliver back in the composer.
+   *
+   * Written through the same path as every other composer write, so history
+   * navigation is invalidated with it: left tracking the empty draft it had
+   * before, an ArrowUp and ArrowDown afterwards would replace the recovered
+   * text with that empty draft, losing the only copy there is.
+   */
+  function restoreFailedPrompt(key: string, content: string) {
+    updateComposerDrafts([key], (current) =>
+      // Anything typed since is newer and is left alone.
+      current[key] ? current : { ...current, [key]: content },
+    )
+  }
+
+  // A browser that was not listening when the send failed learns about it from
+  // the session itself. The event covers the connected case; this covers the
+  // reconnect, and doing both means neither has to be relied on alone.
+  useEffect(() => {
+    for (const session of sessions) {
+      const failed = session.failedPrompt
+      if (failed?.content) {
+        restoreFailedPromptRef.current(sessionKey(session), failed.content)
+      }
+    }
+  }, [sessions])
+
   function updateComposerDrafts(
     invalidateKeys: string[],
     update: (current: Record<string, string>) => Record<string, string>,

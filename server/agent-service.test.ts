@@ -3815,6 +3815,11 @@ describe('AgentService deletion', () => {
     expect(
       errors.map((event) => event.failedPrompt),
     ).toContain('work the queue lost')
+    // Also recorded on the session, so a browser that was not listening when
+    // it failed still finds it in the next snapshot it reads.
+    expect(
+      service.store.get(client.session.sessionId)?.failedPrompt?.content,
+    ).toBe('work the queue lost')
     await service.stop()
   })
 

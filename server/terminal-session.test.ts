@@ -9,6 +9,7 @@ import {
   isTerminalAgentWorking,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
+  composerHoldsOtherText,
   composerHoldsText,
   paneEvidenceCount,
   paneShowsText,
@@ -993,4 +994,37 @@ describe('composerHoldsText', () => {
     // count as someone's unsent message rather than be typed over.
     expect(composerHoldsText('no composer drawn here')).toBe(true)
   })
+
+  it('reads a real message that opens with the placeholder word', () => {
+    // "Message the team about the deploy" is someone's message, not an empty
+    // composer, and Ctrl+U would take it.
+    expect(
+      composerHoldsText(framed(['│ > Message the team about the deploy │'])),
+    ).toBe(true)
+  })
+})
+
+describe('composerHoldsOtherText', () => {
+  const framed = (body: string[]) =>
+    ['transcript line', '╭──────────────╮', ...body, '╰──────────────╯'].join(
+      '\n',
+    )
+
+  it('ignores the paste it is about to take back', () => {
+    expect(
+      composerHoldsOtherText(framed(['│ > deploy the thing │']), 'deploy the thing'),
+    ).toBe(false)
+  })
+
+  it('sees text typed beside the paste', () => {
+    // Cleanup can happen seconds after the send, which is long enough for
+    // someone to have started writing next to it.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ > deploy the thing and also this │']),
+        'deploy the thing',
+      ),
+    ).toBe(true)
+  })
+
 })

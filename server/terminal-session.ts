@@ -1671,12 +1671,17 @@ async function waitForPaneText(
 
 /** Whether a tmux command failed because there is no server left to ask. */
 function noTmuxServer(error: unknown): boolean {
-  const failure = error as { code?: unknown; stderr?: unknown }
-  if (typeof failure.stderr === 'string' && /no server running/i.test(failure.stderr)) {
-    return true
-  }
-  // tmux reports an ordinary "nothing to list" failure the same way.
-  return failure.code === 1
+  const failure = error as { stderr?: unknown }
+  // Only tmux's own "there is nothing to ask" diagnostics. Treating every
+  // exit status of 1 as absence also swallowed a socket that could not be
+  // reached or read, and stopping then reported success without having killed
+  // anything, while the process it was meant to end carried on.
+  return (
+    typeof failure.stderr === 'string' &&
+    /no server running|no such file or directory|error connecting to/i.test(
+      failure.stderr,
+    )
+  )
 }
 
 async function tmuxTargetForPid(pid: number): Promise<string | undefined> {

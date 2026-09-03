@@ -1514,6 +1514,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   // them alone: the store still says idle until the turn is recorded, and
   // tearing the runtime down here kills a turn that has already started.
   private readonly dispatchingSessions = new Map<string, number>()
+  // Sessions whose runtime is not open for new work yet. A resume clears the
+  // suspended flag before it has claimed the queue, and sending is reopened
+  // by that flag, so admission is held shut separately until the prompt that
+  // was already waiting has been taken.
+  private readonly admissionClosed = new Set<string>()
 
   /** Marks a session as having a prompt on its way, and gives back the undo. */
   private holdDispatch(sessionId: string): () => void {
@@ -2404,6 +2409,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             stored.runtime,
           )
         } finally {
+          // Discovery that began while this was starting up saw no process
+          // and is holding an answer that predates the pane. Moving the
+          // generation on discards it, so it cannot land afterwards and mark
+          // the session closed again.
+          this.discoveryGeneration += 1
           this.launchingTerminalSessionIds.delete(id)
         }
       }
@@ -2411,6 +2421,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     // An SDK session reconnects on its own when it is next spoken to, so
     // there is nothing to start here.
+    // Closed before the flag is written, because clearing it is exactly what
+    // reopens sending, and the queue has not been claimed yet.
+    const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
+    if (hasQueue) {
+      this.admissionClosed.add(id)
+    }
     const resumed = await this.store.setSuspended(id, false)
     this.publish(resumed)
     // A prompt queued before the suspension is waiting with nothing to run it.
@@ -2433,8 +2449,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.publishError(id, error)
         })
       } finally {
+        this.admissionClosed.delete(id)
         releaseDispatch()
       }
+    } else if (hasQueue) {
+      this.admissionClosed.delete(id)
     }
     return resumed
   }
@@ -2854,6 +2873,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.suspendingSessions.has(sessionId)
     ) {
       throw new Error('Resume the session before sending to it')
+    }
+    if (this.admissionClosed.has(sessionId)) {
+      // Resuming, and the prompt that was already queued has not been claimed
+      // yet. Starting a turn now would put this one in front of it.
+      throw new Error('The session is still resuming')
     }
     // Held for the whole dispatch, not just the checks. Detection, pane
     // capture and delivery are all awaited, and a suspension finishing during
@@ -3487,6 +3511,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    // In the same queue as the rest. Deleting takes the runtime and the state
+    // with it, so a resume running beside it could build a new owner for a
+    // session whose files are already going.
+    return this.serializeLifecycle(sessionId, () =>
+      this.deleteSerialized(sessionId),
+    )
+  }
+
+  private async deleteSerialized(sessionId: string): Promise<void> {
     const stored = this.store.get(sessionId)
     if (!stored) {
       throw new Error('Session not found')
@@ -3864,9 +3897,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (active) {
       return active
     }
-    if (this.store.get(sessionId)?.suspended) {
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
       // Attaching would start the runtime this session was suspended to be
-      // rid of, so it is asked for rather than assumed.
+      // rid of, so it is asked for rather than assumed. A suspension still
+      // under way counts: the pane is killed before the flag is written, and
+      // anything reaching here in that gap would attach an SDK owner that
+      // outlives the suspension.
       throw new Error('Resume the session before using it')
     }
     const inFlight = this.loadingSessions.get(sessionId)

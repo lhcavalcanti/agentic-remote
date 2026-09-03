@@ -154,6 +154,9 @@ export class ClaudeAgentService
   /** Sessions being put down, which nothing may start a query into. */
   private readonly suspendingSessions = new Set<string>()
   private readonly dispatchingSessions = new Map<string, number>()
+  // Not open for new work yet: resuming clears the suspended flag before the
+  // queue has been claimed, and that flag is what reopens sending.
+  private readonly admissionClosed = new Set<string>()
 
   /** Marks a session as having a prompt on its way, and gives back the undo. */
   private holdDispatch(sessionId: string): () => void {
@@ -529,6 +532,10 @@ export class ClaudeAgentService
     if (!stored.suspended) {
       return stored
     }
+    const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
+    if (hasQueue) {
+      this.admissionClosed.add(id)
+    }
     const resumed = await this.store.setSuspended(id, false)
     this.publish(resumed)
     // A prompt queued before the suspension is waiting with nothing to run
@@ -549,8 +556,11 @@ export class ClaudeAgentService
           })
         })
       } finally {
+        this.admissionClosed.delete(id)
         releaseDispatch()
       }
+    } else if (hasQueue) {
+      this.admissionClosed.delete(id)
     }
     return resumed
   }
@@ -1332,6 +1342,10 @@ export class ClaudeAgentService
 
   private requireIdle(id: string): SessionDetail {
     const session = this.requireSession(id)
+    if (this.admissionClosed.has(id)) {
+      // Resuming, and the prompt already queued has not been claimed yet.
+      throw new Error('The session is still resuming')
+    }
     if (session.status !== 'idle') {
       throw new Error('Session must be idle')
     }

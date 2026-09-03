@@ -157,6 +157,21 @@ export class ClaudeAgentService
   // Not open for new work yet: resuming clears the suspended flag before the
   // queue has been claimed, and that flag is what reopens sending.
   private readonly admissionClosed = new Set<string>()
+  private readonly lifecycleLocks = new Map<string, Promise<unknown>>()
+
+  /** Runs lifecycle work for a session one at a time, in arrival order. */
+  private serializeLifecycle<T>(
+    sessionId: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.lifecycleLocks.get(sessionId) ?? Promise.resolve()
+    const next = previous.catch(() => undefined).then(run)
+    this.lifecycleLocks.set(
+      sessionId,
+      next.catch(() => undefined),
+    )
+    return next
+  }
 
   /** Marks a session as having a prompt on its way, and gives back the undo. */
   private holdDispatch(sessionId: string): () => void {
@@ -497,6 +512,10 @@ export class ClaudeAgentService
   }
 
   async suspendSession(id: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, () => this.suspendQueued(id))
+  }
+
+  private async suspendQueued(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
@@ -525,6 +544,10 @@ export class ClaudeAgentService
   }
 
   async resumeSession(id: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, () => this.resumeQueued(id))
+  }
+
+  private async resumeQueued(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
@@ -601,6 +624,11 @@ export class ClaudeAgentService
       this.suspendingSessions.has(sessionId)
     ) {
       throw new Error('Resume the session before sending to it')
+    }
+    if (this.admissionClosed.has(sessionId)) {
+      // Resuming, and the prompt already queued has not been claimed yet.
+      // Only the idle check consulted this, which a send can reach past.
+      throw new Error('The session is still resuming')
     }
     await this.refreshAuthentication()
     // Suspending may have finished while authentication was being refreshed,
@@ -723,6 +751,15 @@ export class ClaudeAgentService
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    // Deleting takes the provider session and the stored state with it, so a
+    // resume running beside it could start a query against files that are
+    // already going.
+    return this.serializeLifecycle(sessionId, () =>
+      this.deleteSerialized(sessionId),
+    )
+  }
+
+  private async deleteSerialized(sessionId: string): Promise<void> {
     const session = this.requireSession(sessionId)
     this.active.get(sessionId)?.abortController.abort()
     this.resolvePending(sessionId, 'Session was deleted')

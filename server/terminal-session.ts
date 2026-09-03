@@ -1678,9 +1678,14 @@ function noTmuxServer(error: unknown): boolean {
   // anything, while the process it was meant to end carried on.
   return (
     typeof failure.stderr === 'string' &&
-    /no server running|no such file or directory|error connecting to/i.test(
-      failure.stderr,
-    )
+    // tmux uses "error connecting to" for a socket it cannot reach at all and
+    // for one it is not allowed to open, and only the first means there is
+    // nothing there. Reading both as absence let `stop` report success
+    // without killing anything.
+    (/no server running/i.test(failure.stderr) ||
+      /error connecting to .*\(no such file or directory\)/i.test(
+        failure.stderr,
+      ))
   )
 }
 

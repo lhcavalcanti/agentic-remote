@@ -3207,6 +3207,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error('Resume the session before sending to it')
     }
+    if (this.admissionClosed.has(sessionId)) {
+      // Resuming, and the prompt already queued has not been claimed yet.
+      // A command allowed during execution would otherwise slip past it.
+      throw new Error('The session is still resuming')
+    }
     // Kept exactly as it was written. Splitting on whitespace and rejoining
     // with single spaces rewrote the argument, and `/cwd` carries a directory
     // that was validated before it got here: a folder whose name holds two
@@ -3896,6 +3901,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const active = this.sessions.get(sessionId)
     if (active) {
       return active
+    }
+    const alreadyLoading = this.loadingSessions.get(sessionId)
+    if (alreadyLoading) {
+      // Already on its way. Joining it rather than refusing keeps a read that
+      // started before the suspension from failing for a reason that was not
+      // true when it began.
+      return alreadyLoading
     }
     if (
       this.store.get(sessionId)?.suspended ||

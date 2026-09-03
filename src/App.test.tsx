@@ -4159,6 +4159,93 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('opens background tasks by shortcut when the status line is off', async () => {
+    // The status line is a display preference, so it cannot be the only way to
+    // reach a panel that describes work still running.
+    localStorage.setItem(
+      'agentic-remote:statusline',
+      JSON.stringify({ enabled: false, backgroundTasks: false }),
+    )
+    const runningSnapshot: BackgroundTaskSnapshot = {
+      tasks: [
+        {
+          id: 'task-1',
+          type: 'agent' as const,
+          description: 'Review the implementation',
+          status: 'running' as const,
+          startedAt: '2026-08-31T18:00:00.000Z',
+          agentType: 'code-review',
+          prompt: 'Review the implementation',
+          canCancel: true,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    }
+    vi.mocked(listBackgroundTasks).mockResolvedValue(runningSnapshot)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({ ...session, executionMode: 'sdk' })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(screen.queryByTestId('web-statusline')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'View background tasks' }),
+    ).not.toBeInTheDocument()
+
+    fireEvent.keyDown(window, { code: 'KeyT', altKey: true })
+
+    expect(
+      await screen.findByRole('dialog', {
+        name: 'Background tasks · Project chat',
+      }),
+    ).toHaveTextContent('Review the implementation')
+  })
+
+  it('opens background tasks by touch from the sidebar count', async () => {
+    // The status line is a display preference, so it cannot be the only way to
+    // reach a panel that describes work still running.
+    localStorage.setItem(
+      'agentic-remote:statusline',
+      JSON.stringify({ enabled: false, backgroundTasks: false }),
+    )
+    const runningSnapshot: BackgroundTaskSnapshot = {
+      tasks: [
+        {
+          id: 'task-1',
+          type: 'agent' as const,
+          description: 'Review the implementation',
+          status: 'running' as const,
+          startedAt: '2026-08-31T18:00:00.000Z',
+          agentType: 'code-review',
+          prompt: 'Review the implementation',
+          canCancel: true,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    }
+    vi.mocked(listBackgroundTasks).mockResolvedValue(runningSnapshot)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({ ...session, executionMode: 'sdk' })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // A keyboard shortcut cannot be reached by touch, so the count already in
+    // the sidebar has to be a way in that no display preference can remove.
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'View background tasks for Project chat',
+      }),
+    )
+
+    expect(
+      await screen.findByRole('dialog', {
+        name: 'Background tasks \u00b7 Project chat',
+      }),
+    ).toHaveTextContent('Review the implementation')
+  })
+
   it('shows running background tasks, blue session styling, and cancellation', async () => {
     const runningTask = {
       id: 'task-1',
@@ -4577,6 +4664,245 @@ describe('App', () => {
       ).toBe(240),
     )
   })
+  it('moves the session to a folder browsed in Knowledge', async () => {
+    vi.mocked(executeCommand).mockImplementation(
+      async (_computerId, _sessionId, input) => ({
+        ...session,
+        cwd: input.command.slice('/cwd '.length),
+      }),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? { path: 'guides', parent: '.', entries: [] }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
+    )
+
+    // Browsing to a folder is how the session is moved there: the reader picks
+    // it in the tree rather than opening a separate browser for it.
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Move session to this folder',
+      }),
+    )
+    await waitFor(() =>
+      expect(executeCommand).toHaveBeenCalledWith(computer.id, session.id, {
+        command: '/cwd /home/tester/docs/guides',
+      }),
+    )
+    // A knowledge root may sit outside the roots a session is allowed to run
+    // in, so the target is checked on the owning computer before `/cwd`.
+    expect(validateSessionDirectory).toHaveBeenCalledWith(
+      computer.id,
+      '/home/tester/docs/guides',
+    )
+  })
+
+  it('offers the move to a session the workspace browser would also move', async () => {
+    // The workspace browser moves an SDK session too, so browsing Knowledge
+    // must not withhold what the other route already allows.
+    const sdkSession = { ...session, executionMode: 'sdk' as const }
+    vi.mocked(listSessions).mockResolvedValue([sdkSession])
+    vi.mocked(getSession).mockResolvedValue(sdkSession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? { path: 'guides', parent: '.', entries: [] }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
+    )
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Move session to this folder',
+      }),
+    ).not.toBeDisabled()
+  })
+
+  it('withholds the move while the agent is still working', async () => {
+    // `/cwd` is sent rather than queued, so moving a live pane would type
+    // over the turn that is running in it.
+    const busySession = { ...session, status: 'running' as const }
+    vi.mocked(listSessions).mockResolvedValue([busySession])
+    vi.mocked(getSession).mockResolvedValue(busySession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? { path: 'guides', parent: '.', entries: [] }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
+    )
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Move session to this folder',
+      }),
+    ).toBeDisabled()
+  })
+
+  it('does not offer the move to a provider that refuses commands', async () => {
+    // Claude refuses every slash command, so the move could only ever fail.
+    const claudeSession = { ...session, provider: 'claude' as const }
+    vi.mocked(listSessions).mockResolvedValue([claudeSession])
+    vi.mocked(getSession).mockResolvedValue(claudeSession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? { path: 'guides', parent: '.', entries: [] }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
+    )
+
+    expect(
+      screen.queryByRole('button', { name: 'Move session to this folder' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not move the session to a folder the server rejects', async () => {
+    vi.mocked(validateSessionDirectory).mockRejectedValue(
+      new Error('Sessions are restricted to the user home directory'),
+    )
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/srv/shared',
+        name: 'shared',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? { path: 'guides', parent: '.', entries: [] }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
+    )
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Move session to this folder',
+      }),
+    )
+    await screen.findAllByText(
+      'Sessions are restricted to the user home directory',
+    )
+    // The boundary is the point: a rejected folder never reaches the CLI.
+    expect(executeCommand).not.toHaveBeenCalled()
+  })
+
   it('browses a knowledge root from the sidebar switch', async () => {
     vi.mocked(listKnowledgeRoots).mockResolvedValue([
       {

@@ -360,14 +360,100 @@ function toolTelemetryProperties(
   return recordValue(recordValue(data.toolTelemetry).properties)
 }
 
+/**
+ * The transport's own footer, as it writes it and nowhere else.
+ *
+ * A shell id read out of ordinary output is not a shell id. Command text,
+ * file contents and an agent's own prose all quote these words, and taking
+ * them at face value hands a completion to whatever unrelated task happens to
+ * hold the number that was quoted. Only a complete marker on the last line
+ * counts.
+ */
+const SHELL_FOOTERS = [
+  // `<command started in detached background with shellId: 9>`
+  /^<[^<>]*\bshell[_ ]?id\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)[^<>]*>$/i,
+  // `Started background shell (shellId: shell-1)`
+  /^[^()<>]*\(\s*shell[_ ]?id\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)\s*\)$/i,
+]
+
+/**
+ * A completion reported as text rather than structure.
+ *
+ * `<shellId: 9 completed with exit code 1>` is the transport saying the shell
+ * is over and how it ended. Reading only the id from it left a detached shell
+ * running for good, and a command that failed recorded as having succeeded.
+ */
+const COMPLETION_FOOTER =
+  /^<[^<>]*\bshell[_ ]?id\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)[^<>]*\bexit code\s+(-?\d+)[^<>]*>$/i
+
+/**
+ * The end of whatever text a value carries, without display limits.
+ *
+ * The transport writes its footer last, and the text used for display is
+ * truncated and prefers a summary field, so the one place the footer reliably
+ * is happens to be the one place that reading never reaches.
+ */
+function rawTailText(value: unknown, depth = 0): string {
+  if (depth > 4 || value === null || value === undefined) {
+    return ''
+  }
+  if (typeof value === 'string') {
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => rawTailText(entry, depth + 1)).join('\n')
+  }
+  if (typeof value !== 'object') {
+    return ''
+  }
+  const object = recordValue(value)
+  return (
+    ['content', 'detailedContent', 'text', 'output', 'stdout', 'result']
+      .map((key) => rawTailText(object[key], depth + 1))
+      .filter(Boolean)
+      .join('\n')
+  )
+}
+
+function shellExitFromFooter(
+  text: string,
+): { shellId: string; exitCode: number } | undefined {
+  const last = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1)
+  const match = last?.match(COMPLETION_FOOTER)
+  if (!match) {
+    return undefined
+  }
+  return { shellId: match[1], exitCode: Number.parseInt(match[2], 10) }
+}
+
+function shellIdFromFooter(text: string): string | undefined {
+  const last = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1)
+  if (!last) {
+    return undefined
+  }
+  for (const pattern of SHELL_FOOTERS) {
+    const match = last.match(pattern)
+    if (match) {
+      return match[1]
+    }
+  }
+  return undefined
+}
+
 function shellIdFromValue(value: unknown, depth = 0): string | undefined {
   if (depth > 4 || value === null || value === undefined) {
     return undefined
   }
   if (typeof value === 'string') {
-    return value.match(
-      /\bshell[_ ]?id\b["'\s:=]+([A-Za-z0-9][A-Za-z0-9._:-]*)/i,
-    )?.[1]
+    return shellIdFromFooter(value)
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
@@ -411,12 +497,8 @@ function shellIdFromValue(value: unknown, depth = 0): string | undefined {
       return id
     }
   }
-  for (const entry of Object.values(object)) {
-    const id = shellIdFromValue(entry, depth + 1)
-    if (id) {
-      return id
-    }
-  }
+  // Deliberately no sweep over every remaining value: that is what turned a
+  // function name printed by a grep into a shell id.
   return undefined
 }
 
@@ -489,6 +571,7 @@ function shellTaskMode(
 ): {
   executionMode: BackgroundTask['executionMode']
   attachmentMode: BackgroundTask['attachmentMode']
+  assumed: boolean
 } | undefined {
   const telemetry = toolTelemetryProperties(data)
   const requestedMode = (
@@ -541,7 +624,29 @@ function shellTaskMode(
   return {
     executionMode: 'background',
     attachmentMode: attachmentMode || (detached ? 'detached' : 'attached'),
+    // Nothing said this was in the background; it is only being treated that
+    // way because the transport left the mode out.
+    assumed: !background,
   }
+}
+
+/** Tools that report on a shell somebody else started. */
+function isShellObserverTool(name: string | undefined): boolean {
+  if (!name) {
+    // A completion that does not say what produced it is not taken as
+    // speaking for a shell it never opened.
+    return false
+  }
+  const tool = name.toLowerCase()
+  return (
+    tool === 'read_bash' ||
+    tool === 'read_shell' ||
+    tool === 'stop_bash' ||
+    tool === 'stop_shell' ||
+    tool === 'list_bash' ||
+    tool === 'bash_output' ||
+    isShellTool(tool)
+  )
 }
 
 function isShellTool(name: string): boolean {
@@ -589,6 +694,7 @@ function rekeyTask(
   aliases: Map<string, string>,
   from: string,
   to: string,
+  assumed?: { flags: Set<string>; owners: Map<string, string> },
 ): BackgroundTask | undefined {
   const resolvedFrom = taskIdAlias(aliases, from)
   const current = tasks.get(resolvedFrom)
@@ -600,6 +706,17 @@ function rekeyTask(
     tasks.delete(resolvedFrom)
     current.id = to
     tasks.set(to, current)
+    // A task carries its identity, so what was recorded against the old one
+    // has to follow it. Leaving it behind records the assumption against an id
+    // no task answers to, and the sweep never recognizes the task again.
+    if (assumed?.flags.delete(resolvedFrom)) {
+      assumed.flags.add(to)
+    }
+    const owner = assumed?.owners.get(resolvedFrom)
+    if (owner !== undefined) {
+      assumed?.owners.delete(resolvedFrom)
+      assumed?.owners.set(to, owner)
+    }
   }
   aliases.set(from, to)
   aliases.set(to, to)
@@ -671,6 +788,7 @@ function shellTask(
   mode: {
     executionMode: BackgroundTask['executionMode']
     attachmentMode: BackgroundTask['attachmentMode']
+    assumed: boolean
   },
 ): BackgroundTask {
   const args = taskArguments(data)
@@ -707,7 +825,12 @@ function shellTaskOutput(
     textFromValue(record.stdout) ||
     textFromValue(record.stderr) ||
     textFromValue(record.detailedContent) ||
-    textFromValue(record.outputPreview)
+    textFromValue(record.outputPreview) ||
+    // The plain shapes too: a result that is just a string, or carries its
+    // text under `content`, is how a completion reported as a footer arrives,
+    // and reading neither left the finished task with no output at all.
+    textFromValue(record.content) ||
+    (typeof value === 'string' ? value : '')
   if (!output) {
     return
   }
@@ -731,6 +854,9 @@ function backgroundHandoff(
   | {
       executionMode: BackgroundTask['executionMode']
       attachmentMode: BackgroundTask['attachmentMode']
+      // A handoff is the shell saying outright that it went to the
+      // background, which is the opposite of being assumed to be there.
+      assumed: false
     }
   | undefined {
   const result = recordValue(data.result)
@@ -755,6 +881,7 @@ function backgroundHandoff(
     detached
   ) {
     return {
+      assumed: false,
       executionMode: 'background',
       attachmentMode:
         detached ? 'detached' : 'attached',
@@ -768,6 +895,7 @@ function backgroundHandoff(
     booleanValue(telemetry.background)
   ) {
     return {
+      assumed: false,
       executionMode: 'background',
       attachmentMode:
         booleanValue(data.detached) ||
@@ -777,20 +905,63 @@ function backgroundHandoff(
           : 'attached',
     }
   }
+  // The raw tail, for the same reason completions use it: the text prepared
+  // for display is truncated and prefers a summary field, so a command that
+  // printed enough before its footer loses the footer itself.
   const message =
-    textFromValue(result) ||
-    textFromValue(recordValue(result.structuredContent)) ||
-    textFromValue(data)
-  // Ordinary output can mention a background command without one existing, so
-  // the handoff has to name the shell it created before it is believed.
+    rawTailText(result) ||
+    rawTailText(recordValue(result.structuredContent)) ||
+    rawTailText(data)
+  // Ordinary output can describe a background command without one existing,
+  // and an agent quoting the transport's own wording would otherwise promote
+  // a task out of reach of the turn-end sweep. Only the footer counts, and
+  // only when it names the shell it created.
+  const footerLine = message
+    ? message
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1)
+    : undefined
   if (
-    message &&
-    /shell\s*id\s*[:=]/i.test(message) &&
-    /(?:background|detached|async|still running|moved)/i.test(message)
+    footerLine &&
+    shellIdFromFooter(footerLine) &&
+    // `still running after 30 seconds` is how a synchronous command that
+    // timed out reports that it carried on without its caller. That is a
+    // promotion, and not recognising it left the shell to be ended by the
+    // turn it had already outlived.
+    /(?:background|detached|async|still running)/i.test(footerLine)
   ) {
     return {
+      assumed: false,
       executionMode: 'background',
-      attachmentMode: /detached/i.test(message) ? 'detached' : 'attached',
+      attachmentMode: /detached/i.test(footerLine) ? 'detached' : 'attached',
+    }
+  }
+  return undefined
+}
+
+/**
+ * When the agent last finished a turn of its own. Work that belongs to a turn
+ * cannot still be running after one ended.
+ */
+function lastForegroundCompletionAt(events: SessionEvent[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    // The owning agent can be named on the envelope or in the payload, and
+    // reading only the envelope took an agent's own completion for the
+    // foreground turn ending.
+    if (event.agentId || eventString(recordValue(event.data), 'agentId')) {
+      continue
+    }
+    if (
+      event.type === 'assistant.turn_end' ||
+      event.type === 'session.idle' ||
+      event.type === 'abort' ||
+      event.type === 'session.error' ||
+      event.type === 'session.shutdown'
+    ) {
+      return event.timestamp
     }
   }
   return undefined
@@ -818,6 +989,18 @@ export function backgroundTasksFromEvents(
 ): BackgroundTask[] {
   const assumeBackground = options.assumeBackground === true
   const tasks = new Map<string, BackgroundTask>()
+  // Shells that never said they were in the background, and are only being
+  // treated as such because the transport left the mode out. They are the
+  // only ones a finished turn can be said to have taken with it.
+  const assumedBackground = new Set<string>()
+  // Which background agent, if any, started an assumed shell. A background
+  // agent outlives the foreground turn, so work it owns cannot be ended by
+  // one; only its own agent finishing can.
+  const assumedOwners = new Map<string, string>()
+  // Which tool a call belongs to. Only the start event says so, and the
+  // completion has to know whether it came from something that reads shells.
+  const toolNames = new Map<string, string>()
+  const assumed = { flags: assumedBackground, owners: assumedOwners }
   const aliases = new Map<string, string>()
   const shellStarts = new Map<
     string,
@@ -872,8 +1055,12 @@ export function backgroundTasksFromEvents(
           executionMode: 'background',
           attachmentMode:
             data.type === 'shell_detached_completed' ? 'detached' : 'attached',
+          assumed: false,
         },
       )
+      if (start.mode?.assumed) {
+        assumedBackground.add(current.id)
+      }
       tasks.set(start.id, current)
       aliases.set(start.id, start.id)
     }
@@ -895,7 +1082,8 @@ export function backgroundTasksFromEvents(
       aliases.set(shellId, shellId)
     }
     if (current.id !== shellId) {
-      current = rekeyTask(tasks, aliases, current.id, shellId) || current
+      current =
+        rekeyTask(tasks, aliases, current.id, shellId, assumed) || current
     }
     const exitCode = numberValue(data.exitCode)
     current.status =
@@ -943,6 +1131,10 @@ export function backgroundTasksFromEvents(
         normalizeBackgroundTask(listedTask, undefined, false),
       )
       aliases.set(listedTask.id, listedTask.id)
+      // The CLI has reported this task itself, so nothing about it is being
+      // assumed any more and the turn ending must not end it.
+      assumedBackground.delete(listedTask.id)
+      assumedOwners.delete(listedTask.id)
     }
     const eventType = String(event.type)
     if (
@@ -969,6 +1161,7 @@ export function backgroundTasksFromEvents(
               kindType === 'shell_detached_started'
                 ? ('detached' as const)
                 : ('attached' as const),
+            assumed: false,
           }
           const current = shellTask(
             shellId,
@@ -978,8 +1171,27 @@ export function backgroundTasksFromEvents(
           )
           current.status =
             eventString(kind, 'status') === 'queued' ? 'queued' : 'running'
+          // The call that started this shell may already have a task of its
+          // own, projected before any shell id was known. Left alone it stays
+          // beside the reported one, so the same command is counted twice and
+          // the older half never finishes.
+          const startedBy = eventString(kind, 'toolCallId') || eventString(data, 'toolCallId')
+          if (startedBy) {
+            const existing = taskIdAlias(aliases, startedBy)
+            if (existing !== shellId && tasks.has(existing)) {
+              tasks.delete(existing)
+              assumedBackground.delete(existing)
+              assumedOwners.delete(existing)
+            }
+            aliases.set(startedBy, shellId)
+          }
           tasks.set(shellId, current)
           aliases.set(shellId, shellId)
+          // Reported by the CLI itself, so nothing about this shell is being
+          // assumed any more. Left set, a turn ending could close a shell the
+          // CLI had just described.
+          assumedBackground.delete(shellId)
+          assumedOwners.delete(shellId)
         }
       }
       if (
@@ -1050,6 +1262,10 @@ export function backgroundTasksFromEvents(
         continue
       }
       const args = taskArguments(data)
+      const startedCallId = eventString(data, 'toolCallId')
+      if (startedCallId) {
+        toolNames.set(startedCallId, toolName)
+      }
       if (isShellTool(toolName)) {
         const mode = shellTaskMode(data, args, assumeBackground)
         const toolCallId = eventString(data, 'toolCallId')
@@ -1065,6 +1281,17 @@ export function backgroundTasksFromEvents(
         }
         if (mode && shellId) {
           const current = shellTask(shellId, event.timestamp, data, mode)
+          if (mode?.assumed) {
+            assumedBackground.add(current.id)
+            // The owning agent can be named on the envelope or in the payload,
+            // and a persisted event uses the second. Reading only the first
+            // left the shell with no owner, so a foreground turn ending closed
+            // work a background agent was still doing.
+            const owner = event.agentId || eventString(data, 'agentId')
+            if (owner) {
+              assumedOwners.set(current.id, owner)
+            }
+          }
           tasks.set(shellId, current)
           if (toolCallId) {
             aliases.set(toolCallId, shellId)
@@ -1153,18 +1380,43 @@ export function backgroundTasksFromEvents(
         continue
       }
       const shellId = shellIdFromValue(data)
-      const shellExit = shellExitFromValue(data)
+      const shellExit =
+        shellExitFromValue(data) ||
+        // The transport can report the exit as its footer rather than as
+        // structure, and that carries the code as well as the id.
+        //
+        // Read from the raw tail rather than through the display text, which
+        // is truncated and prefers a summary field: a long `read_bash` result
+        // loses its footer to that limit, and with it the fact that the shell
+        // is over and how it ended.
+        shellExitFromFooter(rawTailText(data.result)) ||
+        shellExitFromFooter(rawTailText(data))
       // A detached shell reports its exit through whichever call observed it,
-      // and a follow-up read_bash/read_shell carries its own tool call id. The
-      // task is therefore looked up by the shell the exit names before falling
-      // back to the call that started it, or the exit and output would never
-      // reach it and the task would stay running.
+      // and a follow-up read_bash/read_shell carries its own tool call id, so
+      // the shell it names is consulted when the call itself owns no task.
+      // The call comes first: a shell id is a small per-run counter that comes
+      // round again, and preferring it lands one command's completion on an
+      // unrelated task that then never finishes.
       const namedShellId = shellExit?.shellId || shellId
       const id = taskIdAlias(aliases, toolCallId)
-      let current =
-        (namedShellId
-          ? tasks.get(taskIdAlias(aliases, namedShellId))
-          : undefined) || tasks.get(id)
+      // A call that opened a shell of its own answers only for that shell. A
+      // command that ran in the foreground is deliberately not projected as a
+      // task, so it has none to find, and letting it match by shell id hands
+      // its completion to whichever live task holds that number — the very
+      // collision this is meant to remove. Only an observer such as
+      // `read_bash`, which owns no start, may resolve one that way.
+      const ownsShellStart = Boolean(shellStartFor(toolCallId))
+      // ...and only a tool that reads shells. Any other tool can return
+      // content that happens to end with a completion footer -- a file being
+      // read, an agent quoting a transcript -- and matching on the id would
+      // close whichever live shell holds that recycled number.
+      const observesShells = isShellObserverTool(
+        eventString(data, 'toolName') || toolNames.get(toolCallId),
+      )
+      let current = tasks.get(id)
+      if (!current && !ownsShellStart && observesShells && namedShellId) {
+        current = tasks.get(taskIdAlias(aliases, namedShellId))
+      }
       const start = shellStartFor(toolCallId) || shellStartFor(shellId)
       const handoffMode = backgroundHandoff(data)
       if (!current && start && handoffMode) {
@@ -1180,10 +1432,41 @@ export function backgroundTasksFromEvents(
         aliases.set(backgroundId, backgroundId)
       }
       if (current?.type === 'shell') {
-        const resolvedShellId = namedShellId
-        if (resolvedShellId && current.id !== resolvedShellId) {
+        if (handoffMode) {
+          // The task already exists when a session projects every tool as
+          // background, so the handoff has to be applied to it rather than
+          // only used to create one. Without this a detached shell stays
+          // recorded as attached and is treated as part of its turn.
+          current.executionMode = handoffMode.executionMode
+          // Detachment only ever becomes known: a later report that says
+          // nothing about it must not take it back.
+          if (handoffMode.attachmentMode === 'detached') {
+            current.attachmentMode = 'detached'
+          }
+          // The shell said outright that it went to the background, so it is
+          // no longer only assumed to be there and the turn that started it
+          // can no longer end it.
+          assumedBackground.delete(current.id)
+          assumedOwners.delete(current.id)
+        }
+        // Only a real handoff renames the task after the shell it created. An
+        // ordinary command reports the same id when it finishes, and taking
+        // that as its identity hands the completion to whichever unrelated
+        // task already holds the id, which then never finishes.
+        // A direct exit is this call's own completion and stays under it. Only
+        // a handoff creates a new shell worth renaming the task after, and
+        // renaming on an exit hands the task whatever recycled id the shell
+        // happened to be given.
+        const handoffShellId = handoffMode && !shellExit ? shellId : undefined
+        if (handoffShellId && current.id !== handoffShellId) {
           current =
-            rekeyTask(tasks, aliases, current.id, resolvedShellId) || current
+            rekeyTask(
+              tasks,
+              aliases,
+              current.id,
+              handoffShellId,
+              assumed,
+            ) || current
         }
         if (shellExit) {
           current.status = shellExit.exitCode === 0 ? 'completed' : 'failed'
@@ -1192,7 +1475,13 @@ export function backgroundTasksFromEvents(
             current.status === 'failed'
               ? `Shell exited with status ${shellExit.exitCode}`
               : undefined
+          // The footer form carries only an id and a code, so the command's
+          // own output is taken from the result it arrived with. Reading the
+          // synthesized exit alone threw away everything the task printed.
           shellTaskOutput(current, shellExit)
+          if (data.result !== undefined) {
+            shellTaskOutput(current, data.result)
+          }
           current.canCancel = false
         } else if (!data.success) {
           current.status = data.cancelled === true ? 'cancelled' : 'failed'
@@ -1224,6 +1513,90 @@ export function backgroundTasksFromEvents(
       const toolName = eventString(data, 'toolName') || 'tool'
       addActivity(current, toolName, event.timestamp)
       tasks.set(id, current)
+    }
+  }
+  // A shell that only ever ran inside the turn cannot outlive it. One that
+  // started before the agent last finished and never reported is not still
+  // going: the turn ended and took it along, and leaving it running fills the
+  // panel with work that stopped hours ago.
+  //
+  // Only a shell that never reached the background is swept. Going async or
+  // being promoted mid-command is precisely how a shell comes to outlive the
+  // turn that started it, so those are still running exactly when they say
+  // they are, and each has its own completion to close it. What is left is a
+  // shell whose mode the transport never reported, which is treated as
+  // background on the chance that it is.
+  const lastTurnEndAt = lastForegroundCompletionAt(events)
+  // Only the session shutting down ends everything in it, agents included. An
+  // abort stops the turn and an error ends it, but neither disconnects the
+  // session, and background work explicitly put there is meant to outlive
+  // both -- which is why the foreground status treats them the same way.
+  const sessionEndedAt = events.findLast(
+    (event) => event.type === 'session.shutdown',
+  )?.timestamp
+  for (const task of tasks.values()) {
+    if (
+      task.status !== 'running' ||
+      task.type !== 'shell' ||
+      !assumedBackground.has(task.id) ||
+      task.attachmentMode === 'detached'
+    ) {
+      continue
+    }
+    // Work is over when whatever started it is over. For a foreground shell
+    // that is the turn ending; for one a background agent started it is that
+    // agent finishing, which can happen long after any turn and is the only
+    // thing that can speak for it.
+    const ownerId = assumedOwners.get(task.id)
+    let endedAt: string | undefined
+    if (!ownerId) {
+      endedAt = lastTurnEndAt
+    } else {
+      const owner = tasks.get(taskIdAlias(aliases, ownerId))
+      if (
+        !owner ||
+        owner.status === 'running' ||
+        owner.status === 'queued'
+      ) {
+        // The session ending ends its agents too, whether or not each one
+        // reported finishing. Without this a missing completion leaves the
+        // agent and everything it started running for good.
+        if (!sessionEndedAt) {
+          // Either the agent is still going or its lifecycle was never seen,
+          // and neither is evidence that the work it started has stopped.
+          continue
+        }
+        endedAt = sessionEndedAt
+      } else {
+        endedAt = owner.completedAt
+      }
+    }
+    if (!endedAt || task.startedAt >= endedAt) {
+      continue
+    }
+    task.status = 'failed'
+    task.completedAt = endedAt
+    task.error = task.error || 'Ended without reporting completion'
+    task.canCancel = false
+  }
+  if (sessionEndedAt) {
+    // The session stopping ends everything it was running, agents included.
+    // Leaving an agent running because its completion was never reported also
+    // keeps alive every shell that is waiting on it.
+    for (const task of tasks.values()) {
+      if (
+        (task.status === 'running' || task.status === 'queued') &&
+        // A detached shell is deliberately not the session's to end: it was
+        // put outside it precisely so it would carry on, and its own process
+        // may still be running long after the session has gone.
+        task.attachmentMode !== 'detached' &&
+        task.startedAt < sessionEndedAt
+      ) {
+        task.status = 'failed'
+        task.completedAt = sessionEndedAt
+        task.error = task.error || 'Ended without reporting completion'
+        task.canCancel = false
+      }
     }
   }
   return [...tasks.values()]

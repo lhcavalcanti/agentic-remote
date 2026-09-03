@@ -51,6 +51,7 @@ import {
   Command,
   Eraser,
   Folder,
+  FolderInput,
   FolderOpen,
   File as FileIcon,
   FileText,
@@ -2354,6 +2355,7 @@ function AppSettingsDialog({
             ['Previous session', 'Alt + \u2191'],
             ['Open or close knowledge', 'Alt + K'],
             ['Expand or minimize knowledge', 'Alt + Shift + K'],
+            ['View background tasks', 'Alt + T'],
             ['Recall previous message', '\u2191'],
           ].map(([label, keys]) => (
             <li key={label}>
@@ -3491,11 +3493,13 @@ function SortableSessionItem({
   selected,
   backgroundTasks,
   onSelect,
+  onOpenTasks,
 }: {
   session: ManagedSession
   selected: boolean
   backgroundTasks?: BackgroundTaskSnapshot
   onSelect: () => void
+  onOpenTasks?: () => void
 }) {
   const sortableId = `session:${sessionKey(session)}`
   const {
@@ -3557,7 +3561,36 @@ function SortableSessionItem({
         </strong>
         <small>{shortPath(session.cwd)}</small>
         {taskCount > 0 ? (
-          <span className="session-item__tasks">
+          <span
+            aria-label={
+              onOpenTasks ? `View background tasks for ${session.title}` : undefined
+            }
+            className={`session-item__tasks ${
+              onOpenTasks ? 'session-item__tasks--interactive' : ''
+            }`}
+            onClick={
+              onOpenTasks
+                ? (event) => {
+                    event.stopPropagation()
+                    onOpenTasks()
+                  }
+                : undefined
+            }
+            onKeyDown={
+              onOpenTasks
+                ? (event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') {
+                      return
+                    }
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onOpenTasks()
+                  }
+                : undefined
+            }
+            role={onOpenTasks ? 'button' : undefined}
+            tabIndex={onOpenTasks ? 0 : undefined}
+          >
             {runningBackgroundTasks > 0
               ? `${runningBackgroundTasks} running task${
                   runningBackgroundTasks === 1 ? '' : 's'
@@ -3577,6 +3610,7 @@ function SortableComputerGroup({
   selectedKey,
   showComputerHandle,
   onSelectSession,
+  onOpenSessionTasks,
 }: {
   computer: ComputerSummary
   sessions: ManagedSession[]
@@ -3584,6 +3618,7 @@ function SortableComputerGroup({
   selectedKey?: string
   showComputerHandle: boolean
   onSelectSession: (session: ManagedSession) => void
+  onOpenSessionTasks: (session: ManagedSession) => void
 }) {
   const {
     attributes,
@@ -3632,6 +3667,7 @@ function SortableComputerGroup({
             <SortableSessionItem
               key={sessionKey(session)}
               backgroundTasks={taskSnapshot(backgroundTasks, session)}
+              onOpenTasks={() => onOpenSessionTasks(session)}
               onSelect={() => onSelectSession(session)}
               selected={sessionKey(session) === selectedKey}
               session={session}
@@ -5543,6 +5579,7 @@ function App() {
   const [clearing, setClearing] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
+  const [movingSessionFolder, setMovingSessionFolder] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
@@ -6172,6 +6209,14 @@ function App() {
         } else {
           toggleKnowledgePanel()
         }
+        return
+      }
+      // The status line is the usual way in, but it is a display preference and
+      // can be turned off while background tasks keep running, so the panel
+      // needs a way in that does not depend on what is on screen.
+      if (event.code === 'KeyT' && !event.shiftKey) {
+        event.preventDefault()
+        openBackgroundTasks()
       }
     }
   })
@@ -7454,6 +7499,80 @@ function App() {
 
   const activeRoot = roots.find((root) => root.id === activeRootId)
 
+  /**
+   * Where the Knowledge panel is browsing, on the computer that owns it. The
+   * tree works in paths relative to the root, and the session has to be told
+   * an absolute one.
+   */
+  const browsedFolderPath =
+    activeRoot && knowledgePath && knowledgePath !== knowledgeRootPath
+      ? `${activeRoot.path.replace(/\/$/, '')}/${knowledgePath}`
+      : activeRoot?.path
+  // Moving the session means asking the CLI to change directory. That works
+  // for any session the workspace browser would move, so the rules are the
+  // same as its own: the root has to be on the session's computer, and the
+  // agent has to be idle, because the command is sent rather than queued.
+  const selectedMoveBusy =
+    selected?.status === 'running' || selected?.status === 'waiting'
+  const canMoveSessionHere = Boolean(
+    selected &&
+      browsedFolderPath &&
+      // Claude refuses every slash command, so `/cwd` cannot land there and
+      // offering the move only produces a failure.
+      selected.provider !== 'claude' &&
+      activeRoot &&
+      activeRoot.computerId === selected.computerId &&
+      browsedFolderPath !== selected.cwd,
+  )
+
+  async function moveSessionToBrowsedFolder() {
+    if (
+      !selected ||
+      !browsedFolderPath ||
+      movingSessionFolder ||
+      selectedMoveBusy
+    ) {
+      return
+    }
+    setMovingSessionFolder(true)
+    setError(undefined)
+    try {
+      // A knowledge root may sit anywhere the user can read, but a session
+      // working directory is where an agent executes and stays confined to the
+      // configured roots. `/cwd` reaches the CLI unchecked, so the boundary has
+      // to be enforced here, on the computer that owns the root.
+      const target = (
+        await validateSessionDirectory(selected.computerId, browsedFolderPath)
+      ).trim()
+      if (!target) {
+        throw new Error('The selected folder could not be validated')
+      }
+      if (/[\r\n]/.test(target)) {
+        throw new Error('Folder paths cannot contain line breaks')
+      }
+      // Validation is a round trip to the owning computer, and a turn can
+      // start while it is in flight -- from another reader, or from the
+      // terminal itself. `/cwd` is sent rather than queued, so checking only
+      // before the wait would type into a pane that is now working.
+      const nowBusy = selectedRef.current
+      if (
+        nowBusy &&
+        sessionKey(nowBusy) === sessionKey(selected) &&
+        (nowBusy.status === 'running' || nowBusy.status === 'waiting')
+      ) {
+        throw new Error('Wait for the current agent turn to finish')
+      }
+      const updated = await executeCommand(selected.computerId, selected.id, {
+        command: `/cwd ${target}`,
+      })
+      setSessions((current) => upsertSession(current, updated))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setMovingSessionFolder(false)
+    }
+  }
+
   function setKnowledgeMode(mode: KnowledgePanelMode) {
     setKnowledgeModeState(mode)
   }
@@ -7824,6 +7943,15 @@ function App() {
     }
     setBackgroundTasksOpen(true)
     void loadBackgroundTasks(selected, true)
+  }
+
+  // Reaching the panel from the sidebar count keeps it available by touch,
+  // where a keyboard shortcut is not, and without depending on what the status
+  // line happens to be configured to show.
+  function openTasksForSession(session: ManagedSession) {
+    selectSession(session)
+    setBackgroundTasksOpen(true)
+    void loadBackgroundTasks(session, true)
   }
 
   async function cancelSelectedBackgroundTask(taskId: string) {
@@ -8727,6 +8855,7 @@ function App() {
                       computer={computer}
                       backgroundTasks={backgroundTaskSnapshots}
                       key={computer.id}
+                      onOpenSessionTasks={openTasksForSession}
                       onSelectSession={selectSession}
                       selectedKey={selectedKey}
                       sessions={sessionsByComputer.get(computer.id) || []}
@@ -8830,6 +8959,22 @@ function App() {
                       ),
                     )}
                   </div>
+                  {canMoveSessionHere ? (
+                    <button
+                      aria-label="Move session to this folder"
+                      className="icon-button"
+                      disabled={movingSessionFolder || selectedMoveBusy}
+                      onClick={() => void moveSessionToBrowsedFolder()}
+                      title={
+                        selectedMoveBusy
+                          ? 'Wait for the current agent turn to finish'
+                          : `Move this session to ${browsedFolderPath}`
+                      }
+                      type="button"
+                    >
+                      <FolderInput size={14} />
+                    </button>
+                  ) : null}
                   <button
                     aria-label="Collapse all folders"
                     className="icon-button"
@@ -8992,15 +9137,38 @@ function App() {
           </button>
           <div className="conversation-header__title">
             <strong>{selected?.title || 'Agentic Remote'}</strong>
-            <span>
-              {selected
-                ? `${providerName(selected.provider)}${
+            {selected ? (
+              <span className="conversation-header__meta">
+                {/* The description shrinks; the folder does not. On a phone
+                    the icons leave little room, and letting this prefix take
+                    what it likes clipped the folder away entirely -- which is
+                    the only way into the workspace by touch. */}
+                <span className="conversation-header__describes">
+                  {`${providerName(selected.provider)}${
                     executionModeName(selected.executionMode)
                       ? ` · ${executionModeName(selected.executionMode)}`
                       : ''
-                  } · ${selected.computerName} · ${shortPath(selected.cwd)}`
-                : 'Ready when you are'}
-            </span>
+                  } · ${selected.computerName} · `}
+                </span>
+                {/* The folder the session is in is also the way into it, so it
+                    does not need a button of its own in the header. */}
+                <button
+                  aria-label="Browse current session folder"
+                  className="conversation-header__cwd"
+                  onClick={() => {
+                    setWorkspaceInitialPath(undefined)
+                    setWorkspaceInitialKind(undefined)
+                    setWorkspaceOpen(true)
+                  }}
+                  title={`Browse ${selected.cwd}`}
+                  type="button"
+                >
+                  {shortPath(selected.cwd)}
+                </button>
+              </span>
+            ) : (
+              <span>Ready when you are</span>
+            )}
           </div>
           <button
             aria-label="Session knowledge"
@@ -9018,40 +9186,6 @@ function App() {
           >
             <BookOpen size={18} />
           </button>
-          {selected ? (
-            <button
-              aria-label="Browse current session folder"
-              className="icon-button"
-              onClick={() => {
-                setWorkspaceInitialPath(undefined)
-                setWorkspaceInitialKind(undefined)
-                setWorkspaceOpen(true)
-              }}
-              type="button"
-            >
-              <FolderOpen size={18} />
-            </button>
-          ) : null}
-          {selected && selectedSupportsBackgroundTasks ? (
-            <button
-              aria-label="View background tasks"
-              className={`icon-button ${
-                selectedRunningBackgroundTasks > 0
-                  ? 'icon-button--task-running'
-                  : ''
-              }`}
-              onClick={openBackgroundTasks}
-              title="View background tasks"
-              type="button"
-            >
-              <List size={18} />
-              {selectedRunningBackgroundTasks > 0 ? (
-                <span className="background-task-button__count">
-                  {selectedRunningBackgroundTasks}
-                </span>
-              ) : null}
-            </button>
-          ) : null}
           {selected?.provider !== 'claude' &&
           selected?.executionMode === 'sdk' &&
           selectedProviderCapability?.supportsTmuxMigration === true ? (
@@ -9254,10 +9388,20 @@ function App() {
               <span>{selected.queuedCount || 0} queued</span>
             ) : null}
             {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
-              <span className="web-statusline__tasks">
+              <button
+                aria-label="View background tasks"
+                className={`web-statusline__tasks ${
+                  selectedRunningBackgroundTasks > 0
+                    ? 'web-statusline__tasks--running'
+                    : ''
+                }`}
+                onClick={openBackgroundTasks}
+                title="View background tasks"
+                type="button"
+              >
                 {selectedRunningBackgroundTasks} background task
                 {selectedRunningBackgroundTasks === 1 ? '' : 's'} running
-              </span>
+              </button>
             ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>

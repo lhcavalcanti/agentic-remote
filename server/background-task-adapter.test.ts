@@ -315,6 +315,92 @@ describe('background task adapter', () => {
     )
   })
 
+  it('leaves a promoted shell running after the turn that started it ends', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "sync-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:03:00.000Z",
+          "data": {
+            "toolCallId": "sync-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm check",
+              "description": "Run checks",
+              "mode": "sync"
+            }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "sync-handoff",
+          "parentId": "sync-start",
+          "timestamp": "2026-08-31T18:03:01.000Z",
+          "data": {
+            "toolCallId": "sync-call",
+            "success": true,
+            "result": {
+              "content": "Command moved to background (shellId: shell-promoted)"
+            }
+          }
+        },
+        {
+          "type": "assistant.turn_end",
+          "id": "turn-end",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:04:00.000Z",
+          "data": {}
+        }
+      ]`) as SessionEvent[],
+    )
+
+    // Being promoted is how a shell comes to outlive the turn that started
+    // it, so the turn ending says nothing about whether it is still running.
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        id: 'shell-promoted',
+        type: 'shell',
+        status: 'running',
+        attachmentMode: 'attached',
+      }),
+    ])
+  })
+
+  it('leaves an async shell running after the turn that started it ends', () => {
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "async-start",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:02:00.000Z",
+          "data": {
+            "toolCallId": "async-call",
+            "toolName": "bash",
+            "arguments": {
+              "command": "pnpm dev",
+              "description": "Start the dev server",
+              "mode": "async"
+            }
+          }
+        },
+        {
+          "type": "assistant.turn_end",
+          "id": "turn-end",
+          "parentId": null,
+          "timestamp": "2026-08-31T18:04:00.000Z",
+          "data": {}
+        }
+      ]`) as SessionEvent[],
+    )
+
+    expect(tasks).toEqual([
+      expect.objectContaining({ id: 'async-call', status: 'running' }),
+    ])
+  })
+
   it('does not promote an explicitly synchronous shell when assuming background', () => {
     const tasks = backgroundTasksFromEvents(
       JSON.parse(`[
@@ -602,6 +688,124 @@ describe('background task adapter', () => {
     ])
   })
 
+  it('does not keep attached work running past the turn it belonged to', () => {
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "attached-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "attached-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm test" }
+        }
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "detached-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "detached-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm dev" }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "detached-launch",
+        "parentId": "detached-start",
+        "timestamp": "2026-09-02T08:00:02.000Z",
+        "data": {
+          "toolCallId": "detached-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "async", "detached": "true" }
+          },
+          "result": {
+            "content": "<command started in detached background with shellId: shell-9>"
+          }
+        }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": {}
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+    const running = tasks.filter((task) => task.status === 'running')
+
+    // The command that never reported went with its turn; the detached shell
+    // outliving one is the whole point of it.
+    expect(running.map((task) => task.id)).toEqual(['shell-9'])
+    expect(
+      tasks.find((task) => task.id === 'attached-call'),
+    ).toMatchObject({ status: 'failed' })
+  })
+
+  it('does not let a repeated shell id finish an unrelated command', () => {
+    // Shell ids are small per-run counters that come round again. Two ordinary
+    // commands in a long session can name the same one, and the second must
+    // not close the first, which would leave it running for good.
+    const tasks = backgroundTasksFromEvents(
+      JSON.parse(`[
+        {
+          "type": "tool.execution_start",
+          "id": "first-start",
+          "parentId": null,
+          "timestamp": "2026-09-02T08:18:27.445Z",
+          "data": {
+            "toolCallId": "call-first",
+            "toolName": "bash",
+            "arguments": { "command": "echo one" }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "first-finish",
+          "parentId": "first-start",
+          "timestamp": "2026-09-02T08:18:27.586Z",
+          "data": {
+            "toolCallId": "call-first",
+            "success": true,
+            "result": { "content": "one\\n<shellId: 75 completed with exit code 0>" }
+          }
+        },
+        {
+          "type": "tool.execution_start",
+          "id": "second-start",
+          "parentId": null,
+          "timestamp": "2026-09-02T09:00:00.000Z",
+          "data": {
+            "toolCallId": "call-second",
+            "toolName": "bash",
+            "arguments": { "command": "echo two" }
+          }
+        },
+        {
+          "type": "tool.execution_complete",
+          "id": "second-finish",
+          "parentId": "second-start",
+          "timestamp": "2026-09-02T09:00:00.200Z",
+          "data": {
+            "toolCallId": "call-second",
+            "success": true,
+            "result": { "content": "two\\n<shellId: 75 completed with exit code 0>" }
+          }
+        }
+      ]`) as SessionEvent[],
+      { assumeBackground: true },
+    )
+
+    expect(tasks.filter((task) => task.status === 'running')).toEqual([])
+    expect(tasks).toHaveLength(2)
+  })
+
   it('keeps a task asked to run synchronously out of the background', () => {
     const tasks = backgroundTasksFromEvents(
       JSON.parse(`[
@@ -733,4 +937,660 @@ describe('background task adapter', () => {
       }),
     ])
   })
+
+  it('keeps a direct exit from stealing a recycled shell id', () => {
+    // Shell ids come round again. A plain command reporting its own exit must
+    // close itself, not seize the id from whatever is live under that number.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "live-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "live-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm dev", "async": true }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "live-handoff",
+        "parentId": "live-start",
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "live-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "async", "detached": "true" }
+          },
+          "result": {
+            "content": "<command started in detached background with shellId: 75>"
+          }
+        }
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "plain-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:02.000Z",
+        "data": {
+          "toolCallId": "plain-call",
+          "toolName": "bash",
+          "arguments": { "command": "ls" }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "plain-done",
+        "parentId": "plain-start",
+        "timestamp": "2026-09-02T08:00:03.000Z",
+        "data": {
+          "toolCallId": "plain-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "sync", "detached": "false" }
+          },
+          "result": {
+            "type": "shell_exit",
+            "shellId": "75",
+            "exitCode": 0
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    // The detached shell keeps the id it was handed and stays running.
+    expect(tasks.find((task) => task.id === '75')).toMatchObject({
+      status: 'running',
+      attachmentMode: 'detached',
+    })
+    // The ordinary command closes under its own call.
+    expect(tasks.find((task) => task.id === 'plain-call')).toMatchObject({
+      status: 'completed',
+    })
+  })
+
+  it('lets a background agent outlive the turn that is sweeping', () => {
+    // A background agent is explicitly allowed to run past the foreground
+    // turn, so a shell it started cannot be ended by that turn finishing.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "agent-shell",
+        "parentId": null,
+        "agentId": "agent-1",
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "agent-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm test" }
+        }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": {}
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'agent-call')).toMatchObject({
+      status: 'running',
+    })
+  })
+
+  it('ends assumed foreground work when the turn errors out', () => {
+    // A turn that fails still took its work with it, and it may never emit a
+    // turn_end or idle event to say so.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "shell-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "shell-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm test" }
+        }
+      },
+      {
+        "type": "session.error",
+        "id": "blew-up",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": { "message": "stream failed" }
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'shell-call')).toMatchObject({
+      status: 'failed',
+    })
+  })
+
+  it('does not sweep a shell that reported going async in place', () => {
+    // Telemetry can report the handoff without renaming the shell. The task is
+    // then explicitly background, so the turn ending must leave it alone.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "async-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "async-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm dev" }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "async-report",
+        "parentId": "async-start",
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "async-call",
+          "success": true,
+          "toolTelemetry": { "properties": { "executionMode": "async" } }
+        }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": {}
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'async-call')).toMatchObject({
+      status: 'running',
+    })
+  })
+
+
+  it('does not let a foreground command close a live shell with its number', () => {
+    // A command that ran in the foreground is deliberately not a task. Its
+    // completion has nothing of its own to close, and must not be allowed to
+    // close whatever live task is holding the same recycled number.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "live-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "live-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm dev", "async": true }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "live-handoff",
+        "parentId": "live-start",
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "live-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "async", "detached": "true" }
+          },
+          "result": {
+            "content": "<command started in detached background with shellId: 75>"
+          }
+        }
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "sync-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:02.000Z",
+        "data": {
+          "toolCallId": "sync-call",
+          "toolName": "bash",
+          "arguments": { "command": "ls", "async": false }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "sync-done",
+        "parentId": "sync-start",
+        "timestamp": "2026-09-02T08:00:03.000Z",
+        "data": {
+          "toolCallId": "sync-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "sync", "detached": "false" }
+          },
+          "result": { "type": "shell_exit", "shellId": "75", "exitCode": 0 }
+        }
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, {})
+
+    expect(tasks.find((task) => task.id === '75')).toMatchObject({
+      status: 'running',
+      attachmentMode: 'detached',
+    })
+  })
+
+  it('ends agent work when the agent ends, not when a turn does', () => {
+    // A background agent outlives the foreground turn, so a shell it starts
+    // after that turn has already ended can never be older than it. Measured
+    // against the turn it would stay running for good; measured against its
+    // own agent it ends when the agent does.
+    const events = JSON.parse(`[
+      {
+        "type": "subagent.started",
+        "id": "agent-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": { "agentId": "agent-1", "description": "Review" }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:05.000Z",
+        "data": {}
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "agent-shell",
+        "parentId": null,
+        "agentId": "agent-1",
+        "timestamp": "2026-09-02T08:00:10.000Z",
+        "data": {
+          "toolCallId": "agent-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm test" }
+        }
+      },
+      {
+        "type": "subagent.completed",
+        "id": "agent-done",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:20.000Z",
+        "data": { "agentId": "agent-1" }
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'agent-call')).toMatchObject({
+      status: 'failed',
+    })
+  })
+
+
+  it('reads the marker at the end, not one quoted before it', () => {
+    // A `read_bash` result carries whatever the command printed, and then the
+    // transport's own footer. Taking the first thing that looks like a shell
+    // id closes a task the output merely mentioned and leaves the real one
+    // running for good.
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'fake-start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'fake-call',
+          toolName: 'bash',
+          arguments: { command: 'pnpm one', async: true },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'fake-handoff',
+        parentId: 'fake-start',
+        timestamp: '2026-09-02T08:00:01.000Z',
+        data: {
+          toolCallId: 'fake-call',
+          success: true,
+          toolTelemetry: {
+            properties: { executionMode: 'async', detached: 'true' },
+          },
+          result: {
+            content:
+              '<command started in detached background with shellId: fake>',
+          },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'observer',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:05.000Z',
+        data: {
+          toolCallId: 'read-call',
+          toolName: 'read_bash',
+          // The read itself failed, which closes whatever task it is taken to
+          // speak for -- so which one that is has to be right.
+          success: false,
+          result: {
+            // The command's own output mentions one shell; the footer names
+            // another, and only the footer is the transport speaking.
+            content: [
+              'log line: shellId: fake was started earlier',
+              '<shellId: real completed with exit code 0>',
+            ].join('\n'),
+          },
+        },
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    // The shell the output only mentioned is untouched.
+    expect(tasks.find((task) => task.id === 'fake')).toMatchObject({
+      status: 'running',
+    })
+  })
+
+  it('does not take quoted handoff wording as a handoff', () => {
+    // An agent describing what a background shell looks like would otherwise
+    // promote its own foreground command out of reach of the turn-end sweep.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "plain-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "plain-call",
+          "toolName": "bash",
+          "arguments": { "command": "cat notes.txt" }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "plain-done",
+        "parentId": "plain-start",
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "plain-call",
+          "success": true,
+          "result": {
+            "content": "the docs say Command moved to background (shellId: 42) is printed when a shell detaches"
+          }
+        }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": {}
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    // Still ordinary work: the quote did not promote it out of reach of the
+    // turn that owned it, so the turn ending leaves nothing running.
+    expect(
+      tasks.find((task) => task.id === 'plain-call')?.status,
+    ).not.toBe('running')
+    expect(tasks.filter((task) => task.status === 'running')).toEqual([])
+  })
+
+
+  it('reads the exit code out of a completion reported as text', () => {
+    // `<shellId: 9 completed with exit code 1>` says both that the shell is
+    // over and how it ended. Taking only the id left it running for good, and
+    // a command that failed recorded as having succeeded.
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'call-1',
+          toolName: 'bash',
+          arguments: { command: 'pnpm test', async: true },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'handoff',
+        parentId: 'start',
+        timestamp: '2026-09-02T08:00:01.000Z',
+        data: {
+          toolCallId: 'call-1',
+          success: true,
+          toolTelemetry: {
+            properties: { executionMode: 'async', detached: 'true' },
+          },
+          result: {
+            content: '<command started in detached background with shellId: 9>',
+          },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'observed',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:09.000Z',
+        data: {
+          toolCallId: 'read-call',
+          toolName: 'read_bash',
+          success: true,
+          result: { content: '<shellId: 9 completed with exit code 1>' },
+        },
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '9')).toMatchObject({
+      status: 'failed',
+    })
+  })
+
+  it('treats a timed-out sync command as promoted, not ended', () => {
+    // A synchronous command that outlives its timeout reports that it is
+    // still running. That is a promotion, and the turn it outlived must not
+    // be allowed to end it.
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'slow-call',
+          toolName: 'bash',
+          arguments: { command: 'pnpm build' },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'timeout',
+        parentId: 'start',
+        timestamp: '2026-09-02T08:00:30.000Z',
+        data: {
+          toolCallId: 'slow-call',
+          success: true,
+          result: {
+            content:
+              '<command with shellId: 45 is still running after 30 seconds>',
+          },
+        },
+      },
+      {
+        type: 'assistant.turn_end',
+        id: 'turn-over',
+        parentId: null,
+        timestamp: '2026-09-02T08:05:00.000Z',
+        data: {},
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '45')).toMatchObject({
+      status: 'running',
+    })
+  })
+
+
+  it('finds the footer past the length used for display', () => {
+    // The transport writes its footer last, and the text used for display is
+    // truncated, so a long result loses the one thing that says the shell is
+    // over and how it ended.
+    const noise = 'x'.repeat(30_000)
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'call-1',
+          toolName: 'bash',
+          arguments: { command: 'pnpm test', async: true },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'handoff',
+        parentId: 'start',
+        timestamp: '2026-09-02T08:00:01.000Z',
+        data: {
+          toolCallId: 'call-1',
+          success: true,
+          toolTelemetry: {
+            properties: { executionMode: 'async', detached: 'true' },
+          },
+          result: {
+            content: '<command started in detached background with shellId: 9>',
+          },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'observed',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:09.000Z',
+        data: {
+          toolCallId: 'read-call',
+          toolName: 'read_bash',
+          success: true,
+          result: {
+            content: [noise, '<shellId: 9 completed with exit code 1>'].join(
+              '\n',
+            ),
+          },
+        },
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '9')).toMatchObject({
+      status: 'failed',
+    })
+  })
+
+  it('ends agent work when the session itself stops', () => {
+    // Shutting the session down ends its agents, reported or not. Waiting for
+    // a completion that never comes leaves both running for good.
+    const events = [
+      {
+        type: 'subagent.started',
+        id: 'agent-start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: { agentId: 'agent-1', description: 'Review' },
+      },
+      {
+        type: 'tool.execution_start',
+        id: 'agent-shell',
+        parentId: null,
+        agentId: 'agent-1',
+        timestamp: '2026-09-02T08:00:10.000Z',
+        data: {
+          toolCallId: 'agent-call',
+          toolName: 'bash',
+          arguments: { command: 'pnpm test' },
+        },
+      },
+      {
+        type: 'session.shutdown',
+        id: 'gone',
+        parentId: null,
+        timestamp: '2026-09-02T08:01:00.000Z',
+        data: {},
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.filter((task) => task.status === 'running')).toEqual([])
+  })
+
+
+  it('lets a detached shell outlive the session it was started from', () => {
+    // Detaching is what puts a shell outside the session on purpose. Its
+    // process can still be running long after the session has gone, so the
+    // shutdown cannot be taken as its ending.
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'call-1',
+          toolName: 'bash',
+          arguments: { command: 'pnpm dev', async: true },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'handoff',
+        parentId: 'start',
+        timestamp: '2026-09-02T08:00:01.000Z',
+        data: {
+          toolCallId: 'call-1',
+          success: true,
+          toolTelemetry: {
+            properties: { executionMode: 'async', detached: 'true' },
+          },
+          result: {
+            content: '<command started in detached background with shellId: 9>',
+          },
+        },
+      },
+      {
+        type: 'session.shutdown',
+        id: 'gone',
+        parentId: null,
+        timestamp: '2026-09-02T08:05:00.000Z',
+        data: {},
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '9')).toMatchObject({
+      status: 'running',
+      attachmentMode: 'detached',
+    })
+  })
+
 })

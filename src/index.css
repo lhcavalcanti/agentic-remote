@@ -2155,10 +2155,61 @@ button {
   margin: 12px 0 0;
 }
 
+/* The folder is part of the header line and opens it, so it stays text until
+   it is reached for. */
+.conversation-header__cwd {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.conversation-header__cwd:hover,
+.conversation-header__cwd:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
+
 .background-tasks-dialog {
-  width: min(100%, 620px);
   max-height: min(88vh, 760px);
   overflow-y: auto;
+}
+
+/* Task rows carry a command, a description and its output, which wrapped into
+   a narrow column. On a desktop there is room for roughly twice the width.
+   `.dialog` sets its own width later in this file, so this has to outrank it
+   rather than rely on order. */
+.dialog.background-tasks-dialog {
+  width: min(100%, 1240px);
+}
+
+@media (max-width: 900px) {
+  .dialog.background-tasks-dialog {
+    width: min(100%, 620px);
+  }
+}
+
+/* The running count is the way into the panel, so it behaves as a control
+   while still reading as part of the status line. */
+.web-statusline__tasks {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.web-statusline__tasks:hover,
+.web-statusline__tasks:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.web-statusline__tasks--running {
+  color: var(--accent);
 }
 
 .background-tasks-dialog__toolbar {
@@ -4092,4 +4143,39 @@ button {
 
 .transcript-earlier:hover {
   color: var(--text);
+}
+
+.session-item__tasks--interactive {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.session-item__tasks--interactive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.conversation-header__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  min-width: 0;
+}
+
+/* Everything before the folder gives way first: the folder is the only way
+   into the workspace on a touch device, so it must never be the part that is
+   clipped off. */
+.conversation-header__describes {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.conversation-header__meta .conversation-header__cwd {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }

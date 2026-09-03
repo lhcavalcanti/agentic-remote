@@ -97,6 +97,14 @@ export interface TerminalSessionController {
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
+  /**
+   * Whether a prompt is already inside the controller for this session.
+   *
+   * Sending records itself only after it returns, so the stored status still
+   * says idle while one is on its way in. This is the only reading that is
+   * true at the moment more keystrokes would be added to the same pane.
+   */
+  sending?(sessionId: string): boolean
 }
 
 export class TmuxTerminalSessionController
@@ -916,6 +924,10 @@ export class TmuxTerminalSessionController
       () => undefined,
     )
     throw new Error('Copilot did not start in the new tmux window')
+  }
+
+  sending(sessionId: string): boolean {
+    return this.operations.has(sessionId)
   }
 
   private async serialize<T>(

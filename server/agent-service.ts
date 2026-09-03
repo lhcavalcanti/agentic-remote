@@ -2825,10 +2825,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!command.startsWith('/')) {
       throw new Error('Slash command must start with /')
     }
-    const [name, ...parts] = command.slice(1).split(/\s+/)
+    const body = command.slice(1)
+    const name = body.split(/\s+/, 1)[0]
     if (!name) {
       throw new Error('Slash command name is required')
     }
+    // Kept exactly as it was written. Splitting on whitespace and rejoining
+    // with single spaces rewrote the argument, and `/cwd` carries a directory
+    // that was validated before it got here: a folder whose name holds two
+    // spaces became a different folder, or none at all.
+    const argument = body.slice(name.length).replace(/^\s/, '')
     const catalog = await this.sessionCommandCatalog(sessionId)
     const commandInfo = catalog.commands.find(
       (candidate) =>
@@ -2840,11 +2846,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
     const canonicalName = commandInfo?.name || name
     const canonicalCommand = `/${canonicalName}${
-      parts.length > 0 ? ` ${parts.join(' ')}` : ''
+      argument ? ` ${argument}` : ''
     }`
+    const stored = this.store.get(sessionId)
     const busy =
       this.activePrompts.has(sessionId) ||
-      this.drainingSessions.has(sessionId)
+      this.drainingSessions.has(sessionId) ||
+      // A terminal the CLI owns is worked in directly, so a turn can be
+      // running that this process never dispatched. Its recorded status is
+      // the only account of that, and a command sent rather than queued would
+      // otherwise be typed straight into it.
+      ((this.externalSessionIds.has(sessionId) ||
+        this.store.backend(sessionId) === 'terminal') &&
+        (stored?.status === 'running' || stored?.status === 'waiting'))
     if (
       !enqueue &&
       busy &&
@@ -2870,6 +2884,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       nativeEnqueue || busy || this.store.get(sessionId)?.status === 'running'
         ? undefined
         : await this.terminalController.capture?.(sessionId)
+    // Capturing the pane is awaited, and another reader's prompt can start a
+    // turn while it is. The keystrokes themselves are serialized, but that
+    // only orders them: it does not stop this one being typed into a turn
+    // that began after the check above said there was none.
+    if (!nativeEnqueue && !enqueue && !commandInfo?.allowDuringAgentExecution) {
+      const now = this.store.get(sessionId)
+      if (
+        this.activePrompts.has(sessionId) ||
+        this.drainingSessions.has(sessionId) ||
+        // Another prompt already inside the controller has not come back to
+        // record itself yet, so the stored status still says idle. The
+        // controller knows, and asking it is the only reading that is true at
+        // the moment the keystrokes would go in.
+        this.terminalController.sending?.(sessionId) === true ||
+        now?.status === 'running' ||
+        now?.status === 'waiting'
+      ) {
+        throw new Error(`/${name} must be queued while the agent is running`)
+      }
+    }
     if (
       await this.terminalController.send(
         sessionId,
@@ -2916,7 +2950,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } else {
       const result = await session.rpc.commands.invoke({
         name: canonicalName,
-        input: parts.join(' '),
+        input: argument,
       })
       if (result.kind === 'agent-prompt') {
         const notice = await this.store.addMessage(sessionId, {

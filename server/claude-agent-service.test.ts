@@ -616,6 +616,35 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(session.id)?.messages.length).toBe(before)
   })
 
+  it('restarts a queue left standing by a drain that failed', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    // A queue left standing: the prompt is back on it and the session is idle,
+    // with no query running to take it off again.
+    await service.store.enqueuePrompt(session.id, {
+      id: 'waiting-1',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    await service.sendMessage(session.id, 'written afterwards')
+
+    await vi.waitFor(() => {
+      expect(
+        service.getSession(session.id)?.queuedPrompts?.map(
+          (prompt) => prompt.id,
+        ),
+      ).not.toContain('waiting-1')
+    })
+    // The drain starts a turn of its own, and the fixture removes the
+    // directory as soon as the test ends. It is left to finish first.
+    await vi.waitFor(() => {
+      expect(service.getSession(session.id)?.status).toBe('idle')
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await service.store.flush()
+  })
+
   it('refuses a restart that a suspension has already claimed', async () => {
     const { directory, service } = await fixture(async function* () {})
     const session = await service.createSession(directory, false, true, 'claude')

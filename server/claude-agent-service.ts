@@ -686,6 +686,11 @@ export class ClaudeAgentService
         createdAt: new Date().toISOString(),
       })
       this.publish(queued)
+      // A drain that failed put its prompt back and left no query running to
+      // take it off again. Without this the queue stands still and every
+      // message written afterwards simply joins it. The drain does nothing at
+      // all while the session is busy, so this is safe to ask for either way.
+      void this.drainQueue(sessionId).catch(() => undefined)
       return queued
     }
     await this.refreshAuthentication()

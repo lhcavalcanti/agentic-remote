@@ -314,14 +314,25 @@ export class TmuxTerminalSessionController
       //
       // Killing the window rather than the pane would take any pane beside
       // it, which belongs to whoever split it there.
-      await execFileAsync('tmux', [
-        'if-shell',
-        '-F',
-        '-t',
-        owner.target,
-        `#{==:#{pane_pid},${owner.pid}}`,
-        `kill-pane -t ${owner.target}`,
-      ])
+      try {
+        await execFileAsync('tmux', [
+          'if-shell',
+          '-F',
+          '-t',
+          owner.target,
+          `#{==:#{pane_pid},${owner.rootPid}}`,
+          `kill-pane -t ${owner.target}`,
+        ])
+      } catch (error) {
+        // The pane can end on its own while confirmation is running, and the
+        // last pane ending takes the server with it. tmux then refuses to
+        // address a pane that is not there, and reporting that as failure left
+        // a session that had genuinely stopped never recorded as suspended.
+        // Anything else is a real failure and is not swallowed.
+        if (!noTmuxServer(error) && !missingTmuxTarget(error)) {
+          throw error
+        }
+      }
       // The pane is torn down asynchronously, and a resume that raced it would
       // find the old window and take it for the new one.
       //
@@ -862,15 +873,17 @@ export class TmuxTerminalSessionController
 
   private async owner(
     sessionId: string,
-  ): Promise<{ pid: number; target: string } | undefined> {
+  ): Promise<{ pid: number; target: string; rootPid: number } | undefined> {
     const processInfo = (await this.activeProcesses()).find(
       (candidate) => candidate.sessionId === sessionId,
     )
     if (!processInfo) {
       return undefined
     }
-    const target = await tmuxTargetForPid(processInfo.pid)
-    return target ? { pid: processInfo.pid, target } : undefined
+    const pane = await tmuxTargetForPid(processInfo.pid)
+    return pane
+      ? { pid: processInfo.pid, target: pane.target, rootPid: pane.rootPid }
+      : undefined
   }
 
   private activeProcesses(): ReturnType<typeof findActiveCopilotProcesses> {
@@ -1706,6 +1719,19 @@ async function waitForPaneText(
 }
 
 /** Whether a tmux command failed because there is no server left to ask. */
+/** Whether tmux refused because the pane named is no longer there. */
+function missingTmuxTarget(error: unknown): boolean {
+  const message = `${(error as { stderr?: string }).stderr || ''}${
+    error instanceof Error ? error.message : ''
+  }`
+  return (
+    /can't find pane/i.test(message) ||
+    /can't find window/i.test(message) ||
+    /can't find session/i.test(message) ||
+    /pane not found/i.test(message)
+  )
+}
+
 function noTmuxServer(error: unknown): boolean {
   const failure = error as { stderr?: unknown }
   // Only tmux's own "there is nothing to ask" diagnostics. Treating every
@@ -1725,7 +1751,9 @@ function noTmuxServer(error: unknown): boolean {
   )
 }
 
-async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
+async function tmuxTargetForPid(
+  pid: number,
+): Promise<{ target: string; rootPid: number } | undefined> {
   let output = ''
   try {
     output = (
@@ -1758,8 +1786,13 @@ async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
   const ancestors = await processAncestors(pid)
   for (const line of output.split('\n')) {
     const [panePid, target] = line.split('\t', 2)
-    if (target && ancestors.has(Number.parseInt(panePid, 10))) {
-      return target
+    const root = Number.parseInt(panePid, 10)
+    if (target && ancestors.has(root)) {
+      // Both: the pane is named by its id, and the process tmux compares
+      // against is the pane's own root. A session started beneath a shell or a
+      // wrapper is an ancestor away from that root, and comparing the Copilot
+      // process instead made tmux decline every kill.
+      return { target, rootPid: root }
     }
   }
   return undefined

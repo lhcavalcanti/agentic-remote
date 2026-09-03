@@ -726,9 +726,6 @@ export class TmuxTerminalSessionController
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
       const paneBeforePaste = await capturePane(target)
-      // Ctrl+U would take this with it, so whether the composer was already
-      // holding something has to be settled before the paste adds to it.
-      const composerWasHolding = composerHoldsText(paneBeforePaste)
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -778,36 +775,23 @@ export class TmuxTerminalSessionController
           content,
           20,
         )
-        // Only what this paste put there is taken back. If the prompt never
-        // gained it, or the composer was holding something typed at the
-        // terminal, clearing would throw that away instead.
+        // Nothing is cleared here any more.
         //
-        // Both readings matter. The one before the paste says the composer was
-        // empty to begin with; the one now says nothing has been typed into it
-        // in the seconds since, which is long enough for someone to have
-        // started a message while this was waiting.
-        // A paste that never landed leaves the prompt as it was found, so
-        // there is nothing to take back. One that landed late is only put back
-        // by a clear that confirmed: skipped because the composer was holding
-        // something, or because somebody has typed since, the text is still
-        // sitting there and the sender must be told to look rather than to
-        // send again.
-        // tmux accepted the paste either way, and a loaded CLI can draw it
-        // after this has stopped looking. Never having seen it arrive is not
-        // the same as knowing it did not, so an unconfirmed send stays
-        // uncertain: only a clear that confirmed says the prompt is as it was
-        // found, and everything else sends the reader to look at the terminal.
-        let restored = false
-        if (!composerWasHolding) {
-          // The clear takes its own reading first and refuses if the composer
-          // is holding anything this paste did not put there.
-          restored = await clearPastedPrompt(target, paneBeforePaste, content)
-        }
+        // Reading the composer and then clearing it cannot be made one act:
+        // whatever is read, a person at the terminal can type between the
+        // reading and the keystroke, and Ctrl+U takes the whole composer.
+        // Putting their text back is not possible either -- the pane shows a
+        // wrapped, marker-prefixed rendering, and a large paste as a
+        // placeholder, so what could be typed back is a different message.
+        //
+        // tmux accepted the paste whether or not it was ever seen to arrive,
+        // and a loaded CLI can draw it after this has stopped looking, so the
+        // text may well be sitting in the prompt. That is said plainly instead:
+        // a message left behind is recoverable by the person looking at it,
+        // and their own unsent writing destroyed by us is not.
         throw Object.assign(
           new Error(
-            restored
-              ? 'The terminal did not receive the message. Please try again.'
-              : 'The terminal did not receive the message, and the text may still be in the prompt. Check the terminal before sending it again.',
+            'The terminal did not receive the message, and the text may still be in the prompt. Check the terminal before sending it again.',
           ),
           { statusCode: 409 },
         )
@@ -1696,71 +1680,6 @@ export function paneShowsText(
  * prompt happened to hold, and report a message as delivered that the
  * terminal never received.
  */
-/**
- * Takes back a paste that was never sent.
- *
- * A message reported as undelivered has to leave nothing behind, or sending
- * it again lands beside the first copy rather than instead of it.
- */
-export async function clearPastedPrompt(
-  target: string,
-  paneBefore: string,
-  pasted: string,
-): Promise<boolean> {
-  // The latest state is read first and the clear only follows if it is safe.
-  // Sending Ctrl+U first and looking afterwards destroys whatever arrived in
-  // the meantime, and what the pane draws cannot be typed back: wrapping,
-  // newlines, prompt markers and a large paste shown as a placeholder are all
-  // normalised away, so the reconstruction would be a different message.
-  //
-  // A composer holding somebody's writing is left exactly as it is, and the
-  // caller reports that the prompt was not put back, which sends the reader to
-  // look at the terminal rather than to send again.
-  const authorising = await capturePane(target).catch(() => undefined)
-  if (authorising === undefined) {
-    return false
-  }
-  if (composerHoldsOtherText(paneBefore, authorising, pasted)) {
-    return false
-  }
-  // Ctrl+U clears the composer. Escape is deliberately not sent: it would
-  // dismiss whatever dialog the agent has open behind the paste.
-  try {
-    await execFileAsync('tmux', ['send-keys', '-t', target, 'C-u'])
-  } catch {
-    // Saying the prompt was put back when the keystroke never arrived is what
-    // leaves the paste to be concatenated with the retry.
-    return false
-  }
-  // The composer is read again because the reading that authorised this clear
-  // is a moment old, and a terminal user can type inside that moment.
-  //
-  // Emptiness is the test, not the absence of somebody else's writing.
-  // `composerHoldsOtherText` discounts the pasted prompt on purpose, so a
-  // composer that Ctrl+U never reached -- still holding exactly that prompt --
-  // read as successfully cleared, and the caller told the sender to try again
-  // while the original text sat there waiting to be joined to it.
-  //
-  // Ctrl+U is not instant, so this is given the same moment to take effect
-  // that the paste itself is given to appear.
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    const after = await capturePane(target).catch(() => undefined)
-    if (after === undefined) {
-      return false
-    }
-    if (!composerHoldsText(after)) {
-      return true
-    }
-    // Something is in there. If it is not this paste, it is somebody's
-    // writing that arrived after the clear was authorised, and waiting for it
-    // to disappear would be waiting for them to delete it themselves.
-    if (composerHoldsOtherText(paneBefore, after, pasted)) {
-      return false
-    }
-  }
-  return false
-}
 
 /**
  * Whether the composer is holding anything of its own.
@@ -1948,11 +1867,18 @@ export function composerTookPaste(
       paneEvidenceCount(paneBefore, expected, pasted)
     )
   }
-  const after = compact(drawnAfter || '')
+  // The CLI's own hint is not anybody's text, on either side of the paste.
+  // Read as content it made a composer that is empty look like one holding
+  // the very words being waited for.
+  const after = composerHoldsText(paneAfter) ? compact(drawnAfter || '') : ''
   if (!after) {
     return false
   }
-  const before = compact(drawnBefore || '')
+  // A composer holding only the CLI's own hint is holding nothing of anyone's,
+  // and the hint names files and commands. Counted as text that was already
+  // there, a paste of exactly one of those words looked like no change at all,
+  // and the send was reported as never landing.
+  const before = composerHoldsText(paneBefore) ? compact(drawnBefore || '') : ''
   // A paste too large to echo is shown as a placeholder instead of its text,
   // and only a send big enough to have produced one may claim it.
   if (pasted.length > PASTE_ECHO_LIMIT) {

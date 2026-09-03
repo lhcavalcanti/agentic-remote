@@ -7396,7 +7396,11 @@ function App() {
         handledFailures.current.set(key, stamp)
         unshownFailures.current.delete(key)
         restoredFailures.current.set(key, stamp)
-        return current
+        // Unless the composer is empty. A recovery edited into a command that
+        // this app answers by itself is cleared without anything being sent,
+        // and leaving the record in place meant the text was never offered
+        // again -- invisible, with the marker still holding the queue.
+        return current[key] ? current : { ...current, [key]: content }
       }
       if (current[key]) {
         // Something newer is already there, so this has not been given back

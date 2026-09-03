@@ -470,7 +470,12 @@ export class SessionStore {
       })
     } catch (error) {
       const current = this.state.sessions[sessionId]
-      if (current) {
+      // Only if nothing has happened since. The write is asynchronous and
+      // another mutation can land while it is outstanding; putting the old
+      // values back over that one would undo it and walk the revision
+      // backwards, leaving memory, disk and the record already handed out all
+      // describing different things.
+      if (current && current.revision === (previousRevision ?? 0) + 1) {
         current.queuedPrompts = previousQueue
         current.queuedCount = previousCount
         current.failedPrompt = previousFailed
@@ -497,7 +502,9 @@ export class SessionStore {
       })
     } catch (error) {
       const current = this.state.sessions[sessionId]
-      if (current) {
+      // As above: put back only what this call changed, and only while it is
+      // still the last word.
+      if (current && current.revision === (previousRevision ?? 0) + 1) {
         current.failedPrompt = previousFailed
         current.revision = previousRevision
       }

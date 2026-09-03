@@ -1486,6 +1486,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly hydratingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly activePrompts = new Map<string, ActivePrompt>()
   private readonly drainingSessions = new Set<string>()
+  /** Failures whose resend has been admitted, so a second cannot be. */
+  private readonly claimedFailures = new Set<string>()
+  /** Marker clearances still outstanding after an accepted send. */
+  private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
@@ -2540,8 +2544,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // drained straight away can fail and record a new one, and acknowledging
     // afterwards would clear the failure this very call just created.
     const before = this.store.get(sessionId)?.failedPrompt?.failedAt
-    const sent = await this.sendAdmitted(sessionId, content, enqueue)
+    // Claimed before it is delivered, not after. Two readers handed the same
+    // recovered prompt both passed the check and both sends were accepted,
+    // and with queueing both copies went in and drained once the first
+    // acknowledgement cleared the marker.
+    const claim = this.claimFailure(sessionId, content, before, acknowledgedFailure)
+    let sent: SessionDetail
+    try {
+      sent = await this.sendAdmitted(sessionId, content, enqueue)
+    } catch (error) {
+      claim?.release()
+      throw error
+    }
     if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
+      claim?.release()
       return sent
     }
     // The snapshot above still carries the failure that this send answers, so
@@ -2557,13 +2573,102 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       content,
       acknowledgedFailure,
     ).catch((error: unknown) => {
+      // The send has already been delivered or queued, so this is not a failed
+      // send and must not be reported as one. It is not forgotten either: the
+      // marker is still on disk holding the queue, so clearing it is left
+      // outstanding and tried again rather than logged and abandoned.
       console.warn(
         `Could not clear the recovery marker for ${sessionId} after an accepted send:`,
         error,
       )
+      this.scheduleFailureAcknowledgement(sessionId, content, acknowledgedFailure)
       return undefined
     })
+    claim?.release()
     return settled ?? sent
+  }
+
+  /**
+   * Reserves a failure so only one resend of it can be admitted.
+   *
+   * Two readers can be holding the same recovered prompt, and the marker is
+   * only cleared once the send has gone out. Both passed that check and both
+   * were accepted, so the prompt was delivered twice.
+   */
+  private claimFailure(
+    sessionId: string,
+    submitted: string,
+    failedAt: string | undefined,
+    acknowledged?: string,
+  ): { release: () => void } | undefined {
+    if (!failedAt) {
+      return undefined
+    }
+    const stored = this.store.get(sessionId)?.failedPrompt
+    if (
+      !stored ||
+      (stored.content.trim() !== submitted.trim() &&
+        acknowledged !== stored.failedAt)
+    ) {
+      // Not a resend of the failure at all, so there is nothing to reserve.
+      return undefined
+    }
+    const key = `${sessionId}:${failedAt}`
+    if (this.claimedFailures.has(key)) {
+      throw Object.assign(
+        new Error('This message has already been sent from another window.'),
+        { statusCode: 409 },
+      )
+    }
+    this.claimedFailures.add(key)
+    let released = false
+    return {
+      release: () => {
+        if (!released) {
+          released = true
+          this.claimedFailures.delete(key)
+        }
+      },
+    }
+  }
+
+  /**
+   * Keeps trying to clear a marker whose send has already been accepted.
+   *
+   * The marker holds the queue, and is offered again after a reload and to
+   * every other reader, so leaving it behind invites the accepted prompt to be
+   * sent a second time.
+   */
+  private scheduleFailureAcknowledgement(
+    sessionId: string,
+    submitted: string,
+    acknowledged?: string,
+  ): void {
+    if (this.pendingAcknowledgements.has(sessionId)) {
+      return
+    }
+    const attempt = async (remaining: number): Promise<void> => {
+      if (!this.store.get(sessionId)?.failedPrompt) {
+        return
+      }
+      try {
+        await this.acknowledgeFailedPrompt(sessionId, submitted, acknowledged)
+      } catch (error) {
+        if (remaining <= 0) {
+          console.warn(
+            `Gave up clearing the recovery marker for ${sessionId}:`,
+            error,
+          )
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        await attempt(remaining - 1)
+      }
+    }
+    const running = attempt(5).finally(() => {
+      this.pendingAcknowledgements.delete(sessionId)
+    })
+    this.pendingAcknowledgements.set(sessionId, running)
   }
 
   private async sendAdmitted(
@@ -2878,9 +2983,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // The text going back out, or the reader saying outright that they have
     // it. Matching alone held the marker for good when they edited or
     // abandoned the recovered draft, and the marker stops the queue draining.
+    // The reader saying outright which failure they are answering, or -- only
+    // where there is nothing to say it with -- the text itself.
+    //
+    // A failure the browser never saw is one it cannot acknowledge, and it
+    // deliberately does not attach a stamp to writing of its own. Taking the
+    // words alone as proof cleared that unseen failure when an identical draft
+    // was sent, and one of the two intended messages was never delivered.
     if (
-      failed.content.trim() !== submitted.trim() &&
-      acknowledged !== failed.failedAt
+      acknowledged !== failed.failedAt &&
+      (failed.failedAt !== undefined ||
+        failed.content.trim() !== submitted.trim())
     ) {
       return undefined
     }
@@ -2904,17 +3017,38 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
     const command = rawCommand.trim()
-    // Answered only once the command has actually been taken, like a message.
+    // Answered only once the command has actually been taken, like a message,
+    // and reserved before it is taken for the same reason.
     const before = this.store.get(sessionId)?.failedPrompt?.failedAt
-    const ran = await this.runCommand(sessionId, command, enqueue)
+    const claim = this.claimFailure(sessionId, command, before, acknowledgedFailure)
+    let ran: SessionDetail
+    try {
+      ran = await this.runCommand(sessionId, command, enqueue)
+    } catch (error) {
+      claim?.release()
+      throw error
+    }
     if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
+      claim?.release()
       return ran
     }
+    // The command has already run or been queued, so a marker that will not
+    // clear is not a failed command. Rejecting here had the browser hand back
+    // a command that had already been carried out, and running some of them
+    // twice changes the session.
     const settled = await this.acknowledgeFailedPrompt(
       sessionId,
       command,
       acknowledgedFailure,
-    )
+    ).catch((error: unknown) => {
+      console.warn(
+        `Could not clear the recovery marker for ${sessionId} after an accepted command:`,
+        error,
+      )
+      this.scheduleFailureAcknowledgement(sessionId, command, acknowledgedFailure)
+      return undefined
+    })
+    claim?.release()
     return settled ?? ran
   }
 

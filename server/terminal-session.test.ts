@@ -12,7 +12,6 @@ import {
   composerHoldsOtherText,
   composerHoldsText,
   composerTookPaste,
-  clearPastedPrompt,
   paneEvidenceCount,
   paneShowsText,
   parseTerminalFormActiveField,
@@ -538,15 +537,14 @@ describe('paneShowsText', () => {
       '\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f'
     // Nothing has changed in the composer, so nothing has arrived.
     expect(composerTookPaste(hint, hint, 'files')).toBe(false)
-  })
 
-  it('does not report the prompt put back when the keystroke never arrived', async () => {
-    // tmux cannot deliver to a pane that is not there. Swallowing that and
-    // reporting the paste taken back is what left it to be concatenated with
-    // the retry the queue sends on its own.
-    await expect(
-      clearPastedPrompt('agentic-remote-missing:0.0', '', 'hello'),
-    ).resolves.toBe(false)
+    // And the other way round: the hint is not text that was already there,
+    // so a paste of one of its own words is still the paste arriving.
+    const pasted = hint.replace(
+      'Type @ to mention files, # for issues/PRs, / for commands',
+      '> files',
+    )
+    expect(composerTookPaste(hint, pasted, 'files')).toBe(true)
   })
 
   it('does not read a terminal user\'s placeholder as a short send landing', () => {

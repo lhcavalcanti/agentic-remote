@@ -3759,10 +3759,11 @@ describe('AgentService deletion', () => {
       terminal,
     )
     await service.start()
+    const failedAt = new Date().toISOString()
     await service.store.update(client.session.sessionId, (stored) => {
       stored.failedPrompt = {
         content: 'the one that failed',
-        failedAt: new Date().toISOString(),
+        failedAt,
       }
     })
 
@@ -3771,16 +3772,75 @@ describe('AgentService deletion', () => {
       service.store.get(client.session.sessionId)?.failedPrompt?.content,
     ).toBe('the one that failed')
 
-    // Sending it back is what settles it.
+    // Saying which failure is being answered is what settles it. The words
+    // alone are not proof: a reader who never saw this failure can have
+    // written the same thing themselves, and clearing it then would deliver
+    // one of the two intended messages and silently drop the other.
     await service.sendMessage(
       client.session.sessionId,
       'the one that failed',
       false,
+      failedAt,
     )
     expect(
       service.store.get(client.session.sessionId)?.failedPrompt,
     ).toBeUndefined()
     await service.stop()
+  })
+
+  it('admits only one resend of the same failure', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-claim-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const failedAt = new Date().toISOString()
+    await service.store.update(created.id, (stored) => {
+      stored.failedPrompt = { content: 'the one that failed', failedAt }
+    })
+
+    // Two readers handed the same recovered prompt. The marker is only
+    // cleared once a send has gone out, so both passed the check and both
+    // were accepted, and with queueing both copies were delivered.
+    const results = await Promise.allSettled([
+      service.sendMessage(created.id, 'the one that failed', true, failedAt),
+      service.sendMessage(created.id, 'the one that failed', true, failedAt),
+    ])
+    const accepted = results.filter((result) => result.status === 'fulfilled')
+    expect(accepted).toHaveLength(1)
+  })
+
+  it('does not clear a failure the sender never said they had', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-same-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.update(created.id, (stored) => {
+      stored.failedPrompt = {
+        content: 'ship it',
+        failedAt: new Date().toISOString(),
+      }
+    })
+
+    // A failure this browser never saw, and writing of its own that happens to
+    // read the same. Taking the words as proof delivered one of the two
+    // intended messages and dropped the other without saying so.
+    await service.sendMessage(created.id, 'ship it', true)
+
+    expect(service.store.get(created.id)?.failedPrompt?.content).toBe('ship it')
   })
 
   it('gives back a queued prompt whose send failed', async () => {

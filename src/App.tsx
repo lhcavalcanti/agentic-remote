@@ -7205,9 +7205,25 @@ function App() {
       // still missing has genuinely gone, and waiting for it forever leaves
       // selection treating it as on its way.
       const present = new Set(reconciledForClaim.map((s) => sessionKey(s)))
+      // A hub answers for a paired computer out of its own cache when the node
+      // does not reply, and it reports the computer as offline when that
+      // happens. Such an answer has not looked at the node at all, so a
+      // replacement missing from it has not been shown to be missing: settling
+      // on that let selection cleanup move to an unrelated session, and the
+      // upsert that arrived afterwards had nobody left to redirect.
+      const answeredFor = new Set(
+        snapshotComputers
+          .filter((computer) => computer.online)
+          .map((computer) => computer.id),
+      )
       for (const key of [...pendingReplacements.current]) {
         const announcedAt = sessionEventSequenceRef.current.get(key) || 0
-        if (present.has(key) || announcedAt <= startedAtSequence) {
+        if (present.has(key)) {
+          pendingReplacements.current.delete(key)
+          continue
+        }
+        const computerId = key.slice(0, key.indexOf(':'))
+        if (announcedAt <= startedAtSequence && answeredFor.has(computerId)) {
           pendingReplacements.current.delete(key)
         }
       }
@@ -7753,9 +7769,25 @@ function App() {
     // across would point the replacement's own document at a place it never
     // came from, and the position that gets written back would overwrite what
     // the reader actually has open.
+    // Decided here and recorded here. Ancestors are claimed one after another
+    // in the same batch, and the ref is only refreshed by an effect that runs
+    // after all of them, so each claim used to see a replacement that nothing
+    // had taken yet. The newest ancestor rightly won the position while an
+    // older one still moved the ownership markers across, and the document the
+    // reader could see was then written back over the newer position.
     const takesPosition =
       knowledgePositionsRef.current[fromKey] !== undefined &&
       knowledgePositionsRef.current[toKey] === undefined
+    if (takesPosition) {
+      knowledgePositionsRef.current = {
+        ...knowledgePositionsRef.current,
+        [toKey]: knowledgePositionsRef.current[fromKey],
+      }
+    }
+    if (knowledgePositionsRef.current[fromKey] !== undefined) {
+      const { [fromKey]: _taken, ...rest } = knowledgePositionsRef.current
+      knowledgePositionsRef.current = rest
+    }
     const offset = knowledgeScrollTops.current[fromKey]
     delete knowledgeScrollTops.current[fromKey]
     if (

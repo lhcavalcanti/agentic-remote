@@ -360,14 +360,46 @@ function toolTelemetryProperties(
   return recordValue(recordValue(data.toolTelemetry).properties)
 }
 
+/**
+ * The transport's own footer, as it writes it and nowhere else.
+ *
+ * A shell id read out of ordinary output is not a shell id. Command text,
+ * file contents and an agent's own prose all quote these words, and taking
+ * them at face value hands a completion to whatever unrelated task happens to
+ * hold the number that was quoted. Only a complete marker on the last line
+ * counts.
+ */
+const SHELL_FOOTERS = [
+  // `<command started in detached background with shellId: 9>`
+  /^<[^<>]*\bshell[_ ]?id\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)[^<>]*>$/i,
+  // `Started background shell (shellId: shell-1)`
+  /^[^()<>]*\(\s*shell[_ ]?id\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)\s*\)$/i,
+]
+
+function shellIdFromFooter(text: string): string | undefined {
+  const last = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1)
+  if (!last) {
+    return undefined
+  }
+  for (const pattern of SHELL_FOOTERS) {
+    const match = last.match(pattern)
+    if (match) {
+      return match[1]
+    }
+  }
+  return undefined
+}
+
 function shellIdFromValue(value: unknown, depth = 0): string | undefined {
   if (depth > 4 || value === null || value === undefined) {
     return undefined
   }
   if (typeof value === 'string') {
-    return value.match(
-      /\bshell[_ ]?id\b["'\s:=]+([A-Za-z0-9][A-Za-z0-9._:-]*)/i,
-    )?.[1]
+    return shellIdFromFooter(value)
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
@@ -411,12 +443,8 @@ function shellIdFromValue(value: unknown, depth = 0): string | undefined {
       return id
     }
   }
-  for (const entry of Object.values(object)) {
-    const id = shellIdFromValue(entry, depth + 1)
-    if (id) {
-      return id
-    }
-  }
+  // Deliberately no sweep over every remaining value: that is what turned a
+  // function name printed by a grep into a shell id.
   return undefined
 }
 
@@ -803,17 +831,26 @@ function backgroundHandoff(
     textFromValue(result) ||
     textFromValue(recordValue(result.structuredContent)) ||
     textFromValue(data)
-  // Ordinary output can mention a background command without one existing, so
-  // the handoff has to name the shell it created before it is believed.
+  // Ordinary output can describe a background command without one existing,
+  // and an agent quoting the transport's own wording would otherwise promote
+  // a task out of reach of the turn-end sweep. Only the footer counts, and
+  // only when it names the shell it created.
+  const footerLine = message
+    ? message
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1)
+    : undefined
   if (
-    message &&
-    /shell\s*id\s*[:=]/i.test(message) &&
-    /(?:background|detached|async|still running|moved)/i.test(message)
+    footerLine &&
+    shellIdFromFooter(footerLine) &&
+    /(?:background|detached|async)/i.test(footerLine)
   ) {
     return {
       assumed: false,
       executionMode: 'background',
-      attachmentMode: /detached/i.test(message) ? 'detached' : 'attached',
+      attachmentMode: /detached/i.test(footerLine) ? 'detached' : 'attached',
     }
   }
   return undefined

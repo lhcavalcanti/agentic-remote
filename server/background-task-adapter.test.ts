@@ -1234,4 +1234,117 @@ describe('background task adapter', () => {
     })
   })
 
+
+  it('reads the marker at the end, not one quoted before it', () => {
+    // A `read_bash` result carries whatever the command printed, and then the
+    // transport's own footer. Taking the first thing that looks like a shell
+    // id closes a task the output merely mentioned and leaves the real one
+    // running for good.
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'fake-start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'fake-call',
+          toolName: 'bash',
+          arguments: { command: 'pnpm one', async: true },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'fake-handoff',
+        parentId: 'fake-start',
+        timestamp: '2026-09-02T08:00:01.000Z',
+        data: {
+          toolCallId: 'fake-call',
+          success: true,
+          toolTelemetry: {
+            properties: { executionMode: 'async', detached: 'true' },
+          },
+          result: {
+            content:
+              '<command started in detached background with shellId: fake>',
+          },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'observer',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:05.000Z',
+        data: {
+          toolCallId: 'read-call',
+          toolName: 'read_bash',
+          // The read itself failed, which closes whatever task it is taken to
+          // speak for -- so which one that is has to be right.
+          success: false,
+          result: {
+            // The command's own output mentions one shell; the footer names
+            // another, and only the footer is the transport speaking.
+            content: [
+              'log line: shellId: fake was started earlier',
+              '<shellId: real completed with exit code 0>',
+            ].join('\n'),
+          },
+        },
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    // The shell the output only mentioned is untouched.
+    expect(tasks.find((task) => task.id === 'fake')).toMatchObject({
+      status: 'running',
+    })
+  })
+
+  it('does not take quoted handoff wording as a handoff', () => {
+    // An agent describing what a background shell looks like would otherwise
+    // promote its own foreground command out of reach of the turn-end sweep.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "plain-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "plain-call",
+          "toolName": "bash",
+          "arguments": { "command": "cat notes.txt" }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "plain-done",
+        "parentId": "plain-start",
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "plain-call",
+          "success": true,
+          "result": {
+            "content": "the docs say Command moved to background (shellId: 42) is printed when a shell detaches"
+          }
+        }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": {}
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    // Still ordinary work: the quote did not promote it out of reach of the
+    // turn that owned it, so the turn ending leaves nothing running.
+    expect(
+      tasks.find((task) => task.id === 'plain-call')?.status,
+    ).not.toBe('running')
+    expect(tasks.filter((task) => task.status === 'running')).toEqual([])
+  })
+
 })

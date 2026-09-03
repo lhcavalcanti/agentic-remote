@@ -6145,6 +6145,33 @@ describe('App', () => {
     )
   })
 
+  it('does not hand back a failed prompt the send it answered has cleared', async () => {
+    // The HTTP answer can arrive before the event that clears the marker, and
+    // with the socket down it never arrives at all. Offering whatever the
+    // session still shows put the prompt that was just sent straight back in
+    // the composer, ready to be sent a second time.
+    const failed: ManagedSession = {
+      ...session,
+      failedPrompt: {
+        content: 'the one that failed',
+        failedAt: '2026-09-03T00:00:00.000Z',
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed, secondSession])
+    vi.mocked(getSession).mockResolvedValue(failed)
+    // Answers with the session exactly as it was: the marker is still there.
+    vi.mocked(sendMessage).mockResolvedValue(failed)
+
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(textarea).toHaveValue('the one that failed'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalled())
+    await waitFor(() => expect(textarea).toHaveValue(''))
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',

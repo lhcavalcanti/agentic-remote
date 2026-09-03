@@ -481,9 +481,28 @@ export class SessionStore {
   }
 
   async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {
-    return this.mutate(sessionId, (stored) => {
-      stored.failedPrompt = undefined
-    })
+    // Put back if the write does not land, for the same reason as recording
+    // one. A submission that had already succeeded was reported as failed and
+    // handed back as a draft, while the marker stayed on disk to be found
+    // again after a restart and delivered a second time.
+    const existing = this.state.sessions[sessionId]
+    if (!existing) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    const previousFailed = existing.failedPrompt
+    const previousRevision = existing.revision
+    try {
+      return await this.mutate(sessionId, (stored) => {
+        stored.failedPrompt = undefined
+      })
+    } catch (error) {
+      const current = this.state.sessions[sessionId]
+      if (current) {
+        current.failedPrompt = previousFailed
+        current.revision = previousRevision
+      }
+      throw error
+    }
   }
 
   async shiftQueuedPrompt(

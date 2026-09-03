@@ -726,11 +726,6 @@ export class TmuxTerminalSessionController
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
       const paneBeforePaste = await capturePane(target)
-      const alreadyShown = paneEvidenceCount(
-        paneBeforePaste,
-        confirmation,
-        content,
-      )
       // Ctrl+U would take this with it, so whether the composer was already
       // holding something has to be settled before the paste adds to it.
       const composerWasHolding = composerHoldsText(paneBeforePaste)
@@ -752,11 +747,10 @@ export class TmuxTerminalSessionController
         target,
       ])
       if (
-        !(await waitForPaneText(
+        !(await waitForComposerPaste(
           target,
+          paneBeforePaste,
           confirmation,
-          alreadyShown,
-          40,
           content,
         ))
       ) {
@@ -773,12 +767,12 @@ export class TmuxTerminalSessionController
         // the paste arrive late, so one look at this instant would miss it and
         // leave the text to be concatenated with the retry. It is given a
         // further moment to appear.
-        const landedLate = await waitForPaneText(
+        const landedLate = await waitForComposerPaste(
           target,
+          paneBeforePaste,
           confirmation,
-          alreadyShown,
-          20,
           content,
+          20,
         )
         // Only what this paste put there is taken back. If the prompt never
         // gained it, or the composer was holding something typed at the
@@ -1713,13 +1707,49 @@ export async function clearPastedPrompt(
   paneBefore: string,
   pasted: string,
 ): Promise<boolean> {
+  // The reading that authorises this clear and the clear itself go to tmux as
+  // one command list, so no other tmux command can run between them. Taken
+  // separately, someone could type in the gap and Ctrl+U would take it.
+  //
   // Ctrl+U clears the composer. Escape is deliberately not sent: it would
   // dismiss whatever dialog the agent has open behind the paste.
+  let authorising = ''
   try {
-    await execFileAsync('tmux', ['send-keys', '-t', target, 'C-u'])
+    authorising = (
+      await execFileAsync('tmux', [
+        'capture-pane',
+        '-p',
+        '-t',
+        target,
+        '-S',
+        '-30',
+        ';',
+        'send-keys',
+        '-t',
+        target,
+        'C-u',
+      ])
+    ).stdout
   } catch {
     // Saying the prompt was put back when the keystroke never arrived is what
     // leaves the paste to be concatenated with the retry.
+    return false
+  }
+  // What the composer held at the instant it was cleared. Anything beyond this
+  // paste was somebody's writing, and it is put straight back rather than
+  // left destroyed -- the caller is told the clear did not hold, so the reader
+  // is sent to look at the terminal instead of sending again.
+  if (composerHoldsOtherText(paneBefore, authorising, pasted)) {
+    const strayed = composerText(authorising)
+    if (strayed) {
+      await execFileAsync('tmux', [
+        'send-keys',
+        '-t',
+        target,
+        '-l',
+        strayed,
+      ]).catch(() => undefined)
+    }
     return false
   }
   // The composer is read again because the reading that authorised this clear
@@ -1907,21 +1937,86 @@ async function capturePane(target: string): Promise<string> {
   ).stdout
 }
 
-async function waitForPaneText(
-  target: string,
+/**
+ * Whether the composer has taken this paste, judged by what changed in it.
+ *
+ * Counting occurrences across the whole pane credits chrome the CLI was
+ * already drawing. The empty-composer hint names files and commands, so a
+ * prompt sharing a word with it was found before it had arrived -- and
+ * replacing that hint with the paste left the count where it was, so the send
+ * was reported as never landing while the text sat in the prompt.
+ */
+export function composerTookPaste(
+  paneBefore: string,
+  paneAfter: string,
   expected: string,
-  before: number,
-  attempts = 40,
   pasted = expected,
+): boolean {
+  const compact = (value: string) => value.replace(/\s+/gu, '')
+  const wanted = compact(expected)
+  if (!wanted) {
+    return true
+  }
+  const drawnAfter = composerText(paneAfter)
+  const drawnBefore = composerText(paneBefore)
+  if (drawnAfter === undefined && drawnBefore === undefined) {
+    // No composer to read. Not every pane draws one -- an agent mid-dialog, or
+    // something that is not the CLI at all -- and the pane itself is then the
+    // only evidence there is.
+    return (
+      paneEvidenceCount(paneAfter, expected, pasted) >
+      paneEvidenceCount(paneBefore, expected, pasted)
+    )
+  }
+  const after = compact(drawnAfter || '')
+  if (!after) {
+    return false
+  }
+  const before = compact(drawnBefore || '')
+  // A paste too large to echo is shown as a placeholder instead of its text,
+  // and only a send big enough to have produced one may claim it.
+  if (pasted.length > PASTE_ECHO_LIMIT) {
+    const drawn = (after.match(/\[Pastedtext/gu) || []).length
+    const had = (before.match(/\[Pastedtext/gu) || []).length
+    if (drawn > had) {
+      return true
+    }
+  }
+  const occurrences = (haystack: string, needle: string) => {
+    let found = 0
+    let index = 0
+    for (;;) {
+      const at = haystack.indexOf(needle, index)
+      if (at < 0) {
+        return found
+      }
+      found += 1
+      index = at + needle.length
+    }
+  }
+  // One more than the composer already held. The same text may have been
+  // typed there and left, and its mere presence would prove nothing.
+  return occurrences(after, wanted) > occurrences(before, wanted)
+}
+
+async function waitForComposerPaste(
+  target: string,
+  paneBefore: string,
+  expected: string,
+  pasted: string,
+  attempts = 40,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (paneShowsText(await capturePane(target), expected, before, pasted)) {
+    if (
+      composerTookPaste(paneBefore, await capturePane(target), expected, pasted)
+    ) {
       return true
     }
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
   return false
 }
+
 
 async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
   let output = ''

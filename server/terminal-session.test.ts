@@ -11,6 +11,7 @@ import {
   isTerminalSessionInUsePrompt,
   composerHoldsOtherText,
   composerHoldsText,
+  composerTookPaste,
   clearPastedPrompt,
   paneEvidenceCount,
   paneShowsText,
@@ -524,6 +525,19 @@ describe('paneShowsText', () => {
     expect(
       paneShowsText('> [Pasted text #1 +500 lines]', 'q', 0, content),
     ).toBe(true)
+  })
+
+  it('does not read the CLI\'s own hint as the paste arriving', () => {
+    // The empty-composer hint names files and commands. A prompt sharing a
+    // word with it was found on the pane before it had arrived, and replacing
+    // the hint with the paste left the count where it was -- so the send was
+    // reported as never landing while the text sat in the prompt.
+    const hint =
+      '\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n' +
+      '\u2502 Type @ to mention files, # for issues/PRs, / for commands\n' +
+      '\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f'
+    // Nothing has changed in the composer, so nothing has arrived.
+    expect(composerTookPaste(hint, hint, 'files')).toBe(false)
   })
 
   it('does not report the prompt put back when the keystroke never arrived', async () => {

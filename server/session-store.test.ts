@@ -625,6 +625,35 @@ describe('SessionStore', () => {
     expect(after?.queuedCount).toBe(1)
   })
 
+  it('keeps the failed prompt when clearing it cannot be written', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-clear',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+    await store.setFailedPrompt('session-clear', 'missing', 'Deploy it')
+
+    const store_ = store as unknown as { persist: () => Promise<void> }
+    const originalPersist = store_.persist.bind(store_)
+    store_.persist = async () => {
+      throw new Error('disk full')
+    }
+
+    // A submission that had already succeeded was reported as failed and
+    // handed back as a draft, while the marker stayed on disk to be found
+    // again after a restart and delivered a second time.
+    await expect(store.clearFailedPrompt('session-clear')).rejects.toThrow(
+      /disk full/,
+    )
+
+    store_.persist = originalPersist
+    expect(store.get('session-clear')?.failedPrompt?.content).toBe('Deploy it')
+  })
+
   it('persists every mutation in a burst that shares one write', async () => {
     const { directory, store } = await createStore()
     await store.create({

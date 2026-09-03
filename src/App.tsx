@@ -5516,6 +5516,12 @@ function App() {
     new Map<string, { content: string; stamp: string }>(),
   )
   const restoredFailures = useRef(new Map<string, string>())
+  // Which draft was put in the composer by a recovery, and for which failure.
+  // Survives a reload beside the draft itself, because after one the text is
+  // all that is left and identical text is not proof of where it came from.
+  const restoredDraftStamps = useRef<Record<string, string>>(
+    readStoredOrder('agentic-remote:composer-draft-failures', {}),
+  )
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -7334,6 +7340,13 @@ function App() {
    * so the marker is still waiting and the text has just been cleared from
    * under it. Forgetting it was handled lets the next pass hand it back.
    */
+  function failureStampFor(key: string): string | undefined {
+    const current = selectedRef.current
+    return current && sessionKey(current) === key
+      ? current.failedPrompt?.failedAt || current.failedPrompt?.content
+      : undefined
+  }
+
   function reofferFailedPrompt(key: string) {
     const current = selectedRef.current
     const failed =
@@ -7366,10 +7379,14 @@ function App() {
       return
     }
     updateComposerDrafts([key], (current) => {
-      if (current[key] === content) {
-        // Already back in the composer, from before a reload. It is this
-        // failure's own text, so it counts as handed back rather than as
-        // somebody's newer writing.
+      if (
+        current[key] === content &&
+        restoredDraftStamps.current[key] === stamp
+      ) {
+        // Already back in the composer, from before a reload, and recorded as
+        // this failure's own text when it was put there. Matching on the words
+        // alone gave somebody's newer writing this failure's token, and
+        // sending it answered for a message that was never handed back.
         handledFailures.current.set(key, stamp)
         unshownFailures.current.delete(key)
         restoredFailures.current.set(key, stamp)
@@ -7385,6 +7402,7 @@ function App() {
       handledFailures.current.set(key, stamp)
       unshownFailures.current.delete(key)
       restoredFailures.current.set(key, stamp)
+      rememberRestoredDraft(key, stamp)
       return { ...current, [key]: content }
     })
   }
@@ -7407,6 +7425,7 @@ function App() {
       handledFailures.current.delete(key)
       restoredFailures.current.delete(key)
       unshownFailures.current.delete(key)
+      forgetRestoredDraft(key)
     }
   }, [sessions])
 
@@ -7422,6 +7441,29 @@ function App() {
       restoreFailedPromptRef.current(key, pending.content, pending.stamp)
     }
   }, [composerDrafts])
+
+  function rememberRestoredDraft(key: string, stamp: string) {
+    restoredDraftStamps.current = {
+      ...restoredDraftStamps.current,
+      [key]: stamp,
+    }
+    localStorage.setItem(
+      'agentic-remote:composer-draft-failures',
+      JSON.stringify(restoredDraftStamps.current),
+    )
+  }
+
+  function forgetRestoredDraft(key: string) {
+    if (!(key in restoredDraftStamps.current)) {
+      return
+    }
+    const { [key]: _removed, ...remaining } = restoredDraftStamps.current
+    restoredDraftStamps.current = remaining
+    localStorage.setItem(
+      'agentic-remote:composer-draft-failures',
+      JSON.stringify(remaining),
+    )
+  }
 
   function updateComposerDrafts(
     invalidateKeys: string[],
@@ -8238,6 +8280,9 @@ function App() {
     setSending(true)
     setError(undefined)
     setComposer('')
+    // Which failure this send is answering, so the recovery that runs after it
+    // can tell that one from a failure it has not answered.
+    let acknowledgedStamp: string | undefined
     try {
       const updated = isCommand
         ? await executeCommand(selected.computerId, selected.id, {
@@ -8255,7 +8300,9 @@ function App() {
             enqueue: shouldEnqueue,
           })
       const acknowledged = restoredFailures.current.get(targetKey)
+      acknowledgedStamp = acknowledged
       restoredFailures.current.delete(targetKey)
+      forgetRestoredDraft(targetKey)
       // Only the failure this send was answering. A prompt that failed while
       // this one was in flight was held back precisely because the composer
       // was busy, and this answer is older than it: the session rejects the
@@ -8283,7 +8330,15 @@ function App() {
           stillDeferred.content,
           stillDeferred.stamp,
         )
-      } else {
+      } else if (
+        // Only a failure this send did not answer. The session on hand may
+        // still be the one from before the send -- the answer can arrive
+        // before the event that clears the marker, and with the socket down it
+        // never arrives at all -- so offering whatever it still shows put the
+        // prompt that was just sent back in the composer, ready to go twice.
+        acknowledgedStamp === undefined ||
+        failureStampFor(targetKey) !== acknowledgedStamp
+      ) {
         reofferFailedPrompt(targetKey)
       }
       focusComposer(targetKey)

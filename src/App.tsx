@@ -5754,6 +5754,40 @@ function App() {
     )
   }, [])
 
+  /**
+   * Records what a session says it replaced, and nothing else.
+   *
+   * A list rejects sessions that changed while it was in flight, because it
+   * cannot speak for them. Their ancestry is not an opinion about the present
+   * though -- a session names what it replaced for good -- and dropping it
+   * with the rest of the record left a deep link to an ancestor with no way to
+   * reach the replacement, so it opened an unrelated session instead.
+   *
+   * Only the links are taken. Moving state across is a claim about what is
+   * current, and that is what the rejection was about.
+   */
+  const recordReplacementLinks = useCallback((loaded: ManagedSession[]) => {
+    for (const session of loaded) {
+      const replacement = sessionKey(session)
+      for (const ancestorId of [
+        ...(session.replacedSessionIds || []),
+      ].reverse()) {
+        const ancestor = sessionKey({
+          computerId: session.computerId,
+          id: ancestorId,
+        })
+        if (!replacedInto.current.has(ancestor)) {
+          replacedInto.current.set(ancestor, replacement)
+        }
+        // The address is read once the list has been applied, and a link to a
+        // session that has since been cleared should open what it became.
+        if (initialUrlSelection.current === ancestor) {
+          initialUrlSelection.current = followReplacementsRef.current(ancestor)
+        }
+      }
+    }
+  }, [])
+
   const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {    for (const session of loaded) {
       const replacement = sessionKey(session)
       // Newest first. Each ancestor only fills what the replacement does not
@@ -6918,6 +6952,11 @@ function App() {
         }
         const reconciled = reconcile(sessionsRef.current)
         setSessions(reconcile)
+        // Every session the response named, including the ones reconciliation
+        // rejected. A session that was cleared again while this was in flight
+        // is dropped from the list, but what it replaced is still true, and
+        // without it a deep link to its ancestor has no way through.
+        recordReplacementLinks(loadedSessions)
         claimReplacedSessions(reconciled)
         setComputers(loadedComputers)
         // A live removal can arrive before this list does, so the address may
@@ -7172,6 +7211,9 @@ function App() {
           pendingReplacements.current.delete(key)
         }
       }
+      // As above: the links a rejected session carries are still the truth
+      // about what it replaced, and they are what a deep link follows.
+      recordReplacementLinks(loadedSessions)
       claimReplacedSessions(reconciledForClaim)
       // Whichever load arrives first is the one that has to answer the
       // address. The socket opening starts a refresh of its own, and when it

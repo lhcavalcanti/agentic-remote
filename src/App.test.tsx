@@ -6577,6 +6577,73 @@ describe('App', () => {
     window.history.replaceState({}, '', '/')
   })
 
+  it('follows a link through a replacement the list could not speak for', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-2',
+    )
+    // The link names A. The list that is about to answer holds B, which says
+    // it replaced A -- but B is cleared into C while that list is in flight,
+    // so reconciliation rejects B and its ancestry went with it. Without the
+    // link A -> B there is no route from the address to C, and an unrelated
+    // session sorts first and takes the reader's place for good.
+    const replacementB: ManagedSession = {
+      ...secondSession,
+      id: 'session-2-b',
+      title: 'Second chat',
+      replacedSessionIds: ['session-2'],
+      messages: [],
+    }
+    const replacementC: ManagedSession = {
+      ...secondSession,
+      id: 'session-2-c',
+      title: 'Second chat',
+      replacedSessionIds: ['session-2', 'session-2-b'],
+      messages: [],
+    }
+    let answerSessions: (() => void) | undefined
+    vi.mocked(listSessions).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answerSessions = () => resolve([session, replacementB])
+        }),
+    )
+    vi.mocked(getSession).mockResolvedValue(replacementC)
+
+    render(<App />)
+    await waitFor(() => expect(answerSessions).toBeDefined())
+
+    // B is cleared into C while the list is still in flight.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-2-b',
+          replacedBy: 'session-2-c',
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSessions?.()
+    })
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: replacementC,
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-2-c'),
+    )
+    window.history.replaceState({}, '', '/')
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',

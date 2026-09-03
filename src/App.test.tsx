@@ -4813,6 +4813,48 @@ describe('App', () => {
     ).toBeDisabled()
   })
 
+  it('does not offer the move to a provider that refuses commands', async () => {
+    // Claude refuses every slash command, so the move could only ever fail.
+    const claudeSession = { ...session, provider: 'claude' as const }
+    vi.mocked(listSessions).mockResolvedValue([claudeSession])
+    vi.mocked(getSession).mockResolvedValue(claudeSession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-1',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_root, path) =>
+      path === 'guides'
+        ? { path: 'guides', parent: '.', entries: [] }
+        : {
+            path: '.',
+            entries: [
+              { name: 'guides', path: 'guides', kind: 'directory' as const },
+            ],
+          },
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(
+      await within(tree).findByRole('treeitem', { name: /guides/ }),
+    )
+    await waitFor(() =>
+      expect(listKnowledgeEntries).toHaveBeenLastCalledWith('root-1', 'guides'),
+    )
+
+    expect(
+      screen.queryByRole('button', { name: 'Move session to this folder' }),
+    ).not.toBeInTheDocument()
+  })
+
   it('does not move the session to a folder the server rejects', async () => {
     vi.mocked(validateSessionDirectory).mockRejectedValue(
       new Error('Sessions are restricted to the user home directory'),

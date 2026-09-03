@@ -1229,11 +1229,17 @@ export function backgroundTasksFromEvents(
       // unrelated task that then never finishes.
       const namedShellId = shellExit?.shellId || shellId
       const id = taskIdAlias(aliases, toolCallId)
-      let current =
-        tasks.get(id) ||
-        (namedShellId
-          ? tasks.get(taskIdAlias(aliases, namedShellId))
-          : undefined)
+      // A call that opened a shell of its own answers only for that shell. A
+      // command that ran in the foreground is deliberately not projected as a
+      // task, so it has none to find, and letting it match by shell id hands
+      // its completion to whichever live task holds that number — the very
+      // collision this is meant to remove. Only an observer such as
+      // `read_bash`, which owns no start, may resolve one that way.
+      const ownsShellStart = Boolean(shellStartFor(toolCallId))
+      let current = tasks.get(id)
+      if (!current && !ownsShellStart && namedShellId) {
+        current = tasks.get(taskIdAlias(aliases, namedShellId))
+      }
       const start = shellStartFor(toolCallId) || shellStartFor(shellId)
       const handoffMode = backgroundHandoff(data)
       if (!current && start && handoffMode) {
@@ -1336,38 +1342,43 @@ export function backgroundTasksFromEvents(
   // shell whose mode the transport never reported, which is treated as
   // background on the chance that it is.
   const lastTurnEndAt = lastForegroundCompletionAt(events)
-  if (lastTurnEndAt) {
-    const ownerLifecycleEnded = (taskId: string): boolean => {
-      const ownerId = assumedOwners.get(taskId)
-      if (!ownerId) {
-        // Foreground work: the turn that started it is its owner.
-        return true
-      }
+  for (const task of tasks.values()) {
+    if (
+      task.status !== 'running' ||
+      task.type !== 'shell' ||
+      !assumedBackground.has(task.id) ||
+      task.attachmentMode === 'detached'
+    ) {
+      continue
+    }
+    // Work is over when whatever started it is over. For a foreground shell
+    // that is the turn ending; for one a background agent started it is that
+    // agent finishing, which can happen long after any turn and is the only
+    // thing that can speak for it.
+    const ownerId = assumedOwners.get(task.id)
+    let endedAt: string | undefined
+    if (!ownerId) {
+      endedAt = lastTurnEndAt
+    } else {
       const owner = tasks.get(taskIdAlias(aliases, ownerId))
-      if (!owner) {
-        // The agent is known to exist but its lifecycle was never observed, so
-        // there is no evidence the work is over.
-        return false
-      }
-      return owner.status !== 'running' && owner.status !== 'queued'
-    }
-    for (const task of tasks.values()) {
       if (
-        task.status === 'running' &&
-        task.type === 'shell' &&
-        assumedBackground.has(task.id) &&
-        task.attachmentMode !== 'detached' &&
-        task.startedAt < lastTurnEndAt &&
-        // A background agent is allowed to outlive the foreground turn, so
-        // work it started is only over when the agent itself is.
-        ownerLifecycleEnded(task.id)
+        !owner ||
+        owner.status === 'running' ||
+        owner.status === 'queued'
       ) {
-        task.status = 'failed'
-        task.completedAt = lastTurnEndAt
-        task.error = task.error || 'Ended without reporting completion'
-        task.canCancel = false
+        // Either the agent is still going or its lifecycle was never seen,
+        // and neither is evidence that the work it started has stopped.
+        continue
       }
+      endedAt = owner.completedAt
     }
+    if (!endedAt || task.startedAt >= endedAt) {
+      continue
+    }
+    task.status = 'failed'
+    task.completedAt = endedAt
+    task.error = task.error || 'Ended without reporting completion'
+    task.canCancel = false
   }
   return [...tasks.values()]
     .sort(

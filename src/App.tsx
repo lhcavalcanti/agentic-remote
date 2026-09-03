@@ -7517,6 +7517,9 @@ function App() {
   const canMoveSessionHere = Boolean(
     selected &&
       browsedFolderPath &&
+      // Claude refuses every slash command, so `/cwd` cannot land there and
+      // offering the move only produces a failure.
+      selected.provider !== 'claude' &&
       activeRoot &&
       activeRoot.computerId === selected.computerId &&
       browsedFolderPath !== selected.cwd,

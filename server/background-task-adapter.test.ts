@@ -1118,4 +1118,120 @@ describe('background task adapter', () => {
     })
   })
 
+
+  it('does not let a foreground command close a live shell with its number', () => {
+    // A command that ran in the foreground is deliberately not a task. Its
+    // completion has nothing of its own to close, and must not be allowed to
+    // close whatever live task is holding the same recycled number.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "live-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "live-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm dev", "async": true }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "live-handoff",
+        "parentId": "live-start",
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "live-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "async", "detached": "true" }
+          },
+          "result": {
+            "content": "<command started in detached background with shellId: 75>"
+          }
+        }
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "sync-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:02.000Z",
+        "data": {
+          "toolCallId": "sync-call",
+          "toolName": "bash",
+          "arguments": { "command": "ls", "async": false }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "sync-done",
+        "parentId": "sync-start",
+        "timestamp": "2026-09-02T08:00:03.000Z",
+        "data": {
+          "toolCallId": "sync-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "sync", "detached": "false" }
+          },
+          "result": { "type": "shell_exit", "shellId": "75", "exitCode": 0 }
+        }
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, {})
+
+    expect(tasks.find((task) => task.id === '75')).toMatchObject({
+      status: 'running',
+      attachmentMode: 'detached',
+    })
+  })
+
+  it('ends agent work when the agent ends, not when a turn does', () => {
+    // A background agent outlives the foreground turn, so a shell it starts
+    // after that turn has already ended can never be older than it. Measured
+    // against the turn it would stay running for good; measured against its
+    // own agent it ends when the agent does.
+    const events = JSON.parse(`[
+      {
+        "type": "subagent.started",
+        "id": "agent-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": { "agentId": "agent-1", "description": "Review" }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:05.000Z",
+        "data": {}
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "agent-shell",
+        "parentId": null,
+        "agentId": "agent-1",
+        "timestamp": "2026-09-02T08:00:10.000Z",
+        "data": {
+          "toolCallId": "agent-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm test" }
+        }
+      },
+      {
+        "type": "subagent.completed",
+        "id": "agent-done",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:20.000Z",
+        "data": { "agentId": "agent-1" }
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'agent-call')).toMatchObject({
+      status: 'failed',
+    })
+  })
+
 })

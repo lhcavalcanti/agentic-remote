@@ -4143,4 +4143,15 @@ button {
 
 .transcript-earlier:hover {
   color: var(--text);
+.session-item__tasks--interactive {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.session-item__tasks--interactive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }

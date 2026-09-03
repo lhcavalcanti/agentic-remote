@@ -3493,11 +3493,13 @@ function SortableSessionItem({
   selected,
   backgroundTasks,
   onSelect,
+  onOpenTasks,
 }: {
   session: ManagedSession
   selected: boolean
   backgroundTasks?: BackgroundTaskSnapshot
   onSelect: () => void
+  onOpenTasks?: () => void
 }) {
   const sortableId = `session:${sessionKey(session)}`
   const {
@@ -3559,7 +3561,36 @@ function SortableSessionItem({
         </strong>
         <small>{shortPath(session.cwd)}</small>
         {taskCount > 0 ? (
-          <span className="session-item__tasks">
+          <span
+            aria-label={
+              onOpenTasks ? `View background tasks for ${session.title}` : undefined
+            }
+            className={`session-item__tasks ${
+              onOpenTasks ? 'session-item__tasks--interactive' : ''
+            }`}
+            onClick={
+              onOpenTasks
+                ? (event) => {
+                    event.stopPropagation()
+                    onOpenTasks()
+                  }
+                : undefined
+            }
+            onKeyDown={
+              onOpenTasks
+                ? (event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') {
+                      return
+                    }
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onOpenTasks()
+                  }
+                : undefined
+            }
+            role={onOpenTasks ? 'button' : undefined}
+            tabIndex={onOpenTasks ? 0 : undefined}
+          >
             {runningBackgroundTasks > 0
               ? `${runningBackgroundTasks} running task${
                   runningBackgroundTasks === 1 ? '' : 's'
@@ -3579,6 +3610,7 @@ function SortableComputerGroup({
   selectedKey,
   showComputerHandle,
   onSelectSession,
+  onOpenSessionTasks,
 }: {
   computer: ComputerSummary
   sessions: ManagedSession[]
@@ -3586,6 +3618,7 @@ function SortableComputerGroup({
   selectedKey?: string
   showComputerHandle: boolean
   onSelectSession: (session: ManagedSession) => void
+  onOpenSessionTasks: (session: ManagedSession) => void
 }) {
   const {
     attributes,
@@ -3634,6 +3667,7 @@ function SortableComputerGroup({
             <SortableSessionItem
               key={sessionKey(session)}
               backgroundTasks={taskSnapshot(backgroundTasks, session)}
+              onOpenTasks={() => onOpenSessionTasks(session)}
               onSelect={() => onSelectSession(session)}
               selected={sessionKey(session) === selectedKey}
               session={session}
@@ -7474,19 +7508,27 @@ function App() {
     activeRoot && knowledgePath && knowledgePath !== knowledgeRootPath
       ? `${activeRoot.path.replace(/\/$/, '')}/${knowledgePath}`
       : activeRoot?.path
-  // Moving the session means asking the CLI to change directory, which only a
-  // terminal-backed session on the root's own computer can be asked to do.
+  // Moving the session means asking the CLI to change directory. That works
+  // for any session the workspace browser would move, so the rules are the
+  // same as its own: the root has to be on the session's computer, and the
+  // agent has to be idle, because the command is sent rather than queued.
+  const selectedMoveBusy =
+    selected?.status === 'running' || selected?.status === 'waiting'
   const canMoveSessionHere = Boolean(
     selected &&
       browsedFolderPath &&
-      selected.executionMode === 'tmux' &&
       activeRoot &&
       activeRoot.computerId === selected.computerId &&
       browsedFolderPath !== selected.cwd,
   )
 
   async function moveSessionToBrowsedFolder() {
-    if (!selected || !browsedFolderPath || movingSessionFolder) {
+    if (
+      !selected ||
+      !browsedFolderPath ||
+      movingSessionFolder ||
+      selectedMoveBusy
+    ) {
       return
     }
     setMovingSessionFolder(true)
@@ -7886,6 +7928,15 @@ function App() {
     }
     setBackgroundTasksOpen(true)
     void loadBackgroundTasks(selected, true)
+  }
+
+  // Reaching the panel from the sidebar count keeps it available by touch,
+  // where a keyboard shortcut is not, and without depending on what the status
+  // line happens to be configured to show.
+  function openTasksForSession(session: ManagedSession) {
+    selectSession(session)
+    setBackgroundTasksOpen(true)
+    void loadBackgroundTasks(session, true)
   }
 
   async function cancelSelectedBackgroundTask(taskId: string) {
@@ -8789,6 +8840,7 @@ function App() {
                       computer={computer}
                       backgroundTasks={backgroundTaskSnapshots}
                       key={computer.id}
+                      onOpenSessionTasks={openTasksForSession}
                       onSelectSession={selectSession}
                       selectedKey={selectedKey}
                       sessions={sessionsByComputer.get(computer.id) || []}
@@ -8896,9 +8948,13 @@ function App() {
                     <button
                       aria-label="Move session to this folder"
                       className="icon-button"
-                      disabled={movingSessionFolder}
+                      disabled={movingSessionFolder || selectedMoveBusy}
                       onClick={() => void moveSessionToBrowsedFolder()}
-                      title={`Move this session to ${browsedFolderPath}`}
+                      title={
+                        selectedMoveBusy
+                          ? 'Wait for the current agent turn to finish'
+                          : `Move this session to ${browsedFolderPath}`
+                      }
                       type="button"
                     >
                       <FolderInput size={14} />

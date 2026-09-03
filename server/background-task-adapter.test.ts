@@ -937,4 +937,185 @@ describe('background task adapter', () => {
       }),
     ])
   })
+
+  it('keeps a direct exit from stealing a recycled shell id', () => {
+    // Shell ids come round again. A plain command reporting its own exit must
+    // close itself, not seize the id from whatever is live under that number.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "live-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "live-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm dev", "async": true }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "live-handoff",
+        "parentId": "live-start",
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "live-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "async", "detached": "true" }
+          },
+          "result": {
+            "content": "<command started in detached background with shellId: 75>"
+          }
+        }
+      },
+      {
+        "type": "tool.execution_start",
+        "id": "plain-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:02.000Z",
+        "data": {
+          "toolCallId": "plain-call",
+          "toolName": "bash",
+          "arguments": { "command": "ls" }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "plain-done",
+        "parentId": "plain-start",
+        "timestamp": "2026-09-02T08:00:03.000Z",
+        "data": {
+          "toolCallId": "plain-call",
+          "success": true,
+          "toolTelemetry": {
+            "properties": { "executionMode": "sync", "detached": "false" }
+          },
+          "result": {
+            "type": "shell_exit",
+            "shellId": "75",
+            "exitCode": 0
+          }
+        }
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    // The detached shell keeps the id it was handed and stays running.
+    expect(tasks.find((task) => task.id === '75')).toMatchObject({
+      status: 'running',
+      attachmentMode: 'detached',
+    })
+    // The ordinary command closes under its own call.
+    expect(tasks.find((task) => task.id === 'plain-call')).toMatchObject({
+      status: 'completed',
+    })
+  })
+
+  it('lets a background agent outlive the turn that is sweeping', () => {
+    // A background agent is explicitly allowed to run past the foreground
+    // turn, so a shell it started cannot be ended by that turn finishing.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "agent-shell",
+        "parentId": null,
+        "agentId": "agent-1",
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "agent-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm test" }
+        }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": {}
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'agent-call')).toMatchObject({
+      status: 'running',
+    })
+  })
+
+  it('ends assumed foreground work when the turn errors out', () => {
+    // A turn that fails still took its work with it, and it may never emit a
+    // turn_end or idle event to say so.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "shell-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "shell-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm test" }
+        }
+      },
+      {
+        "type": "session.error",
+        "id": "blew-up",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": { "message": "stream failed" }
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'shell-call')).toMatchObject({
+      status: 'failed',
+    })
+  })
+
+  it('does not sweep a shell that reported going async in place', () => {
+    // Telemetry can report the handoff without renaming the shell. The task is
+    // then explicitly background, so the turn ending must leave it alone.
+    const events = JSON.parse(`[
+      {
+        "type": "tool.execution_start",
+        "id": "async-start",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:00:00.000Z",
+        "data": {
+          "toolCallId": "async-call",
+          "toolName": "bash",
+          "arguments": { "command": "pnpm dev" }
+        }
+      },
+      {
+        "type": "tool.execution_complete",
+        "id": "async-report",
+        "parentId": "async-start",
+        "timestamp": "2026-09-02T08:00:01.000Z",
+        "data": {
+          "toolCallId": "async-call",
+          "success": true,
+          "toolTelemetry": { "properties": { "executionMode": "async" } }
+        }
+      },
+      {
+        "type": "assistant.turn_end",
+        "id": "turn-over",
+        "parentId": null,
+        "timestamp": "2026-09-02T08:05:00.000Z",
+        "data": {}
+      }
+    ]`) as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'async-call')).toMatchObject({
+      status: 'running',
+    })
+  })
+
 })

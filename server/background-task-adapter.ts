@@ -593,6 +593,7 @@ function rekeyTask(
   aliases: Map<string, string>,
   from: string,
   to: string,
+  assumed?: { flags: Set<string>; owners: Map<string, string> },
 ): BackgroundTask | undefined {
   const resolvedFrom = taskIdAlias(aliases, from)
   const current = tasks.get(resolvedFrom)
@@ -604,6 +605,17 @@ function rekeyTask(
     tasks.delete(resolvedFrom)
     current.id = to
     tasks.set(to, current)
+    // A task carries its identity, so what was recorded against the old one
+    // has to follow it. Leaving it behind records the assumption against an id
+    // no task answers to, and the sweep never recognizes the task again.
+    if (assumed?.flags.delete(resolvedFrom)) {
+      assumed.flags.add(to)
+    }
+    const owner = assumed?.owners.get(resolvedFrom)
+    if (owner !== undefined) {
+      assumed?.owners.delete(resolvedFrom)
+      assumed?.owners.set(to, owner)
+    }
   }
   aliases.set(from, to)
   aliases.set(to, to)
@@ -821,6 +833,7 @@ function lastForegroundCompletionAt(events: SessionEvent[]): string | undefined 
       event.type === 'assistant.turn_end' ||
       event.type === 'session.idle' ||
       event.type === 'abort' ||
+      event.type === 'session.error' ||
       event.type === 'session.shutdown'
     ) {
       return event.timestamp
@@ -855,6 +868,11 @@ export function backgroundTasksFromEvents(
   // treated as such because the transport left the mode out. They are the
   // only ones a finished turn can be said to have taken with it.
   const assumedBackground = new Set<string>()
+  // Which background agent, if any, started an assumed shell. A background
+  // agent outlives the foreground turn, so work it owns cannot be ended by
+  // one; only its own agent finishing can.
+  const assumedOwners = new Map<string, string>()
+  const assumed = { flags: assumedBackground, owners: assumedOwners }
   const aliases = new Map<string, string>()
   const shellStarts = new Map<
     string,
@@ -936,7 +954,8 @@ export function backgroundTasksFromEvents(
       aliases.set(shellId, shellId)
     }
     if (current.id !== shellId) {
-      current = rekeyTask(tasks, aliases, current.id, shellId) || current
+      current =
+        rekeyTask(tasks, aliases, current.id, shellId, assumed) || current
     }
     const exitCode = numberValue(data.exitCode)
     current.status =
@@ -1109,6 +1128,9 @@ export function backgroundTasksFromEvents(
           const current = shellTask(shellId, event.timestamp, data, mode)
           if (mode?.assumed) {
             assumedBackground.add(current.id)
+            if (event.agentId) {
+              assumedOwners.set(current.id, event.agentId)
+            }
           }
           tasks.set(shellId, current)
           if (toolCallId) {
@@ -1238,16 +1260,28 @@ export function backgroundTasksFromEvents(
           if (handoffMode.attachmentMode === 'detached') {
             current.attachmentMode = 'detached'
           }
+          // The shell said outright that it went to the background, so it is
+          // no longer only assumed to be there and the turn that started it
+          // can no longer end it.
+          assumedBackground.delete(current.id)
+          assumedOwners.delete(current.id)
         }
         // Only a real handoff renames the task after the shell it created. An
-        // ordinary command prints the same marker when it finishes, and taking
-        // that as its identity merges unrelated commands that happen to reuse
-        // the number, so one of them can never finish.
-        const handoffShellId =
-          shellExit?.shellId || (handoffMode ? shellId : undefined)
+        // ordinary command reports the same id when it finishes, and taking
+        // that as its identity hands the completion to whichever unrelated
+        // task already holds the id, which then never finishes.
+        const handoffShellId = handoffMode
+          ? shellExit?.shellId || shellId
+          : undefined
         if (handoffShellId && current.id !== handoffShellId) {
           current =
-            rekeyTask(tasks, aliases, current.id, handoffShellId) || current
+            rekeyTask(
+              tasks,
+              aliases,
+              current.id,
+              handoffShellId,
+              assumed,
+            ) || current
         }
         if (shellExit) {
           current.status = shellExit.exitCode === 0 ? 'completed' : 'failed'
@@ -1303,13 +1337,30 @@ export function backgroundTasksFromEvents(
   // background on the chance that it is.
   const lastTurnEndAt = lastForegroundCompletionAt(events)
   if (lastTurnEndAt) {
+    const ownerLifecycleEnded = (taskId: string): boolean => {
+      const ownerId = assumedOwners.get(taskId)
+      if (!ownerId) {
+        // Foreground work: the turn that started it is its owner.
+        return true
+      }
+      const owner = tasks.get(taskIdAlias(aliases, ownerId))
+      if (!owner) {
+        // The agent is known to exist but its lifecycle was never observed, so
+        // there is no evidence the work is over.
+        return false
+      }
+      return owner.status !== 'running' && owner.status !== 'queued'
+    }
     for (const task of tasks.values()) {
       if (
         task.status === 'running' &&
         task.type === 'shell' &&
         assumedBackground.has(task.id) &&
         task.attachmentMode !== 'detached' &&
-        task.startedAt < lastTurnEndAt
+        task.startedAt < lastTurnEndAt &&
+        // A background agent is allowed to outlive the foreground turn, so
+        // work it started is only over when the agent itself is.
+        ownerLifecycleEnded(task.id)
       ) {
         task.status = 'failed'
         task.completedAt = lastTurnEndAt

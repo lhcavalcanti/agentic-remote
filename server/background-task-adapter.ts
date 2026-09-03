@@ -376,6 +376,31 @@ const SHELL_FOOTERS = [
   /^[^()<>]*\(\s*shell[_ ]?id\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)\s*\)$/i,
 ]
 
+/**
+ * A completion reported as text rather than structure.
+ *
+ * `<shellId: 9 completed with exit code 1>` is the transport saying the shell
+ * is over and how it ended. Reading only the id from it left a detached shell
+ * running for good, and a command that failed recorded as having succeeded.
+ */
+const COMPLETION_FOOTER =
+  /^<[^<>]*\bshell[_ ]?id\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._:-]*)[^<>]*\bexit code\s+(-?\d+)[^<>]*>$/i
+
+function shellExitFromFooter(
+  text: string,
+): { shellId: string; exitCode: number } | undefined {
+  const last = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1)
+  const match = last?.match(COMPLETION_FOOTER)
+  if (!match) {
+    return undefined
+  }
+  return { shellId: match[1], exitCode: Number.parseInt(match[2], 10) }
+}
+
 function shellIdFromFooter(text: string): string | undefined {
   const last = text
     .split('\n')
@@ -845,7 +870,11 @@ function backgroundHandoff(
   if (
     footerLine &&
     shellIdFromFooter(footerLine) &&
-    /(?:background|detached|async)/i.test(footerLine)
+    // `still running after 30 seconds` is how a synchronous command that
+    // timed out reports that it carried on without its caller. That is a
+    // promotion, and not recognising it left the shell to be ended by the
+    // turn it had already outlived.
+    /(?:background|detached|async|still running)/i.test(footerLine)
   ) {
     return {
       assumed: false,
@@ -1040,6 +1069,10 @@ export function backgroundTasksFromEvents(
         normalizeBackgroundTask(listedTask, undefined, false),
       )
       aliases.set(listedTask.id, listedTask.id)
+      // The CLI has reported this task itself, so nothing about it is being
+      // assumed any more and the turn ending must not end it.
+      assumedBackground.delete(listedTask.id)
+      assumedOwners.delete(listedTask.id)
     }
     const eventType = String(event.type)
     if (
@@ -1257,7 +1290,12 @@ export function backgroundTasksFromEvents(
         continue
       }
       const shellId = shellIdFromValue(data)
-      const shellExit = shellExitFromValue(data)
+      const shellExit =
+        shellExitFromValue(data) ||
+        // The transport can report the exit as its footer rather than as
+        // structure, and that carries the code as well as the id.
+        shellExitFromFooter(textFromValue(recordValue(data.result)) || '') ||
+        shellExitFromFooter(textFromValue(data) || '')
       // A detached shell reports its exit through whichever call observed it,
       // and a follow-up read_bash/read_shell carries its own tool call id, so
       // the shell it names is consulted when the call itself owns no task.

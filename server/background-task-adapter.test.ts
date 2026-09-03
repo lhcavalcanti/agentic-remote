@@ -1347,4 +1347,104 @@ describe('background task adapter', () => {
     expect(tasks.filter((task) => task.status === 'running')).toEqual([])
   })
 
+
+  it('reads the exit code out of a completion reported as text', () => {
+    // `<shellId: 9 completed with exit code 1>` says both that the shell is
+    // over and how it ended. Taking only the id left it running for good, and
+    // a command that failed recorded as having succeeded.
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'call-1',
+          toolName: 'bash',
+          arguments: { command: 'pnpm test', async: true },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'handoff',
+        parentId: 'start',
+        timestamp: '2026-09-02T08:00:01.000Z',
+        data: {
+          toolCallId: 'call-1',
+          success: true,
+          toolTelemetry: {
+            properties: { executionMode: 'async', detached: 'true' },
+          },
+          result: {
+            content: '<command started in detached background with shellId: 9>',
+          },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'observed',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:09.000Z',
+        data: {
+          toolCallId: 'read-call',
+          toolName: 'read_bash',
+          success: true,
+          result: { content: '<shellId: 9 completed with exit code 1>' },
+        },
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '9')).toMatchObject({
+      status: 'failed',
+    })
+  })
+
+  it('treats a timed-out sync command as promoted, not ended', () => {
+    // A synchronous command that outlives its timeout reports that it is
+    // still running. That is a promotion, and the turn it outlived must not
+    // be allowed to end it.
+    const events = [
+      {
+        type: 'tool.execution_start',
+        id: 'start',
+        parentId: null,
+        timestamp: '2026-09-02T08:00:00.000Z',
+        data: {
+          toolCallId: 'slow-call',
+          toolName: 'bash',
+          arguments: { command: 'pnpm build' },
+        },
+      },
+      {
+        type: 'tool.execution_complete',
+        id: 'timeout',
+        parentId: 'start',
+        timestamp: '2026-09-02T08:00:30.000Z',
+        data: {
+          toolCallId: 'slow-call',
+          success: true,
+          result: {
+            content:
+              '<command with shellId: 45 is still running after 30 seconds>',
+          },
+        },
+      },
+      {
+        type: 'assistant.turn_end',
+        id: 'turn-over',
+        parentId: null,
+        timestamp: '2026-09-02T08:05:00.000Z',
+        data: {},
+      },
+    ] as unknown as SessionEvent[]
+
+    const tasks = backgroundTasksFromEvents(events, { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '45')).toMatchObject({
+      status: 'running',
+    })
+  })
+
 })

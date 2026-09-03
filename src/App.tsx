@@ -3321,11 +3321,19 @@ const RENDERED_HISTORY = 250
 const ConversationMessages = memo(function ConversationMessages({
   messages: allMessages,
   currentToolId,
+  showAll,
+  onShowAll,
 }: {
   messages: ChatMessage[]
   currentToolId?: string
+  // Held by the conversation rather than here. A snapshot refresh installs
+  // session summaries, which carry no messages on purpose, so this component
+  // is unmounted and mounted again around every reconnect and every return to
+  // the tab. State of its own would not survive that, and a transcript the
+  // reader had opened would close under them.
+  showAll: boolean
+  onShowAll: () => void
 }) {
-  const [showAll, setShowAll] = useState(false)
   const cut = showAll
     ? 0
     : Math.max(0, allMessages.length - RENDERED_HISTORY)
@@ -3435,7 +3443,7 @@ const ConversationMessages = memo(function ConversationMessages({
       <button
         className="transcript-earlier"
         key="show-earlier"
-        onClick={() => setShowAll(true)}
+        onClick={onShowAll}
         type="button"
       >
         {`Show ${hidden} earlier message${hidden === 1 ? '' : 's'}`}
@@ -5374,6 +5382,10 @@ function App() {
   const migrateSessionStateRef = useRef<(from: string, to: string) => void>(
     () => {},
   )
+  // Which transcripts the reader has opened past the window, by session.
+  const [expandedTranscripts, setExpandedTranscripts] = useState<
+    Record<string, boolean>
+  >({})
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -9084,6 +9096,13 @@ function App() {
           ) : (
             <ConversationMessages
               currentToolId={currentTool?.id}
+              onShowAll={() =>
+                setExpandedTranscripts((current) => ({
+                  ...current,
+                  [sessionKey(selected)]: true,
+                }))
+              }
+              showAll={expandedTranscripts[sessionKey(selected)] === true}
               // Identity is the computer and the session together: two
               // computers can hand out the same provider session id, and
               // keying on the id alone reuses this component between them,

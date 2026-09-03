@@ -1838,6 +1838,55 @@ describe('App', () => {
     expect(await screen.findByText('$ pnpm dev')).toBeInTheDocument()
   })
 
+  it('keeps an expanded transcript across a snapshot refresh', async () => {
+    // A refresh installs session summaries first, and those carry no messages
+    // on purpose, so the transcript is unmounted and mounted again around
+    // every reconnect. Expansion has to outlive that or it closes under the
+    // reader whenever the tab comes back.
+    const long = {
+      ...session,
+      messages: Array.from({ length: 400 }, (_, index) => ({
+        id: `line-${index}`,
+        role: 'assistant' as const,
+        content: `line ${index}`,
+        createdAt: new Date(Date.UTC(2026, 6, 22, 0, 0, index)).toISOString(),
+      })),
+    }
+    vi.mocked(listSessions).mockResolvedValue([long])
+    vi.mocked(getSession).mockResolvedValue(long)
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Show \d+ earlier messages/ }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /earlier messages/ }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getByText('line 0')).toBeInTheDocument()
+
+    // The summary with no messages lands, then the detail comes back.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...long, messages: [] },
+        }),
+      } as MessageEvent)
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: long }),
+      } as MessageEvent)
+    })
+
+    expect(await screen.findByText('line 0')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /earlier messages/ }),
+    ).not.toBeInTheDocument()
+  })
+
   it('does not carry an expanded transcript into the next session', async () => {
     // The window is what bounds rendering cost. It belongs to the session being
     // read, so expanding one must not hand the next session an open transcript.

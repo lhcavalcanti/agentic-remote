@@ -5506,7 +5506,11 @@ function App() {
   // rather than closing over the first one.
   const followReplacementsRef = useRef<(key: string) => string>((key) => key)
   // Which refresh is the newest, so a slower one cannot land after it.
+  // Ordered by when each was asked for, not by when it happened to answer: a
+  // request that stalled on a paired node was otherwise treated as the newer
+  // one simply because it finished last.
   const snapshotGeneration = useRef(0)
+  const snapshotApplied = useRef(0)
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -6884,15 +6888,14 @@ function App() {
     // The first load takes a generation like every other refresh: the socket
     // opening starts one of its own, and without this the slower of the two
     // applies last and reinstates whatever the newer one already replaced.
+    const asked = ++snapshotGeneration.current
     const startedAtSequence = eventSequenceRef.current
     void Promise.all([listSessions(), listComputers()])
       .then(([loadedSessions, loadedComputers]) => {
-        // Taken here rather than at the start, so a refresh that began after
-        // this one and then failed cannot cancel an answer that arrived.
-        const generation = ++snapshotGeneration.current
-        if (!active || generation !== snapshotGeneration.current) {
+        if (!active || asked <= snapshotApplied.current) {
           return
         }
+        snapshotApplied.current = asked
         // Events that arrived while this was in flight describe those sessions
         // more recently than it does. A session cleared again in that window
         // is only still here because the answer predates its removal, and
@@ -7094,10 +7097,18 @@ function App() {
       // reinstates whatever the newer one already replaced, including a
       // session that has since been cleared away.
       //
-      // Claimed only once the answers are actually in hand. Claiming it up
-      // front let a refresh that then failed cancel a load that succeeded,
-      // and the client finished with nothing open and the address forgotten.
-      const claimGeneration = () => ++snapshotGeneration.current
+      // Numbered when asked for, applied only if nothing newer has already
+      // landed. A refresh that fails never applies, so it cannot cancel a
+      // load that succeeded, and one that stalls cannot overwrite an answer
+      // that was asked for after it.
+      const asked = ++snapshotGeneration.current
+      const claimGeneration = () => {
+        if (asked <= snapshotApplied.current) {
+          return 0
+        }
+        snapshotApplied.current = asked
+        return asked
+      }
       const startedAtSequence = eventSequenceRef.current
       const startedAtMuteRevision = muteRevisionRef.current
       const [loadedSessions, loadedComputers, pushSettings] = await Promise.all([
@@ -7109,6 +7120,9 @@ function App() {
         }),
       ])
       const generation = claimGeneration()
+      if (!generation) {
+        return
+      }
       const snapshotSessions = loadedSessions.filter(
         (session) =>
           (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) <=
@@ -7218,7 +7232,7 @@ function App() {
         )
         const detailKey = sessionKey(detail)
         if (
-          generation !== snapshotGeneration.current ||
+          generation < snapshotApplied.current ||
           (sessionEventSequenceRef.current.get(detailKey) || 0) >
             detailStartedAtSequence
         ) {

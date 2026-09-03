@@ -60,7 +60,17 @@ export interface TerminalSessionController {
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
   /** Ends the window running a session without forgetting the session. */
-  stop?(sessionId: string): Promise<boolean>
+  /**
+   * Ends the session's runtime.
+   *
+   * `confirm` runs immediately before anything is killed, and inside whatever
+   * serialization the controller uses, so a caller can refuse a teardown that
+   * stopped being safe while the owner was being looked up.
+   */
+  stop?(
+    sessionId: string,
+    confirm?: () => void | Promise<void>,
+  ): Promise<boolean>
   pendingPermission?(sessionId: string): Promise<PendingPermission | undefined>
   replyPermission?(
     sessionId: string,
@@ -280,7 +290,10 @@ export class TmuxTerminalSessionController
     })
   }
 
-  async stop(sessionId: string): Promise<boolean> {
+  async stop(
+    sessionId: string,
+    confirm?: () => void | Promise<void>,
+  ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const owner = await this.owner(sessionId)
       if (!owner) {
@@ -288,6 +301,10 @@ export class TmuxTerminalSessionController
         // and nothing is.
         return true
       }
+      // The last word before anything is killed. Looking the owner up is
+      // awaited, and the pane belongs to somebody who may have started a turn
+      // in it while that happened.
+      await confirm?.()
       // The target names a pane. Killing the window would take any pane
       // beside it, which belongs to whoever split it there.
       await execFileAsync('tmux', ['kill-pane', '-t', owner.target])

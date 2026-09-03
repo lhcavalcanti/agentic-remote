@@ -305,7 +305,10 @@ export class SessionStore {
       session.activity = undefined
       session.pendingPermission = undefined
       session.pendingUserInput = undefined
-      session.updatedAt = new Date().toISOString()
+      // `updatedAt` is when the conversation last moved, and the list is
+      // ordered by it. Suspending is not the conversation moving, so touching
+      // it here would send a session to the top of the list for being put
+      // down -- the opposite of keeping the place it had.
     })
   }
 

@@ -2477,6 +2477,30 @@ describe('App', () => {
     )
   })
 
+  it('keeps a suspended conversation readable and closed to writing', async () => {
+    // Suspending stops the process, not the conversation: the history and the
+    // name stay, and the way back is the button rather than the composer.
+    const resting = { ...session, suspended: true }
+    vi.mocked(listSessions).mockResolvedValue([resting])
+    vi.mocked(getSession).mockResolvedValue(resting)
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // Still readable.
+    expect(screen.getByText('Hello agent')).toBeInTheDocument()
+    // ...and visibly not running.
+    expect(document.querySelector('.session-item')?.className).toContain(
+      'session-item--suspended',
+    )
+    // Writing is what resuming is for.
+    const composer = screen.getByLabelText('Message')
+    expect(composer).toBeDisabled()
+    expect(composer).toHaveAttribute('placeholder', 'Suspended · resume to send')
+    expect(
+      screen.getByRole('button', { name: 'Resume session' }),
+    ).toBeInTheDocument()
+  })
+
   it('suspends the selected session and offers to start it again', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

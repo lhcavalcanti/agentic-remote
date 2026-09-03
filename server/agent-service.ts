@@ -2326,7 +2326,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!this.terminalController.stop) {
         throw new Error('Terminal session suspend is not available')
       }
-      if (!(await this.terminalController.stop(id))) {
+      // Checked again in there, immediately before the pane is killed.
+      // Finding the owner is awaited, and somebody working in tmux can start
+      // a turn while that happens, which this would otherwise take with it.
+      const closed = await this.terminalController.stop(id, async () => {
+        this.assertStillIdle(id)
+        const live = await this.sessionEventReader(id).catch(() => {
+          throw new Error(
+            'Session cannot be suspended until its transcript can be read',
+          )
+        })
+        if (statusFromEvents(live) !== 'idle') {
+          throw new Error('Session can only be suspended while idle')
+        }
+      })
+      if (!closed) {
         throw new Error('The terminal window could not be closed')
       }
     } else {
@@ -2463,6 +2477,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             ? this.drainTerminalQueue(id)
             : this.drainSdkQueue(id)
         await drain.catch((error: unknown) => {
+          // The head prompt goes back on the queue when a drain fails. The
+          // door reopens so the session stays usable, and what is still
+          // waiting keeps its place because a send made while a queue exists
+          // joins the end of it rather than going straight out.
           this.publishError(id, error)
         })
       } finally {
@@ -3037,13 +3055,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async shouldEnqueueTerminalPrompt(
     sessionId: string,
   ): Promise<boolean> {
-    const status = this.store.get(sessionId)?.status
+    const stored = this.store.get(sessionId)
+    const status = stored?.status
     const eligible =
       status === 'idle' ||
       status === 'running' ||
       status === 'waiting' ||
       this.drainingSessions.has(sessionId)
-    return eligible && Boolean(await this.sessionEventVersion(sessionId))
+    if (!eligible) {
+      return false
+    }
+    // Anything already waiting goes first. Sending straight out past a queue
+    // that a failed drain left behind would put this message in front of one
+    // written before it.
+    if (stored?.queuedPrompts?.length) {
+      return true
+    }
+    return Boolean(await this.sessionEventVersion(sessionId))
   }
 
   private shouldUseNativeTerminalQueue(

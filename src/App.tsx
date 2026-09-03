@@ -3527,6 +3527,8 @@ function SortableSessionItem({
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
       )} ${backgroundTaskActive ? 'session-item--background-running' : ''} ${
+        session.suspended ? 'session-item--suspended' : ''
+      } ${
         selected ? 'session-item--active' : ''
       } ${
         isDragging ? 'sortable-dragging' : ''
@@ -7199,6 +7201,13 @@ function App() {
       setCommands([])
       return
     }
+    if (selected?.suspended) {
+      // A suspended session has no runtime to ask, and asking would start the
+      // one that suspending put down. Resuming is what brings it back, and
+      // the list with it.
+      setCommands([])
+      return
+    }
     let active = true
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
@@ -7224,9 +7233,6 @@ function App() {
     return () => {
       active = false
     }
-    // Suspension is part of the trigger: loading is refused while a session is
-    // suspended, and resuming leaves the provider, computer and id all the
-    // same, so without this the commands never come back.
   }, [
     selected?.provider,
     selected?.suspended,
@@ -10192,12 +10198,19 @@ function App() {
               <div className="composer-text-panel">
                 <textarea
                   aria-label="Message"
-                  disabled={sending}
+                  // A suspended session has nothing running to send to. The
+                  // conversation stays here to be read; writing to it is what
+                  // resuming is for.
+                  disabled={sending || selected.suspended === true}
                   onChange={(event) => {
                     setComposer(event.target.value)
                   }}
                   onKeyDown={composerKeyDown}
-                  placeholder={`Message agent on ${selected.computerName}…`}
+                  placeholder={
+                    selected.suspended
+                      ? 'Suspended · resume to send'
+                      : `Message agent on ${selected.computerName}…`
+                  }
                   ref={composerRef}
                   rows={1}
                   value={composer}

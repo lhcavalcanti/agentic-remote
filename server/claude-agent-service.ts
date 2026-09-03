@@ -711,6 +711,10 @@ export class ClaudeAgentService
             (message) => message.id !== userId && message.id !== assistantId,
           )
         })
+        // Announced as well as written: readers were shown the prompt and the
+        // blank reply as they went in, so putting the store back without
+        // saying so leaves both on screen for good.
+        .then((session) => this.publish(session))
         .catch(() => {
           repaired = false
         })

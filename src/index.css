@@ -4179,3 +4179,18 @@ button {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+/* A suspended session keeps its place and its history, and says plainly that
+   nothing is running in it. */
+.session-item--suspended {
+  opacity: 0.55;
+}
+
+.session-item--suspended .status-dot {
+  background: var(--muted);
+}
+
+.composer-text-panel textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

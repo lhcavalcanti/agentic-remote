@@ -1708,26 +1708,43 @@ export function composerHoldsOtherText(
   if (!composerHoldsText(paneAfter)) {
     return false
   }
+  const before = composerText(paneBefore) || ''
   let remainder = composerText(paneAfter) || ''
   // A paste too large to echo is shown as `[Pasted text #3]` rather than its
   // own text, so removing the lines that were sent leaves the placeholder
-  // behind and reads as somebody else's writing. Only the placeholders this
-  // paste added are taken out; any that were already there are not its doing.
-  const added =
-    pastedPlaceholderCount(remainder) -
-    pastedPlaceholderCount(composerText(paneBefore) || '')
-  for (let index = 0; index < added; index += 1) {
+  // behind and reads as somebody else's writing.
+  //
+  // Exactly one placeholder is discounted, and only if exactly one appeared.
+  // Someone pasting at the terminal during the wait adds one too, and there
+  // is no way to tell which is which, so nothing is taken back in that case.
+  if (
+    pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1
+  ) {
     remainder = remainder.replace(PASTED_PLACEHOLDER, ' ')
   }
+  // Likewise for the text itself: only the occurrences this paste added are
+  // discounted, not any the composer was already showing or that were typed
+  // beside it.
   for (const line of pasted.split('\n').map((entry) => entry.trim())) {
-    if (line) {
-      remainder = remainder.split(line).join(' ')
+    if (!line) {
+      continue
+    }
+    const added = occurrences(remainder, line) - occurrences(before, line)
+    for (let index = 0; index < added; index += 1) {
+      remainder = remainder.replace(line, ' ')
     }
   }
   return remainder.replace(/[>\u276f\s\u2026.]/gu, '').length > 0
 }
 
 const PASTED_PLACEHOLDER = /\[Pasted text[^\]]*\]/u
+
+function occurrences(text: string, needle: string): number {
+  if (!needle) {
+    return 0
+  }
+  return text.split(needle).length - 1
+}
 
 function pastedPlaceholderCount(text: string): number {
   return (text.match(/\[Pasted text[^\]]*\]/gu) || []).length

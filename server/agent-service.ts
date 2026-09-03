@@ -4708,6 +4708,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!next || stored.status !== 'idle') {
         return false
       }
+      // One unacknowledged failure at a time. Sending the next prompt while
+      // the previous one is still waiting to be handed back would overwrite
+      // it, and the first would be gone with nothing holding it.
+      if (stored.failedPrompt) {
+        return false
+      }
       const dispatchedAt = new Date().toISOString()
       // A command reports what it printed instead of starting a turn, so its
       // pane is captured before the keystrokes go in, exactly as it would be

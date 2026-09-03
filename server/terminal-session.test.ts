@@ -1064,4 +1064,27 @@ describe('composerHoldsOtherText', () => {
     ).toBe(true)
   })
 
+
+  it('leaves the composer alone when someone else pasted too', () => {
+    // Two placeholders appeared during the wait and there is no telling which
+    // belongs to this paste, so nothing is taken back.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Pasted text #3] [Pasted text #4] │']),
+        'a very long message',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not discount text the composer already showed', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ > deploy │']),
+        framed(['│ > deploy deploy │']),
+        'deploy',
+      ),
+    ).toBe(true)
+  })
+
 })

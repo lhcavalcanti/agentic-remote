@@ -5509,9 +5509,7 @@ function App() {
   // Which failure each session has already had handed back, and when the
   // reader last submitted, so a stale one is not put back on top of it.
   const handledFailures = useRef(new Map<string, string>())
-  const lastSubmissionAt = useRef(
-    new Map<string, { serverBefore: number; inFlight: boolean }>(),
-  )
+  const submissionsInFlight = useRef(new Set<string>())
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -7322,26 +7320,27 @@ function App() {
    * text with that empty draft, losing the only copy there is.
    */
   function restoreFailedPrompt(key: string, content: string, failedAt?: string) {
-    // A submission clears the composer before its request is answered, so an
-    // empty composer is not on its own evidence that nothing newer has been
-    // written. A failure older than what the reader has since sent belongs to
-    // a prompt they have already moved past.
-    const stamp = failedAt || ''
+    const stamp = failedAt || content
     if (handledFailures.current.get(key) === stamp) {
       return
     }
-    const submittedAt = lastSubmissionAt.current.get(key)
-    if (submittedAt && stamp && Date.parse(stamp) < submittedAt.serverBefore) {
+    // Sending empties the composer before the request is answered, so an
+    // empty composer during one is no evidence that nothing newer was
+    // written. The server clears the marker when that send is accepted, which
+    // is what settles the question; nothing here compares the two clocks.
+    if (submissionsInFlight.current.has(key)) {
       return
     }
-    if (submittedAt?.inFlight) {
-      return
-    }
-    handledFailures.current.set(key, stamp)
-    updateComposerDrafts([key], (current) =>
-      // Anything typed since is newer and is left alone.
-      current[key] ? current : { ...current, [key]: content },
-    )
+    updateComposerDrafts([key], (current) => {
+      if (current[key]) {
+        // Something newer is already there. This is deliberately not recorded
+        // as handled: the text has not been given back to anyone yet, and
+        // marking it so would let the next submission clear the only copy.
+        return current
+      }
+      handledFailures.current.set(key, stamp)
+      return { ...current, [key]: content }
+    })
   }
 
   // A browser that was not listening when the send failed learns about it from
@@ -8109,15 +8108,9 @@ function App() {
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
     // sent. The mark is cleared once the request settles.
-    lastSubmissionAt.current.set(targetKey, {
-      serverBefore: Date.now(),
-      inFlight: true,
-    })
+    submissionsInFlight.current.add(targetKey)
     const settleSubmission = () => {
-      const entry = lastSubmissionAt.current.get(targetKey)
-      if (entry) {
-        lastSubmissionAt.current.set(targetKey, { ...entry, inFlight: false })
-      }
+      submissionsInFlight.current.delete(targetKey)
     }
 
     const isCommand = content.startsWith('/')
@@ -8144,17 +8137,20 @@ function App() {
         setStatuslineOpen(true)
       }
       setComposer('')
+      settleSubmission()
       return
     }
     if (command?.name === 'clear') {
       setComposer('')
       focusComposer(await clearSelectedConversation())
+      settleSubmission()
       return
     }
     if (command?.name === 'restart') {
       setComposer('')
       await restartSelectedSession()
       focusComposer(targetKey)
+      settleSubmission()
       return
     }
     if (
@@ -8163,6 +8159,7 @@ function App() {
     ) {
       setComposer('')
       setCwdOpen(true)
+      settleSubmission()
       return
     }
     const shouldEnqueue =

@@ -6228,6 +6228,61 @@ describe('App', () => {
     )
   })
 
+  it('opens the linked session when the socket refresh gets there first', async () => {
+    // The socket opens and starts a refresh of its own, which can overtake
+    // the first list because that request waits on paired nodes. Whichever
+    // arrives first has to be the one that answers the address.
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-wanted',
+    )
+    const other: ManagedSession = {
+      ...session,
+      id: 'session-first',
+      title: 'Unrelated chat',
+      messages: [],
+    }
+    const wanted: ManagedSession = {
+      ...session,
+      id: 'session-wanted',
+      title: 'Linked chat',
+      messages: [],
+    }
+    let deliverInitial: (value: ManagedSession[]) => void = () => {}
+    let call = 0
+    vi.mocked(listSessions).mockImplementation(() => {
+      call += 1
+      // The first list is held; the socket's refresh answers immediately.
+      return call === 1
+        ? new Promise<ManagedSession[]>((resolve) => {
+            deliverInitial = resolve
+          })
+        : Promise.resolve([other, wanted])
+    })
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === wanted.id ? wanted : other,
+    )
+
+    render(<App />)
+    await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+    act(() => {
+      MockWebSocket.instances[0]?.onopen?.()
+    })
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item--active')?.textContent,
+      ).toContain('Linked chat'),
+    )
+    await act(async () => {
+      deliverInitial([other, wanted])
+    })
+    expect(
+      document.querySelector('.session-item--active')?.textContent,
+    ).toContain('Linked chat')
+  })
+
   it('takes the newest ancestor when several held something', async () => {
     // Ancestors only fill what the replacement lacks, so the most recent has
     // to be offered first. Oldest-first, the earliest draft takes the place

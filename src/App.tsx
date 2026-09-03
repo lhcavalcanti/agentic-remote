@@ -5724,6 +5724,32 @@ function App() {
     return current
   }, [])
 
+  /**
+   * Opens what the address asked for, if nothing is open yet.
+   *
+   * Startup and the socket's own refresh race, and either can be the one that
+   * lands first, so both have to be able to honour a link.
+   */
+  const applyInitialSelection = useCallback((loaded: ManagedSession[]) => {
+    const requestedKey = initialUrlSelection.current
+      ? followReplacementsRef.current(initialUrlSelection.current)
+      : undefined
+    const requested = loaded.find(
+      (session) => sessionKey(session) === requestedKey,
+    )
+    setSelectedKey(
+      (current) =>
+        current ||
+        (requested
+          ? sessionKey(requested)
+          : requestedKey && pendingReplacements.current.has(requestedKey)
+            ? requestedKey
+            : loaded[0]
+              ? sessionKey(loaded[0])
+              : undefined),
+    )
+  }, [])
+
   const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {    for (const session of loaded) {
       const replacement = sessionKey(session)
       // Newest first. Each ancestor only fills what the replacement does not
@@ -6897,27 +6923,7 @@ function App() {
         // A clear announced while this request was in flight leaves the
         // replacement out of the response entirely, and searching the stale
         // list finds nothing and falls through to an unrelated conversation.
-        const requestedKey = initialUrlSelection.current
-          ? followReplacements(initialUrlSelection.current)
-          : undefined
-        const requested = reconciled.find(
-          (session) => sessionKey(session) === requestedKey,
-        )
-        setSelectedKey(
-          (current) =>
-            current ||
-            (requested
-              ? sessionKey(requested)
-              : // The replacement was promised by a removal but its arrival
-                // has not been delivered yet. Holding the key it will have
-                // keeps the reader on their own conversation instead of
-                // opening someone else's while it lands.
-                requestedKey && pendingReplacements.current.has(requestedKey)
-                ? requestedKey
-                : reconciled[0]
-                  ? sessionKey(reconciled[0])
-                  : undefined),
-        )
+        applyInitialSelection(reconciled)
       })
       .catch((caught: unknown) => {
         if (active) {
@@ -7140,6 +7146,14 @@ function App() {
         pendingReplacements.current.delete(sessionKey(session))
       }
       claimReplacedSessions(reconciledForClaim)
+      // Whichever load arrives first is the one that has to answer the
+      // address. The socket opening starts a refresh of its own, and when it
+      // overtakes the first list — likely, because that request waits on
+      // paired nodes — the startup path is discarded as stale and the deep
+      // link the reader followed is replaced by whichever session sorts
+      // first. Selection is only set when nothing has been chosen yet, so
+      // this never moves a reader who is already somewhere.
+      applyInitialSelection(reconciledForClaim)
       setComputers((current) => {
         let reconciled = snapshotComputers
         for (const existing of current) {

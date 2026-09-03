@@ -80,6 +80,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { MermaidDiagram } from './MermaidDiagram.js'
 import {
   breadcrumbSegments,
   headingSlug,
@@ -3291,7 +3292,10 @@ const TranscriptMessage = memo(function TranscriptMessage({
       </div>
       <div className="message__content">
         {message.content ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown
+            components={mermaidComponents}
+            remarkPlugins={[remarkGfm]}
+          >
             {message.content}
           </ReactMarkdown>
         ) : (
@@ -4451,6 +4455,7 @@ function markdownComponentsFor(
 ) {
   return {
     ...knowledgeHeadingComponents,
+    ...mermaidComponents,
     img({ alt, src, title }: { alt?: string; src?: unknown; title?: string }) {
       return (
         <MarkdownImage
@@ -4463,6 +4468,37 @@ function markdownComponentsFor(
       )
     },
   }
+}
+
+/** Reads the text of a fenced block, which arrives as its children. */
+function fencedSource(children: ReactNode): string {
+  if (typeof children === 'string') {
+    return children
+  }
+  if (Array.isArray(children)) {
+    return children.map((child) => fencedSource(child as ReactNode)).join('')
+  }
+  return ''
+}
+
+const mermaidComponents = {
+  code({
+    children,
+    className,
+    ...rest
+  }: {
+    children?: ReactNode
+    className?: string
+  }) {
+    if (!/\blanguage-mermaid\b/.test(className || '')) {
+      return (
+        <code className={className} {...rest}>
+          {children}
+        </code>
+      )
+    }
+    return <MermaidDiagram source={fencedSource(children).trimEnd()} />
+  },
 }
 
 function markdownHeading(level: 1 | 2 | 3 | 4 | 5 | 6) {

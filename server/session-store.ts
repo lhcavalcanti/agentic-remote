@@ -436,6 +436,32 @@ export class SessionStore {
     return { session, prompt: removed }
   }
 
+  /**
+   * Takes a prompt off the queue and records it as needing recovery, together.
+   *
+   * Two writes would leave a window where both copies are on disk: a restart
+   * between them delivers the prompt again while the reader has already been
+   * handed the text back, so it arrives twice.
+   */
+  async setFailedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (stored) => {
+      const queue = stored.queuedPrompts || []
+      stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
+      stored.queuedCount = stored.queuedPrompts.length
+      stored.failedPrompt = { content, failedAt: new Date().toISOString() }
+    })
+  }
+
+  async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (stored) => {
+      stored.failedPrompt = undefined
+    })
+  }
+
   async shiftQueuedPrompt(
     sessionId: string,
   ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {

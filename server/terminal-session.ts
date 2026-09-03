@@ -778,7 +778,11 @@ export class TmuxTerminalSessionController
         if (
           landedLate &&
           !composerWasHolding &&
-          !composerHoldsOtherText(await capturePane(target), content)
+          !composerHoldsOtherText(
+            paneBeforePaste,
+            await capturePane(target),
+            content,
+          )
         ) {
           await clearPastedPrompt(target)
         }
@@ -1685,10 +1689,8 @@ async function clearPastedPrompt(target: string): Promise<void> {
  * Only these exact forms count as empty. Anything else is someone's message.
  */
 const COMPOSER_PLACEHOLDERS = [
-  /^Message agent on [^\n]*[\u2026.]{0,3}$/iu,
-  /^Message [^\n]*agent[^\n]*[\u2026.]{0,3}$/iu,
-  /^Type a message[\u2026.]{0,3}$/iu,
-  /^Ask [^\n]*[\u2026.]{0,3}$/iu,
+  /^Message agent on .+(?:\u2026|\.\.\.)$/iu,
+  /^Type a message(?:\u2026|\.\.\.)$/iu,
 ]
 
 /**
@@ -1698,17 +1700,37 @@ const COMPOSER_PLACEHOLDERS = [
  * Ctrl+U takes the whole composer, so the only safe moment to use it is when
  * nothing has arrived beside the text it is meant to remove.
  */
-export function composerHoldsOtherText(pane: string, pasted: string): boolean {
-  if (!composerHoldsText(pane)) {
+export function composerHoldsOtherText(
+  paneBefore: string,
+  paneAfter: string,
+  pasted: string,
+): boolean {
+  if (!composerHoldsText(paneAfter)) {
     return false
   }
-  const held = composerText(pane) || ''
-  const lines = pasted.split('\n').map((line) => line.trim()).filter(Boolean)
-  let remainder = held
-  for (const line of lines) {
-    remainder = remainder.split(line).join(' ')
+  let remainder = composerText(paneAfter) || ''
+  // A paste too large to echo is shown as `[Pasted text #3]` rather than its
+  // own text, so removing the lines that were sent leaves the placeholder
+  // behind and reads as somebody else's writing. Only the placeholders this
+  // paste added are taken out; any that were already there are not its doing.
+  const added =
+    pastedPlaceholderCount(remainder) -
+    pastedPlaceholderCount(composerText(paneBefore) || '')
+  for (let index = 0; index < added; index += 1) {
+    remainder = remainder.replace(PASTED_PLACEHOLDER, ' ')
+  }
+  for (const line of pasted.split('\n').map((entry) => entry.trim())) {
+    if (line) {
+      remainder = remainder.split(line).join(' ')
+    }
   }
   return remainder.replace(/[>\u276f\s\u2026.]/gu, '').length > 0
+}
+
+const PASTED_PLACEHOLDER = /\[Pasted text[^\]]*\]/u
+
+function pastedPlaceholderCount(text: string): number {
+  return (text.match(/\[Pasted text[^\]]*\]/gu) || []).length
 }
 
 /** The composer's contents, or nothing when the pane cannot be read. */

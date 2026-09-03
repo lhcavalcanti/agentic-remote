@@ -2532,15 +2532,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!content) {
       throw new Error('Message cannot be empty')
     }
-    // Writing again is the reader saying they have the earlier text back, or
-    // have given up on it. Either way it is no longer waiting to be returned.
-    if (this.store.get(sessionId)?.failedPrompt) {
-      await this.store
-        .update(sessionId, (stored) => {
-          stored.failedPrompt = undefined
-        })
-        .catch(() => undefined)
-    }
+    await this.acknowledgeFailedPrompt(sessionId)
     const terminalBacked = await this.terminalController.has(sessionId)
     if (terminalBacked) {
       // A full-screen view takes the keyboard, so a prompt sent now is typed
@@ -2825,12 +2817,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return { commands: result.commands, session }
   }
 
+  /**
+   * Marks a prompt handed back to the reader as dealt with.
+   *
+   * Submitting again is them saying they have it, whether it goes out as a
+   * message or as the slash command it was. Left set, the next snapshot puts
+   * the text they have just sent back into the composer.
+   */
+  private async acknowledgeFailedPrompt(sessionId: string): Promise<void> {
+    if (!this.store.get(sessionId)?.failedPrompt) {
+      return
+    }
+    await this.store.clearFailedPrompt(sessionId).catch(() => undefined)
+  }
+
   async executeCommand(
     sessionId: string,
     rawCommand: string,
     enqueue = false,
   ): Promise<SessionDetail> {
     const command = rawCommand.trim()
+    await this.acknowledgeFailedPrompt(sessionId)
     if (!command.startsWith('/')) {
       throw new Error('Slash command must start with /')
     }
@@ -4723,21 +4730,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // never absent from both at once. A snapshot carries it to a browser
         // that was not listening when it failed, which a one-off event
         // cannot.
-        let recovered = false
+        // One write: the prompt leaves the queue and is recorded as needing
+        // recovery together. Done separately, a restart between them finds
+        // both copies on disk, and the prompt is delivered again while the
+        // reader has already been handed the text back.
+        let session: SessionDetail | undefined
         try {
-          await this.store.update(sessionId, (stored) => {
-            stored.failedPrompt = {
-              content: next.content,
-              failedAt: new Date().toISOString(),
-            }
-          })
-          recovered = true
+          session = await this.store.setFailedPrompt(
+            sessionId,
+            next.id,
+            next.content,
+          )
         } catch {
-          recovered = false
+          session = undefined
         }
-        const { session } = await this.store
-          .removeQueuedPrompt(sessionId, next.id)
-          .catch(() => ({ session: undefined }))
+        const recovered = Boolean(session)
         if (session) {
           // The queue changed, and a browser told only about the error would
           // go on showing a prompt that is no longer waiting for anything.

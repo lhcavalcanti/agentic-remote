@@ -981,7 +981,9 @@ describe('composerHoldsText', () => {
     )
 
   it('reads an empty composer as empty', () => {
-    expect(composerHoldsText(framed(['│ > Message agent…  │']))).toBe(false)
+    expect(
+      composerHoldsText(framed(['│ > Message agent on development\u2026 │'])),
+    ).toBe(false)
     expect(composerHoldsText(framed(['│                   │']))).toBe(false)
   })
 
@@ -1001,6 +1003,12 @@ describe('composerHoldsText', () => {
     expect(
       composerHoldsText(framed(['│ > Message the team about the deploy │'])),
     ).toBe(true)
+    // The placeholder must end in an ellipsis, or every draft opening with
+    // one of these words reads as an empty composer.
+    expect(composerHoldsText(framed(['│ > Ask the team first │']))).toBe(true)
+    expect(
+      composerHoldsText(framed(['│ > Message agent on development\u2026 │'])),
+    ).toBe(false)
   })
 })
 
@@ -1012,7 +1020,11 @@ describe('composerHoldsOtherText', () => {
 
   it('ignores the paste it is about to take back', () => {
     expect(
-      composerHoldsOtherText(framed(['│ > deploy the thing │']), 'deploy the thing'),
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > deploy the thing │']),
+        'deploy the thing',
+      ),
     ).toBe(false)
   })
 
@@ -1021,8 +1033,33 @@ describe('composerHoldsOtherText', () => {
     // someone to have started writing next to it.
     expect(
       composerHoldsOtherText(
+        framed(['│ >  │']),
         framed(['│ > deploy the thing and also this │']),
         'deploy the thing',
+      ),
+    ).toBe(true)
+  })
+
+
+  it('takes back a paste too large to echo', () => {
+    // A large paste is shown as its placeholder, not its text, so removing the
+    // lines that were sent leaves the placeholder looking like someone else's
+    // writing and the paste is never taken back.
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Pasted text #3] │']),
+        'a very long message',
+      ),
+    ).toBe(false)
+  })
+
+  it('keeps a placeholder that was already there', () => {
+    expect(
+      composerHoldsOtherText(
+        framed(['│ > [Pasted text #2] │']),
+        framed(['│ > [Pasted text #2] [Pasted text #3] │']),
+        'a very long message',
       ),
     ).toBe(true)
   })

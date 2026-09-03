@@ -5503,8 +5503,14 @@ function App() {
     setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
   }, [selectedKey])
   // The socket is bound once, so it reaches the restore through a ref.
-  const restoreFailedPromptRef = useRef<(key: string, content: string) => void>(
-    () => {},
+  const restoreFailedPromptRef = useRef<
+    (key: string, content: string, failedAt?: string) => void
+  >(() => {})
+  // Which failure each session has already had handed back, and when the
+  // reader last submitted, so a stale one is not put back on top of it.
+  const handledFailures = useRef(new Map<string, string>())
+  const lastSubmissionAt = useRef(
+    new Map<string, { serverBefore: number; inFlight: boolean }>(),
   )
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
@@ -7315,7 +7321,23 @@ function App() {
    * before, an ArrowUp and ArrowDown afterwards would replace the recovered
    * text with that empty draft, losing the only copy there is.
    */
-  function restoreFailedPrompt(key: string, content: string) {
+  function restoreFailedPrompt(key: string, content: string, failedAt?: string) {
+    // A submission clears the composer before its request is answered, so an
+    // empty composer is not on its own evidence that nothing newer has been
+    // written. A failure older than what the reader has since sent belongs to
+    // a prompt they have already moved past.
+    const stamp = failedAt || ''
+    if (handledFailures.current.get(key) === stamp) {
+      return
+    }
+    const submittedAt = lastSubmissionAt.current.get(key)
+    if (submittedAt && stamp && Date.parse(stamp) < submittedAt.serverBefore) {
+      return
+    }
+    if (submittedAt?.inFlight) {
+      return
+    }
+    handledFailures.current.set(key, stamp)
     updateComposerDrafts([key], (current) =>
       // Anything typed since is newer and is left alone.
       current[key] ? current : { ...current, [key]: content },
@@ -7329,7 +7351,11 @@ function App() {
     for (const session of sessions) {
       const failed = session.failedPrompt
       if (failed?.content) {
-        restoreFailedPromptRef.current(sessionKey(session), failed.content)
+        restoreFailedPromptRef.current(
+          sessionKey(session),
+          failed.content,
+          failed.failedAt,
+        )
       }
     }
   }, [sessions])
@@ -8080,6 +8106,19 @@ function App() {
       return
     }
     const targetKey = sessionKey(selected)
+    // Sending clears the composer before the request is answered, so a failure
+    // that arrives during it must not be put back on top of what was just
+    // sent. The mark is cleared once the request settles.
+    lastSubmissionAt.current.set(targetKey, {
+      serverBefore: Date.now(),
+      inFlight: true,
+    })
+    const settleSubmission = () => {
+      const entry = lastSubmissionAt.current.get(targetKey)
+      if (entry) {
+        lastSubmissionAt.current.set(targetKey, { ...entry, inFlight: false })
+      }
+    }
 
     const isCommand = content.startsWith('/')
     const commandName = isCommand
@@ -8149,6 +8188,7 @@ function App() {
       prependComposerForKey(targetKey, content)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
+      settleSubmission()
       setSending(false)
       focusComposer(targetKey)
     }

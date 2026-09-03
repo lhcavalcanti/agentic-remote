@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -3820,6 +3820,17 @@ describe('AgentService deletion', () => {
     expect(
       service.store.get(client.session.sessionId)?.failedPrompt?.content,
     ).toBe('work the queue lost')
+
+    // Recorded and dequeued in one write, so a restart can never find both.
+    const onDisk = JSON.parse(
+      await readFile(
+        path.join(directory, 'state', 'state.json'),
+        'utf8',
+      ),
+    ) as { sessions: Record<string, { queuedPrompts?: unknown[]; failedPrompt?: unknown }> }
+    const persisted = onDisk.sessions[client.session.sessionId]
+    expect(persisted?.failedPrompt).toBeTruthy()
+    expect(persisted?.queuedPrompts ?? []).toHaveLength(0)
     await service.stop()
   })
 

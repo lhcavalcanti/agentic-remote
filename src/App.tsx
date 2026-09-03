@@ -7132,6 +7132,13 @@ function App() {
           const { [removedKey]: _removed, ...remaining } = current
           return remaining
           })
+          // The session is gone, so nothing here can ever be settled against
+          // it again. Left behind, the text of a prompt that failed stayed in
+          // this browser's storage for good.
+          forgetRestoredDraft(removedKey)
+          handledFailures.current.delete(removedKey)
+          restoredFailures.current.delete(removedKey)
+          unshownFailures.current.delete(removedKey)
         } else if (event.type === 'session.tasks.updated') {
           const key = `${event.computerId}:${event.sessionId}`
           eventSequenceRef.current += 1
@@ -7160,6 +7167,17 @@ function App() {
             event.computerId,
             eventSequenceRef.current,
           )
+          // Its sessions go with it, so nothing held for them can ever be
+          // settled again. Left behind, the text of a prompt that failed
+          // stayed in this browser's storage for good.
+          for (const key of Object.keys(restoredDraftStamps.current)) {
+            if (key.slice(0, key.indexOf(':')) === event.computerId) {
+              forgetRestoredDraft(key)
+              handledFailures.current.delete(key)
+              restoredFailures.current.delete(key)
+              unshownFailures.current.delete(key)
+            }
+          }
           setComputers((current) =>
             current.filter((computer) => computer.id !== event.computerId),
           )
@@ -7425,6 +7443,26 @@ function App() {
       const key = sessionKey(session)
       const failed = session.failedPrompt
       if (failed?.content) {
+        // A different failure from the one this client is holding. The one it
+        // was handed has been answered by somebody, and leaving that text on
+        // screen has an offline tab resending it when it comes back.
+        const held = restoredDraftStamps.current[key]
+        const stamp = failed.failedAt || failed.content
+        if (held !== undefined && held !== stamp) {
+          const handed = restoredDraftContents.current[key]
+          if (handed !== undefined) {
+            updateComposerDrafts([], (current) =>
+              current[key] === handed
+                ? Object.fromEntries(
+                    Object.entries(current).filter(([entry]) => entry !== key),
+                  )
+                : current,
+            )
+          }
+          forgetRestoredDraft(key)
+          handledFailures.current.delete(key)
+          restoredFailures.current.delete(key)
+        }
         restoreFailedPromptRef.current(key, failed.content, failed.failedAt)
         continue
       }

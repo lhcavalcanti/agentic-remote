@@ -461,25 +461,37 @@ export class SessionStore {
     const previousCount = existing.queuedCount
     const previousFailed = existing.failedPrompt
     const previousRevision = existing.revision
+    // Held so the rollback can tell this call's own values from anybody's.
+    let applied: StoredSession['failedPrompt']
+    let appliedQueue: StoredSession['queuedPrompts']
     try {
       return await this.mutate(sessionId, (stored) => {
         const queue = stored.queuedPrompts || []
         stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
         stored.queuedCount = stored.queuedPrompts.length
         stored.failedPrompt = { content, failedAt: new Date().toISOString() }
+        applied = stored.failedPrompt
+        appliedQueue = stored.queuedPrompts
       })
     } catch (error) {
+      // Only the fields this call changed, and only where they are still what
+      // it left. Another mutation can land while the write is outstanding, and
+      // that write covers this change too: putting everything back would undo
+      // theirs, while putting nothing back leaves a change in memory that
+      // never reached disk -- a draft handed to a reader whose queued copy a
+      // restart still finds.
       const current = this.state.sessions[sessionId]
-      // Only if nothing has happened since. The write is asynchronous and
-      // another mutation can land while it is outstanding; putting the old
-      // values back over that one would undo it and walk the revision
-      // backwards, leaving memory, disk and the record already handed out all
-      // describing different things.
-      if (current && current.revision === (previousRevision ?? 0) + 1) {
-        current.queuedPrompts = previousQueue
-        current.queuedCount = previousCount
-        current.failedPrompt = previousFailed
-        current.revision = previousRevision
+      if (current) {
+        if (current.failedPrompt === applied) {
+          current.failedPrompt = previousFailed
+        }
+        if (current.queuedPrompts === appliedQueue) {
+          current.queuedPrompts = previousQueue
+          current.queuedCount = previousCount
+        }
+        if (current.revision === (previousRevision ?? 0) + 1) {
+          current.revision = previousRevision
+        }
       }
       throw error
     }
@@ -501,12 +513,18 @@ export class SessionStore {
         stored.failedPrompt = undefined
       })
     } catch (error) {
+      // As above: put back only this call's own change, and leave anything
+      // written since alone. Skipping the rollback outright left the marker
+      // cleared in memory and still on disk, to reappear after a restart and
+      // invite the accepted prompt to be sent again.
       const current = this.state.sessions[sessionId]
-      // As above: put back only what this call changed, and only while it is
-      // still the last word.
-      if (current && current.revision === (previousRevision ?? 0) + 1) {
-        current.failedPrompt = previousFailed
-        current.revision = previousRevision
+      if (current) {
+        if (current.failedPrompt === undefined) {
+          current.failedPrompt = previousFailed
+        }
+        if (current.revision === (previousRevision ?? 0) + 1) {
+          current.revision = previousRevision
+        }
       }
       throw error
     }

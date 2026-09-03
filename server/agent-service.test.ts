@@ -3816,6 +3816,34 @@ describe('AgentService deletion', () => {
     expect(accepted).toHaveLength(1)
   })
 
+  it('refuses a second window still holding a failure that was answered', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-late-ack-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const failedAt = new Date().toISOString()
+    await service.store.update(created.id, (stored) => {
+      stored.failedPrompt = { content: 'the one that failed', failedAt }
+    })
+
+    await service.sendMessage(created.id, 'the one that failed', true, failedAt)
+    expect(service.store.get(created.id)?.failedPrompt).toBeUndefined()
+
+    // A second window was still showing the same recovered text. Reaching the
+    // check after the marker had gone, it found nothing to reserve and sent
+    // the prompt a second time.
+    await expect(
+      service.sendMessage(created.id, 'the one that failed', true, failedAt),
+    ).rejects.toThrow(/already been sent/)
+  })
+
   it('does not clear a failure the sender never said they had', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-same-'))
     directories.push(directory)

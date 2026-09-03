@@ -1488,6 +1488,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly drainingSessions = new Set<string>()
   /** Failures whose resend has been admitted, so a second cannot be. */
   private readonly claimedFailures = new Set<string>()
+  /** Failures whose resend was accepted, so a later copy cannot follow it. */
+  private readonly answeredFailures = new Set<string>()
   /** Marker clearances still outstanding after an accepted send. */
   private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
   private readonly queueOperations = new Map<string, Promise<unknown>>()
@@ -2584,7 +2586,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.scheduleFailureAcknowledgement(sessionId, content, acknowledgedFailure)
       return undefined
     })
-    claim?.release()
+    claim?.release(true)
     return settled ?? sent
   }
 
@@ -2600,21 +2602,36 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     submitted: string,
     failedAt: string | undefined,
     acknowledged?: string,
-  ): { release: () => void } | undefined {
+  ): { release: (accepted?: boolean) => void } | undefined {
+    // Asked first, and whatever the store now says. A window still showing a
+    // recovered prompt reaches this after another has answered for it, finds
+    // no marker left to reserve, and would send the prompt a second time.
+    if (acknowledged && this.answeredFailures.has(`${sessionId}:${acknowledged}`)) {
+      throw Object.assign(
+        new Error('This message has already been sent from another window.'),
+        { statusCode: 409 },
+      )
+    }
     if (!failedAt) {
       return undefined
     }
     const stored = this.store.get(sessionId)?.failedPrompt
-    if (
-      !stored ||
-      (stored.content.trim() !== submitted.trim() &&
-        acknowledged !== stored.failedAt)
-    ) {
+    if (!stored) {
+      return undefined
+    }
+    // The same rule the acknowledgement uses. Reserving on the words alone
+    // let an independently written message that happens to read the same take
+    // the reservation, and the real resend was then refused.
+    const isResend =
+      acknowledged === stored.failedAt ||
+      (stored.failedAt === undefined &&
+        stored.content.trim() === submitted.trim())
+    if (!isResend) {
       // Not a resend of the failure at all, so there is nothing to reserve.
       return undefined
     }
     const key = `${sessionId}:${failedAt}`
-    if (this.claimedFailures.has(key)) {
+    if (this.claimedFailures.has(key) || this.answeredFailures.has(key)) {
       throw Object.assign(
         new Error('This message has already been sent from another window.'),
         { statusCode: 409 },
@@ -2623,10 +2640,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.claimedFailures.add(key)
     let released = false
     return {
-      release: () => {
-        if (!released) {
-          released = true
-          this.claimedFailures.delete(key)
+      release: (accepted = false) => {
+        if (released) {
+          return
+        }
+        released = true
+        this.claimedFailures.delete(key)
+        if (accepted) {
+          // Remembered after the marker has gone. A second window still
+          // holding the same recovered text reached the check after the first
+          // had cleared it, found nothing to reserve, and sent the prompt
+          // again.
+          this.answeredFailures.add(key)
+          if (this.answeredFailures.size > 200) {
+            const oldest = this.answeredFailures.values().next().value
+            if (oldest !== undefined) {
+              this.answeredFailures.delete(oldest)
+            }
+          }
         }
       },
     }
@@ -3048,7 +3079,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.scheduleFailureAcknowledgement(sessionId, command, acknowledgedFailure)
       return undefined
     })
-    claim?.release()
+    claim?.release(true)
     return settled ?? ran
   }
 

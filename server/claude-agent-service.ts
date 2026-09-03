@@ -509,6 +509,13 @@ export class ClaudeAgentService
     }
     const resumed = await this.store.setSuspended(id, false)
     this.publish(resumed)
+    // A prompt queued before the suspension is waiting with nothing to run
+    // it. Draining now keeps the queue in the order it was written: left
+    // until some later query happens to finish, a message sent after the
+    // resume would go first.
+    if (resumed.queuedPrompts?.length) {
+      void this.drainQueue(id)
+    }
     return resumed
   }
 
@@ -568,9 +575,16 @@ export class ClaudeAgentService
       this.publish(queued)
       return queued
     }
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      throw new Error('Resume the session before sending to it')
+    }
     const createdAt = new Date().toISOString()
+    const userId = randomUUID()
     await this.store.addMessage(sessionId, {
-      id: randomUUID(),
+      id: userId,
       role: 'user',
       content,
       createdAt,
@@ -590,6 +604,17 @@ export class ClaudeAgentService
       // Suspending saw an idle session and took it down while the message was
       // being recorded. Starting the query now would run it against a session
       // the app describes as having nothing running.
+      //
+      // Both entries go back out together. Refusing the send while keeping
+      // them leaves the prompt in the transcript and an assistant reply that
+      // is blank for good, and the client restores the draft on top of it.
+      await this.store
+        .update(sessionId, (stored) => {
+          stored.messages = stored.messages.filter(
+            (message) => message.id !== userId && message.id !== assistantId,
+          )
+        })
+        .catch(() => undefined)
       throw new Error('Resume the session before sending to it')
     }
     const running = await this.store.update(sessionId, (stored) => {

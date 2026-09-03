@@ -2223,6 +2223,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         'Session can only be suspended once its background tasks finish',
       )
     }
+    // Reading the tasks was awaited, and a turn can start while it is. What
+    // was idle when this began may be working now, and putting the runtime
+    // down would take that work with it.
+    this.assertStillIdle(id)
     if (this.externalSessionIds.has(id)) {
       if (!this.terminalController.stop) {
         throw new Error('Terminal session suspend is not available')
@@ -2245,9 +2249,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.hydratedSessions.delete(id)
     }
+    // Tearing the runtime down was awaited too. Recording a suspension over
+    // work that started meanwhile would describe a session as suspended while
+    // it is still running.
+    this.assertStillIdle(id)
     const suspended = await this.store.setSuspended(id, true)
     this.publish(suspended)
     return suspended
+  }
+
+  /**
+   * Refuses unless the session is still doing nothing.
+   *
+   * Suspending awaits twice over, and the session is only reserved against
+   * other suspensions. Idleness is the whole precondition, so it is checked
+   * again after each wait rather than once at the start.
+   */
+  private assertStillIdle(id: string): void {
+    const current = this.store.get(id)
+    if (
+      !current ||
+      current.status === 'running' ||
+      current.status === 'waiting' ||
+      this.drainingSessions.has(id) ||
+      this.activePrompts.has(id)
+    ) {
+      throw new Error('Session can only be suspended while idle')
+    }
   }
 
   /** Gives a suspended session something to run in again. */
@@ -2308,9 +2336,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored) {
       throw new Error('Session not found')
     }
-    if (stored.suspended) {
+    if (stored.suspended || this.suspendingSessions.has(id)) {
       // Restarting would start a runtime while the session still says it has
-      // none, and for a terminal session leave a second owner behind it.
+      // none, and for a terminal session leave a second owner behind it. A
+      // suspension already under way counts: it is holding the session while
+      // it reads background tasks and puts the runtime down.
       throw new Error('Resume the session before restarting it')
     }
     if (
@@ -2353,7 +2383,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.store.backend(id) === 'terminal') {
       return stored
     }
-    if (stored.suspended) {
+    if (stored.suspended || this.suspendingSessions.has(id)) {
       throw new Error('Resume the session before moving it to tmux')
     }
     if (
@@ -2428,7 +2458,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!stored) {
       throw new Error('Session not found')
     }
-    if (stored.suspended) {
+    if (stored.suspended || this.suspendingSessions.has(id)) {
       // Clearing builds the replacement a session carries on in, which is a
       // live owner. A later resume would then build a second one beside it.
       throw new Error('Resume the session before clearing it')

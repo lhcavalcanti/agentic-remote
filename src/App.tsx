@@ -7224,7 +7224,15 @@ function App() {
     return () => {
       active = false
     }
-  }, [selected?.provider, selectedComputerId, selectedSessionId])
+    // Suspension is part of the trigger: loading is refused while a session is
+    // suspended, and resuming leaves the provider, computer and id all the
+    // same, so without this the commands never come back.
+  }, [
+    selected?.provider,
+    selected?.suspended,
+    selectedComputerId,
+    selectedSessionId,
+  ])
 
   useEffect(() => {
     setSelectedCommandIndex(0)
@@ -9067,6 +9075,8 @@ function App() {
       selected.provider === 'claude' ||
       selected.executionMode !== 'sdk' ||
       selected.status !== 'idle' ||
+      selected.suspended === true ||
+      suspending ||
       !window.confirm(
         `Move "${selected.title}" to tmux?\n\nThe Copilot SDK process will disconnect and the same session will resume in a tmux window.`,
       )
@@ -9834,9 +9844,20 @@ function App() {
             <button
               aria-label="Move session to tmux"
               className="icon-button"
-              disabled={movingToTmux || selected.status !== 'idle'}
+              disabled={
+                movingToTmux ||
+                selected.status !== 'idle' ||
+                // Migrating builds a live terminal owner, which is the one
+                // thing a suspended session is not supposed to have.
+                selected.suspended === true ||
+                suspending
+              }
               onClick={() => void moveSelectedSessionToTmux()}
-              title="Move this Copilot session to tmux"
+              title={
+                selected.suspended
+                  ? 'Resume the session before moving it to tmux'
+                  : 'Move this Copilot session to tmux'
+              }
               type="button"
             >
               <SquareTerminal size={18} />

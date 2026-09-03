@@ -909,6 +909,53 @@ describe('AgentService deletion', () => {
     expect(service.getSession(created.id)?.suspended).toBeFalsy()
   })
 
+  it('refuses competing lifecycle work while a suspension is under way', async () => {
+    // Suspending reads background tasks and puts the runtime down, and both
+    // are awaited. Only refusing other suspensions during that window lets a
+    // restart or a clear attach a live runtime behind the suspension, or lets
+    // the suspension take down work that has only just started.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-race-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    let releaseTasks: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    const listBackgroundTasks = service.listBackgroundTasks.bind(service)
+    vi.spyOn(service, 'listBackgroundTasks').mockImplementation(async (id) => {
+      await held
+      return listBackgroundTasks(id)
+    })
+
+    const suspending = service.suspendSession(created.id)
+    // The session is not yet recorded as suspended: it is only reserved.
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+
+    await expect(service.restartSession(created.id)).rejects.toThrow(
+      /Resume the session/,
+    )
+    await expect(service.clearConversation(created.id)).rejects.toThrow(
+      /Resume the session/,
+    )
+    await expect(
+      service.sendMessage(created.id, 'slip through', false),
+    ).rejects.toThrow(/Resume the session/)
+
+    releaseTasks()
+    await suspending
+    expect(service.getSession(created.id)?.suspended).toBe(true)
+    await service.stop()
+  })
+
   it('keeps a suspended terminal session when it is opened', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-'))
     directories.push(directory)

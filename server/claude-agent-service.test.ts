@@ -584,4 +584,37 @@ describe('ClaudeAgentService', () => {
       }),
     ).rejects.toThrow('Unknown option: Telemetry')
   })
+
+  it('leaves no half-written turn when suspension wins the send', async () => {
+    // Recording the prompt is awaited, and a suspension can land while it is.
+    // Refusing the send afterwards while keeping what was written leaves the
+    // prompt in the transcript with an assistant reply that stays blank, and
+    // the client puts the draft back on top of it.
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    const before = service.getSession(session.id)?.messages.length ?? 0
+
+    // Suspension takes hold between the two writes.
+    const addMessage = service.store.addMessage.bind(service.store)
+    let writes = 0
+    vi.spyOn(service.store, 'addMessage').mockImplementation(
+      async (id, message) => {
+        const result = await addMessage(id, message)
+        writes += 1
+        if (writes === 2) {
+          await service.store.setSuspended(id, true)
+        }
+        return result
+      },
+    )
+
+    await expect(
+      service.sendMessage(session.id, 'lost to a suspension'),
+    ).rejects.toThrow(/Resume the session/)
+
+    // The transcript is as it was: no orphaned prompt, no blank reply.
+    expect(service.getSession(session.id)?.messages.length).toBe(before)
+  })
+
+
 })

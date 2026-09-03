@@ -256,9 +256,7 @@ export async function registerHubRoutes(
     },
   )
 
-  app.get('/api/sessions', async () => ({
-    sessions: await manager.listSessions(),
-  }))
+  app.get('/api/sessions', async () => manager.listSessionsWithAuthority())
 
   app.get('/api/history', async () => ({
     sessions: await manager.listHistory(),

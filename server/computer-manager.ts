@@ -136,9 +136,26 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   }
 
   async listSessions(): Promise<ManagedSession[]> {
+    return (await this.listSessionsWithAuthority()).sessions
+  }
+
+  /**
+   * Sessions, and which computers actually answered for their own.
+   *
+   * A node that does not reply is answered for out of this cache, and such an
+   * answer has not looked at the node at all. A caller cannot tell the two
+   * apart from the list alone, and reading a cached answer as the whole truth
+   * makes a session that is merely unreported look deleted.
+   */
+  async listSessionsWithAuthority(): Promise<{
+    sessions: ManagedSession[]
+    answeredComputerIds: string[]
+  }> {
+    const localComputer = this.localComputer()
     const local = this.localService
       .listSessions()
-      .map((session) => managedSession(session, this.localComputer()))
+      .map((session) => managedSession(session, localComputer))
+    const answered = [localComputer.id]
     const remote = await Promise.all(
       this.registry.list().map(async (computer) => {
         const client = this.clients.get(computer.id)
@@ -150,15 +167,19 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             managedSession(session, computer),
           )
           this.sessionCache.set(computer.id, sessions)
+          answered.push(computer.id)
           return sessions
         } catch {
           return this.sessionCache.get(computer.id) ?? []
         }
       }),
     )
-    return [...local, ...remote.flat()].sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt),
-    )
+    return {
+      sessions: [...local, ...remote.flat()].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
+      answeredComputerIds: answered,
+    }
   }
 
   async listHistory(): Promise<ManagedSession[]> {

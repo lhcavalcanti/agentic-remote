@@ -5726,9 +5726,10 @@ function App() {
 
   const claimReplacedSessions = useCallback((loaded: ManagedSession[]) => {    for (const session of loaded) {
       const replacement = sessionKey(session)
-      // Oldest first, so that when several ancestors held something the most
-      // recent one is what the conversation ends up with.
-      for (const ancestorId of session.replacedSessionIds || []) {
+      // Newest first. Each ancestor only fills what the replacement does not
+      // already have, so the most recent one has to be offered first or an
+      // older ancestor takes the place it should have had.
+      for (const ancestorId of [...(session.replacedSessionIds || [])].reverse()) {
         const ancestor = sessionKey({
           computerId: session.computerId,
           id: ancestorId,
@@ -6854,10 +6855,14 @@ function App() {
 
   useEffect(() => {
     let active = true
+    // The first load takes a generation like every other refresh: the socket
+    // opening starts one of its own, and without this the slower of the two
+    // applies last and reinstates whatever the newer one already replaced.
+    const generation = ++snapshotGeneration.current
     const startedAtSequence = eventSequenceRef.current
     void Promise.all([listSessions(), listComputers()])
       .then(([loadedSessions, loadedComputers]) => {
-        if (!active) {
+        if (!active || generation !== snapshotGeneration.current) {
           return
         }
         // Events that arrived while this was in flight describe those sessions
@@ -7127,12 +7132,26 @@ function App() {
       // that took its place will never look for it. Worked out from the last
       // committed sessions rather than inside the updater, which React is free
       // to run whenever it likes.
-      claimReplacedSessions(reconcile(sessionsRef.current))
+      const reconciledForClaim = reconcile(sessionsRef.current)
+      // A replacement confirmed by a snapshot is no longer pending, even if
+      // its own arrival event was never seen. Left pending for good, selection
+      // cleanup goes on treating it as expected and can leave nothing open.
+      for (const session of reconciledForClaim) {
+        pendingReplacements.current.delete(sessionKey(session))
+      }
+      claimReplacedSessions(reconciledForClaim)
       setComputers((current) => {
         let reconciled = snapshotComputers
         for (const existing of current) {
-          const changedAt =
-            computerEventSequenceRef.current.get(existing.id) || 0
+          // Both watermarks: a removal speaks for the computer's sessions, an
+          // ordinary update speaks only for the record. Reading one when
+          // filtering and the other when preserving dropped a computer that
+          // was merely updated while the refresh was in flight, taking its
+          // whole session group with it.
+          const changedAt = Math.max(
+            computerEventSequenceRef.current.get(existing.id) || 0,
+            computerRecordSequenceRef.current.get(existing.id) || 0,
+          )
           if (changedAt > startedAtSequence) {
             reconciled = upsertComputer(reconciled, existing)
           }
@@ -7181,9 +7200,13 @@ function App() {
         )
         const detailKey = sessionKey(detail)
         if (
+          generation !== snapshotGeneration.current ||
           (sessionEventSequenceRef.current.get(detailKey) || 0) >
-          detailStartedAtSequence
+            detailStartedAtSequence
         ) {
+          // Checked again here, not only before the request: a newer refresh
+          // starting while this was in flight has already spoken, and putting
+          // this answer in would bring back a session it removed.
           return
         }
         setSessions((current) => upsertSession(current, detail))
@@ -7557,7 +7580,10 @@ function App() {
     })
   }
 
-  function appendComposerForKey(targetKey: string, value: string) {
+  function appendComposerForKey(rawTargetKey: string, value: string) {
+    // Transcription and uploads start before they finish, and a clear during
+    // that wait leaves this key naming a session that is gone.
+    const targetKey = followReplacementsRef.current(rawTargetKey)
     updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
@@ -8573,9 +8599,16 @@ function App() {
           cleared,
         ),
       )
-      migrateSessionState(targetKey, sessionKey(cleared))
-      setSelectedKey(sessionKey(cleared))
-      return sessionKey(cleared)
+      // Registered here, not only from the live removal. The response is
+      // proof enough on its own, and a missed event would otherwise leave a
+      // late write, a Back entry or a deep link still pointing at a session
+      // that no longer exists.
+      const clearedKey = sessionKey(cleared)
+      replacedInto.current.set(targetKey, clearedKey)
+      adoptedReplacements.current.add(targetKey)
+      migrateSessionState(targetKey, clearedKey)
+      setSelectedKey(clearedKey)
+      return clearedKey
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
       return sessionKey(target)

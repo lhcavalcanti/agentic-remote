@@ -6228,6 +6228,34 @@ describe('App', () => {
     )
   })
 
+  it('takes the newest ancestor when several held something', async () => {
+    // Ancestors only fill what the replacement lacks, so the most recent has
+    // to be offered first. Oldest-first, the earliest draft takes the place
+    // the latest one should have had and the newer text is lost.
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({
+        'computer-1:session-a': 'oldest thought',
+        'computer-1:session-b': 'newest thought',
+      }),
+    )
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-c',
+      replacedSessionIds: ['session-a', 'session-b'],
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('newest thought'),
+    )
+  })
+
   it('does not overwrite newer state under the replacement', async () => {
     // This browser used the replacement before it learned what it replaced, so
     // it already has newer writing there. Claiming the ancestor must fill a

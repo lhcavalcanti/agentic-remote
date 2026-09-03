@@ -2893,6 +2893,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (
         this.activePrompts.has(sessionId) ||
         this.drainingSessions.has(sessionId) ||
+        // Another prompt already inside the controller has not come back to
+        // record itself yet, so the stored status still says idle. The
+        // controller knows, and asking it is the only reading that is true at
+        // the moment the keystrokes would go in.
+        this.terminalController.sending?.(sessionId) === true ||
         now?.status === 'running' ||
         now?.status === 'waiting'
       ) {

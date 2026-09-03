@@ -4143,6 +4143,8 @@ button {
 
 .transcript-earlier:hover {
   color: var(--text);
+}
+
 .session-item__tasks--interactive {
   cursor: pointer;
   text-decoration: underline;

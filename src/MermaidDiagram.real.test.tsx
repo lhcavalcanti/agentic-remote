@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { render, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, render, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MermaidDiagram } from './MermaidDiagram.js'
 
 /**
@@ -11,6 +11,12 @@ import { MermaidDiagram } from './MermaidDiagram.js'
  * taking it away again. A mocked rejection cannot show whether that happened.
  */
 describe('MermaidDiagram against the real Mermaid', () => {
+  // Vitest globals are off, so React Testing Library cannot install this
+  // itself, and a render left mounted leaks into the next test.
+  afterEach(() => {
+    cleanup()
+  })
+
   it('leaves no error diagram behind once the render has been attempted', async () => {
     // The source fallback is on screen before Mermaid is even imported, so it
     // is no evidence that anything was rendered. The real implementation is

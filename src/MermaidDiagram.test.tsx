@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MermaidDiagram } from './MermaidDiagram.js'
 
 const render_ = vi.hoisted(() => vi.fn())
@@ -14,13 +14,20 @@ describe('MermaidDiagram', () => {
     render_.mockReset()
   })
 
+  // Vitest globals are off, so React Testing Library cannot install this
+  // itself. Without it, nodes and timers from one test survive into the next
+  // and document-wide queries match what an earlier render left behind.
+  afterEach(() => {
+    cleanup()
+  })
+
   it('shows the diagram once it has been drawn', async () => {
     render_.mockResolvedValue({ svg: '<svg><title>Flow</title></svg>' })
 
-    render(<MermaidDiagram source={'graph TD;\n A-->B;'} />)
+    const { container } = render(<MermaidDiagram source={'graph TD;\n A-->B;'} />)
 
     await waitFor(() =>
-      expect(document.querySelector('.mermaid-diagram svg')).not.toBeNull(),
+      expect(container.querySelector('.mermaid-diagram svg')).not.toBeNull(),
     )
   })
 
@@ -29,10 +36,10 @@ describe('MermaidDiagram', () => {
     // yet, and is not worth interrupting the page for.
     render_.mockRejectedValue(new Error('Parse error'))
 
-    render(<MermaidDiagram source={'graph TD; A--'} />)
+    const { container } = render(<MermaidDiagram source={'graph TD; A--'} />)
 
     expect(await screen.findByText('graph TD; A--')).toBeTruthy()
-    expect(document.querySelector('.mermaid-source')).not.toBeNull()
+    expect(container.querySelector('.mermaid-source')).not.toBeNull()
   })
 
   it('leaves the diagram its own accessibility information', async () => {
@@ -41,10 +48,10 @@ describe('MermaidDiagram', () => {
     // writes into the SVG for screen readers.
     render_.mockResolvedValue({ svg: '<svg><title>Flow</title></svg>' })
 
-    render(<MermaidDiagram source={'graph TD;\n A-->B;'} />)
+    const { container } = render(<MermaidDiagram source={'graph TD;\n A-->B;'} />)
 
     const wrapper = await waitFor(() => {
-      const found = document.querySelector('.mermaid-diagram')
+      const found = container.querySelector('.mermaid-diagram')
       expect(found).not.toBeNull()
       return found as HTMLElement
     })

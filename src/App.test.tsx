@@ -1807,6 +1807,37 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument()
   })
 
+  it('keeps a running activity visible past the window', async () => {
+    // The activity indicator is suppressed while a tool is running, so a
+    // running row that the window cuts off leaves nothing on screen saying
+    // anything is happening at all.
+    const messages = [
+      {
+        id: 'running-tool',
+        role: 'activity' as const,
+        content: 'Bash\n$ pnpm dev',
+        createdAt: '2026-07-22T00:00:00.000Z',
+        activityStatus: 'running' as const,
+      },
+      ...Array.from({ length: 400 }, (_, index) => ({
+        id: `later-${index}`,
+        role: 'assistant' as const,
+        content: `later line ${index}`,
+        createdAt: new Date(Date.UTC(2026, 6, 22, 1, 0, index)).toISOString(),
+      })),
+    ]
+    const busy = { ...session, activity: 'Working', messages }
+    vi.mocked(listSessions).mockResolvedValue([busy])
+    vi.mocked(getSession).mockResolvedValue(busy)
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The oldest ordinary message is behind the window, as intended.
+    expect(screen.queryByText('later line 0')).not.toBeInTheDocument()
+    // The running tool is not.
+    expect(await screen.findByText('$ pnpm dev')).toBeInTheDocument()
+  })
+
   it('does not carry an expanded transcript into the next session', async () => {
     // The window is what bounds rendering cost. It belongs to the session being
     // read, so expanding one must not hand the next session an open transcript.

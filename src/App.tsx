@@ -3326,8 +3326,39 @@ const ConversationMessages = memo(function ConversationMessages({
   currentToolId?: string
 }) {
   const [showAll, setShowAll] = useState(false)
-  const hidden = showAll ? 0 : Math.max(0, allMessages.length - RENDERED_HISTORY)
-  const messages = hidden ? allMessages.slice(hidden) : allMessages
+  const cut = showAll
+    ? 0
+    : Math.max(0, allMessages.length - RENDERED_HISTORY)
+  const tail = cut ? allMessages.slice(cut) : allMessages
+  // Some rows from before the cut have to come with it. An activity that is
+  // still running is one: the separate activity indicator is suppressed while
+  // one exists, so dropping the row leaves nothing on screen saying anything
+  // is happening. The parent of a visible child is another, or the child is
+  // lifted out of the group it belongs to and read as work of its own.
+  const carried: ChatMessage[] = []
+  if (cut > 0) {
+    const wanted = new Set<string>()
+    for (const message of tail) {
+      if (message.role === 'activity' && message.activityGroupId) {
+        wanted.add(message.activityGroupId)
+      }
+    }
+    for (let index = cut - 1; index >= 0; index -= 1) {
+      const message = allMessages[index]
+      if (message.role !== 'activity') {
+        continue
+      }
+      if (message.activityStatus === 'running' || wanted.has(message.id)) {
+        carried.unshift(message)
+        // Groups nest, so the parent's own parent is needed as well.
+        if (message.activityGroupId) {
+          wanted.add(message.activityGroupId)
+        }
+      }
+    }
+  }
+  const hidden = cut - carried.length
+  const messages = carried.length ? [...carried, ...tail] : tail
   const activityMessages = new Map(
     messages
       .filter((message) => message.role === 'activity')
@@ -9053,7 +9084,11 @@ function App() {
           ) : (
             <ConversationMessages
               currentToolId={currentTool?.id}
-              key={selected.id}
+              // Identity is the computer and the session together: two
+              // computers can hand out the same provider session id, and
+              // keying on the id alone reuses this component between them,
+              // carrying an expanded transcript across.
+              key={sessionKey(selected)}
               messages={selected.messages}
             />
           )}

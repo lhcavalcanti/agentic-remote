@@ -328,6 +328,28 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.session
   }
 
+  async suspendSession(sessionId: string): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/suspend`,
+      {
+        method: 'POST',
+        body: '{}',
+      },
+    )
+    return response.session
+  }
+
+  async resumeSession(sessionId: string): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/resume`,
+      {
+        method: 'POST',
+        body: '{}',
+      },
+    )
+    return response.session
+  }
+
   async restartSession(sessionId: string): Promise<SessionDetail> {
     const response = await this.request<{ session: SessionDetail }>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/restart`,

@@ -120,6 +120,15 @@ interface ClaudeAgentServiceEvents {
 interface ActiveClaudeQuery {
   abortController: AbortController
   query: Query
+  /**
+   * Settles when the run that owns this entry has finished tearing down.
+   *
+   * Suspending waits on it, so a resume cannot start a query while the
+   * previous one is still unwinding.
+   */
+  done: Promise<void>
+  /** Resolves `done`. */
+  finish: () => void
 }
 
 interface PendingClaudePermission {
@@ -151,7 +160,73 @@ export class ClaudeAgentService
   private available = false
   private unavailableReason = 'Claude Agent is not initialized'
   private models: RuntimeModelOption[] = []
+  /** Sessions being put down, which nothing may start a query into. */
+  private readonly suspendingSessions = new Set<string>()
+  private readonly dispatchingSessions = new Map<string, number>()
+  // Not open for new work yet: resuming clears the suspended flag before the
+  // queue has been claimed, and that flag is what reopens sending.
+  private readonly admissionClosed = new Set<string>()
+  private readonly lifecycleLocks = new Map<string, Promise<unknown>>()
+
+  /** Runs lifecycle work for a session one at a time, in arrival order. */
+  private serializeLifecycle<T>(
+    sessionId: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.lifecycleLocks.get(sessionId) ?? Promise.resolve()
+    const next = previous.catch(() => undefined).then(run)
+    // Only that it finished, never what it produced.
+    const settled = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.lifecycleLocks.set(sessionId, settled)
+    void settled.then(() => {
+      if (this.lifecycleLocks.get(sessionId) === settled) {
+        this.lifecycleLocks.delete(sessionId)
+      }
+    })
+    return next
+  }
+
+  /** Marks a session as having a prompt on its way, and gives back the undo. */
+  private holdDispatch(sessionId: string): () => void {
+    this.dispatchingSessions.set(
+      sessionId,
+      (this.dispatchingSessions.get(sessionId) || 0) + 1,
+    )
+    let released = false
+    return () => {
+      if (released) {
+        return
+      }
+      released = true
+      const held = (this.dispatchingSessions.get(sessionId) || 1) - 1
+      if (held > 0) {
+        this.dispatchingSessions.set(sessionId, held)
+      } else {
+        this.dispatchingSessions.delete(sessionId)
+      }
+    }
+  }
+
   private readonly active = new Map<string, ActiveClaudeQuery>()
+  /**
+   * Sessions whose turn has been started but has not registered its query yet.
+   *
+   * A turn asks the provider for its session before it has anything to
+   * register, and work that only looks at `active` read that gap as nothing
+   * running.
+   */
+  private readonly startingQueries = new Map<string, Promise<void>>()
+  /** Sessions being deleted, closed to new work from before the first await. */
+  private readonly deletingSessions = new Set<string>()
+  /** Sends that have been admitted but have not finished being admitted. */
+  private readonly admittingSends = new Map<string, Promise<void>[]>()
+  /** Settles the matching `startingQueries` entry once a turn has registered. */
+  private readonly startedQuery = new Map<string, () => void>()
+  /** Sessions whose queue is being drained, so two drains cannot overlap. */
+  private readonly drainingSessions = new Set<string>()
   private readonly permissions = new Map<string, PendingClaudePermission>()
   private readonly userInputs = new Map<string, PendingClaudeInput>()
 
@@ -199,7 +274,12 @@ export class ClaudeAgentService
           .list()
           .filter(
             (session) =>
-              session.status === 'idle' && session.queuedPrompts?.length,
+              session.status === 'idle' &&
+              // A suspended session has nothing to send to. Draining it would
+              // take the prompt off the queue and then refuse it, losing the
+              // work and failing the provider's own startup.
+              !session.suspended &&
+              session.queuedPrompts?.length,
           )
           .map((session) => this.drainQueue(session.id)),
       )
@@ -441,6 +521,21 @@ export class ClaudeAgentService
   }
 
   async clearConversation(id: string): Promise<SessionDetail> {
+    // In the lifecycle queue with the rest: clearing replaces the session with
+    // a new id, and a suspension starting while it awaits the provider would
+    // then be recorded against a session that no longer exists.
+    return this.serializeLifecycle(id, () => this.clearSerialized(id))
+  }
+
+  private async clearSerialized(id: string): Promise<SessionDetail> {
+    if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
+      throw Object.assign(new Error('Resume the session before clearing it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     const session = this.requireIdle(id)
     try {
       await this.sdk.deleteSession(id, { dir: session.cwd })
@@ -460,7 +555,107 @@ export class ClaudeAgentService
     return cleared
   }
 
+  async suspendSession(id: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, () => this.suspendQueued(id))
+  }
+
+  private async suspendQueued(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (stored.suspended) {
+      return stored
+    }
+    this.requireIdle(id)
+    // Claimed before anything is awaited: a message that got past the check on
+    // its way in would otherwise start a query into a session on its way down.
+    this.suspendingSessions.add(id)
+    // The conversation is held on disk and a query is started again for the
+    // next message, so letting go of it costs nothing but starting one.
+    const active = this.active.get(id)
+    if (active) {
+      active.abortController.abort()
+      if (this.active.get(id) === active) {
+        this.active.delete(id)
+      }
+      // Waited for rather than abandoned. The run tears down after the abort,
+      // and a resume that got in first would have registered its own query by
+      // then -- which the old run's cleanup used to remove, leaving the live
+      // query with nothing able to stop it.
+      await active.done
+    }
+    try {
+      const suspended = await this.store.setSuspended(id, true)
+      this.publish(suspended)
+      return suspended
+    } finally {
+      this.suspendingSessions.delete(id)
+    }
+  }
+
+  async resumeSession(id: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(id, () => this.resumeQueued(id))
+  }
+
+  private async resumeQueued(id: string): Promise<SessionDetail> {
+    const stored = this.store.get(id)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (!stored.suspended) {
+      return stored
+    }
+    const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
+    if (hasQueue) {
+      this.admissionClosed.add(id)
+    }
+    const resumed = await this.store.setSuspended(id, false)
+    this.publish(resumed)
+    // A prompt queued before the suspension is waiting with nothing to run
+    // it. Draining now keeps the queue in the order it was written: left
+    // until some later query happens to finish, a message sent after the
+    // resume would go first.
+    if (resumed.queuedPrompts?.length) {
+      // The drain requeues and rethrows when authentication, persistence or
+      // sending fails. Discarded, that rejection has nowhere to go and takes
+      // the process with it.
+      const releaseDispatch = this.holdDispatch(id)
+      try {
+        await this.drainQueue(id).catch((error: unknown) => {
+          this.emit('event', {
+            type: 'error',
+            sessionId: id,
+            message: error instanceof Error ? error.message : String(error),
+          })
+        })
+      } finally {
+        this.admissionClosed.delete(id)
+        releaseDispatch()
+      }
+    } else if (hasQueue) {
+      this.admissionClosed.delete(id)
+    }
+    return resumed
+  }
+
   async restartSession(id: string): Promise<SessionDetail> {
+    // In the same queue as suspend, resume and clear. Left outside it, a
+    // restart could report success after suspension had claimed the session
+    // but before the flag was written, and the suspension that finished
+    // afterwards wrote over it.
+    return this.serializeLifecycle(id, () => this.restartSerialized(id))
+  }
+
+  private async restartSerialized(id: string): Promise<SessionDetail> {
+    if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
+      throw Object.assign(new Error('Resume the session before restarting it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     this.requireIdle(id)
     const restarted = await this.store.updateStatus(id, 'idle')
     this.publish(restarted)
@@ -488,7 +683,100 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
   ): Promise<SessionDetail> {
+    if (this.deletingSessions.has(sessionId)) {
+      // Deleting takes several awaits, and a send starting inside any of them
+      // ran a turn against a conversation on its way out.
+      throw new Error('Session not found')
+    }
+    // Claimed here, before the first await. A send that got past the check
+    // above could then wait in authentication while deletion began, find its
+    // only synchronisation point empty, and register a query afterwards --
+    // provider work and tool side effects carrying on against a conversation
+    // that was gone.
+    let admitted = () => {}
+    const admission = new Promise<void>((resolve) => {
+      admitted = resolve
+    })
+    this.admittingSends.set(sessionId, [
+      ...(this.admittingSends.get(sessionId) || []),
+      admission,
+    ])
+    try {
+      return await this.admitSend(sessionId, content, enqueue)
+    } finally {
+      admitted()
+      this.admittingSends.set(
+        sessionId,
+        (this.admittingSends.get(sessionId) || []).filter(
+          (entry) => entry !== admission,
+        ),
+      )
+    }
+  }
+
+  private async admitSend(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+  ): Promise<SessionDetail> {
+    if (this.admissionClosed.has(sessionId)) {
+      // Resuming, and the prompt already queued has not been claimed yet, or a
+      // drain has taken its prompt off and not yet marked the session running.
+      // Only the idle check consulted this, which a send can reach past.
+      throw Object.assign(new Error('The session is still resuming'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+    return this.dispatchQueued(sessionId, content, enqueue)
+  }
+
+  private async dispatchQueued(
+    sessionId: string,
+    content: string,
+    enqueue = false,
+    fromQueue = false,
+  ): Promise<SessionDetail> {
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
+    // Anything already waiting goes first. A resume whose drain failed puts
+    // the prompt back, and a message written after it must not overtake it.
+    if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
+      const queued = await this.store.enqueuePrompt(sessionId, {
+        id: randomUUID(),
+        content,
+        createdAt: new Date().toISOString(),
+      })
+      this.publish(queued)
+      // A drain that failed put its prompt back and left no query running to
+      // take it off again. Without this the queue stands still and every
+      // message written afterwards simply joins it. The drain does nothing at
+      // all while the session is busy, so this is safe to ask for either way.
+      void this.drainQueue(sessionId).catch(() => undefined)
+      return queued
+    }
     await this.refreshAuthentication()
+    // Suspending may have finished while authentication was being refreshed,
+    // and may still finish before the turn starts, so it is asked again there.
+    if (this.store.get(sessionId)?.suspended) {
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     const session = this.requireSession(sessionId)
     if (session.status === 'running' || session.status === 'waiting') {
       if (!enqueue) {
@@ -502,9 +790,25 @@ export class ClaudeAgentService
       this.publish(queued)
       return queued
     }
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     const createdAt = new Date().toISOString()
+    // Kept so a refused send can put it back. Both `addMessage` calls move the
+    // session to the top of the list, and a rollback that only removed the
+    // messages left a suspended session reordered by a send it rejected.
+    const previousUpdatedAt = this.store.get(sessionId)?.updatedAt
+    const userId = randomUUID()
     await this.store.addMessage(sessionId, {
-      id: randomUUID(),
+      id: userId,
       role: 'user',
       content,
       createdAt,
@@ -517,6 +821,51 @@ export class ClaudeAgentService
       createdAt: new Date().toISOString(),
       streaming: true,
     })
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      // Suspending saw an idle session and took it down while the message was
+      // being recorded. Starting the query now would run it against a session
+      // the app describes as having nothing running.
+      //
+      // Both entries go back out together. Refusing the send while keeping
+      // them leaves the prompt in the transcript and an assistant reply that
+      // is blank for good, and the client restores the draft on top of it.
+      let repaired = true
+      await this.store
+        .update(sessionId, (stored) => {
+          stored.messages = stored.messages.filter(
+            (message) => message.id !== userId && message.id !== assistantId,
+          )
+          if (previousUpdatedAt) {
+            // `updatedAt` is when the conversation last moved, and the list is
+            // ordered by it. This send did not move it.
+            stored.updatedAt = previousUpdatedAt
+          }
+        })
+        // Announced as well as written: readers were shown the prompt and the
+        // blank reply as they went in, so putting the store back without
+        // saying so leaves both on screen for good.
+        .then((session) => this.publish(session))
+        .catch(() => {
+          repaired = false
+        })
+      if (!repaired) {
+        // Saying only that the send was refused would describe a transcript
+        // that is still holding a prompt and a reply that stays blank as
+        // though it had been put back the way it was found.
+        throw new Error(
+          'Resume the session before sending to it. The message could not be taken back out of the transcript.',
+        )
+      }
+      throw Object.assign(new Error('Resume the session before sending to it'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     const running = await this.store.update(sessionId, (stored) => {
       stored.status = 'running'
       stored.activity = 'Thinking'
@@ -526,7 +875,29 @@ export class ClaudeAgentService
       }
     })
     this.publish(running)
-    void this.runQuery(sessionId, content, assistantId)
+    // Nothing waits on this, so a rejection escaping it would be unhandled and
+    // could take the process down. The turn reports its own failures on the
+    // session; the queue drain that runs after it puts its prompt back and
+    // rethrows, and that has nowhere left to go but here.
+    // Claimed before the turn is started, not once it has a query to show for
+    // itself. Registering only after the provider has been asked for its
+    // session left a window in which a delete found nothing running, took the
+    // conversation away, and the turn then started against a session that no
+    // longer existed.
+    let started = () => {}
+    this.startingQueries.set(
+      sessionId,
+      new Promise<void>((resolve) => {
+        started = resolve
+      }),
+    )
+    this.startedQuery.set(sessionId, started)
+    void this.runQuery(sessionId, content, assistantId).catch((error) => {
+      console.warn(
+        `Claude turn for ${sessionId} ended in an unreported failure:`,
+        error,
+      )
+    })
     return running
   }
 
@@ -566,9 +937,54 @@ export class ClaudeAgentService
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    // Deleting takes the provider session and the stored state with it, so a
+    // resume running beside it could start a query against files that are
+    // already going.
+    return this.serializeLifecycle(sessionId, () =>
+      this.deleteSerialized(sessionId),
+    )
+  }
+
+  private async deleteSerialized(sessionId: string): Promise<void> {
     const session = this.requireSession(sessionId)
+    // Marked before anything is awaited. Deleting takes several awaits, and a
+    // send starting inside any of them ran a turn against a conversation that
+    // was on its way out.
+    this.deletingSessions.add(sessionId)
+    try {
+      await this.deleteClaimed(sessionId, session)
+    } finally {
+      this.deletingSessions.delete(sessionId)
+    }
+  }
+
+  private async deleteClaimed(
+    sessionId: string,
+    session: SessionDetail,
+  ): Promise<void> {
+    // A turn started a moment ago may not have registered its query yet. It is
+    // waited for rather than polled for a while: a provider that is slow to
+    // answer outlasted the polling and the turn then started against a
+    // conversation already taken away.
+    // Sends already inside admission, before whatever they are waiting on can
+    // let them through. Sampling only the registered turns found nothing and
+    // deleted the conversation out from under one that was still on its way.
+    const admitting = this.admittingSends.get(sessionId) || []
+    if (admitting.length) {
+      await Promise.allSettled(admitting)
+    }
+    const starting = this.startingQueries.get(sessionId)
+    if (starting) {
+      await starting.catch(() => undefined)
+    }
     this.active.get(sessionId)?.abortController.abort()
+    const settling = this.active.get(sessionId)?.done
     this.resolvePending(sessionId, 'Session was deleted')
+    if (settling) {
+      // Waited for, so the turn is finished with the conversation before it is
+      // removed rather than writing into it afterwards.
+      await settling
+    }
     let cleanupError: unknown
     try {
       await this.sdk.deleteSession(sessionId, { dir: session.cwd })
@@ -736,6 +1152,8 @@ export class ClaudeAgentService
   ): Promise<void> {
     const session = this.requireSession(sessionId)
     const abortController = new AbortController()
+    // This run's own entry, so cleanup cannot remove a newer one.
+    let owned: ActiveClaudeQuery | undefined
     const runtime = session.runtime
     const toolIds = new Set<string>()
     let aborted = false
@@ -763,10 +1181,21 @@ export class ClaudeAgentService
           ...(hasProviderSession ? { resume: sessionId } : { sessionId }),
         },
       })
-      this.active.set(sessionId, {
+      let finish = () => {}
+      const done = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const entry: ActiveClaudeQuery = {
         abortController,
         query: activeQuery,
-      })
+        done,
+        finish,
+      }
+      owned = entry
+      this.active.set(sessionId, entry)
+      this.startedQuery.get(sessionId)?.()
+      this.startedQuery.delete(sessionId)
+      this.startingQueries.delete(sessionId)
       for await (const message of activeQuery) {
         if (!this.store.get(sessionId)) {
           return
@@ -828,10 +1257,33 @@ export class ClaudeAgentService
         })
       }
     } finally {
-      this.active.delete(sessionId)
+      // Only this run's own entry is removed. A suspension that abandoned this
+      // query, followed by a resume that started another, leaves a newer entry
+      // here, and deleting by id alone took the live query's handle away and
+      // left nothing able to stop it.
+      if (owned && this.active.get(sessionId) === owned) {
+        this.active.delete(sessionId)
+      }
+      owned?.finish()
+      this.startedQuery.get(sessionId)?.()
+      this.startedQuery.delete(sessionId)
+      this.startingQueries.delete(sessionId)
       this.resolvePending(sessionId, 'Claude Agent stopped')
       if (!aborted) {
-        await this.drainQueue(sessionId)
+        // The drain puts its own prompt back before rethrowing, and there is
+        // nobody above this to tell. Reported rather than thrown out of a
+        // finally block, which would replace whatever this turn was already
+        // saying.
+        await this.drainQueue(sessionId).catch((drainError: unknown) => {
+          this.emit('event', {
+            type: 'error',
+            sessionId,
+            message:
+              drainError instanceof Error
+                ? drainError.message
+                : String(drainError),
+          })
+        })
       }
     }
   }
@@ -1120,8 +1572,29 @@ export class ClaudeAgentService
   }
 
   private async drainQueue(sessionId: string): Promise<void> {
+    // One drain at a time. Two sends reaching an idle session with a prompt
+    // already waiting each took a different head off the queue before either
+    // marked the session running, and started concurrent turns: the queue lost
+    // its order, and the second registration hid the first from cancellation.
+    if (this.drainingSessions.has(sessionId)) {
+      return
+    }
+    this.drainingSessions.add(sessionId)
+    try {
+      await this.drainSerialized(sessionId)
+    } finally {
+      this.drainingSessions.delete(sessionId)
+    }
+  }
+
+  private async drainSerialized(sessionId: string): Promise<void> {
     const session = this.store.get(sessionId)
     if (!session || session.status !== 'idle') {
+      return
+    }
+    if (session.suspended || this.suspendingSessions.has(sessionId)) {
+      // Suspending leaves a session idle, so the queue would take a prompt off
+      // and then be refused for being suspended, losing it for good.
       return
     }
     const next = session.queuedPrompts?.[0]
@@ -1129,7 +1602,52 @@ export class ClaudeAgentService
       return
     }
     await this.store.removeQueuedPrompt(sessionId, next.id)
-    await this.sendMessage(sessionId, next.content)
+    // Held from the moment the prompt leaves the queue until its turn has
+    // registered. Without it a send arriving in between saw an idle session
+    // with an empty queue, started a turn of its own beside this one, and the
+    // later registration hid the first from cancellation.
+    this.admissionClosed.add(sessionId)
+    // The drain's own prompt is a send too, and it goes straight to the
+    // dispatch rather than through the public path. Deletion looked only at
+    // sends that came in that way, so a drain between taking its prompt off
+    // the queue and registering its turn was invisible to it.
+    let drained = () => {}
+    const draining = new Promise<void>((resolve) => {
+      drained = resolve
+    })
+    this.admittingSends.set(sessionId, [
+      ...(this.admittingSends.get(sessionId) || []),
+      draining,
+    ])
+    try {
+      // The queue's own prompt is the one admission is being held for, so it
+      // goes past that gate rather than into it. Sending through the public
+      // path refused it on the very flag that exists to keep newer work out
+      // until this has gone in, so resume finished having sent nothing.
+      await this.dispatchQueued(sessionId, next.content, false, true)
+    } catch (error) {
+      // The prompt is off the queue and was never sent, so it goes back where
+      // it was rather than disappearing.
+      await this.store
+        .enqueuePrompt(sessionId, next, true)
+        .catch(() => undefined)
+      throw error
+    } finally {
+      // Let go of only once the turn is registered, or once it has failed and
+      // its prompt is back where it was.
+      const starting = this.startingQueries.get(sessionId)
+      if (starting) {
+        await starting.catch(() => undefined)
+      }
+      this.admissionClosed.delete(sessionId)
+      drained()
+      this.admittingSends.set(
+        sessionId,
+        (this.admittingSends.get(sessionId) || []).filter(
+          (entry) => entry !== draining,
+        ),
+      )
+    }
   }
 
   private permissionMode(
@@ -1171,7 +1689,21 @@ export class ClaudeAgentService
 
   private requireIdle(id: string): SessionDetail {
     const session = this.requireSession(id)
+    if (this.admissionClosed.has(id)) {
+      // Resuming, and the prompt already queued has not been claimed yet.
+      throw Object.assign(new Error('The session is still resuming'), {
+        // Carries a status so the reason reaches the reader. Left
+        // unclassified it was reported as a generic server error,
+        // which says nothing about what to do next.
+        statusCode: 409,
+      })
+    }
     if (session.status !== 'idle') {
+      throw new Error('Session must be idle')
+    }
+    if (this.dispatchingSessions.has(id)) {
+      // A prompt is already on its way. The status only turns to running once
+      // the turn is recorded, so without this a second one starts beside it.
       throw new Error('Session must be idle')
     }
     return session

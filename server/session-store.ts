@@ -241,6 +241,10 @@ export class SessionStore {
     for (const session of Object.values(this.state.sessions)) {
       session.isOpen =
         active.has(session.id) ||
+        // A suspended session has nothing running by design. Reading that as
+        // closed would hide it from the list, and the only way back to it is
+        // the button on the session itself.
+        session.suspended === true ||
         (session.managedOpen === true && session.backend !== 'terminal')
     }
     await this.persist()
@@ -268,7 +272,11 @@ export class SessionStore {
     return Object.values(this.state.sessions)
       .filter(
         (session) =>
-          session.backend === 'terminal' && session.managedOpen === true,
+          session.backend === 'terminal' &&
+          session.managedOpen === true &&
+          // A suspended session is meant to have nothing running for it.
+          // Starting one back up at boot is the opposite of what was asked.
+          session.suspended !== true,
       )
       .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
       .map(cloneSession)
@@ -284,6 +292,29 @@ export class SessionStore {
       if (managedOpen) {
         session.managedOpen = isOpen
       }
+    })
+  }
+
+  async setSuspended(
+    sessionId: string,
+    suspended: boolean,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.suspended = suspended
+      // A suspended session is put down on purpose, not found missing, and it
+      // keeps its place in the list either way. Written here so the state is
+      // the same however the teardown and a discovery pass interleaved:
+      // without it a pass that saw the pane go marked the session closed, and
+      // this call left that in place -- a session both suspended and gone.
+      session.isOpen = true
+      session.status = 'idle'
+      session.activity = undefined
+      session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      // `updatedAt` is when the conversation last moved, and the list is
+      // ordered by it. Suspending is not the conversation moving, so touching
+      // it here would send a session to the top of the list for being put
+      // down -- the opposite of keeping the place it had.
     })
   }
 

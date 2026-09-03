@@ -67,7 +67,9 @@ import {
   Mic,
   MonitorCog,
   Paperclip,
+  Pause,
   Pencil,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -156,6 +158,8 @@ import {
   renameSession,
   readWorkspaceFile,
   restartSession,
+  resumeSession,
+  suspendSession,
   replyPermission,
   replyUserInput,
   sendMessage,
@@ -3523,6 +3527,8 @@ function SortableSessionItem({
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
       )} ${backgroundTaskActive ? 'session-item--background-running' : ''} ${
+        session.suspended ? 'session-item--suspended' : ''
+      } ${
         selected ? 'session-item--active' : ''
       } ${
         isDragging ? 'sortable-dragging' : ''
@@ -5605,6 +5611,7 @@ function App() {
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [restarting, setRestarting] = useState(false)
+  const [suspending, setSuspending] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
   const [movingSessionFolder, setMovingSessionFolder] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
@@ -7194,6 +7201,19 @@ function App() {
       setCommands([])
       return
     }
+    if (selected?.suspended) {
+      // A suspended session has no runtime to ask, and asking would start the
+      // one that suspending put down. It offers no commands at all until it is
+      // resumed.
+      //
+      // The flag is a dependency on purpose. Resuming is meant to bring the
+      // session back the way reopening the CLI does, so the runtime coming up
+      // on resume is the feature rather than a side effect of this read: the
+      // list is only knowable from a live runtime, and a resumed session that
+      // offered no commands until its first message would be the bug.
+      setCommands([])
+      return
+    }
     let active = true
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
@@ -7219,7 +7239,12 @@ function App() {
     return () => {
       active = false
     }
-  }, [selected?.provider, selectedComputerId, selectedSessionId])
+  }, [
+    selected?.provider,
+    selected?.suspended,
+    selectedComputerId,
+    selectedSessionId,
+  ])
 
   useEffect(() => {
     setSelectedCommandIndex(0)
@@ -9018,6 +9043,26 @@ function App() {
     }
   }
 
+  async function toggleSelectedSessionSuspended() {
+    if (!selected || suspending) {
+      return
+    }
+    const target = selected
+    const wasSuspended = target.suspended === true
+    setSuspending(true)
+    setError(undefined)
+    try {
+      const updated = wasSuspended
+        ? await resumeSession(target.computerId, target.id)
+        : await suspendSession(target.computerId, target.id)
+      setSessions((current) => upsertSession(current, updated))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setSuspending(false)
+    }
+  }
+
   async function restartSelectedSession() {
     if (!selected || restarting) {
       return
@@ -9042,6 +9087,8 @@ function App() {
       selected.provider === 'claude' ||
       selected.executionMode !== 'sdk' ||
       selected.status !== 'idle' ||
+      selected.suspended === true ||
+      suspending ||
       !window.confirm(
         `Move "${selected.title}" to tmux?\n\nThe Copilot SDK process will disconnect and the same session will resume in a tmux window.`,
       )
@@ -9809,9 +9856,20 @@ function App() {
             <button
               aria-label="Move session to tmux"
               className="icon-button"
-              disabled={movingToTmux || selected.status !== 'idle'}
+              disabled={
+                movingToTmux ||
+                selected.status !== 'idle' ||
+                // Migrating builds a live terminal owner, which is the one
+                // thing a suspended session is not supposed to have.
+                selected.suspended === true ||
+                suspending
+              }
               onClick={() => void moveSelectedSessionToTmux()}
-              title="Move this Copilot session to tmux"
+              title={
+                selected.suspended
+                  ? 'Resume the session before moving it to tmux'
+                  : 'Move this Copilot session to tmux'
+              }
               type="button"
             >
               <SquareTerminal size={18} />
@@ -9819,9 +9877,32 @@ function App() {
           ) : null}
           {selected ? (
             <button
+              aria-label={
+                selected.suspended ? 'Resume session' : 'Suspend session'
+              }
+              aria-pressed={selected.suspended ? true : undefined}
+              className={`icon-button${selected.suspended ? ' icon-button--active' : ''}`}
+              disabled={
+                suspending || (!selected.suspended && selected.status !== 'idle')
+              }
+              onClick={() => void toggleSelectedSessionSuspended()}
+              title={
+                selected.suspended
+                  ? 'Start this session up again'
+                  : 'Keep this session but stop what is running for it'
+              }
+              type="button"
+            >
+              {selected.suspended ? <Play size={17} /> : <Pause size={17} />}
+            </button>
+          ) : null}
+          {selected ? (
+            <button
               aria-label="Restart session"
               className="icon-button"
-              disabled={restarting || selected.status !== 'idle'}
+              disabled={
+                restarting || selected.suspended || selected.status !== 'idle'
+              }
               onClick={() => void restartSelectedSession()}
               type="button"
             >
@@ -9832,7 +9913,9 @@ function App() {
             <button
               aria-label="Clear conversation"
               className="icon-button"
-              disabled={clearing || selected.status !== 'idle'}
+              disabled={
+                clearing || selected.suspended || selected.status !== 'idle'
+              }
               onClick={() => void clearSelectedConversation()}
               type="button"
             >
@@ -10121,12 +10204,19 @@ function App() {
               <div className="composer-text-panel">
                 <textarea
                   aria-label="Message"
-                  disabled={sending}
+                  // A suspended session has nothing running to send to. The
+                  // conversation stays here to be read; writing to it is what
+                  // resuming is for.
+                  disabled={sending || selected.suspended === true}
                   onChange={(event) => {
                     setComposer(event.target.value)
                   }}
                   onKeyDown={composerKeyDown}
-                  placeholder={`Message agent on ${selected.computerName}…`}
+                  placeholder={
+                    selected.suspended
+                      ? 'Suspended · resume to send'
+                      : `Message agent on ${selected.computerName}…`
+                  }
                   ref={composerRef}
                   rows={1}
                   value={composer}

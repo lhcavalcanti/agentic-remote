@@ -59,6 +59,18 @@ export interface TerminalSessionController {
     clearState: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
+  /** Ends the window running a session without forgetting the session. */
+  /**
+   * Ends the session's runtime.
+   *
+   * `confirm` runs immediately before anything is killed, and inside whatever
+   * serialization the controller uses, so a caller can refuse a teardown that
+   * stopped being safe while the owner was being looked up.
+   */
+  stop?(
+    sessionId: string,
+    confirm?: () => void | Promise<void>,
+  ): Promise<boolean>
   pendingPermission?(sessionId: string): Promise<PendingPermission | undefined>
   replyPermission?(
     sessionId: string,
@@ -276,6 +288,105 @@ export class TmuxTerminalSessionController
       }
       return true
     })
+  }
+
+  async stop(
+    sessionId: string,
+    confirm?: () => void | Promise<void>,
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        // Already gone: the caller wanted nothing running for this session,
+        // and nothing is.
+        //
+        // Discovery answers with nothing when it fails as well as when there
+        // is nothing, and taking a failed look for proof recorded a session as
+        // suspended while its terminal was still running. tmux is asked
+        // directly, and only a server that is not there, or a pane list that
+        // holds nothing for this session, settles it.
+        return this.noPaneRemains()
+      }
+      // Confirmation is the last thing awaited. Anything after it -- even
+      // looking the owner up again -- is another moment in which somebody at
+      // the terminal can start a turn or detach a task, and the pane would
+      // then go down on the strength of a check that is already out of date.
+      await confirm?.()
+      // The pane is named by its id, and tmux is asked to compare the process
+      // itself before killing it, in one command. Reading the pid here and
+      // killing on the strength of it would put the same gap back: a pane
+      // respawned in between keeps its id, and the kill would take whatever
+      // is running in it now.
+      //
+      // Killing the window rather than the pane would take any pane beside
+      // it, which belongs to whoever split it there.
+      // The pane's root is what tmux can compare, but it is not always the
+      // session: Copilot can run beneath a persistent shell, exit while
+      // confirmation is running, and leave that same shell starting something
+      // else. The root would still match and the kill would take work that has
+      // nothing to do with this session.
+      //
+      // Ended by signalling the process that is the session, not by naming a
+      // pane. No arrangement of tmux commands is atomic here -- a target is
+      // expanded before the condition runs, and the condition finishes before
+      // the consequent begins -- so any of them can act on a pane that has
+      // been respawned or handed to something else in between.
+      //
+      // A signal has no such gap. The kernel either delivers it to that exact
+      // process or reports that it is gone, and nothing else can inherit its
+      // identity. A pane whose root this was ends with it; one that was only
+      // hosting it carries on, which is somebody's shell and not ours to
+      // close.
+      try {
+        process.kill(owner.pid, 'SIGTERM')
+      } catch (error) {
+        // Already gone, which is the outcome being asked for.
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+          throw error
+        }
+      }
+      // The pane is torn down asynchronously, and a resume that raced it would
+      // find the old window and take it for the new one.
+      //
+      // This also answers a kill that tmux declined because the pane had
+      // changed hands: the owner is still there, the wait runs out, and the
+      // caller is told the window could not be closed rather than being told
+      // that somebody else's work was ended.
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        if (await this.paneStopped(owner)) {
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      return false
+    })
+  }
+
+  /**
+   * Whether this exact pane and this exact process are both gone.
+   *
+   * Asked of the two identities that were resolved before the teardown, not of
+   * the world in general. Process discovery answers with nothing when it fails
+   * as well as when there is nothing, and a surviving process that has become
+   * detached from its pane's ancestry drops out of it too -- either way a
+   * suspension was recorded while the runtime was still going, and a resume
+   * then started a second owner for the same session.
+   */
+  private async paneStopped(owner: {
+    pid: number
+    target: string
+  }): Promise<boolean> {
+    // The process first, and always. A pane that has gone says nothing about a
+    // process that outlived it or was moved out of it, and reporting that as
+    // stopped recorded a suspension over a runtime that was still going --
+    // after which a resume started a second owner for the same session.
+    if (processIsAlive(owner.pid)) {
+      return false
+    }
+    // The process has gone. Whether its pane is still there or not, the
+    // session has stopped: a shell that outlives what it ran is not this
+    // session running.
+    return true
   }
 
   async restart(sessionId: string, cwd: string): Promise<boolean> {
@@ -799,17 +910,61 @@ export class TmuxTerminalSessionController
     return (await this.owner(sessionId))?.target
   }
 
+  /**
+   * Whether tmux itself says nothing is left running this session.
+   *
+   * Process discovery returning nothing is not the same as nothing running:
+   * it answers with nothing when it cannot look. This asks the one thing that
+   * can say for certain, and refuses when even that cannot be reached.
+   */
+  private async noPaneRemains(): Promise<boolean> {
+    let listed = ''
+    try {
+      listed = (
+        await execFileAsync('tmux', [
+          'list-panes',
+          '-a',
+          '-F',
+          '#{pane_pid}',
+        ])
+      ).stdout
+    } catch (error) {
+      // No server at all means no pane, which is the ordinary way a
+      // suspension finishes. Anything else is a look that failed.
+      return noTmuxServer(error)
+    }
+    if (!listed.trim()) {
+      return true
+    }
+    // Panes exist, so the question is whether one of them is this session's.
+    // Process discovery answers with nothing when it cannot look, and asking
+    // it again here read that as absence: no owner found, so reported stopped,
+    // while the pane was still running. The pane list is asked instead, and it
+    // has already been read successfully above.
+    // Panes are running, and the only thing that could say this session is not
+    // among them is process discovery -- which can succeed in part, finding one
+    // session while a transient failure hides another. A list that is missing
+    // this session is therefore not proof, so nothing here settles it.
+    //
+    // Refusing costs a suspension that has to be asked for again. Accepting
+    // recorded a session as suspended while its terminal carried on, and a
+    // resume then started a second owner for it.
+    return false
+  }
+
   private async owner(
     sessionId: string,
-  ): Promise<{ pid: number; target: string } | undefined> {
+  ): Promise<{ pid: number; target: string; rootPid: number } | undefined> {
     const processInfo = (await this.activeProcesses()).find(
       (candidate) => candidate.sessionId === sessionId,
     )
     if (!processInfo) {
       return undefined
     }
-    const target = await tmuxTargetForPid(processInfo.pid)
-    return target ? { pid: processInfo.pid, target } : undefined
+    const pane = await tmuxTargetForPid(processInfo.pid)
+    return pane
+      ? { pid: processInfo.pid, target: pane.target, rootPid: pane.rootPid }
+      : undefined
   }
 
   private activeProcesses(): ReturnType<typeof findActiveCopilotProcesses> {
@@ -1644,7 +1799,30 @@ async function waitForPaneText(
   return false
 }
 
-async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
+/** Whether a tmux command failed because there is no server left to ask. */
+
+function noTmuxServer(error: unknown): boolean {
+  const failure = error as { stderr?: unknown }
+  // Only tmux's own "there is nothing to ask" diagnostics. Treating every
+  // exit status of 1 as absence also swallowed a socket that could not be
+  // reached or read, and stopping then reported success without having killed
+  // anything, while the process it was meant to end carried on.
+  return (
+    typeof failure.stderr === 'string' &&
+    // tmux uses "error connecting to" for a socket it cannot reach at all and
+    // for one it is not allowed to open, and only the first means there is
+    // nothing there. Reading both as absence let `stop` report success
+    // without killing anything.
+    (/no server running/i.test(failure.stderr) ||
+      /error connecting to .*\(no such file or directory\)/i.test(
+        failure.stderr,
+      ))
+  )
+}
+
+async function tmuxTargetForPid(
+  pid: number,
+): Promise<{ target: string; rootPid: number } | undefined> {
   let output = ''
   try {
     output = (
@@ -1652,11 +1830,24 @@ async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
         'list-panes',
         '-a',
         '-F',
-        '#{pane_pid}\t#{session_name}:#{window_index}.#{pane_index}',
+        // The pane id rather than `session:window.pane`. The index form is
+        // recomputed whenever panes are moved, closed, or renumbered, so a
+        // target resolved before an await could name a different pane by the
+        // time it is used -- and killing it would take somebody else's work.
+        // A pane id belongs to one pane for as long as it exists.
+        '#{pane_pid}\t#{pane_id}',
       ])
     ).stdout
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined
+    }
+    // Killing the last pane in the last session ends tmux itself, and the
+    // next lookup then fails rather than reporting nothing. That is the
+    // ordinary way a suspension finishes, so it reads as absence: raising here
+    // reported failure for work that had already succeeded, leaving the
+    // session never recorded as suspended.
+    if (noTmuxServer(error)) {
       return undefined
     }
     throw error
@@ -1664,11 +1855,34 @@ async function tmuxTargetForPid(pid: number): Promise<string | undefined> {
   const ancestors = await processAncestors(pid)
   for (const line of output.split('\n')) {
     const [panePid, target] = line.split('\t', 2)
-    if (target && ancestors.has(Number.parseInt(panePid, 10))) {
-      return target
+    const root = Number.parseInt(panePid, 10)
+    if (target && ancestors.has(root)) {
+      // Both: the pane is named by its id, and the process tmux compares
+      // against is the pane's own root. A session started beneath a shell or a
+      // wrapper is an ancestor away from that root, and comparing the Copilot
+      // process instead made tmux decline every kill.
+      return { target, rootPid: root }
     }
   }
   return undefined
+}
+
+/**
+ * Whether a process is still there to be ended.
+ *
+ * Signal 0 asks the kernel directly and returns without waiting, so this adds
+ * no moment between the last check and the teardown. Reading `/proc` here
+ * instead put an await after confirmation, and a turn started at the terminal
+ * inside it went down with the pane.
+ */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // Alive but not ours to signal is still alive.
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 async function processAncestors(pid: number): Promise<Set<number>> {

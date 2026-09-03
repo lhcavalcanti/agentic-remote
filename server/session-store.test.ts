@@ -26,6 +26,72 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it('keeps a suspended session in the list when nothing is running for it', async () => {
+    const { store } = await createStore()
+    await store.create(
+      {
+        id: 'resting-session',
+        cwd: '/tmp/resting-project',
+        title: 'Resting project',
+        updatedAt: '2026-07-22T00:00:01.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.setSuspended('resting-session', true)
+
+    // Discovery finds no process for it, which is the point. Reading that as
+    // closed would hide the session, and the only way to resume it is the
+    // button on the session itself.
+    await store.syncOpen([])
+
+    expect(store.get('resting-session')).toMatchObject({
+      isOpen: true,
+      suspended: true,
+    })
+  })
+
+  it('leaves a suspended session alone when recovering terminals', async () => {
+    const { directory, store } = await createStore()
+    await store.create(
+      {
+        id: 'terminal-session',
+        cwd: '/tmp/terminal-project',
+        title: 'Terminal project',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.create(
+      {
+        id: 'resting-session',
+        cwd: '/tmp/resting-project',
+        title: 'Resting project',
+        updatedAt: '2026-07-22T00:00:01.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    await store.setSuspended('resting-session', true)
+
+    const restored = new SessionStore(directory)
+    await restored.initialize()
+
+    // Starting a suspended session back up at boot is the opposite of what
+    // suspending it asked for.
+    expect(restored.terminalRecoverySessions()).toEqual([
+      expect.objectContaining({ id: 'terminal-session' }),
+    ])
+    expect(restored.get('resting-session')).toMatchObject({ suspended: true })
+  })
+
   it('persists sessions and protects the state file', async () => {
     const { directory, store } = await createStore()
     await store.create({

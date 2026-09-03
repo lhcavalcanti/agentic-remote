@@ -481,6 +481,30 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return managedSession(session, computer)
   }
 
+  async suspendSession(
+    computerId: string,
+    sessionId: string,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.suspendSession(sessionId)
+        : await this.requireClient(computerId).suspendSession(sessionId)
+    return managedSession(session, computer)
+  }
+
+  async resumeSession(
+    computerId: string,
+    sessionId: string,
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.resumeSession(sessionId)
+        : await this.requireClient(computerId).resumeSession(sessionId)
+    return managedSession(session, computer)
+  }
+
   async restartSession(
     computerId: string,
     sessionId: string,

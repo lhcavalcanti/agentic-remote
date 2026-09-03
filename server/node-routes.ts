@@ -353,6 +353,20 @@ export async function registerNodeRoutes(
       )
 
       node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/suspend',
+        async (request) => ({
+          session: await service.suspendSession(request.params.sessionId),
+        }),
+      )
+
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/resume',
+        async (request) => ({
+          session: await service.resumeSession(request.params.sessionId),
+        }),
+      )
+
+      node.post<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/tmux',
         async (request) => ({
           session: await service.moveToTerminal(request.params.sessionId),

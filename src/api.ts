@@ -359,6 +359,34 @@ export async function clearConversation(
   return response.session
 }
 
+export async function suspendSession(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/suspend`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
+  return response.session
+}
+
+export async function resumeSession(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/resume`,
+    {
+      method: 'POST',
+      body: '{}',
+    },
+  )
+  return response.session
+}
+
 export async function restartSession(
   computerId: string,
   sessionId: string,

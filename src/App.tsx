@@ -2355,6 +2355,7 @@ function AppSettingsDialog({
             ['Previous session', 'Alt + \u2191'],
             ['Open or close knowledge', 'Alt + K'],
             ['Expand or minimize knowledge', 'Alt + Shift + K'],
+            ['View background tasks', 'Alt + T'],
             ['Recall previous message', '\u2191'],
           ].map(([label, keys]) => (
             <li key={label}>
@@ -6174,6 +6175,14 @@ function App() {
         } else {
           toggleKnowledgePanel()
         }
+        return
+      }
+      // The status line is the usual way in, but it is a display preference and
+      // can be turned off while background tasks keep running, so the panel
+      // needs a way in that does not depend on what is on screen.
+      if (event.code === 'KeyT' && !event.shiftKey) {
+        event.preventDefault()
+        openBackgroundTasks()
       }
     }
   })
@@ -7483,8 +7492,21 @@ function App() {
     setMovingSessionFolder(true)
     setError(undefined)
     try {
+      // A knowledge root may sit anywhere the user can read, but a session
+      // working directory is where an agent executes and stays confined to the
+      // configured roots. `/cwd` reaches the CLI unchecked, so the boundary has
+      // to be enforced here, on the computer that owns the root.
+      const target = (
+        await validateSessionDirectory(selected.computerId, browsedFolderPath)
+      ).trim()
+      if (!target) {
+        throw new Error('The selected folder could not be validated')
+      }
+      if (/[\r\n]/.test(target)) {
+        throw new Error('Folder paths cannot contain line breaks')
+      }
       const updated = await executeCommand(selected.computerId, selected.id, {
-        command: `/cwd ${browsedFolderPath}`,
+        command: `/cwd ${target}`,
       })
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {

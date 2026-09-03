@@ -5565,6 +5565,37 @@ describe('AgentService deletion', () => {
     ).toBeUndefined()
   })
 
+  it('carries the checklist rows that were chosen', () => {
+    const form: UserInputForm = {
+      fields: [
+        {
+          name: 'operations',
+          title: 'Wiki operations to authorize',
+          type: 'array',
+          required: false,
+          default: ['confirm_all'],
+          options: [
+            { value: 'confirm_all', label: 'Confirm all (Recommended)' },
+            { value: 'child', label: 'Upsert child page' },
+            { value: 'parent', label: 'Upsert parent index' },
+            { value: 'cancel', label: 'Cancel' },
+          ],
+        },
+      ],
+    }
+
+    // What has to be pressed depends on what the list is showing, which is
+    // read from the screen, so what travels is only what was chosen.
+    expect(terminalFormSteps(form, { operations: ['confirm_all'] })).toEqual([
+      { kind: 'checklist', optionCount: 5, selected: [0] },
+    ])
+    expect(terminalFormSteps(form, { operations: ['child', 'parent'] })).toEqual(
+      [{ kind: 'checklist', optionCount: 5, selected: [1, 2] }],
+    )
+
+    expect(terminalFormSteps(form, { operations: ['nope'] })).toBeUndefined()
+  })
+
   it('recovers and answers a persisted SDK ask-user request', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

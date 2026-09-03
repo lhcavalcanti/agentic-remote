@@ -847,7 +847,40 @@ export function terminalFormSteps(
   for (const field of form.fields) {
     const value = values[field.name]
     if (field.type === 'array') {
-      return undefined
+      const options = field.options
+      if (!options || options.length === 0) {
+        return undefined
+      }
+      const chosen = Array.isArray(value) ? value.map(String) : undefined
+      if (!chosen) {
+        return undefined
+      }
+      const wanted = new Set(chosen)
+      if (
+        [...wanted].some(
+          (entry) => !options.some((option) => String(option.value) === entry),
+        )
+      ) {
+        // The reader picked something this checklist does not offer, so the
+        // rows cannot be walked with any confidence about where they are.
+        return undefined
+      }
+      // What the reader chose, as rows. Which of them have to be pressed
+      // depends on what the checklist is showing, which only the screen knows.
+      const selected: number[] = []
+      options.forEach((option, index) => {
+        if (wanted.has(String(option.value))) {
+          selected.push(index)
+        }
+      })
+      steps.push({
+        kind: 'checklist',
+        // The CLI adds a freeform row under the options, as it does for a
+        // single-choice list, and it is one of the rows on screen.
+        optionCount: options.length + 1,
+        selected,
+      })
+      continue
     }
     if (field.type === 'boolean') {
       if (typeof value !== 'boolean') {

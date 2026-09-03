@@ -13,6 +13,7 @@ import {
   paneShowsText,
   parseTerminalFormActiveField,
   parseTerminalPermission,
+  terminalChecklistState,
   submitTerminalForm,
   terminalFormCommitKeys,
   parseTerminalUpdateNotice,
@@ -937,5 +938,36 @@ describe('submitTerminalForm', () => {
     await expect(
       submitTerminalForm(async () => openForm, async () => {}, 10),
     ).resolves.toBe(false)
+  })
+})
+
+describe('terminalChecklistState', () => {
+  // Captured from a real Copilot CLI checklist, cursor on the ticked row.
+  const pane = [
+    ' Wiki operations to authorize:',
+    ' Confirm both page updates, or select only one operation.',
+    ' ❯ ✓ Confirm all (Recommended)',
+    '   • Upsert experiment child page and upload charts',
+    '   • Upsert Experiments parent index',
+    '   • Cancel',
+    '   • Other (type your answer)',
+    '',
+    ' ↑/↓ select · space toggle · enter accept · esc cancel',
+  ].join('\n')
+
+  it('reads which rows the list is showing as ticked', () => {
+    // The freeform row is one of them, so a four-option list has five rows.
+    expect(terminalChecklistState(pane, 5)).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+    ])
+  })
+
+  it('refuses a screen that is not showing a list of that size', () => {
+    expect(terminalChecklistState(pane, 3)).toBeUndefined()
+    expect(terminalChecklistState('❯ \n', 4)).toBeUndefined()
   })
 })

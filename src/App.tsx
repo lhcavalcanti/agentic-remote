@@ -5923,8 +5923,13 @@ function App() {
     () =>
       onShellDeepLink((target) => {
         historyIntentRef.current = 'push'
+        // A link written before a clear names a session that is gone, exactly
+        // as a Back entry can, so it follows the same lineage rather than
+        // falling through to whichever session happens to be first.
         setSelectedKey(
-          sessionKey({ computerId: target.computerId, id: target.sessionId }),
+          followReplacementsRef.current(
+            sessionKey({ computerId: target.computerId, id: target.sessionId }),
+          ),
         )
         setSidebarOpen(false)
       }),
@@ -6870,17 +6875,22 @@ function App() {
           }
           return reconciled
         }
+        const reconciled = reconcile(sessionsRef.current)
         setSessions(reconcile)
-        claimReplacedSessions(reconcile(sessionsRef.current))
+        claimReplacedSessions(reconciled)
         setComputers(loadedComputers)
         // A live removal can arrive before this list does, so the address may
         // name a session that has already been replaced, possibly more than
         // once. Falling through to `sessions[0]` would open something the
         // reader never asked for.
+        // Resolved and looked for in the reconciled list, not the response.
+        // A clear announced while this request was in flight leaves the
+        // replacement out of the response entirely, and searching the stale
+        // list finds nothing and falls through to an unrelated conversation.
         const requestedKey = initialUrlSelection.current
           ? followReplacements(initialUrlSelection.current)
           : undefined
-        const requested = loadedSessions.find(
+        const requested = reconciled.find(
           (session) => sessionKey(session) === requestedKey,
         )
         setSelectedKey(
@@ -6888,9 +6898,15 @@ function App() {
             current ||
             (requested
               ? sessionKey(requested)
-              : loadedSessions[0]
-                ? sessionKey(loadedSessions[0])
-                : undefined),
+              : // The replacement was promised by a removal but its arrival
+                // has not been delivered yet. Holding the key it will have
+                // keeps the reader on their own conversation instead of
+                // opening someone else's while it lands.
+                requestedKey && pendingReplacements.current.has(requestedKey)
+                ? requestedKey
+                : reconciled[0]
+                  ? sessionKey(reconciled[0])
+                  : undefined),
         )
       })
       .catch((caught: unknown) => {

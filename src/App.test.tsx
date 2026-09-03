@@ -6101,6 +6101,70 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('waits for the promised replacement instead of opening another session', async () => {
+    // The address names a session that is cleared while the first list request
+    // is still in flight. The response cannot contain the replacement yet, so
+    // searching it finds nothing; falling through opens an unrelated
+    // conversation the reader never asked for.
+    window.history.replaceState(
+      {},
+      '',
+      '/?computer=computer-1&session=session-1',
+    )
+    const other: ManagedSession = {
+      ...session,
+      id: 'session-unrelated',
+      title: 'Unrelated chat',
+      messages: [],
+    }
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      title: 'Followed on',
+      messages: [],
+    }
+    let deliver: (value: ManagedSession[]) => void = () => {}
+    vi.mocked(listSessions).mockReturnValue(
+      new Promise<ManagedSession[]>((resolve) => {
+        deliver = resolve
+      }),
+    )
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === replacement.id ? replacement : other,
+    )
+
+    render(<App />)
+    await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+
+    // The clear is announced before the list arrives.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1',
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      // Only the unrelated session: the replacement has not been delivered.
+      deliver([other])
+    })
+    // Its arrival comes after the list has already settled.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item--active')?.textContent,
+      ).toContain('Followed on'),
+    )
+  })
+
   it('follows a clear when the reader goes back to the old session', async () => {
     // The clear happens while another session is open, so nothing moves the
     // selection at the time. Back then reaches an address naming a session

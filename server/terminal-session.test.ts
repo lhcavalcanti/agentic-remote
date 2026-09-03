@@ -502,6 +502,17 @@ describe('paneShowsText', () => {
     expect(paneShowsText('> [Pasted text #1 +40 lines]', huge)).toBe(true)
   })
 
+  it('recognises a placeholder for a long paste ending in a short line', () => {
+    // Only the final line is looked for on the pane, and a long paste can end
+    // in a short one. Judged by that line alone the placeholder this send
+    // really did produce went unrecognised, the paste was left behind, and the
+    // retry put a second copy in the prompt.
+    const content = `${'a very long message '.repeat(60)}\nok`
+    expect(
+      paneShowsText('> [Pasted text #1 +40 lines]', 'ok', 0, content),
+    ).toBe(true)
+  })
+
   it('does not report the prompt put back when the keystroke never arrived', async () => {
     // tmux cannot deliver to a pane that is not there. Swallowing that and
     // reporting the paste taken back is what left it to be concatenated with

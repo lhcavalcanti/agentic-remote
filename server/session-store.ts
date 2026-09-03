@@ -448,12 +448,36 @@ export class SessionStore {
     promptId: string,
     content: string,
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (stored) => {
-      const queue = stored.queuedPrompts || []
-      stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
-      stored.queuedCount = stored.queuedPrompts.length
-      stored.failedPrompt = { content, failedAt: new Date().toISOString() }
-    })
+    // Put back if the write does not land. The caller reports the send as
+    // unrecovered when this rejects, but the queue entry had already gone from
+    // memory and the prompt was already recorded as needing recovery, so the
+    // snapshot handed back described a prompt the reader owned while the copy
+    // on disk was still queued -- and a restart delivered it beside the draft.
+    const existing = this.state.sessions[sessionId]
+    if (!existing) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    const previousQueue = existing.queuedPrompts
+    const previousCount = existing.queuedCount
+    const previousFailed = existing.failedPrompt
+    const previousRevision = existing.revision
+    try {
+      return await this.mutate(sessionId, (stored) => {
+        const queue = stored.queuedPrompts || []
+        stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
+        stored.queuedCount = stored.queuedPrompts.length
+        stored.failedPrompt = { content, failedAt: new Date().toISOString() }
+      })
+    } catch (error) {
+      const current = this.state.sessions[sessionId]
+      if (current) {
+        current.queuedPrompts = previousQueue
+        current.queuedCount = previousCount
+        current.failedPrompt = previousFailed
+        current.revision = previousRevision
+      }
+      throw error
+    }
   }
 
   async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {

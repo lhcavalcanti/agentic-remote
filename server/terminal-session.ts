@@ -726,7 +726,11 @@ export class TmuxTerminalSessionController
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
       const paneBeforePaste = await capturePane(target)
-      const alreadyShown = paneEvidenceCount(paneBeforePaste, confirmation)
+      const alreadyShown = paneEvidenceCount(
+        paneBeforePaste,
+        confirmation,
+        content,
+      )
       // Ctrl+U would take this with it, so whether the composer was already
       // holding something has to be settled before the paste adds to it.
       const composerWasHolding = composerHoldsText(paneBeforePaste)
@@ -747,7 +751,15 @@ export class TmuxTerminalSessionController
         '-t',
         target,
       ])
-      if (!(await waitForPaneText(target, confirmation, alreadyShown))) {
+      if (
+        !(await waitForPaneText(
+          target,
+          confirmation,
+          alreadyShown,
+          40,
+          content,
+        ))
+      ) {
         // The prompt never showed the message, so pressing Enter would send
         // whatever it does hold and still be reported as delivered.
         //
@@ -766,6 +778,7 @@ export class TmuxTerminalSessionController
           confirmation,
           alreadyShown,
           20,
+          content,
         )
         // Only what this paste put there is taken back. If the prompt never
         // gained it, or the composer was holding something typed at the
@@ -1621,7 +1634,11 @@ async function copilotCommand(
  * fall inside a word. The composer also adds a border to each wrapped line.
  * Strip those line edges and whitespace before comparing the visible text.
  */
-export function paneEvidenceCount(pane: string, expected: string): number {
+export function paneEvidenceCount(
+  pane: string,
+  expected: string,
+  pasted = expected,
+): number {
   const compact = (value: string) => value.replace(/\s+/g, '')
   const wanted = compact(expected)
   if (!wanted) {
@@ -1644,7 +1661,13 @@ export function paneEvidenceCount(pane: string, expected: string): number {
   // so one is evidence only for a send big enough to have produced one.
   // Counting them for every send let an attached user's own paste stand in for
   // this one, and Enter would then submit whatever they had written.
-  if (compact(expected).length <= PASTE_ECHO_LIMIT) {
+  //
+  // Measured against the whole send rather than the line being matched. Only
+  // the final line is looked for on the pane, and a long multi-line paste can
+  // end in a short one: judged by that line alone, the placeholder it really
+  // did produce went unrecognised and the paste was left behind to be sent
+  // twice.
+  if (compact(pasted).length <= PASTE_ECHO_LIMIT) {
     return found
   }
   return found + (pane.match(/\[Pasted text/g) || []).length
@@ -1661,11 +1684,12 @@ export function paneShowsText(
   pane: string,
   expected: string,
   before = 0,
+  pasted = expected,
 ): boolean {
   if (!expected.replace(/\s+/g, '')) {
     return true
   }
-  return paneEvidenceCount(pane, expected) > before
+  return paneEvidenceCount(pane, expected, pasted) > before
 }
 
 /**
@@ -1694,16 +1718,34 @@ export async function clearPastedPrompt(
     // leaves the paste to be concatenated with the retry.
     return false
   }
-  await new Promise((resolve) => setTimeout(resolve, 30))
-  // The composer is read once more because the reading that authorised this
-  // clear is a moment old, and a terminal user can type inside that moment.
-  // A composer that did not come back empty is holding something this clear
-  // did not account for, and the caller must not report it as put back.
-  const after = await capturePane(target).catch(() => '')
-  if (!after) {
-    return false
+  // The composer is read again because the reading that authorised this clear
+  // is a moment old, and a terminal user can type inside that moment.
+  //
+  // Emptiness is the test, not the absence of somebody else's writing.
+  // `composerHoldsOtherText` discounts the pasted prompt on purpose, so a
+  // composer that Ctrl+U never reached -- still holding exactly that prompt --
+  // read as successfully cleared, and the caller told the sender to try again
+  // while the original text sat there waiting to be joined to it.
+  //
+  // Ctrl+U is not instant, so this is given the same moment to take effect
+  // that the paste itself is given to appear.
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    const after = await capturePane(target).catch(() => undefined)
+    if (after === undefined) {
+      return false
+    }
+    if (!composerHoldsText(after)) {
+      return true
+    }
+    // Something is in there. If it is not this paste, it is somebody's
+    // writing that arrived after the clear was authorised, and waiting for it
+    // to disappear would be waiting for them to delete it themselves.
+    if (composerHoldsOtherText(paneBefore, after, pasted)) {
+      return false
+    }
   }
-  return !composerHoldsOtherText(paneBefore, after, pasted)
+  return false
 }
 
 /**
@@ -1862,9 +1904,10 @@ async function waitForPaneText(
   expected: string,
   before: number,
   attempts = 40,
+  pasted = expected,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (paneShowsText(await capturePane(target), expected, before)) {
+    if (paneShowsText(await capturePane(target), expected, before, pasted)) {
       return true
     }
     await new Promise((resolve) => setTimeout(resolve, 50))

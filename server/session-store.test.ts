@@ -584,6 +584,47 @@ describe('SessionStore', () => {
     expect(store.get('stopped')?.isOpen).toBe(false)
   })
 
+  it('leaves the queue alone when recording a failed prompt cannot be written', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-failed',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+    await store.enqueuePrompt('session-failed', {
+      id: 'prompt-1',
+      content: 'Deploy it',
+      createdAt: '2026-07-22T00:00:01.000Z',
+    })
+    const queued = store.get('session-failed')?.queuedPrompts?.[0]
+    expect(queued).toBeDefined()
+
+    const store_ = store as unknown as { persist: () => Promise<void> }
+    const originalPersist = store_.persist.bind(store_)
+    store_.persist = async () => {
+      throw new Error('disk full')
+    }
+
+    // The caller reports the send as unrecovered when this rejects. Leaving
+    // the queue entry removed and the prompt recorded as needing recovery
+    // handed the reader a draft while the queued copy was still on disk, and
+    // a restart delivered it beside the draft.
+    await expect(
+      store.setFailedPrompt('session-failed', queued!.id, 'Deploy it'),
+    ).rejects.toThrow(/disk full/)
+
+    store_.persist = originalPersist
+    const after = store.get('session-failed')
+    expect(after?.failedPrompt).toBeUndefined()
+    expect(after?.queuedPrompts?.map((prompt) => prompt.id)).toEqual([
+      queued!.id,
+    ])
+    expect(after?.queuedCount).toBe(1)
+  })
+
   it('persists every mutation in a burst that shares one write', async () => {
     const { directory, store } = await createStore()
     await store.create({

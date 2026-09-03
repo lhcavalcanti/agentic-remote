@@ -4076,3 +4076,20 @@ button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Reveals the history a long session keeps out of the first render. */
+.transcript-earlier {
+  align-self: center;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.transcript-earlier:hover {
+  color: var(--text);
+}

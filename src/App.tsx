@@ -3316,13 +3316,62 @@ const TranscriptMessage = memo(function TranscriptMessage({
  * composer is typed into, so it is kept out of that render. Rebuilding a few
  * thousand rows for every keystroke is what made typing lag.
  */
+/**
+ * How much history is rendered at once. Everything older is kept in memory and
+ * revealed on request, so a long session does not pay for its whole past on
+ * every switch.
+ */
+const RENDERED_HISTORY = 250
+
 const ConversationMessages = memo(function ConversationMessages({
-  messages,
+  messages: allMessages,
   currentToolId,
+  showAll,
+  onShowAll,
 }: {
   messages: ChatMessage[]
   currentToolId?: string
+  // Held by the conversation rather than here. A snapshot refresh installs
+  // session summaries, which carry no messages on purpose, so this component
+  // is unmounted and mounted again around every reconnect and every return to
+  // the tab. State of its own would not survive that, and a transcript the
+  // reader had opened would close under them.
+  showAll: boolean
+  onShowAll: () => void
 }) {
+  const cut = showAll
+    ? 0
+    : Math.max(0, allMessages.length - RENDERED_HISTORY)
+  const tail = cut ? allMessages.slice(cut) : allMessages
+  // Some rows from before the cut have to come with it. An activity that is
+  // still running is one: the separate activity indicator is suppressed while
+  // one exists, so dropping the row leaves nothing on screen saying anything
+  // is happening. The parent of a visible child is another, or the child is
+  // lifted out of the group it belongs to and read as work of its own.
+  const carried: ChatMessage[] = []
+  if (cut > 0) {
+    const wanted = new Set<string>()
+    for (const message of tail) {
+      if (message.role === 'activity' && message.activityGroupId) {
+        wanted.add(message.activityGroupId)
+      }
+    }
+    for (let index = cut - 1; index >= 0; index -= 1) {
+      const message = allMessages[index]
+      if (message.role !== 'activity') {
+        continue
+      }
+      if (message.activityStatus === 'running' || wanted.has(message.id)) {
+        carried.unshift(message)
+        // Groups nest, so the parent's own parent is needed as well.
+        if (message.activityGroupId) {
+          wanted.add(message.activityGroupId)
+        }
+      }
+    }
+  }
+  const hidden = cut - carried.length
+  const messages = carried.length ? [...carried, ...tail] : tail
   const activityMessages = new Map(
     messages
       .filter((message) => message.role === 'activity')
@@ -3394,6 +3443,18 @@ const ConversationMessages = memo(function ConversationMessages({
     )
   }
   const rendered: ReactNode[] = []
+  if (hidden > 0) {
+    rendered.push(
+      <button
+        className="transcript-earlier"
+        key="show-earlier"
+        onClick={onShowAll}
+        type="button"
+      >
+        {`Show ${hidden} earlier message${hidden === 1 ? '' : 's'}`}
+      </button>,
+    )
+  }
   for (const message of messages) {
     if (message.role === 'activity') {
       if (groupedActivityIds.has(message.id)) {
@@ -5392,6 +5453,19 @@ function App() {
   const migrateSessionStateRef = useRef<(from: string, to: string) => void>(
     () => {},
   )
+  // Which transcripts the reader has opened past the window, by session.
+  const [expandedTranscripts, setExpandedTranscripts] = useState<
+    Record<string, boolean>
+  >({})
+  // Stable per session. A fresh closure on every render defeats the memo the
+  // transcript relies on, so every keystroke in the composer would rebuild
+  // every row and walk the hidden history again.
+  const expandSelectedTranscript = useCallback(() => {
+    if (!selectedKey) {
+      return
+    }
+    setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
+  }, [selectedKey])
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -9102,6 +9176,13 @@ function App() {
           ) : (
             <ConversationMessages
               currentToolId={currentTool?.id}
+              onShowAll={expandSelectedTranscript}
+              showAll={expandedTranscripts[sessionKey(selected)] === true}
+              // Identity is the computer and the session together: two
+              // computers can hand out the same provider session id, and
+              // keying on the id alone reuses this component between them,
+              // carrying an expanded transcript across.
+              key={sessionKey(selected)}
               messages={selected.messages}
             />
           )}

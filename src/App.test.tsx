@@ -1841,6 +1841,125 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument()
   })
 
+  it('keeps a running activity visible past the window', async () => {
+    // The activity indicator is suppressed while a tool is running, so a
+    // running row that the window cuts off leaves nothing on screen saying
+    // anything is happening at all.
+    const messages = [
+      {
+        id: 'running-tool',
+        role: 'activity' as const,
+        content: 'Bash\n$ pnpm dev',
+        createdAt: '2026-07-22T00:00:00.000Z',
+        activityStatus: 'running' as const,
+      },
+      ...Array.from({ length: 400 }, (_, index) => ({
+        id: `later-${index}`,
+        role: 'assistant' as const,
+        content: `later line ${index}`,
+        createdAt: new Date(Date.UTC(2026, 6, 22, 1, 0, index)).toISOString(),
+      })),
+    ]
+    const busy = { ...session, activity: 'Working', messages }
+    vi.mocked(listSessions).mockResolvedValue([busy])
+    vi.mocked(getSession).mockResolvedValue(busy)
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    // The oldest ordinary message is behind the window, as intended.
+    expect(screen.queryByText('later line 0')).not.toBeInTheDocument()
+    // The running tool is not.
+    expect(await screen.findByText('$ pnpm dev')).toBeInTheDocument()
+  })
+
+  it('keeps an expanded transcript across a snapshot refresh', async () => {
+    // A refresh installs session summaries first, and those carry no messages
+    // on purpose, so the transcript is unmounted and mounted again around
+    // every reconnect. Expansion has to outlive that or it closes under the
+    // reader whenever the tab comes back.
+    const long = {
+      ...session,
+      messages: Array.from({ length: 400 }, (_, index) => ({
+        id: `line-${index}`,
+        role: 'assistant' as const,
+        content: `line ${index}`,
+        createdAt: new Date(Date.UTC(2026, 6, 22, 0, 0, index)).toISOString(),
+      })),
+    }
+    vi.mocked(listSessions).mockResolvedValue([long])
+    vi.mocked(getSession).mockResolvedValue(long)
+    render(<App />)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Show \d+ earlier messages/ }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /earlier messages/ }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getByText('line 0')).toBeInTheDocument()
+
+    // The summary with no messages lands, then the detail comes back.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...long, messages: [] },
+        }),
+      } as MessageEvent)
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: long }),
+      } as MessageEvent)
+    })
+
+    expect(await screen.findByText('line 0')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /earlier messages/ }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not carry an expanded transcript into the next session', async () => {
+    // The window is what bounds rendering cost. It belongs to the session being
+    // read, so expanding one must not hand the next session an open transcript.
+    const longMessages = (prefix: string) =>
+      Array.from({ length: 400 }, (_, index) => ({
+        id: `${prefix}-${index}`,
+        role: 'assistant' as const,
+        content: `${prefix} line ${index}`,
+        createdAt: new Date(Date.UTC(2026, 6, 22, 0, 0, index)).toISOString(),
+      }))
+    const longFirst = { ...session, messages: longMessages('first') }
+    const longSecond = { ...secondSession, messages: longMessages('second') }
+    vi.mocked(listSessions).mockResolvedValue([longFirst, longSecond])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === longSecond.id ? longSecond : longFirst,
+    )
+    render(<App />)
+
+    const expand = await screen.findByRole('button', {
+      name: /Show \d+ earlier messages/,
+    })
+    fireEvent.click(expand)
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /earlier messages/ }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getByText('first line 0')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+
+    // Back to a bounded transcript: the oldest message is behind the control
+    // again rather than already on screen.
+    expect(
+      await screen.findByRole('button', { name: /Show \d+ earlier messages/ }),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('second line 0')).not.toBeInTheDocument()
+  })
+
   it('preserves a separate composer draft for each session', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>

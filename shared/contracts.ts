@@ -276,6 +276,8 @@ export type ServerEvent =
        * restored.
        */
       failedPrompt?: string
+      /** Identifies the same failure the session snapshot carries. */
+      failedPromptAt?: string
     }
 
 export type HubEvent =
@@ -304,6 +306,8 @@ export type HubEvent =
       message: string
       /** See the node event above. */
       failedPrompt?: string
+      /** See the node event above. */
+      failedPromptAt?: string
     }
 
 export interface CreateSessionInput {

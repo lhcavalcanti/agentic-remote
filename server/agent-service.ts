@@ -2537,8 +2537,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Clearing on the way in meant a retry that then failed left the reader
     // with an empty composer and the server with no copy either.
     const sent = await this.sendAdmitted(sessionId, content, enqueue)
-    await this.acknowledgeFailedPrompt(sessionId, content, acknowledgedFailure)
-    return sent
+    // The snapshot above still carries the failure that this send answers, so
+    // whatever comes back from clearing it is what the caller is given. Left
+    // as it was, the browser dropped its own copy while every reader went on
+    // being told the prompt was still waiting to be handed back.
+    const settled = await this.acknowledgeFailedPrompt(
+      sessionId,
+      content,
+      acknowledgedFailure,
+    )
+    return settled ?? sent
   }
 
   private async sendAdmitted(
@@ -2841,10 +2849,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     submitted: string,
     acknowledged?: string,
-  ): Promise<void> {
+  ): Promise<SessionDetail | undefined> {
     const failed = this.store.get(sessionId)?.failedPrompt
     if (!failed) {
-      return
+      return undefined
     }
     // Only when this is the text going back out. A reader whose composer
     // already held something newer never saw the failed prompt, so it lives
@@ -2857,14 +2865,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       failed.content.trim() !== submitted.trim() &&
       acknowledged !== failed.failedAt
     ) {
-      return
+      return undefined
     }
-    await this.store.clearFailedPrompt(sessionId).catch(() => undefined)
+    // The store changes memory before it writes, so swallowing a failed write
+    // would report a marker as cleared that is still on disk, and start
+    // draining a queue a restart would find blocked again.
+    const cleared = await this.store.clearFailedPrompt(sessionId)
+    this.publish(cleared)
     // The marker was holding the queue shut. Nothing else will come back to
     // it, so the prompts it was blocking are started here.
-    if (this.store.get(sessionId)?.queuedPrompts?.length) {
+    if (cleared.queuedPrompts?.length) {
       void this.drainTerminalQueue(sessionId).catch(() => undefined)
     }
+    return cleared
   }
 
   async executeCommand(
@@ -2876,8 +2889,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const command = rawCommand.trim()
     // Answered only once the command has actually been taken, like a message.
     const ran = await this.runCommand(sessionId, command, enqueue)
-    await this.acknowledgeFailedPrompt(sessionId, command, acknowledgedFailure)
-    return ran
+    const settled = await this.acknowledgeFailedPrompt(
+      sessionId,
+      command,
+      acknowledgedFailure,
+    )
+    return settled ?? ran
   }
 
   private async runCommand(
@@ -4811,6 +4828,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           sessionId,
           message: error instanceof Error ? error.message : String(error),
           failedPrompt: next.content,
+          // The same identity the snapshot uses, so a client that sees both
+          // knows they are one failure rather than two.
+          failedPromptAt: session?.failedPrompt?.failedAt,
         })
         if (!recovered) {
           // Saying the prompt was taken off the queue while it may still be on

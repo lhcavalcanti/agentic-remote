@@ -1751,7 +1751,9 @@ export function composerHoldsOtherText(
   // Only the prompt marker and the placeholder are discounted here. Stray
   // punctuation is somebody's writing: a composer holding nothing but `...`
   // is still holding something, and Ctrl+U would take it.
-  return remainder.replace(/[>\u276f\s]/gu, '').length > 0
+  // Only the composer's own leading marker is dropped. Removing every one of
+  // these characters read a quote marker somebody typed as nothing at all.
+  return remainder.replace(/^[>\u276f]/u, '').replace(/\s/gu, '').length > 0
 }
 
 // Matched against composer text with its whitespace removed, because the

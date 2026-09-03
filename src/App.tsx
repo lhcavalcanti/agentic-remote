@@ -7177,6 +7177,7 @@ function App() {
             restoreFailedPromptRef.current(
               `${event.computerId || ''}:${event.sessionId}`,
               event.failedPrompt,
+              event.failedPromptAt,
             )
           }
           setError(event.message)
@@ -7342,6 +7343,15 @@ function App() {
       return
     }
     updateComposerDrafts([key], (current) => {
+      if (current[key] === content) {
+        // Already back in the composer, from before a reload. It is this
+        // failure's own text, so it counts as handed back rather than as
+        // somebody's newer writing.
+        handledFailures.current.set(key, stamp)
+        unshownFailures.current.delete(key)
+        restoredFailures.current.set(key, stamp)
+        return current
+      }
       if (current[key]) {
         // Something newer is already there, so this has not been given back
         // to anyone. Remembered rather than dropped: the composer can empty

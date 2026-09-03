@@ -1505,6 +1505,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   >()
   /** Sessions being put down, which nothing may start a turn into. */
   private readonly suspendingSessions = new Set<string>()
+  /** Resumes already under way, so a second one joins rather than repeats. */
+  private readonly resumingSessions = new Map<string, Promise<SessionDetail>>()
   private readonly answeredTerminalInputs = new Map<
     string,
     { requestId: string; expiresAt: number; repliedAt: string }
@@ -2204,9 +2206,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Asked for the way the panel asks, because a terminal session's tasks
     // are projected from its event log rather than owned over RPC: the sync
     // path sees nothing for one and would report it as having no work.
-    const tasks = await this.listBackgroundTasks(id).catch(() =>
-      this.backgroundTaskTracker.get(id),
-    )
+    // Not knowing what is running is not the same as nothing running, and the
+    // cache is empty until something has been read once, so a failure here
+    // refuses rather than assumes.
+    const tasks = await this.listBackgroundTasks(id).catch(() => {
+      throw new Error(
+        'Session cannot be suspended until its background tasks can be read',
+      )
+    })
     if (
       tasks.tasks.some(
         (task) => task.status === 'running' || task.status === 'queued',
@@ -2245,6 +2252,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   /** Gives a suspended session something to run in again. */
   async resumeSession(id: string): Promise<SessionDetail> {
+    const inFlight = this.resumingSessions.get(id)
+    if (inFlight) {
+      // Two resumes would each find no owner and each build one, leaving two
+      // Copilot processes on the same session id.
+      return inFlight
+    }
+    const resuming = this.resumeClaimedSession(id).finally(() => {
+      this.resumingSessions.delete(id)
+    })
+    this.resumingSessions.set(id, resuming)
+    return resuming
+  }
+
+  private async resumeClaimedSession(id: string): Promise<SessionDetail> {
     const stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
@@ -2685,6 +2706,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Resume the session before sending to it')
     }
     const terminalBacked = await this.terminalController.has(sessionId)
+    // Detection is awaited, and suspending can finish while it is: the guard
+    // above spoke for a session that was still running.
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      throw new Error('Resume the session before sending to it')
+    }
     if (terminalBacked) {
       // A full-screen view takes the keyboard, so a prompt sent now is typed
       // into its search box: it filters a list, a stray Enter can pick from

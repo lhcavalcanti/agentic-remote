@@ -550,7 +550,8 @@ export class ClaudeAgentService
       throw new Error('Resume the session before sending to it')
     }
     await this.refreshAuthentication()
-    // Suspending may have finished while authentication was being refreshed.
+    // Suspending may have finished while authentication was being refreshed,
+    // and may still finish before the turn starts, so it is asked again there.
     if (this.store.get(sessionId)?.suspended) {
       throw new Error('Resume the session before sending to it')
     }
@@ -582,6 +583,15 @@ export class ClaudeAgentService
       createdAt: new Date().toISOString(),
       streaming: true,
     })
+    if (
+      this.store.get(sessionId)?.suspended ||
+      this.suspendingSessions.has(sessionId)
+    ) {
+      // Suspending saw an idle session and took it down while the message was
+      // being recorded. Starting the query now would run it against a session
+      // the app describes as having nothing running.
+      throw new Error('Resume the session before sending to it')
+    }
     const running = await this.store.update(sessionId, (stored) => {
       stored.status = 'running'
       stored.activity = 'Thinking'
@@ -1189,12 +1199,26 @@ export class ClaudeAgentService
     if (!session || session.status !== 'idle') {
       return
     }
+    if (session.suspended || this.suspendingSessions.has(sessionId)) {
+      // Suspending leaves a session idle, so the queue would take a prompt off
+      // and then be refused for being suspended, losing it for good.
+      return
+    }
     const next = session.queuedPrompts?.[0]
     if (!next) {
       return
     }
     await this.store.removeQueuedPrompt(sessionId, next.id)
-    await this.sendMessage(sessionId, next.content)
+    try {
+      await this.sendMessage(sessionId, next.content)
+    } catch (error) {
+      // The prompt is off the queue and was never sent, so it goes back where
+      // it was rather than disappearing.
+      await this.store
+        .enqueuePrompt(sessionId, next, true)
+        .catch(() => undefined)
+      throw error
+    }
   }
 
   private permissionMode(

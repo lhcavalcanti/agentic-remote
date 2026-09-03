@@ -847,6 +847,36 @@ describe('AgentService deletion', () => {
     ])
   })
 
+  it('refuses to suspend a session that still owns background work', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-busy-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'shell',
+      id: 'shell-1',
+      description: 'pnpm dev',
+      status: 'running',
+      startedAt: '2026-09-02T00:00:00.000Z',
+      executionMode: 'background',
+    })
+
+    // A detached shell holds no foreground, so idle says nothing about it.
+    // Ending the owner would abandon it, or leave it running behind a session
+    // reporting that nothing is.
+    await expect(service.suspendSession(created.id)).rejects.toThrow(
+      /background tasks finish/,
+    )
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+  })
+
   it('keeps a suspended terminal session when it is opened', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-'))
     directories.push(directory)

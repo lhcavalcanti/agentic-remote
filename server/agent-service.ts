@@ -2177,6 +2177,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error('Session can only be suspended while idle')
     }
+    // A detached shell keeps running without holding the foreground, so an
+    // idle session can still own live work. Suspending ends the owner, which
+    // either abandons that work or leaves it running behind a session that
+    // says nothing is.
+    const tasks = await this.syncBackgroundTasks(id).catch(() =>
+      this.backgroundTaskTracker.get(id),
+    )
+    if (
+      tasks.tasks.some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      throw new Error(
+        'Session can only be suspended once its background tasks finish',
+      )
+    }
     if (this.externalSessionIds.has(id)) {
       if (!this.terminalController.stop) {
         throw new Error('Terminal session suspend is not available')
@@ -2293,6 +2309,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.store.backend(id) === 'terminal') {
       return stored
     }
+    if (stored.suspended) {
+      throw new Error('Resume the session before moving it to tmux')
+    }
     if (
       stored.status !== 'idle' ||
       this.drainingSessions.has(id)
@@ -2364,6 +2383,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const stored = this.store.get(id)
     if (!stored) {
       throw new Error('Session not found')
+    }
+    if (stored.suspended) {
+      // Clearing builds the replacement a session carries on in, which is a
+      // live owner. A later resume would then build a second one beside it.
+      throw new Error('Resume the session before clearing it')
     }
     if (
       stored.status === 'running' ||

@@ -199,7 +199,12 @@ export class ClaudeAgentService
           .list()
           .filter(
             (session) =>
-              session.status === 'idle' && session.queuedPrompts?.length,
+              session.status === 'idle' &&
+              // A suspended session has nothing to send to. Draining it would
+              // take the prompt off the queue and then refuse it, losing the
+              // work and failing the provider's own startup.
+              !session.suspended &&
+              session.queuedPrompts?.length,
           )
           .map((session) => this.drainQueue(session.id)),
       )
@@ -441,6 +446,9 @@ export class ClaudeAgentService
   }
 
   async clearConversation(id: string): Promise<SessionDetail> {
+    if (this.store.get(id)?.suspended) {
+      throw new Error('Resume the session before clearing it')
+    }
     const session = this.requireIdle(id)
     try {
       await this.sdk.deleteSession(id, { dir: session.cwd })
@@ -495,6 +503,9 @@ export class ClaudeAgentService
   }
 
   async restartSession(id: string): Promise<SessionDetail> {
+    if (this.store.get(id)?.suspended) {
+      throw new Error('Resume the session before restarting it')
+    }
     this.requireIdle(id)
     const restarted = await this.store.updateStatus(id, 'idle')
     this.publish(restarted)

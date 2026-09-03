@@ -21,7 +21,7 @@ let drawing: Promise<unknown> = Promise.resolve()
 function drawDiagram(
   id: string,
   source: string,
-): Promise<{ svg: string }> {
+): Promise<{ svg: string; bindFunctions?: (element: Element) => void }> {
   const next = drawing.catch(() => undefined).then(async () => {
     const { default: mermaid } = await import('mermaid')
     mermaid.initialize({
@@ -52,8 +52,14 @@ export function MermaidDiagram({ source }: { source: string }) {
   // that has already been drawn stays on screen while a newer source is still
   // parsing, showing one revision of a streaming diagram under another's text.
   const [drawn, setDrawn] = useState<
-    { source: string; svg: string } | undefined
+    {
+      source: string
+      svg: string
+      bind?: (element: Element) => void
+    }
+    | undefined
   >(undefined)
+  const host = useRef<HTMLDivElement>(null)
   const base = useId().replace(/[^a-zA-Z0-9]/g, '')
   const attempt = useRef(0)
 
@@ -70,7 +76,11 @@ export function MermaidDiagram({ source }: { source: string }) {
         try {
           const result = await drawDiagram(id, source)
           if (active) {
-            setDrawn({ source, svg: result.svg })
+            // Mermaid attaches whatever interactions a diagram declared -- the
+            // links a `click ... href ...` line asks for, for instance -- once
+            // the markup is in the document. Dropping the callback left those
+            // diagrams drawn but inert.
+            setDrawn({ source, svg: result.svg, bind: result.bindFunctions })
           }
         } catch {
           // Only this attempt's own elements, and now rather than at cleanup:
@@ -85,6 +95,15 @@ export function MermaidDiagram({ source }: { source: string }) {
       clearTimeout(timer)
     }
   }, [base, source])
+
+  // Run once the markup is in the document, and only for the drawing it came
+  // with, so a diagram's own links and handlers work.
+  useEffect(() => {
+    if (drawn?.source !== source || !host.current || !drawn.bind) {
+      return
+    }
+    drawn.bind(host.current)
+  }, [drawn, source])
 
   // Shown only for the source that produced it, so a diagram never appears
   // under text it does not belong to.
@@ -102,6 +121,7 @@ export function MermaidDiagram({ source }: { source: string }) {
       // Mermaid returns SVG markup, and it is rendered with `securityLevel`
       // strict, which strips scripts and foreign content from it.
       dangerouslySetInnerHTML={{ __html: drawn.svg }}
+      ref={host}
       // Deliberately no `role`: an ARIA image is named by its author and its
       // descendants are flattened away, which would hide the title, the
       // description and the text Mermaid puts inside the SVG for exactly this

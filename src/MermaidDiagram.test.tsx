@@ -151,4 +151,20 @@ describe('MermaidDiagram', () => {
     ])
   })
 
+
+  it('attaches the interactions the diagram declared', async () => {
+    // Mermaid hands back a callback that wires up whatever a diagram asked
+    // for, such as the links a `click ... href ...` line declares, once the
+    // markup is in the document. Dropped, those diagrams draw but do nothing.
+    const bindFunctions = vi.fn()
+    render_.mockResolvedValue({ svg: '<svg></svg>', bindFunctions })
+
+    const { container } = render(<MermaidDiagram source={'graph TD; A-->B;'} />)
+
+    await waitFor(() => expect(bindFunctions).toHaveBeenCalledTimes(1))
+    expect(bindFunctions).toHaveBeenCalledWith(
+      container.querySelector('.mermaid-diagram'),
+    )
+  })
+
 })

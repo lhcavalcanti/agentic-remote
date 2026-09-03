@@ -5516,7 +5516,13 @@ function App() {
   // Computers whose sessions the most recent list actually reached. A computer
   // that answered before and cannot be reached now is saying nothing about a
   // session announced since, so absence is only news while it is in here.
-  const authoritativeNow = useRef(new Set<string>())
+  const authoritativeNow = useRef(new Map<string, number>())
+  // The newest listing that has been applied at all. A computer is speaking
+  // for itself only if it answered that one.
+  const latestListing = useRef(0)
+  // Sessions somebody said outright are gone, as opposed to ones a list did
+  // not mention. Absence and removal are different things.
+  const removedSessions = useRef(new Set<string>())
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -6977,7 +6983,12 @@ function App() {
           snapshotApplied.current = asked
         }
         const loadedSessions = listing.sessions
-        authoritativeNow.current = new Set(listing.answeredComputerIds)
+        latestListing.current = Math.max(latestListing.current, asked)
+        for (const id of listing.answeredComputerIds) {
+          if (asked > (authoritativeNow.current.get(id) || 0)) {
+            authoritativeNow.current.set(id, asked)
+          }
+        }
         for (const id of mine) {
           computerSnapshotApplied.current.set(id, asked)
         }
@@ -7074,7 +7085,14 @@ function App() {
         // The latest word, not whether the computer has ever spoken: one that
         // answered an hour ago and cannot be reached now is saying nothing
         // about a session announced in between.
-        !authoritativeNow.current.has(current.slice(0, current.indexOf(':'))))
+        //
+        // Unless it has been removed outright. A removal is somebody saying so
+        // rather than a list failing to mention it, and holding the reader on
+        // it left them looking at a blank conversation for good.
+        ((authoritativeNow.current.get(
+          current.slice(0, current.indexOf(':')),
+        ) || 0) < latestListing.current &&
+          !removedSessions.current.has(current)))
         ? current
         : sessions[0]
           ? sessionKey(sessions[0])
@@ -7233,7 +7251,12 @@ function App() {
         const mine = answeredIds.filter(
           (id) => asked > (computerSnapshotApplied.current.get(id) || 0),
         )
-        authoritativeNow.current = new Set(answeredIds)
+        latestListing.current = Math.max(latestListing.current, asked)
+        for (const id of answeredIds) {
+          if (asked > (authoritativeNow.current.get(id) || 0)) {
+            authoritativeNow.current.set(id, asked)
+          }
+        }
         for (const id of mine) {
           computerSnapshotApplied.current.set(id, asked)
         }
@@ -7377,6 +7400,15 @@ function App() {
       // As above: the links a rejected session carries are still the truth
       // about what it replaced, and they are what a deep link follows.
       recordReplacementLinks(loadedSessions)
+      // The silences this answer captured go in before the lineage is claimed.
+      // Claiming first meant migration read a list that did not yet hold the
+      // ancestor's mute, marked it adopted without moving it, and the settings
+      // were then installed under a session that had already been replaced --
+      // the replacement left unmuted, notifying on a conversation the reader
+      // had silenced.
+      if (pushSettings) {
+        applyMutedSessions(pushSettings.mutedSessions, startedAtMuteRevision)
+      }
       claimReplacedSessions(reconciledForClaim)
       // Whichever load arrives first is the one that has to answer the
       // address. The socket opening starts a refresh of its own, and when it
@@ -7411,9 +7443,6 @@ function App() {
       // either session.
       const changedSinceRefresh = (key: string) =>
         (sessionEventSequenceRef.current.get(key) || 0) > startedAtSequence
-      if (pushSettings) {
-        applyMutedSessions(pushSettings.mutedSessions, startedAtMuteRevision)
-      }
       setBackgroundTaskRefreshVersion((current) => current + 1)
       const selectedAtRefresh = selectedRef.current
       // A replacement selected while the refresh was in flight is missing
@@ -7508,6 +7537,10 @@ function App() {
           claimReplacedSessions([event.session])
         } else if (event.type === 'session.removed') {
           const removedKey = `${event.computerId}:${event.sessionId}`
+          // Said outright, so a later answer that simply does not mention it
+          // is not what settles it, and a delayed clear response must not put
+          // it back.
+          removedSessions.current.add(removedKey)
           // Whatever this session was itself promised as, it is not on its way
           // any more. Left pending, selection cleanup went on preserving a
           // session that had been deleted and the reader sat on a blank
@@ -7600,6 +7633,11 @@ function App() {
           for (const key of [...pendingReplacements.current]) {
             if (key.slice(0, key.indexOf(':')) === event.computerId) {
               pendingReplacements.current.delete(key)
+            }
+          }
+          for (const session of sessionsRef.current) {
+            if (session.computerId === event.computerId) {
+              removedSessions.current.add(sessionKey(session))
             }
           }
           setSessions((current) =>
@@ -8933,6 +8971,10 @@ function App() {
       // it left them under a session that is gone -- the one that took its
       // place had already been told there was nothing to claim.
       const liveKey = followReplacementsRef.current(clearedKey)
+      // Somebody removed it outright while this request was in flight, and
+      // without a replacement to follow. Putting it back would resurrect a
+      // session already known to be gone and take the reader to it.
+      const liveIsGone = removedSessions.current.has(liveKey)
       adoptedReplacements.current.add(targetKey)
       migrateSessionState(targetKey, liveKey)
       // The session that was cleared is gone either way, and nothing older may
@@ -8949,16 +8991,22 @@ function App() {
             session.computerId !== target.computerId,
         )
         // The replacement is only put back while it is still the live one.
-        return liveKey === clearedKey ? upsertSession(without, cleared) : without
+        return liveKey === clearedKey && !liveIsGone
+          ? upsertSession(without, cleared)
+          : without
       }
       sessionsRef.current = retire(sessionsRef.current)
       setSessions(retire)
-      setSelectedKey((current) =>
-        current === undefined || current === targetKey || current === clearedKey
-          ? liveKey
-          : current,
-      )
-      return liveKey
+      if (!liveIsGone) {
+        setSelectedKey((current) =>
+          current === undefined ||
+          current === targetKey ||
+          current === clearedKey
+            ? liveKey
+            : current,
+        )
+      }
+      return liveIsGone ? undefined : liveKey
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
       return sessionKey(target)

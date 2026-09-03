@@ -5505,6 +5505,8 @@ function App() {
   // The history listener is bound once, so it reads the resolver through a ref
   // rather than closing over the first one.
   const followReplacementsRef = useRef<(key: string) => string>((key) => key)
+  // Which refresh is the newest, so a slower one cannot land after it.
+  const snapshotGeneration = useRef(0)
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -5774,7 +5776,10 @@ function App() {
     },
     [],
   )
+  // Advanced only when a computer is removed, which does speak for its
+  // sessions. Ordinary status changes are tracked separately.
   const computerEventSequenceRef = useRef(new Map<string, number>())
+  const computerRecordSequenceRef = useRef(new Map<string, number>())
   const sidebarResizeRef = useRef<
     | { pointerId: number; startX: number; startWidth: number; width: number }
     | undefined
@@ -7071,6 +7076,11 @@ function App() {
     let reconnectDelay = 1_000
 
     const refreshSnapshot = async () => {
+      // Refreshes overlap: a reconnect and a tab becoming visible can each
+      // start one. Without a generation the slower response applies last and
+      // reinstates whatever the newer one already replaced, including a
+      // session that has since been cleared away.
+      const generation = ++snapshotGeneration.current
       const startedAtSequence = eventSequenceRef.current
       const startedAtMuteRevision = muteRevisionRef.current
       const [loadedSessions, loadedComputers, pushSettings] = await Promise.all([
@@ -7081,6 +7091,9 @@ function App() {
           return undefined
         }),
       ])
+      if (generation !== snapshotGeneration.current) {
+        return
+      }
       const snapshotSessions = loadedSessions.filter(
         (session) =>
           (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) <=
@@ -7090,6 +7103,8 @@ function App() {
       )
       const snapshotComputers = loadedComputers.filter(
         (computer) =>
+          (computerRecordSequenceRef.current.get(computer.id) || 0) <=
+          startedAtSequence &&
           (computerEventSequenceRef.current.get(computer.id) || 0) <=
           startedAtSequence,
       )
@@ -7273,7 +7288,10 @@ function App() {
           }))
         } else if (event.type === 'computer.updated') {
           eventSequenceRef.current += 1
-          computerEventSequenceRef.current.set(
+          // Only the computer record is newer, not its sessions. A paired node
+          // going offline is an ordinary update, and treating it as reason to
+          // reject the snapshot discards every session that computer has.
+          computerRecordSequenceRef.current.set(
             event.computer.id,
             eventSequenceRef.current,
           )
@@ -7453,7 +7471,15 @@ function App() {
     setComposerDrafts(update)
   }
 
-  function setComposerForKey(targetKey: string, value: string, fromHistory = false) {
+  function setComposerForKey(
+    rawTargetKey: string,
+    value: string,
+    fromHistory = false,
+  ) {
+    // The key was taken before whatever this is finishing awaited. A clear
+    // during that wait leaves it naming a session that is gone, and writing
+    // there puts the text somewhere nothing will look for it again.
+    const targetKey = followReplacementsRef.current(rawTargetKey)
     updateComposerDrafts(fromHistory ? [] : [targetKey], (current) => {
       if (!value) {
         const { [targetKey]: _removed, ...remaining } = current
@@ -7515,7 +7541,8 @@ function App() {
     return true
   }
 
-  function prependComposerForKey(targetKey: string, value: string) {
+  function prependComposerForKey(rawTargetKey: string, value: string) {
+    const targetKey = followReplacementsRef.current(rawTargetKey)
     updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || ''
       const separator = existing
@@ -7552,7 +7579,12 @@ function App() {
     updateComposerDrafts([fromKey, toKey], (current) => {
       const value = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
-      return value ? { ...remaining, [toKey]: value } : remaining
+      // Only into an empty destination. A browser that used the replacement
+      // before it learned what it replaced has newer writing there, and the
+      // ancestor's older draft must not be put on top of it.
+      return value && !current[toKey]
+        ? { ...remaining, [toKey]: value }
+        : remaining
     })
   }
 
@@ -7590,7 +7622,7 @@ function App() {
     }
     const offset = knowledgeScrollTops.current[fromKey]
     delete knowledgeScrollTops.current[fromKey]
-    if (offset !== undefined) {
+    if (offset !== undefined && knowledgeScrollTops.current[toKey] === undefined) {
       knowledgeScrollTops.current[toKey] = offset
     }
     if (knowledgeRestoredKey.current === fromKey) {
@@ -7608,7 +7640,11 @@ function App() {
     setKnowledgePositions((current) => {
       const position = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
-      return position ? { ...remaining, [toKey]: position } : remaining
+      // Newer reading under the replacement stays; the ancestor only fills a
+      // gap it left behind.
+      return position && !current[toKey]
+        ? { ...remaining, [toKey]: position }
+        : remaining
     })
   }
 

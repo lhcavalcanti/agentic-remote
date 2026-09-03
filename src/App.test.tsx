@@ -6228,6 +6228,62 @@ describe('App', () => {
     )
   })
 
+  it('does not overwrite newer state under the replacement', async () => {
+    // This browser used the replacement before it learned what it replaced, so
+    // it already has newer writing there. Claiming the ancestor must fill a
+    // gap, not paint over it.
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({
+        'computer-1:session-1': 'older thought',
+        'computer-1:session-1-cleared': 'newer thought',
+      }),
+    )
+    const replacement: ManagedSession = {
+      ...session,
+      id: 'session-1-cleared',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('newer thought'),
+    )
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+      ),
+    ).toEqual({ 'computer-1:session-1-cleared': 'newer thought' })
+  })
+
+  it('keeps a computer\'s sessions when only its status changed', async () => {
+    // A paired node going offline is an ordinary update. Treating it as
+    // reason to reject the snapshot discards every session it owns.
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'computer.updated',
+          computer: { ...computer, online: false },
+        }),
+      } as MessageEvent)
+    })
+
+    expect((await screen.findAllByText('Project chat')).length).toBeGreaterThan(
+      0,
+    )
+  })
+
   it('claims state from a clear that happened while it was away', async () => {
     localStorage.setItem(
       'agentic-remote:composer-drafts',

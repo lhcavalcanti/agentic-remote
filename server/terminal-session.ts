@@ -634,6 +634,24 @@ export class TmuxTerminalSessionController
           commitKeys[position],
         ])
         await new Promise((resolve) => setTimeout(resolve, 90))
+        if (commitKeys[position] === 'Tab') {
+          // The next field is filled from what is on screen, so waiting a
+          // fixed moment for the repaint is not enough: a slow one leaves the
+          // field just left still showing, and it would be answered again with
+          // the next field's values.
+          let arrived = false
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            pane = await capture()
+            if (parseTerminalFormActiveField(pane, form) === position + 1) {
+              arrived = true
+              break
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100))
+          }
+          if (!arrived) {
+            return false
+          }
+        }
       }
       return submitTerminalForm(capture, (ms) =>
         new Promise((resolve) => setTimeout(resolve, ms)),

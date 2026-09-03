@@ -7203,8 +7203,14 @@ function App() {
     }
     if (selected?.suspended) {
       // A suspended session has no runtime to ask, and asking would start the
-      // one that suspending put down. Resuming is what brings it back, and
-      // the list with it.
+      // one that suspending put down. It offers no commands at all until it is
+      // resumed.
+      //
+      // The flag is a dependency on purpose. Resuming is meant to bring the
+      // session back the way reopening the CLI does, so the runtime coming up
+      // on resume is the feature rather than a side effect of this read: the
+      // list is only knowable from a live runtime, and a resumed session that
+      // offered no commands until its first message would be the bug.
       setCommands([])
       return
     }

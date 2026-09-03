@@ -909,6 +909,75 @@ describe('AgentService deletion', () => {
     expect(service.getSession(created.id)?.suspended).toBeFalsy()
   })
 
+  it('refuses to suspend when work is detached while the check is under way', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-late-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    // The runtime is asked for its tasks before the awaits that put it down,
+    // and a detached shell can be started inside those awaits. It holds no
+    // foreground, so the idleness check that follows does not see it, and the
+    // suspension used to go ahead and abandon it.
+    let asked = 0
+    const tasks = client.session.rpc.tasks
+    const originalList = tasks.list
+    tasks.list = async () => {
+      asked += 1
+      if (asked > 1) {
+        client.session.backgroundTasks.push({
+          type: 'shell',
+          id: 'shell-late',
+          description: 'pnpm build',
+          status: 'running',
+          startedAt: '2026-09-02T00:00:00.000Z',
+          executionMode: 'background',
+        })
+      }
+      return originalList()
+    }
+
+    await expect(service.suspendSession(created.id)).rejects.toThrow(
+      /background tasks finish/,
+    )
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+  })
+
+  it('leaves a suspended session listed even if the pane is seen to go first', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-open-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'closing-session',
+        cwd: '/tmp/project',
+        title: 'Closing project',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+
+    // Killing the pane is what a discovery pass reads as the session being
+    // gone, and it can land between the kill and the flag being written.
+    await store.setOpen('closing-session', false, true)
+    const suspended = await store.setSuspended('closing-session', true)
+
+    // Suspended is put down on purpose, not found missing. Left closed, it
+    // dropped out of the list with nothing able to bring it back.
+    expect(suspended).toMatchObject({ suspended: true, isOpen: true })
+  })
+
   it('refuses competing lifecycle work while a suspension is under way', async () => {
     // Suspending reads background tasks and puts the runtime down, and both
     // are awaited. Only refusing other suspensions during that window lets a

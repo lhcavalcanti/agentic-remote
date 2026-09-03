@@ -120,6 +120,15 @@ interface ClaudeAgentServiceEvents {
 interface ActiveClaudeQuery {
   abortController: AbortController
   query: Query
+  /**
+   * Settles when the run that owns this entry has finished tearing down.
+   *
+   * Suspending waits on it, so a resume cannot start a query while the
+   * previous one is still unwinding.
+   */
+  done: Promise<void>
+  /** Resolves `done`. */
+  finish: () => void
 }
 
 interface PendingClaudePermission {
@@ -546,7 +555,14 @@ export class ClaudeAgentService
     const active = this.active.get(id)
     if (active) {
       active.abortController.abort()
-      this.active.delete(id)
+      if (this.active.get(id) === active) {
+        this.active.delete(id)
+      }
+      // Waited for rather than abandoned. The run tears down after the abort,
+      // and a resume that got in first would have registered its own query by
+      // then -- which the old run's cleanup used to remove, leaving the live
+      // query with nothing able to stop it.
+      await active.done
     }
     try {
       const suspended = await this.store.setSuspended(id, true)
@@ -968,6 +984,8 @@ export class ClaudeAgentService
   ): Promise<void> {
     const session = this.requireSession(sessionId)
     const abortController = new AbortController()
+    // This run's own entry, so cleanup cannot remove a newer one.
+    let owned: ActiveClaudeQuery | undefined
     const runtime = session.runtime
     const toolIds = new Set<string>()
     let aborted = false
@@ -995,10 +1013,18 @@ export class ClaudeAgentService
           ...(hasProviderSession ? { resume: sessionId } : { sessionId }),
         },
       })
-      this.active.set(sessionId, {
+      let finish = () => {}
+      const done = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const entry: ActiveClaudeQuery = {
         abortController,
         query: activeQuery,
-      })
+        done,
+        finish,
+      }
+      owned = entry
+      this.active.set(sessionId, entry)
       for await (const message of activeQuery) {
         if (!this.store.get(sessionId)) {
           return
@@ -1060,7 +1086,14 @@ export class ClaudeAgentService
         })
       }
     } finally {
-      this.active.delete(sessionId)
+      // Only this run's own entry is removed. A suspension that abandoned this
+      // query, followed by a resume that started another, leaves a newer entry
+      // here, and deleting by id alone took the live query's handle away and
+      // left nothing able to stop it.
+      if (owned && this.active.get(sessionId) === owned) {
+        this.active.delete(sessionId)
+      }
+      owned?.finish()
       this.resolvePending(sessionId, 'Claude Agent stopped')
       if (!aborted) {
         await this.drainQueue(sessionId)

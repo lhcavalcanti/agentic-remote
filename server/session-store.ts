@@ -301,6 +301,12 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.suspended = suspended
+      // A suspended session is put down on purpose, not found missing, and it
+      // keeps its place in the list either way. Written here so the state is
+      // the same however the teardown and a discovery pass interleaved:
+      // without it a pass that saw the pane go marked the session closed, and
+      // this call left that in place -- a session both suspended and gone.
+      session.isOpen = true
       session.status = 'idle'
       session.activity = undefined
       session.pendingPermission = undefined

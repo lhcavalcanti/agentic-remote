@@ -2283,28 +2283,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Not knowing what is running is not the same as nothing running, and the
     // cache is empty until something has been read once, so a failure here
     // refuses rather than assumes.
-    const tasks = await this.listBackgroundTasks(id).catch(() => {
-      throw new Error(
-        'Session cannot be suspended until its background tasks can be read',
-      )
-    })
-    if (!tasks.supported) {
-      // An empty list because the runtime could not be asked is not the same
-      // as an empty list because nothing is running, and suspending on the
-      // strength of it disconnects a session that still owns live work.
-      throw new Error(
-        'Session cannot be suspended until its background tasks can be read',
-      )
-    }
-    if (
-      tasks.tasks.some(
-        (task) => task.status === 'running' || task.status === 'queued',
-      )
-    ) {
-      throw new Error(
-        'Session can only be suspended once its background tasks finish',
-      )
-    }
+    await this.assertNoLiveBackgroundTasks(id)
     // Reading the tasks was awaited, and a turn can start while it is. What
     // was idle when this began may be working now, and putting the runtime
     // down would take that work with it.
@@ -2334,7 +2313,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // Checked again in there, immediately before the pane is killed.
       // Finding the owner is awaited, and somebody working in tmux can start
       // a turn while that happens, which this would otherwise take with it.
+      // Discovery that began before the pane was killed is holding an answer
+      // that predates the suspension, and would land afterwards and mark the
+      // session closed. Moving the generation on discards it, the same way
+      // resume discards an answer that predates the pane it started.
+      this.discoveryGeneration += 1
       const closed = await this.terminalController.stop(id, async () => {
+        this.assertStillIdle(id)
+        // A detached task started while the owner was being found holds no
+        // turn, so the status read below would not see it and the pane would
+        // be killed out from under live work.
+        await this.assertNoLiveBackgroundTasks(id)
         this.assertStillIdle(id)
         const live = await this.sessionEventReader(id).catch(() => {
           throw new Error(
@@ -2345,6 +2334,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw new Error('Session can only be suspended while idle')
         }
       })
+      this.discoveryGeneration += 1
       if (!closed) {
         throw new Error('The terminal window could not be closed')
       }
@@ -2356,6 +2346,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (loading) {
         await loading.catch(() => undefined)
       }
+      // The attachment above was awaited, and a detached task can be started
+      // inside that wait. Disconnecting would abandon it.
+      await this.assertNoLiveBackgroundTasks(id)
+      this.assertStillIdle(id)
       const active = this.sessions.get(id)
       if (active) {
         await active.disconnect()
@@ -2379,6 +2373,44 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * other suspensions. Idleness is the whole precondition, so it is checked
    * again after each wait rather than once at the start.
    */
+  /**
+   * Refuses unless the session owns no live background work.
+   *
+   * Reading this is awaited, and a detached task can be started inside that
+   * wait, so it is asked again immediately before the runtime goes down rather
+   * than once on the way in. The idleness check beside it only refreshes
+   * foreground status and would not see a task that holds no turn.
+   *
+   * Asked for the way the panel asks, because a terminal session's tasks are
+   * projected from its event log rather than owned over RPC. Not knowing what
+   * is running is not the same as nothing running, so a failure here refuses
+   * rather than assumes.
+   */
+  private async assertNoLiveBackgroundTasks(id: string): Promise<void> {
+    const tasks = await this.listBackgroundTasks(id).catch(() => {
+      throw new Error(
+        'Session cannot be suspended until its background tasks can be read',
+      )
+    })
+    if (!tasks.supported) {
+      // An empty list because the runtime could not be asked is not the same
+      // as an empty list because nothing is running, and suspending on the
+      // strength of it disconnects a session that still owns live work.
+      throw new Error(
+        'Session cannot be suspended until its background tasks can be read',
+      )
+    }
+    if (
+      tasks.tasks.some(
+        (task) => task.status === 'running' || task.status === 'queued',
+      )
+    ) {
+      throw new Error(
+        'Session can only be suspended once its background tasks finish',
+      )
+    }
+  }
+
   private assertStillIdle(id: string): void {
     const current = this.store.get(id)
     if (

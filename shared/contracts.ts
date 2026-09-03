@@ -256,7 +256,18 @@ export type ServerEvent =
       runningCount: number
       supported: boolean
     }
-  | { type: 'error'; sessionId?: string; message: string }
+  | {
+      type: 'error'
+      sessionId?: string
+      message: string
+      /**
+       * A prompt the reader had already handed over and can no longer see. The
+       * browser cleared its draft when the queue accepted it, so a send that
+       * fails afterwards has to give the text back for the draft to be
+       * restored.
+       */
+      failedPrompt?: string
+    }
 
 export type HubEvent =
   | { type: 'session.upserted'; session: ManagedSession }
@@ -277,7 +288,14 @@ export type HubEvent =
     }
   | { type: 'computer.updated'; computer: ComputerSummary }
   | { type: 'computer.removed'; computerId: string }
-  | { type: 'error'; computerId?: string; sessionId?: string; message: string }
+  | {
+      type: 'error'
+      computerId?: string
+      sessionId?: string
+      message: string
+      /** See the node event above. */
+      failedPrompt?: string
+    }
 
 export interface CreateSessionInput {
   cwd: string

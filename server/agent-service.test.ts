@@ -3730,6 +3730,94 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('gives back a queued prompt whose send failed', async () => {
+    // The browser cleared its draft the moment the queue accepted this, so the
+    // text only exists on the queue. Taking it off without handing it back
+    // loses what the reader wrote.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.nextSessionList = Promise.resolve([
+      {
+        sessionId: client.session.sessionId,
+        startTime: new Date(),
+        modifiedTime: new Date(),
+        summary: 'External session',
+        isRemote: false,
+        context: { workingDirectory: directory },
+      },
+    ])
+    let eventVersion: string | undefined = 'events-v0'
+    let events: SessionEvent[] = []
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        throw Object.assign(
+          new Error('The terminal did not receive the message.'),
+          { statusCode: 409 },
+        )
+      }),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => events,
+      async () => eventVersion,
+      terminal,
+    )
+    await service.start()
+    await service.store.updateStatus(client.session.sessionId, 'running')
+    const errors: { message: string; failedPrompt?: string }[] = []
+    service.on('event', (event) => {
+      if (event.type === 'error') {
+        errors.push(event)
+      }
+    })
+
+    const queued = await service.sendMessage(
+      client.session.sessionId,
+      'work the queue lost',
+      true,
+    )
+    const queuedAt = queued.queuedPrompts?.[0]?.createdAt
+    expect(queuedAt).toBeDefined()
+    events = JSON.parse(
+      JSON.stringify([
+        {
+          type: 'session.idle',
+          id: 'idle-event',
+          parentId: null,
+          timestamp: queuedAt,
+          data: {},
+        },
+      ]),
+    ) as SessionEvent[]
+    eventVersion = 'events-v1'
+    await service.refreshTranscripts()
+
+    // Off the retryable queue, so nothing sends it a second time by itself.
+    expect(
+      service.store
+        .get(client.session.sessionId)
+        ?.queuedPrompts?.map((prompt) => prompt.content) ?? [],
+    ).not.toContain('work the queue lost')
+    // ...and handed back, so the draft can be restored.
+    expect(
+      errors.map((event) => event.failedPrompt),
+    ).toContain('work the queue lost')
+    await service.stop()
+  })
+
   it('marks a direct terminal prompt running when completion events are trackable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

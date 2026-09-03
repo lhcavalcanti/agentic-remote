@@ -4718,6 +4718,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           // go on showing a prompt that is no longer waiting for anything.
           this.publish(session)
         }
+        // Taking it off the queue is the only copy gone: the browser cleared
+        // its draft the moment the queue accepted it, and an idle enqueue
+        // swallows this error on the way out. The text goes back with the
+        // report so the draft can be restored, as failed sends must.
+        this.emit('event', {
+          type: 'error',
+          sessionId,
+          message: error instanceof Error ? error.message : String(error),
+          failedPrompt: next.content,
+        })
         throw error
       }
       const { prompt } = await this.store.removeQueuedPrompt(sessionId, next.id)

@@ -725,10 +725,11 @@ export class TmuxTerminalSessionController
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
-      const alreadyShown = paneEvidenceCount(
-        await capturePane(target),
-        confirmation,
-      )
+      const paneBeforePaste = await capturePane(target)
+      const alreadyShown = paneEvidenceCount(paneBeforePaste, confirmation)
+      // Ctrl+U would take this with it, so whether the composer was already
+      // holding something has to be settled before the paste adds to it.
+      const composerWasHolding = composerHoldsText(paneBeforePaste)
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -755,13 +756,21 @@ export class TmuxTerminalSessionController
         // is sent again — which the queue does on its own, without anyone
         // deciding to. The prompt is put back the way it was found, so
         // sending again is sending once.
+        //
+        // The load that makes a send look failed is the same load that makes
+        // the paste arrive late, so one look at this instant would miss it and
+        // leave the text to be concatenated with the retry. It is given a
+        // further moment to appear.
+        const landedLate = await waitForPaneText(
+          target,
+          confirmation,
+          alreadyShown,
+          20,
+        )
         // Only what this paste put there is taken back. If the prompt never
-        // gained it, the composer holds whatever was typed at the terminal
-        // instead, and clearing would throw that away.
-        if (
-          paneEvidenceCount(await capturePane(target), confirmation) >
-          alreadyShown
-        ) {
+        // gained it, or the composer was already holding something typed at
+        // the terminal, clearing would throw that away instead.
+        if (landedLate && !composerWasHolding) {
           await clearPastedPrompt(target)
         }
         throw Object.assign(
@@ -1653,6 +1662,40 @@ async function clearPastedPrompt(target: string): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 30))
 }
 
+/**
+ * Whether the composer is holding anything of its own.
+ *
+ * Ctrl+U takes the whole composer, so it may only be used once the composer is
+ * known to have been empty before the paste. Anything unreadable counts as
+ * holding text: leaving a paste behind is recoverable, and typing over
+ * someone's unsent message is not.
+ */
+export function composerHoldsText(pane: string): boolean {
+  const lines = pane.split('\n').map((line) => line.trimEnd())
+  const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
+  if (top < 0) {
+    return true
+  }
+  const body: string[] = []
+  for (const line of lines.slice(top + 1)) {
+    if (COMPOSER_EDGE.test(line)) {
+      break
+    }
+    body.push(
+      line
+        .replace(/^\s*[\u2502\u2503\u257d\u257f]\s?/u, '')
+        .replace(/[\u2502\u2503\u257d\u257f]\s*$/u, '')
+        .trim(),
+    )
+  }
+  const text = body.join(' ').trim()
+  if (!text) {
+    return false
+  }
+  // An empty composer still draws its prompt marker and placeholder.
+  return !/^[>\u276f]?\s*(?:message\b.*)?[\u2026.]{0,3}$/i.test(text)
+}
+
 async function capturePane(target: string): Promise<string> {
   return (
     await execFileAsync('tmux', ['capture-pane', '-p', '-t', target, '-S', '-30'])
@@ -1663,8 +1706,9 @@ async function waitForPaneText(
   target: string,
   expected: string,
   before: number,
+  attempts = 40,
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (paneShowsText(await capturePane(target), expected, before)) {
       return true
     }

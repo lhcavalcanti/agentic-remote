@@ -9,6 +9,7 @@ import {
   isTerminalAgentWorking,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
+  composerHoldsText,
   paneEvidenceCount,
   paneShowsText,
   parseTerminalFormActiveField,
@@ -969,5 +970,27 @@ describe('terminalChecklistState', () => {
   it('refuses a screen that is not showing a list of that size', () => {
     expect(terminalChecklistState(pane, 3)).toBeUndefined()
     expect(terminalChecklistState('❯ \n', 4)).toBeUndefined()
+  })
+})
+
+describe('composerHoldsText', () => {
+  const framed = (body: string[]) =>
+    ['transcript line', '╭──────────────╮', ...body, '╰──────────────╯'].join(
+      '\n',
+    )
+
+  it('reads an empty composer as empty', () => {
+    expect(composerHoldsText(framed(['│ > Message agent…  │']))).toBe(false)
+    expect(composerHoldsText(framed(['│                   │']))).toBe(false)
+  })
+
+  it('reads typed input as held text', () => {
+    expect(composerHoldsText(framed(['│ > half a thought  │']))).toBe(true)
+  })
+
+  it('treats an unreadable pane as holding text', () => {
+    // Ctrl+U takes the whole composer, so anything that cannot be read has to
+    // count as someone's unsent message rather than be typed over.
+    expect(composerHoldsText('no composer drawn here')).toBe(true)
   })
 })

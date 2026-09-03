@@ -7155,6 +7155,17 @@ function App() {
             ),
           )
         } else {
+          // A prompt that was handed over and then failed to send is gone from
+          // the queue and was never in the composer, so the text comes back
+          // here or nowhere. Anything typed since is newer and is left alone.
+          if (event.type === 'error' && event.failedPrompt && event.sessionId) {
+            const failedKey = `${event.computerId || ''}:${event.sessionId}`
+            setComposerDrafts((current) =>
+              current[failedKey]
+                ? current
+                : { ...current, [failedKey]: event.failedPrompt as string },
+            )
+          }
           setError(event.message)
         }
       }

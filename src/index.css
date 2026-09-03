@@ -1126,6 +1126,39 @@ button {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+/* Sticky inside the transcript's own scroll box, so it stays at the bottom
+   right of what is on screen without moving with the conversation. Zero
+   height keeps it out of the flow, so it never adds space of its own. */
+.timeline-follow {
+  position: sticky;
+  bottom: 4px;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  pointer-events: none;
+}
+
+.timeline-follow__button {
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  transform: translateY(-100%);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--panel-raised);
+  color: var(--text);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 32%);
+  cursor: pointer;
+}
+
+.timeline-follow__button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .timeline-bottom {
   width: 100%;
   height: 1px;

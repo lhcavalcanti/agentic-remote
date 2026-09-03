@@ -6808,28 +6808,34 @@ function App() {
 
   useEffect(() => {
     let active = true
+    const startedAtSequence = eventSequenceRef.current
     void Promise.all([listSessions(), listComputers()])
       .then(([loadedSessions, loadedComputers]) => {
         if (!active) {
           return
         }
-        setSessions((current) => {
-          let reconciled = sortSessions(loadedSessions)
-          for (const existing of current) {
+        // Events that arrived while this was in flight describe those sessions
+        // more recently than it does. A session cleared again in that window
+        // is only still here because the answer predates its removal, and
+        // following its lineage would move state into a session that is
+        // already gone, where its own replacement never looks.
+        const reconcile = (existingSessions: ManagedSession[]) => {
+          let reconciled = sortSessions(
+            loadedSessions.filter(
+              (session) =>
+                (sessionEventSequenceRef.current.get(sessionKey(session)) ||
+                  0) <= startedAtSequence &&
+                (computerEventSequenceRef.current.get(session.computerId) ||
+                  0) <= startedAtSequence,
+            ),
+          )
+          for (const existing of existingSessions) {
             reconciled = upsertSession(reconciled, existing)
           }
           return reconciled
-        })
-        // Events that arrived while this was in flight describe the sessions
-        // more recently than it does, so lineage is followed from those and
-        // from the snapshot only where nothing has replaced it. Claiming from
-        // a session that has since been replaced would move state into one
-        // that is already gone, where its own replacement never looks.
-        let reconciledSessions = sortSessions(loadedSessions)
-        for (const existing of sessionsRef.current) {
-          reconciledSessions = upsertSession(reconciledSessions, existing)
         }
-        claimReplacedSessions(reconciledSessions)
+        setSessions(reconcile)
+        claimReplacedSessions(reconcile(sessionsRef.current))
         setComputers(loadedComputers)
         const requestedKey = initialUrlSelection.current
         const requested = loadedSessions.find(

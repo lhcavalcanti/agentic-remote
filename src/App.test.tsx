@@ -6145,6 +6145,57 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('Half-written thought')
   })
 
+  it('does not bring back a session removed while the list was loading', async () => {
+    const stale: ManagedSession = {
+      ...session,
+      id: 'session-1-b',
+      title: 'Cleared away',
+      replacedSessionIds: ['session-1'],
+      messages: [],
+    }
+    const current: ManagedSession = {
+      ...session,
+      id: 'session-1-c',
+      title: 'Carried on',
+      replacedSessionIds: ['session-1', 'session-1-b'],
+      messages: [],
+    }
+    let answerSessions: (() => void) | undefined
+    vi.mocked(listSessions).mockImplementation(
+      () =>
+        new Promise<ManagedSession[]>((resolve) => {
+          answerSessions = () => resolve([stale])
+        }),
+    )
+    vi.mocked(getSession).mockResolvedValue(current)
+
+    render(<App />)
+    await waitFor(() => expect(answerSessions).toBeDefined())
+
+    // The list was already on its way when the clear happened, so its answer
+    // still describes the session that has since been replaced.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'session-1-b',
+          replacedBy: 'session-1-c',
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      answerSessions?.()
+    })
+
+    expect(await screen.findAllByText('Carried on')).not.toHaveLength(0)
+    // An answer that predates the removal is not evidence the session is back.
+    expect(screen.queryByText('Cleared away')).not.toBeInTheDocument()
+  })
+
   it('claims state from a session cleared twice while it was away', async () => {
     localStorage.setItem(
       'agentic-remote:composer-drafts',

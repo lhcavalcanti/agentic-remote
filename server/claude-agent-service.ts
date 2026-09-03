@@ -166,10 +166,17 @@ export class ClaudeAgentService
   ): Promise<T> {
     const previous = this.lifecycleLocks.get(sessionId) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(run)
-    this.lifecycleLocks.set(
-      sessionId,
-      next.catch(() => undefined),
+    // Only that it finished, never what it produced.
+    const settled = next.then(
+      () => undefined,
+      () => undefined,
     )
+    this.lifecycleLocks.set(sessionId, settled)
+    void settled.then(() => {
+      if (this.lifecycleLocks.get(sessionId) === settled) {
+        this.lifecycleLocks.delete(sessionId)
+      }
+    })
     return next
   }
 
@@ -489,7 +496,14 @@ export class ClaudeAgentService
   }
 
   async clearConversation(id: string): Promise<SessionDetail> {
-    if (this.store.get(id)?.suspended) {
+    // In the lifecycle queue with the rest: clearing replaces the session with
+    // a new id, and a suspension starting while it awaits the provider would
+    // then be recorded against a session that no longer exists.
+    return this.serializeLifecycle(id, () => this.clearSerialized(id))
+  }
+
+  private async clearSerialized(id: string): Promise<SessionDetail> {
+    if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
       throw new Error('Resume the session before clearing it')
     }
     const session = this.requireIdle(id)
@@ -619,16 +633,24 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
   ): Promise<SessionDetail> {
+    if (this.admissionClosed.has(sessionId)) {
+      // Resuming, and the prompt already queued has not been claimed yet.
+      // Only the idle check consulted this, which a send can reach past.
+      throw new Error('The session is still resuming')
+    }
+    return this.dispatchQueued(sessionId, content, enqueue)
+  }
+
+  private async dispatchQueued(
+    sessionId: string,
+    content: string,
+    enqueue = false,
+  ): Promise<SessionDetail> {
     if (
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
     ) {
       throw new Error('Resume the session before sending to it')
-    }
-    if (this.admissionClosed.has(sessionId)) {
-      // Resuming, and the prompt already queued has not been claimed yet.
-      // Only the idle check consulted this, which a send can reach past.
-      throw new Error('The session is still resuming')
     }
     await this.refreshAuthentication()
     // Suspending may have finished while authentication was being refreshed,
@@ -1329,7 +1351,11 @@ export class ClaudeAgentService
     }
     await this.store.removeQueuedPrompt(sessionId, next.id)
     try {
-      await this.sendMessage(sessionId, next.content)
+      // The queue's own prompt is the one admission is being held for, so it
+      // goes past that gate rather than into it. Sending through the public
+      // path refused it on the very flag that exists to keep newer work out
+      // until this has gone in, so resume finished having sent nothing.
+      await this.dispatchQueued(sessionId, next.content)
     } catch (error) {
       // The prompt is off the queue and was never sent, so it goes back where
       // it was rather than disappearing.

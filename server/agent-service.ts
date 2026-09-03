@@ -1551,10 +1551,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<T> {
     const previous = this.lifecycleLocks.get(sessionId) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(run)
-    this.lifecycleLocks.set(
-      sessionId,
-      next.catch(() => undefined),
+    // Only that it finished, never what it produced: holding the result keeps
+    // a whole cloned transcript alive for as long as the session does. The
+    // entry goes once nothing is waiting behind it.
+    const settled = next.then(
+      () => undefined,
+      () => undefined,
     )
+    this.lifecycleLocks.set(sessionId, settled)
+    void settled.then(() => {
+      if (this.lifecycleLocks.get(sessionId) === settled) {
+        this.lifecycleLocks.delete(sessionId)
+      }
+    })
     return next
   }
   /** Resumes already under way, so a second one joins rather than repeats. */
@@ -2274,6 +2283,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         'Session cannot be suspended until its background tasks can be read',
       )
     })
+    if (!tasks.supported) {
+      // An empty list because the runtime could not be asked is not the same
+      // as an empty list because nothing is running, and suspending on the
+      // strength of it disconnects a session that still owns live work.
+      throw new Error(
+        'Session cannot be suspended until its background tasks can be read',
+      )
+    }
     if (
       tasks.tasks.some(
         (task) => task.status === 'running' || task.status === 'queued',

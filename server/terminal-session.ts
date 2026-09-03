@@ -21,6 +21,10 @@ const execFileAsync = promisify(execFile)
  */
 export type TerminalFormStep =
   | { kind: 'select'; optionCount: number; index: number }
+  // A checklist is not chosen but toggled, and what it is already showing is
+  // the only thing that says which rows have to change. So it carries what was
+  // chosen, and the rows to press are worked out against the screen.
+  | { kind: 'checklist'; optionCount: number; selected: number[] }
   | { kind: 'text'; value: string }
 
 /**
@@ -533,7 +537,47 @@ export class TmuxTerminalSessionController
       }
       const commitKeys = terminalFormCommitKeys(steps.length)
       for (const [position, step] of steps.entries()) {
-        if (step.kind === 'select') {
+        if (step.kind === 'checklist') {
+          const ticked = terminalChecklistState(await capture(), step.optionCount)
+          if (!ticked) {
+            // Without knowing what the checklist is showing, pressing space
+            // over it would turn the wrong rows on and off. An attached
+            // terminal can have changed any of them since the reader chose.
+            return false
+          }
+          // Normalising to the top makes the walk independent of wherever the
+          // cursor happens to be sitting.
+          for (let index = 0; index <= step.optionCount; index += 1) {
+            await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Up'])
+            await new Promise((resolve) => setTimeout(resolve, 25))
+          }
+          const wanted = new Set(step.selected)
+          const lastChange = ticked.reduce(
+            (furthest, isTicked, index) =>
+              wanted.has(index) === isTicked ? furthest : index,
+            -1,
+          )
+          for (let index = 0; index <= lastChange; index += 1) {
+            if (wanted.has(index) !== ticked[index]) {
+              await execFileAsync('tmux', [
+                'send-keys',
+                '-t',
+                owner.target,
+                'Space',
+              ])
+              await new Promise((resolve) => setTimeout(resolve, 35))
+            }
+            if (index < lastChange) {
+              await execFileAsync('tmux', [
+                'send-keys',
+                '-t',
+                owner.target,
+                'Down',
+              ])
+              await new Promise((resolve) => setTimeout(resolve, 35))
+            }
+          }
+        } else if (step.kind === 'select') {
           // Normalising to the top first makes the move independent of
           // whichever option the field currently holds.
           for (let index = 0; index <= step.optionCount; index += 1) {
@@ -1172,6 +1216,36 @@ function terminalFormTabsIndex(
 /**
  * Whether the form on screen is the one these fields describe.
  */
+/**
+ * Which rows of the checklist on screen are ticked, or undefined when the
+ * screen does not show a checklist of that size.
+ *
+ * The CLI marks a ticked row with a check and an unticked one with a bullet,
+ * and the cursor sits to the left of either. What the reader chose in the app
+ * says nothing about what the list is showing: an attached terminal can have
+ * changed any of it since, and the schema's defaults describe how the list
+ * opened rather than how it stands.
+ */
+export function terminalChecklistState(
+  pane: string,
+  optionCount: number,
+): boolean[] | undefined {
+  const marks: boolean[] = []
+  for (const raw of pane.split('\n').map(cleanDialogLine)) {
+    const marked = /^(?:❯\s*)?([✓✔•·])\s+\S/u.exec(raw)
+    if (marked) {
+      marks.push(marked[1] === '✓' || marked[1] === '✔')
+      continue
+    }
+    if (marks.length > 0 && marks.length !== optionCount) {
+      // A run that does not match the list being answered says the screen is
+      // showing something else, so the next run is looked at instead.
+      marks.length = 0
+    }
+  }
+  return marks.length === optionCount ? marks : undefined
+}
+
 export function terminalFormShowsFields(
   pane: string,
   form: TerminalFormIdentity,

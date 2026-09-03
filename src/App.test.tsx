@@ -2856,6 +2856,58 @@ describe('App', () => {
     expect(screen.queryByText('What should I inspect?')).not.toBeInTheDocument()
   })
 
+  it('keeps the newest message in view as the composer grows', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const timeline = document.querySelector<HTMLElement>('.timeline')!
+    Object.defineProperties(timeline, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 500, writable: true },
+    })
+
+    // Typing grows the composer, which takes height from the transcript. The
+    // reader has not gone anywhere, so the end must stay where they left it.
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'A message\nlong enough\nto grow the box' },
+    })
+
+    await waitFor(() => expect(timeline.scrollTop).toBe(1_000))
+  })
+
+  it('offers a way back to the latest only once the reader has left it', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(
+      screen.queryByRole('button', { name: 'Scroll to latest' }),
+    ).not.toBeInTheDocument()
+
+    const timeline = document.querySelector<HTMLElement>('.timeline')!
+    Object.defineProperties(timeline, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 100, writable: true },
+    })
+    fireEvent.scroll(timeline)
+
+    const jump = await screen.findByRole('button', { name: 'Scroll to latest' })
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+    fireEvent.click(jump)
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' })
+
+    // Following again is what puts the way back out of the way.
+    timeline.scrollTop = 500
+    fireEvent.scroll(timeline)
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Scroll to latest' }),
+      ).not.toBeInTheDocument(),
+    )
+  })
+
   it('opens at the latest messages and scrolls a new question into view while scrolled up', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

@@ -5452,6 +5452,7 @@ function App() {
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
+  const [followingLatest, setFollowingLatest] = useState(true)
   const autoScrollSessionRef = useRef<string | undefined>(undefined)
   const previousPendingActionRef = useRef<string | undefined>(undefined)
   const requiredActionScrollRef = useRef(false)
@@ -7000,7 +7001,7 @@ function App() {
   useEffect(() => {
     if (autoScrollSessionRef.current !== selectedKey) {
       autoScrollSessionRef.current = selectedKey
-      autoScrollRef.current = true
+      setFollowsLatest(true)
     }
     const pendingActionArrived =
       pendingActionId !== undefined &&
@@ -7041,12 +7042,27 @@ function App() {
       return
     }
     if (requiredActionScrollRef.current) {
-      autoScrollRef.current = false
+      setFollowsLatest(false)
       return
     }
     const distanceFromBottom =
       timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight
-    autoScrollRef.current = distanceFromBottom <= timelineBottomThreshold
+    // Scrolling up stops the view following the conversation, and scrolling
+    // back to the end takes it up again.
+    setFollowsLatest(distanceFromBottom <= timelineBottomThreshold)
+  }
+
+  function setFollowsLatest(following: boolean) {
+    autoScrollRef.current = following
+    setFollowingLatest((current) =>
+      current === following ? current : following,
+    )
+  }
+
+  /** Returns to the end of the conversation and follows it again. */
+  function followLatest() {
+    setFollowsLatest(true)
+    bottomRef.current?.scrollIntoView({ block: 'end' })
   }
 
   useLayoutEffect(() => {
@@ -7064,6 +7080,15 @@ function App() {
       textarea.scrollHeight,
       maximumHeight,
     )}px`
+    // The composer just took height from the transcript, which pushes the
+    // newest message out of sight without the reader having gone anywhere.
+    // Done here, before the browser paints, so the view does not jump.
+    if (autoScrollRef.current) {
+      const timeline = timelineRef.current
+      if (timeline) {
+        timeline.scrollTop = timeline.scrollHeight
+      }
+    }
   }, [composer, viewportHeight])
 
   function setComposer(value: string) {
@@ -9030,6 +9055,19 @@ function App() {
             <div className="activity-line">
               <span className="activity-pulse" />
               {selected.activity}
+            </div>
+          ) : null}
+          {selected && !followingLatest ? (
+            <div className="timeline-follow">
+              <button
+                aria-label="Scroll to latest"
+                className="timeline-follow__button"
+                onClick={followLatest}
+                title="Scroll to latest"
+                type="button"
+              >
+                <ChevronDown size={18} />
+              </button>
             </div>
           ) : null}
           <div aria-hidden="true" className="timeline-bottom" ref={bottomRef} />

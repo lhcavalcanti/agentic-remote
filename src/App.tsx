@@ -15,6 +15,7 @@ import type {
   FormEvent,
   KeyboardEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
   TouchEvent as ReactTouchEvent,
@@ -87,10 +88,11 @@ import ReactMarkdown from 'react-markdown'
 import { MermaidDiagram } from './MermaidDiagram.js'
 import {
   breadcrumbSegments,
-  headingSlug,
-  headingText,
   outlineFromMarkdown,
   resolveDocumentPath,
+  resolveDocumentLink,
+  rehypeDocumentHeadings,
+  scrollToDocumentFragment,
   isExternalSource,
   pushNavigation,
   rememberScroll,
@@ -4910,10 +4912,6 @@ function PdfViewer({ file }: { file: WorkspaceFile }) {
   )
 }
 
-/**
- * Slugs come from the heading text alone so an id stays stable across
- * re-renders; a render-time counter would renumber on every pass.
- */
 function AddKnowledgeRootDialog({
   computers,
   onClose,
@@ -5143,7 +5141,6 @@ function markdownComponentsFor(
   load: MarkdownImageLoader,
 ) {
   return {
-    ...knowledgeHeadingComponents,
     ...mermaidComponents,
     img({ alt, src, title }: { alt?: string; src?: unknown; title?: string }) {
       return (
@@ -5224,51 +5221,82 @@ function mermaidFencedSource(children: ReactNode): string | undefined {
   return fencedSource(props.children).trimEnd()
 }
 
-function markdownHeading(level: 1 | 2 | 3 | 4 | 5 | 6) {
-  return function Heading({ children }: { children?: ReactNode }) {
-    const Tag = `h${level}` as const
-    return <Tag id={headingSlug(headingText(children))}>{children}</Tag>
-  }
+function missingDocumentFragment(fragment: string): string {
+  return `Section "${fragment}" was not found in this document.`
 }
 
-const knowledgeHeadingComponents = {
-  h1: markdownHeading(1),
-  h2: markdownHeading(2),
-  h3: markdownHeading(3),
-  h4: markdownHeading(4),
-  h5: markdownHeading(5),
-  h6: markdownHeading(6),
+function followMarkdownLink(
+  event: ReactMouseEvent<HTMLDivElement>,
+  documentPath: string,
+  onOpen: (path: string, fragment?: string) => void,
+  onError: (message: string | undefined) => void,
+) {
+  if (
+    event.defaultPrevented || event.button !== 0 ||
+    event.metaKey || event.ctrlKey || event.altKey || event.shiftKey
+  ) {
+    return
+  }
+  const link = event.target instanceof Element ? event.target.closest('a') : null
+  const href = link?.getAttribute('href')
+  if (!link || href == null || !event.currentTarget.contains(link)) {
+    return
+  }
+  const target = resolveDocumentLink(documentPath, href)
+  if (target.kind === 'external') {
+    return
+  }
+  event.preventDefault()
+  if (target.kind === 'invalid') {
+    onError(target.error)
+    return
+  }
+  onError(undefined)
+  if (target.path === documentPath) {
+    if (!scrollToDocumentFragment(event.currentTarget, target.fragment || '')) {
+      onError(missingDocumentFragment(target.fragment || ''))
+    }
+  } else {
+    onOpen(target.path, target.fragment)
+  }
 }
 
 function KnowledgeReader({
   file,
+  fragment,
   listing,
   loading,
   root,
   onOpenFolder,
+  onOpenFile,
   onLoadAsset,
 }: {
   file?: WorkspaceFile
+  fragment?: string
   listing?: WorkspaceListing
   loading: boolean
   root: KnowledgeRoot
   onOpenFolder: (path: string) => void
+  onOpenFile: (path: string, fragment?: string) => void
   onLoadAsset: MarkdownImageLoader
 }) {
   const [raw, setRaw] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
+  const [linkError, setLinkError] = useState<string>()
   const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    // Raw and outline state reset through the component key, so this only has
-    // to put the new document back at the top.
     const frame = requestAnimationFrame(() => {
-      if (contentRef.current) {
+      if (fragment !== undefined) {
+        if (!scrollToDocumentFragment(contentRef.current, fragment)) {
+          setLinkError(missingDocumentFragment(fragment))
+        }
+      } else if (contentRef.current) {
         contentRef.current.scrollTop = 0
       }
     })
     return () => cancelAnimationFrame(frame)
-  }, [file?.path])
+  }, [file?.path, fragment])
 
   const outline = useMemo<DocumentHeading[]>(
     () =>
@@ -5300,7 +5328,7 @@ function KnowledgeReader({
     <div className="knowledge-reader">
       <div className="workspace-preview__header">
         <div>
-          <strong>{file.name}</strong>
+          <strong title={file.name}>{file.name}</strong>
           <small>
             {root.computerName} · {root.path}/{file.path}
           </small>
@@ -5370,10 +5398,14 @@ function KnowledgeReader({
           ))}
         </nav>
       ) : null}
+      {linkError ? <p className="form-error" role="alert">{linkError}</p> : null}
       <div
         className={`workspace-preview__content${
           file.kind === 'markdown' && !raw ? ' markdown-body' : ''
         }`}
+        onClick={(event) =>
+          followMarkdownLink(event, file.path, onOpenFile, setLinkError)
+        }
         ref={contentRef}
       >
         {file.kind === 'pdf' ? (
@@ -5383,6 +5415,7 @@ function KnowledgeReader({
         ) : file.kind === 'markdown' && !raw ? (
           <ReactMarkdown
             components={components}
+            rehypePlugins={[rehypeDocumentHeadings]}
             remarkPlugins={[remarkGfm]}
           >
             {file.content || ''}
@@ -5430,6 +5463,7 @@ function WorkspaceDialog({
   const documentHistoryRef = useRef<NavigationEntry[]>([])
   const documentIndexRef = useRef(-1)
   const pendingScrollRef = useRef<number | undefined>(undefined)
+  const pendingFragmentRef = useRef<string | undefined>(undefined)
 
   const updateDocumentHistory = useCallback(
     (history: NavigationEntry[], index: number) => {
@@ -5507,7 +5541,11 @@ function WorkspaceDialog({
   )
 
   const openFile = useCallback(
-    async (path: string, restoreScroll?: number): Promise<boolean> => {
+    async (
+      path: string,
+      restoreScroll?: number,
+      fragment?: string,
+    ): Promise<boolean> => {
       const request = ++workspaceRequest.current
       setLoading(true)
       setError(undefined)
@@ -5537,6 +5575,7 @@ function WorkspaceDialog({
             updateDocumentHistory(pushed.history, pushed.index)
           }
           pendingScrollRef.current = restoreScroll
+          pendingFragmentRef.current = fragment
           setFile(nextFile)
           setRaw(false)
           setOutlineOpen(false)
@@ -5661,10 +5700,16 @@ function WorkspaceDialog({
   useEffect(() => {
     const top = pendingScrollRef.current ?? 0
     pendingScrollRef.current = undefined
+    const fragment = pendingFragmentRef.current
+    pendingFragmentRef.current = undefined
     // Wait for the rendered document before restoring its offset.
     const frame = requestAnimationFrame(() => {
       const element = previewContentRef.current
-      if (element) {
+      if (fragment !== undefined) {
+        if (!scrollToDocumentFragment(element, fragment)) {
+          setError(missingDocumentFragment(fragment))
+        }
+      } else if (element) {
         element.scrollTop = top
       }
     })
@@ -5905,7 +5950,7 @@ function WorkspaceDialog({
                   <ChevronLeft size={16} />
                 </button>
                 <div>
-                  <strong>{file.name}</strong>
+                  <strong title={file.name}>{file.name}</strong>
                   <small>{file.path}</small>
                 </div>
                 {documentHistory.length > 1 ? (
@@ -5984,6 +6029,14 @@ function WorkspaceDialog({
                 className={`workspace-preview__content${
                   file.kind === 'markdown' && !raw ? ' markdown-body' : ''
                 }`}
+                onClick={(event) =>
+                  followMarkdownLink(
+                    event,
+                    file.path,
+                    (path, fragment) => void openFile(path, undefined, fragment),
+                    setError,
+                  )
+                }
                 onScroll={rememberCurrentScroll}
                 ref={previewContentRef}
               >
@@ -5994,6 +6047,7 @@ function WorkspaceDialog({
                 ) : file.kind === 'markdown' && !raw ? (
                   <ReactMarkdown
                     components={markdownComponents}
+                    rehypePlugins={[rehypeDocumentHeadings]}
                     remarkPlugins={[remarkGfm]}
                   >
                     {file.content || ''}
@@ -6057,6 +6111,7 @@ function App() {
     readStoredOrder('agentic-remote:knowledge-roots-open', true),
   )
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
+  const [knowledgeFragment, setKnowledgeFragment] = useState<string>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
   // A single generation for every asynchronous knowledge operation. Anything
@@ -9439,6 +9494,7 @@ function App() {
     path: string,
     rootOverride?: string,
     fromRestore = false,
+    fragment?: string,
   ): Promise<boolean> {
     knowledgeHydrated.current = true
     const rootId = rootOverride || activeRootId
@@ -9463,6 +9519,7 @@ function App() {
         return false
       }
       setKnowledgeFile(opened)
+      setKnowledgeFragment(fragment)
       // Reading is full-screen on a phone, matching how selecting a session
       // hands the view over to the conversation.
       setSidebarOpen(false)
@@ -11566,11 +11623,15 @@ function App() {
             {activeRoot ? (
               <KnowledgeReader
                 file={knowledgeFile}
-                key={knowledgeFile?.path || activeRoot.id}
+                fragment={knowledgeFragment}
+                key={`${activeRoot.id}:${knowledgeFile?.path || '.'}`}
                 listing={knowledgeListing}
                 loading={knowledgeLoading}
                 onLoadAsset={loadKnowledgeAsset}
                 onOpenFolder={(path) => void openKnowledgeFolder(path)}
+                onOpenFile={(path, fragment) =>
+                  void openKnowledgeFile(path, undefined, false, fragment)
+                }
                 root={activeRoot}
               />
             ) : (

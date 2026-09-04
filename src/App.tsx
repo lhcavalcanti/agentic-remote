@@ -489,8 +489,44 @@ function bindingLabel(value: ShortcutBinding): string {
 // Escape leaves the editor rather than being captured, and Tab moves on, so
 // neither can be reached however they are held. Stored, they were shortcuts
 // that showed in the list and could never be pressed.
+const capturableCodes = new Set([
+  'Space',
+  'Enter',
+  'Backspace',
+  'Delete',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'Insert',
+  'Backquote',
+  'Minus',
+  'Equal',
+  'BracketLeft',
+  'BracketRight',
+  'Backslash',
+  'Semicolon',
+  'Quote',
+  'Comma',
+  'Period',
+  'Slash',
+])
+
 function capturableCode(code: string): boolean {
-  return !isModifierCode(code) && code !== 'Escape' && code !== 'Tab'
+  if (isModifierCode(code) || code === 'Escape' || code === 'Tab') {
+    return false
+  }
+  // A shape a real `KeyboardEvent.code` actually takes. Any nonempty string
+  // was accepted before, so `NotARealKey` came back from storage as a shortcut
+  // that showed in the list and no key on the keyboard could ever produce.
+  return (
+    /^Key[A-Z]$/.test(code) ||
+    /^Digit[0-9]$/.test(code) ||
+    /^Numpad[0-9]$/.test(code) ||
+    /^F([1-9]|1[0-2])$/.test(code) ||
+    /^Arrow(Up|Down|Left|Right)$/.test(code) ||
+    capturableCodes.has(code)
+  )
 }
 
 function isModifierCode(code: string): boolean {
@@ -6134,6 +6170,9 @@ function App() {
   const [updatingApp, setUpdatingApp] = useState(false)
   const [updateToastDismissed, setUpdateToastDismissed] = useState(false)
   const [keyboardOpen, setKeyboardOpen] = useState(false)
+  // Escape put the command menu away. Kept until what is being typed changes,
+  // so the menu does not spring back on the next keystroke.
+  const [commandMenuDismissed, setCommandMenuDismissed] = useState(false)
   const [shortcutOverrides, setShortcutOverrides] = useState<
     Partial<Record<ShortcutId, ShortcutBinding>>
   >(() => readStoredShortcuts())
@@ -6607,7 +6646,9 @@ function App() {
     [commandQuery, commands, composer],
   )
   const showCommandMenu =
-    commandSuggestions.length > 0 && !composer.slice(1).includes(' ')
+    commandSuggestions.length > 0 &&
+    !composer.slice(1).includes(' ') &&
+    !commandMenuDismissed
   const defaultComputerId =
     (selectedComputerId &&
     computers.some(
@@ -6963,6 +7004,12 @@ function App() {
       JSON.stringify(knowledgePositions),
     )
   }, [knowledgePositions])
+
+  // What is being typed has changed, so the menu is offering something else
+  // and is worth seeing again.
+  useEffect(() => {
+    setCommandMenuDismissed(false)
+  }, [commandQuery, selectedKey])
 
   useEffect(() => {
     localStorage.setItem(
@@ -10090,6 +10137,14 @@ function App() {
 
   function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing) {
+      return
+    }
+    // The menu is what Escape is about while it is open. Left to the global
+    // handler, the press went past it and closed a panel behind the composer
+    // while the menu stayed where it was.
+    if (event.key === 'Escape' && showCommandMenu) {
+      event.preventDefault()
+      setCommandMenuDismissed(true)
       return
     }
     if (event.key === 'ArrowDown' && showCommandMenu) {

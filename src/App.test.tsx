@@ -5819,6 +5819,33 @@ describe('App', () => {
     ).toHaveTextContent('Alt + \u2193')
   })
 
+  it('drops a stored shortcut whose key is not a real one', async () => {
+    // Any nonempty string was accepted, so a code no keyboard produces came
+    // back as a shortcut that showed in the list and could never be pressed.
+    localStorage.setItem(
+      'agentic-remote:shortcuts',
+      JSON.stringify({
+        toggleKnowledge: {
+          code: 'NotARealKey',
+          alt: true,
+          shift: false,
+          ctrl: false,
+          meta: false,
+        },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    expect(
+      await screen.findByLabelText('Change the keys for Open or close knowledge'),
+    ).toHaveTextContent('Alt + K')
+  })
+
   it('drops stored shortcut keys that could never be pressed', async () => {
     // Escape leaves the editor and Tab moves on, so neither can be recorded
     // however they are held -- stored, they showed in the list as shortcuts
@@ -6058,6 +6085,44 @@ describe('App', () => {
       expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
         'hidden',
       ),
+    )
+  })
+
+  it('closes the command menu on Escape, and nothing behind it', async () => {
+    // The menu is what Escape is about while it is open. Left to the global
+    // handler, the press went straight past it and closed a panel behind the
+    // composer while the menu stayed exactly where it was.
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listCommands).mockResolvedValue([
+      {
+        name: 'clear',
+        description: 'Clear the conversation',
+        allowDuringAgentExecution: false,
+      },
+    ])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+
+    const composer = screen.getByLabelText('Message')
+    fireEvent.change(composer, { target: { value: '/cle' } })
+    await waitFor(() =>
+      expect(document.querySelector('.command-menu')).not.toBeNull(),
+    )
+
+    fireEvent.keyDown(composer, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.command-menu')).toBeNull(),
+    )
+    // The panel behind it is untouched.
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
     )
   })
 

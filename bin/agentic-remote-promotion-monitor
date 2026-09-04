@@ -237,6 +237,34 @@ resolve_path() {
 # validation directory removed, its record left behind pointing at where it
 # used to be. Comparing against nothing matched nothing, so the record was
 # never taken away and every later `worktree add` at that path failed.
+# Canonicalises as much of the path as exists, and tidies the rest by text.
+#
+# Git records the real path, so a state directory reached through a symlink is
+# written down canonically while this was still spelling it the way the profile
+# does -- and the two never matched, leaving the monitor unable to find its own
+# record. The deepest part that exists is asked of the filesystem; whatever is
+# missing below it, which is the case this is needed for, is appended.
+canonical_path() {
+  local path="$1" head tail_part=""
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  head="$(normalize_path "$path")"
+  while [[ "$head" != / && ! -e "$head" ]]; do
+    tail_part="${head##*/}${tail_part:+/$tail_part}"
+    head="${head%/*}"
+    [[ -n "$head" ]] || head=/
+  done
+  local resolved
+  resolved="$(readlink -f -- "$head" 2>/dev/null || printf '%s' "$head")"
+  [[ -n "$resolved" ]] || resolved="$head"
+  if [[ -z "$tail_part" ]]; then
+    printf '%s' "$resolved"
+  elif [[ "$resolved" == / ]]; then
+    printf '/%s' "$tail_part"
+  else
+    printf '%s/%s' "$resolved" "$tail_part"
+  fi
+}
+
 normalize_path() {
   local path="$1" part
   local -a parts=() kept=()
@@ -288,7 +316,7 @@ validate_common_dir() {
 validate_worktree_record() {
   local common record pointer target
   common="$(validate_common_dir)" || return 1
-  target="$(normalize_path "$VALIDATE_ROOT")/.git"
+  target="$(canonical_path "$VALIDATE_ROOT")/.git"
   for record in "$common"/worktrees/*; do
     [[ -d "$record" ]] || continue
     pointer="$(cat -- "$record/gitdir" 2>/dev/null || true)"
@@ -299,7 +327,7 @@ validate_worktree_record() {
     esac
     # Tidied by text, because the worktree this points at may already be gone
     # -- which is the very case this record has to be found for.
-    [[ "$(normalize_path "$pointer")" == "$target" ]] || continue
+    [[ "$(canonical_path "$pointer")" == "$target" ]] || continue
     printf '%s' "$record"
     return 0
   done
@@ -328,7 +356,11 @@ validation_worktree_removable() {
   # vouch for whatever is at the path now -- a checkout somebody put there
   # since, which cleanup would then delete.
   if [[ -e "$VALIDATE_ROOT" ]]; then
-    if [[ -f "$VALIDATE_ROOT/.git" ]]; then
+    if [[ -e "$VALIDATE_ROOT/.git" ]]; then
+      # A repository of its own keeps `.git` as a directory rather than the
+      # file a linked worktree leaves, and either way its presence says this is
+      # somebody's checkout and not the remains of one of ours.
+      [[ -f "$VALIDATE_ROOT/.git" ]] || return 1
       pointer="$(sed -n 's/^gitdir: *//p' "$VALIDATE_ROOT/.git" 2>/dev/null || true)"
       [[ -n "$pointer" ]] || return 1
       case "$pointer" in
@@ -337,7 +369,7 @@ validation_worktree_removable() {
       esac
       [[ "$(resolve_path "$pointer")" == "$(resolve_path "$record")" ]] || return 1
     else
-      # No pointer at all, on a path that still holds something. `worktree
+      # Nothing named `.git` at all, on a path that still holds something. `worktree
       # remove` takes the pointer away before it has finished deleting, so a
       # run killed inside that window leaves exactly this. Only a removal this
       # monitor had already begun and recorded is recognised, and a checkout

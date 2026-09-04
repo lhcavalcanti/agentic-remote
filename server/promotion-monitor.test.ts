@@ -553,6 +553,65 @@ describe('promotion monitor', () => {
     )
   })
 
+  it('refuses a repository of its own standing where its worktree was', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // A checkout of its own keeps `.git` as a directory, not the file a linked
+    // worktree leaves. Testing only for the file sent it down the
+    // partial-removal path, where it was deleted outright.
+    const state = path.join(context.root, 'state-foreign-repo')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+    await rm(validate, { recursive: true, force: true })
+    await writeFile(
+      path.join(state, 'validate.owned'),
+      (await readFile(path.join(state, 'validate.owned'), 'utf8')) + 'removing\n',
+    )
+
+    // Somebody puts a repository of their own at that path.
+    await mkdir(validate, { recursive: true })
+    await git(validate, 'init', '--initial-branch=main')
+    const theirs = path.join(validate, 'theirs.txt')
+    await writeFile(theirs, 'work nobody has committed\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    expect(existsSync(theirs)).toBe(true)
+  })
+
+  it('finds its own record when the state directory is reached through a link', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Git writes down the real path. Spelling it the way the profile does left
+    // the two never matching, so the monitor could not find the record it had
+    // just made.
+    const real = path.join(context.root, 'state-real')
+    await mkdir(real, { recursive: true })
+    const linked = path.join(context.root, 'state-linked')
+    await symlink(real, linked)
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: linked,
+    })
+
+    expect(result.output).not.toContain('not a validation worktree')
+    expect(result.code).toBe(0)
+    expect(await git(context.dev, 'worktree', 'list')).not.toContain(
+      path.join(real, 'validate'),
+    )
+  })
+
   it('finishes a removal of its own worktree that was interrupted partway', async () => {
     const context = await fixture()
     await advanceMain(context)

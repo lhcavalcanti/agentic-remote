@@ -1018,6 +1018,28 @@ describe('single field forms', () => {
     expect(parseTerminalFormActiveField(singleFieldPane, form)).toBe(0)
   })
 
+  it('answers a single-field form whose value holds a run of spaces', () => {
+    // A prefilled value is just text, and text can contain two spaces. Reading
+    // any such line as a row of tabs made an ordinary one-field form look like
+    // a form of several, so it could be neither filled nor dismissed.
+    const pane = [
+      ' Copilot needs information.',
+      ' Which company is this for?',
+      '',
+      ' Company:',
+      ' \u276F ACME  Corp',
+      '   Other (type your answer)',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 esc cancel',
+    ].join('\n')
+    const form = {
+      question: 'Which company is this for?',
+      fields: ['Company'],
+    }
+    expect(terminalFormShowsFields(pane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, form)).toBe(0)
+  })
+
   it('refuses a one-field identity against a form of several fields', () => {
     // The heading of the focused field is printed on its own line inside a
     // multi-field form too. Treated as the whole of a one-field form, the

@@ -1468,10 +1468,21 @@ function terminalFormTabsIndex(
     // Tabs sit on one line separated by runs of spaces, so a title containing
     // a single space stays intact.
     .map((line) => line.split(/\s{2,}/).filter(Boolean))
-  // A form of more than one field prints them as a row of tabs. Whether the
-  // pane holds such a row says which kind of form is on screen, and that is
-  // decided once for the whole pane rather than line by line.
-  const printsTabRow = rows.some((tabs) => tabs.length > 1)
+  // A form of more than one field prints them as a row of tabs, directly under
+  // the question and above the focused field's own content. So it is the first
+  // line with anything on it -- not any line that happens to hold a run of
+  // spaces, which is what a prefilled value like `ACME  Corp` looks like
+  // further down, and which used to make a perfectly ordinary single-field
+  // form impossible to answer.
+  const questionAt = question
+    ? lines.findIndex(
+        (line, index) => index > header && line.trim() === question,
+      )
+    : header
+  const firstContent = rows.find(
+    (tabs, position) => header + 1 + position > questionAt && tabs.length > 0,
+  )
+  const printsTabRow = (firstContent?.length ?? 0) > 1
   for (let position = 0; position < rows.length; position += 1) {
     const tabs = rows[position]
     const index = header + 1 + position

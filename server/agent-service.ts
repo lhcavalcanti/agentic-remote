@@ -5769,11 +5769,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Only when this pass actually consumed something. Carrying on regardless
     // retried a prompt that had just failed and been put back -- for ever,
     // repeating whatever it had already done on the way.
+    //
+    // Whether anything is running, rather than whether the session is idle. A
+    // turn that failed leaves it reading `error`, and a command consumed after
+    // that started nothing of its own to change that -- so everything behind
+    // it waited for an unrelated send, resume or restart.
     const remaining = this.store.get(sessionId)
     if (
       consumed &&
       remaining?.queuedPrompts?.length &&
-      remaining.status === 'idle' &&
+      remaining.status !== 'running' &&
+      remaining.status !== 'waiting' &&
       !this.activePrompts.has(sessionId) &&
       !this.drainingSessions.has(sessionId)
     ) {

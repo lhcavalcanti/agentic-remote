@@ -9843,8 +9843,17 @@ function App() {
         setSessions((current) => upsertSession(current, fresh))
       } catch {
         // Even the re-read failed, so the best available answer is the list as
-        // it was before the drag.
-        setSessions((current) => upsertSession(current, target))
+        // it was before the drag -- but only if it is still a session at all.
+        // Put back after its removal has already been seen, the snapshot
+        // reappears as a session nothing can be done with and no later event
+        // will clear.
+        setSessions((current) =>
+          current.some(
+            (candidate) => sessionKey(candidate) === sessionKey(target),
+          )
+            ? upsertSession(current, target)
+            : current,
+        )
       }
     }
   }

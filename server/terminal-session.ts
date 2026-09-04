@@ -1444,6 +1444,17 @@ export function parseTerminalFormPrompt(pane: string): boolean {
  * nothing about which request it belongs to; the tabs are what distinguish one
  * prompt from the next.
  */
+/**
+ * A tab's name without the mark saying it has focus.
+ *
+ * The CLI writes the focused tab inside brackets. Compared with the mark
+ * still on it the name never matches, so the form is not recognised as the
+ * one being answered, and an answer for it is never sent.
+ */
+function withoutFocusMark(tab: string): string {
+  return tab.replace(/^\[(.*)\]$/, '$1')
+}
+
 function terminalFormTabsIndex(
   lines: string[],
   form: TerminalFormIdentity,
@@ -1509,7 +1520,7 @@ function terminalFormTabsIndex(
     }
     if (
       tabs.length === form.fields.length &&
-      tabs.every((tab, slot) => tab === form.fields[slot])
+      tabs.every((tab, slot) => withoutFocusMark(tab) === form.fields[slot])
     ) {
       return index
     }

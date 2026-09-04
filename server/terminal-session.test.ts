@@ -1003,6 +1003,51 @@ const singleFieldPane = [
   ' \u2191/\u2193 select \u00B7 enter accept \u00B7 ctrl+d decline \u00B7 esc cancel',
 ].join('\n')
 
+// Captured from a real Copilot CLI form of several fields: the tab holding
+// focus is written inside brackets.
+const bracketedTabPane = [
+  ' Copilot needs information.',
+  ' Choose how to handle the unpublished work.',
+  '',
+  ' [lcavalcanti active project]  oai-engine-configs work   agentic-remote work',
+  '',
+  ' lcavalcanti active project:',
+  ' \u276F Preserve local GPT-5.3 changes (Recommended)',
+  '   Commit and push the GPT-5.3 project changes',
+  '   Other (type your answer)',
+  '',
+  ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+].join('\n')
+
+describe('forms whose focused tab is marked', () => {
+  const form = {
+    question: 'Choose how to handle the unpublished work.',
+    fields: [
+      'lcavalcanti active project',
+      'oai-engine-configs work',
+      'agentic-remote work',
+    ],
+  }
+
+  it('reads the tab name from under its marking', () => {
+    expect(terminalFormShowsFields(bracketedTabPane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(bracketedTabPane, form)).toBe(0)
+  })
+
+  it('still refuses a marked form belonging to another question', () => {
+    expect(
+      terminalFormShowsFields(bracketedTabPane, {
+        question: 'Something else entirely?',
+        fields: [
+          'lcavalcanti active project',
+          'oai-engine-configs work',
+          'agentic-remote work',
+        ],
+      }),
+    ).toBe(false)
+  })
+})
+
 describe('single field forms', () => {
   const form = {
     question: 'Which meaning of \u201Csucceeded\u201D should the status file use?',

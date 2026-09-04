@@ -9023,6 +9023,8 @@ function App() {
     if (!selected || !content || sending) {
       return
     }
+    // Set only when this send is an edited prompt leaving the queue.
+    let queuedPlaceBefore = -1
     // This message is already waiting, and is about to be sent instead. It
     // comes off the queue first, or the same text goes out twice: once now and
     // once when the queue reaches it.
@@ -9033,6 +9035,13 @@ function App() {
     // away -- past the removal that was supposed to happen first.
     if (editingQueuedPromptId) {
       const removedId = editingQueuedPromptId
+      // Where it was waiting. A session that still has other prompts queued
+      // cannot send anything ahead of them, so this one is appended -- and a
+      // message edited from the front of the queue would quietly come out at
+      // the back. Its place is given back to it below.
+      queuedPlaceBefore = (selected.queuedPrompts || []).findIndex(
+        (prompt) => prompt.id === removedId,
+      )
       setSending(true)
       try {
         const result = await removeQueuedPrompt(
@@ -9159,6 +9168,36 @@ function App() {
         unshownFailures.current.delete(targetKey)
       }
       setSessions((current) => upsertSession(current, updated))
+      // Other prompts were waiting, so this could not go ahead of them and was
+      // appended instead. It is put back where it was rather than left at the
+      // back: a message edited from the front of the queue coming out last is
+      // not what pressing Send asked for.
+      const queue = updated.queuedPrompts || []
+      if (
+        queuedPlaceBefore >= 0 &&
+        queue.length > 1 &&
+        queue[queue.length - 1]?.content === content &&
+        queuedPlaceBefore < queue.length - 1
+      ) {
+        const restored = [...queue]
+        const [moved] = restored.splice(restored.length - 1, 1)
+        restored.splice(queuedPlaceBefore, 0, moved)
+        const order = restored.map((prompt) => prompt.id)
+        setSessions((current) =>
+          upsertSession(current, { ...updated, queuedPrompts: restored }),
+        )
+        try {
+          const reordered = await reorderQueuedPrompts(
+            selected.computerId,
+            selected.id,
+            order,
+          )
+          setSessions((current) => upsertSession(current, reordered))
+        } catch {
+          // The queue moved on. Its own order stands.
+          setSessions((current) => upsertSession(current, updated))
+        }
+      }
     } catch (caught) {
       prependComposerForKey(targetKey, content)
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -9444,6 +9483,28 @@ function App() {
   }
 
   /** Writes the composer back to the message it was opened from. */
+  // A message being rewritten is still an ordinary waiting message: the agent
+  // can reach it and send it, and it can be removed from the row beside the
+  // composer. Either way it is no longer there to be written back to, and the
+  // banner would go on offering a Save that could not succeed.
+  //
+  // The rewriting is not thrown away. Whatever has been typed stays in the
+  // composer as an ordinary draft, so nothing the reader wrote is lost to a
+  // race they could not see.
+  useEffect(() => {
+    const editing = editingQueuedPrompt
+    if (!editing || !selected || sessionKey(selected) !== editing.sessionKey) {
+      return
+    }
+    const stillQueued = (selected.queuedPrompts || []).some(
+      (prompt) => prompt.id === editing.promptId,
+    )
+    if (stillQueued) {
+      return
+    }
+    setEditingQueuedPrompt(undefined)
+  }, [editingQueuedPrompt, selected])
+
   async function saveQueuedPromptEdit(): Promise<boolean> {
     const promptId = editingQueuedPromptId
     const content = composer.trim()
@@ -9462,15 +9523,30 @@ function App() {
       )
       setSessions((current) => upsertSession(current, result.session))
       setEditingQueuedPrompt(undefined)
-      // Only what was actually saved. The composer stays writable while the
-      // request is in flight, and clearing it regardless threw away anything
-      // typed in the meantime.
-      if (composerRef.current?.value.trim() === content) {
-        setComposer('')
-      }
+      // Only what was actually saved, and only from the session it was saved
+      // for. The composer stays writable while the request is in flight, so
+      // clearing it regardless threw away anything typed meanwhile -- and
+      // reading the live composer cleared the wrong session's draft when the
+      // reader moved on before the answer came back.
+      const savedKey = sessionKey(target)
+      updateComposerDrafts([], (drafts) => {
+        if (drafts[savedKey]?.trim() !== content) {
+          return drafts
+        }
+        const { [savedKey]: _saved, ...rest } = drafts
+        return rest
+      })
       return true
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      const message = caught instanceof Error ? caught.message : String(caught)
+      // It went out, or somebody took it off, while it was being rewritten.
+      // Saying only "not found" leaves the reader wondering what became of
+      // their text; it is still in the composer, and this says so.
+      setError(
+        /not found/i.test(message)
+          ? 'That message left the queue while you were editing it. Your text is still here.'
+          : message,
+      )
       return false
     } finally {
       setQueueActionId(undefined)

@@ -46,7 +46,10 @@ const renameSessionSchema = z.object({
 })
 
 const updateQueuedPromptSchema = z.object({
-  content: z.string().min(1),
+  // The same shape a message has to take. Without it a whitespace-only edit
+  // became a generic server error, and an edit could hold more than any
+  // message was ever allowed to.
+  content: z.string().trim().min(1).max(200_000),
 })
 
 const reorderQueueSchema = z.object({

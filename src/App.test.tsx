@@ -2875,6 +2875,54 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('keeps the text when the message being edited leaves the queue', async () => {
+    // A message being rewritten is still an ordinary waiting message: the
+    // agent can reach it and send it, or it can be removed. Either way it is
+    // no longer there to be written back to, and the banner would go on
+    // offering a Save that could not succeed. What was typed is kept.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+
+    render(<App />)
+    await screen.findByText('the original text')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
+    )
+    const composer = screen.getByLabelText('Message')
+    fireEvent.change(composer, { target: { value: 'my rewritten text' } })
+    expect(document.querySelector('.queued-edit-banner')).not.toBeNull()
+
+    // The agent reaches it and sends it while it is being rewritten.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...withQueue, queuedCount: 0, queuedPrompts: [] },
+        }),
+      } as MessageEvent)
+    })
+
+    // Out of edit mode, because there is nothing left to write back to...
+    await waitFor(() =>
+      expect(document.querySelector('.queued-edit-banner')).toBeNull(),
+    )
+    // ...and the rewriting is still there rather than lost to a race.
+    expect(screen.getByLabelText('Message')).toHaveValue('my rewritten text')
+  })
+
   it('leaves edit mode behind when the reader moves to another session', async () => {
     // The composer follows the selection, so a marker that does not is a
     // marker pointing at a message the reader can no longer see -- and Enter,

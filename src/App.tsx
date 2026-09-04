@@ -10083,6 +10083,15 @@ function App() {
 
 
 
+  /** Applies a session to the list, and to what this turn can read back. */
+  // `setSessions` schedules; `sessionsRef` is what anything already running
+  // reads. Without both, the next drag in the lane resumed from the order that
+  // had just been refused and asked for it again.
+  function applySession(session: ManagedSession) {
+    sessionsRef.current = upsertSession(sessionsRef.current, session)
+    setSessions((current) => upsertSession(current, session))
+  }
+
   /** Whether a session is still one the app knows about. */
   // A reply can come back after the session it is about has been deleted.
   // Upserting then puts the session back: one nothing can be done with, that
@@ -10141,9 +10150,7 @@ function App() {
       const order = next.map((prompt) => prompt.id)
       // Shown in the new order straight away: the drag is the answer, and
       // waiting for the round trip makes the list snap back under the pointer.
-      setSessions((current) =>
-        upsertSession(current, { ...target, queuedPrompts: next }),
-      )
+      applySession({ ...target, queuedPrompts: next })
       setError(undefined)
       try {
       const updated = await reorderQueuedPrompts(
@@ -10163,7 +10170,7 @@ function App() {
         try {
           const fresh = await getSession(target.computerId, target.id)
           if (stillListed(fresh)) {
-            setSessions((current) => upsertSession(current, fresh))
+            applySession(fresh)
           }
         } catch {
           // Even the re-read failed, so the best available answer is the queue
@@ -10171,9 +10178,9 @@ function App() {
           // order the server had accepted. Only if it is still a session at
           // all: put back after its removal has been seen, the snapshot
           // reappears as one nothing can act on and no later event will clear.
-          setSessions((current) =>
-            stillListed(target) ? upsertSession(current, target) : current,
-          )
+          if (stillListed(target)) {
+            applySession(target)
+          }
         }
       }
     } finally {

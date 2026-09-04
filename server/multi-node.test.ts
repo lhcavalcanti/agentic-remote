@@ -27,8 +27,9 @@ import type {
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import { ComputerManager } from './computer-manager.js'
-import type { ComputerRegistry } from './computer-registry.js'
-import type { NodeIdentityStore } from './node-identity.js'
+import { ComputerRegistry } from './computer-registry.js'
+import { NodeIdentityStore } from './node-identity.js'
+import { RemoteNodeClient } from './remote-node-client.js'
 import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
 import type {
@@ -1554,6 +1555,214 @@ describe('multi-node hub', () => {
   })
 })
 
+function deferred<T>() {
+  let finish: ((value: T) => void) | undefined
+  const promise = new Promise<T>((resolve) => { finish = resolve })
+  return {
+    promise,
+    resolve(value: T) {
+      if (!finish) throw new Error('Deferred response was not initialized')
+      finish(value)
+    },
+  }
+}
+
+async function remoteSnapshotFixture() {
+  const directory = await temporaryDirectory('agentic-remote-snapshot')
+  const identity = new NodeIdentityStore(directory)
+  const registry = new ComputerRegistry(directory)
+  await identity.initialize()
+  await registry.initialize()
+  const computer = {
+    id: 'node-1',
+    name: 'Workshop',
+    baseUrl: 'http://127.0.0.1:1',
+    token: 'review-test-token',
+  }
+  await registry.upsert(computer)
+  const manager = new ComputerManager(new FakeSessionService(), identity, registry)
+  const client = new RemoteNodeClient(computer)
+  manager['clients'].set(computer.id, client)
+  const events: HubEvent[] = []
+  manager.on('event', (event) => events.push(event))
+  const managed = (entry: SessionDetail) => ({
+    ...entry, computerId: computer.id, computerName: computer.name,
+  })
+  return { manager, client, computer, events, managed }
+}
+
+function taskSnapshot(running: boolean): BackgroundTaskSnapshot {
+  return {
+    supported: true,
+    runningCount: running ? 1 : 0,
+    tasks: [{
+      id: 'review-task', type: 'shell', description: 'Build project',
+      startedAt: '2026-09-04T00:00:00.000Z',
+      status: running ? 'running' : 'completed', canCancel: running,
+    }],
+  }
+}
+
+describe('remote snapshot consistency', () => {
+  it('reconciles live session events received while a listing is in flight', async () => {
+    const { manager, client, computer, managed } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted', session: session('kept', 'New title'),
+    })
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted', session: session('added', 'Created during read'),
+    })
+    manager['emitNodeEvent'](computer, { type: 'session.removed', sessionId: 'deleted' })
+    response.resolve([session('kept', 'Old title'), session('deleted', 'Deleted')])
+
+    const result = await listing
+    expect(result.sessions).toEqual(expect.arrayContaining([
+      managed(session('kept', 'New title')),
+      managed(session('added', 'Created during read')),
+    ]))
+    expect(result.sessions.some((entry) => entry.id === 'deleted')).toBe(false)
+    expect(result.answeredComputerIds).toContain(computer.id)
+    manager.stop()
+  })
+
+  it('coalesces overlapping reconnect and browser session reads', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const first = manager['resyncRemoteComputer'](computer, client)
+    const second = manager['resyncRemoteComputer'](computer, client)
+    const listing = manager.listSessionsWithAuthority()
+    response.resolve([session('kept', 'Current')])
+    await Promise.all([first, second, listing])
+
+    expect(client.listSessions).toHaveBeenCalledOnce()
+    expect(events.filter((event) => event.type === 'session.upserted'))
+      .toHaveLength(1)
+    manager.stop()
+  })
+
+  it('does not recreate an unpaired computer from a late listing', async () => {
+    const { manager, client, computer } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    await manager.removeComputer(computer.id)
+    response.resolve([session('removed-node-session', 'No longer paired')])
+
+    const result = await listing
+    expect(result.sessions).toEqual([])
+    expect(result.answeredComputerIds).not.toContain(computer.id)
+    expect(manager['sessionCache'].has(computer.id)).toBe(false)
+  })
+
+  it('does not accept a listing from a replaced node client', async () => {
+    const { manager, client, computer, managed } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    manager['clients'].set(computer.id, new RemoteNodeClient(computer))
+    manager['sessionCache'].set(computer.id, [managed(session('fresh', 'New client'))])
+    response.resolve([session('old', 'Old client')])
+
+    const result = await listing
+    expect(result.sessions.map((entry) => entry.id)).toEqual(['fresh'])
+    expect(result.answeredComputerIds).not.toContain(computer.id)
+    manager.stop()
+  })
+
+  it('keeps a live task event newer than a reconnect task read', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept', 'Current')])
+    vi.spyOn(client, 'providers', 'get').mockReturnValue(new FakeSessionService().providers())
+    const response = deferred<BackgroundTaskSnapshot>()
+    vi.spyOn(client, 'listBackgroundTasks').mockReturnValue(response.promise)
+    const sync = manager['resyncRemoteComputer'](computer, client)
+    await vi.waitFor(() => expect(client.listBackgroundTasks).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, {
+      type: 'session.tasks.updated', sessionId: 'kept', ...taskSnapshot(false),
+    })
+    response.resolve(taskSnapshot(true))
+    await sync
+
+    const updates = events.filter((event) => event.type === 'session.tasks.updated')
+    expect(updates).toHaveLength(1)
+    expect(updates[0]).toMatchObject({ runningCount: 0 })
+    manager.stop()
+  })
+
+  it('does not publish tasks from a superseded reconnect', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept', 'Current')])
+    vi.spyOn(client, 'providers', 'get').mockReturnValue(new FakeSessionService().providers())
+    const oldTasks = deferred<BackgroundTaskSnapshot>()
+    vi.spyOn(client, 'listBackgroundTasks')
+      .mockReturnValueOnce(oldTasks.promise)
+      .mockResolvedValueOnce(taskSnapshot(false))
+    const first = manager['resyncRemoteComputer'](computer, client)
+    await vi.waitFor(() => expect(client.listBackgroundTasks).toHaveBeenCalledOnce())
+    await manager['resyncRemoteComputer'](computer, client)
+    oldTasks.resolve(taskSnapshot(true))
+    await first
+
+    const updates = events.filter((event) => event.type === 'session.tasks.updated')
+    expect(updates).toHaveLength(1)
+    expect(updates[0]).toMatchObject({ runningCount: 0 })
+    manager.stop()
+  })
+
+  it('keeps offline fallback non-authoritative after a failed shared read', async () => {
+    const { manager, client, computer, managed } = await remoteSnapshotFixture()
+    const cached = managed(session('kept', 'Last known'))
+    manager['sessionCache'].set(computer.id, [cached])
+    vi.spyOn(client, 'listSessions').mockRejectedValue(new Error('Connection refused'))
+    const result = await manager.listSessionsWithAuthority()
+    expect(result.sessions).toEqual([cached])
+    expect(result.answeredComputerIds).not.toContain(computer.id)
+    manager.stop()
+  })
+
+  it('does not overwrite an explicit task refresh with an older reconnect read', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept', 'Current')])
+    vi.spyOn(client, 'providers', 'get').mockReturnValue(new FakeSessionService().providers())
+    const oldTasks = deferred<BackgroundTaskSnapshot>()
+    vi.spyOn(client, 'listBackgroundTasks')
+      .mockReturnValueOnce(oldTasks.promise)
+      .mockResolvedValueOnce(taskSnapshot(false))
+    const sync = manager['resyncRemoteComputer'](computer, client)
+    await vi.waitFor(() => expect(client.listBackgroundTasks).toHaveBeenCalledOnce())
+    expect(await manager.listBackgroundTasks(computer.id, 'kept'))
+      .toEqual(taskSnapshot(false))
+    oldTasks.resolve(taskSnapshot(true))
+    await sync
+    expect(events.filter((event) => event.type === 'session.tasks.updated'))
+      .toEqual([])
+    manager.stop()
+  })
+
+  it('does not emit tasks for a session removed during the reconnect read', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept', 'Current')])
+    vi.spyOn(client, 'providers', 'get').mockReturnValue(new FakeSessionService().providers())
+    const oldTasks = deferred<BackgroundTaskSnapshot>()
+    vi.spyOn(client, 'listBackgroundTasks').mockReturnValue(oldTasks.promise)
+    const sync = manager['resyncRemoteComputer'](computer, client)
+    await vi.waitFor(() => expect(client.listBackgroundTasks).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, { type: 'session.removed', sessionId: 'kept' })
+    oldTasks.resolve(taskSnapshot(true))
+    await sync
+    expect(events.filter((event) => event.type === 'session.tasks.updated'))
+      .toEqual([])
+    manager.stop()
+  })
+})
+
 describe('readiness endpoints by role', () => {
   it('removes sessions deleted while a node was disconnected', async () => {
     const computer = {
@@ -1576,10 +1785,10 @@ describe('readiness endpoints by role', () => {
     manager.on('event', (event) => events.push(event as ServerEvent))
 
     // One of them was deleted before it came back, so it is simply absent.
-    await manager['resyncRemoteComputer'](computer, {
-      listSessions: async () => [session('kept-session', 'Kept')],
-      providers: [],
-    } as never)
+    const client = new RemoteNodeClient(computer)
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept-session', 'Kept')])
+    manager['clients'].set(computer.id, client)
+    await manager['resyncRemoteComputer'](computer, client)
 
     expect(events).toContainEqual(
       expect.objectContaining({

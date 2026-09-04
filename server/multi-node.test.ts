@@ -1141,12 +1141,12 @@ describe('multi-node hub', () => {
       const sent = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session/messages`,
-        payload: { content: 'hello remote' },
+        payload: { content: '\nhello remote\n' },
       })
       expect(sent.statusCode, sent.body).toBe(202)
       expect(sent.json().session.messages.at(-1)).toMatchObject({
         role: 'user',
-        content: 'hello remote',
+        content: '\nhello remote\n',
       })
       await expect(upserted).resolves.toMatchObject({
         type: 'session.upserted',

@@ -47,7 +47,10 @@ const renameSessionSchema = z.object({
 
 const sendMessageSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
-  content: z.string().trim().min(1).max(200_000),
+  content: z
+    .string()
+    .max(200_000)
+    .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
   enqueue: z.boolean().optional(),
 })
 

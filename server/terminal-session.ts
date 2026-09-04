@@ -1641,6 +1641,9 @@ function activeBottomFrame(
       lines.slice(index + 1).every((line) => !line.trim())
     ) {
       const rawContent = lines.slice(start + 1, index)
+      if (rawContent.some((line) => /^\s*┃/u.test(line))) {
+        continue
+      }
       if (
         containsCopiedInteractiveFrame(
           rawContent.map(stripOuterFrameEdge),

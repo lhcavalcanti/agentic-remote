@@ -222,6 +222,28 @@ describe('TmuxTerminalSessionController', () => {
       isTerminalDesktopInstallPrompt('❯ Ready for a prompt'),
     ).toBe(false)
     expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+┃ THE GITHUB COPILOT APP
+┃ Now generally available!
+┃ Install it now?
+┃ ❯ Yes, install      No, thanks
+┃ ←/→ to choose · Enter to select · Y / N
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      parseTerminalUserInput(`
+╭───────────────────────────────────────────────╮
+┃ Question
+┃ Which environment?
+┃ ❯ 1. Production
+┃   2. Development
+┃ ↑/↓ to select · enter to confirm · esc cancel
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    expect(
       parseTerminalUserInput(`
 ╭─────────────────────────────────────────────────╮
 │ ╭─────────────────────────────────────────────╮ │
@@ -1418,7 +1440,15 @@ Permission request (1 remaining)
     await expect(
       controller.send(sessionId, 'establish cached owner', false),
     ).resolves.toBe(true)
-    await expect(controller.has(sessionId)).resolves.toBe(true)
+    let replacementAvailable = false
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      replacementAvailable = await controller.has(sessionId)
+      if (replacementAvailable) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(replacementAvailable).toBe(true)
     await execFileAsync('tmux', [
       'new-window',
       '-d',

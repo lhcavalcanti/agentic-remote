@@ -3392,7 +3392,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           ),
         )
       }
-      if (pane && isTerminalOverlay(pane)) {
+      const ownsStartup =
+        startupLocked &&
+        (this.terminalController.ownsStartupPrompt?.(sessionId) ?? false)
+      if (ownsStartup || (pane && isTerminalOverlay(pane))) {
         if (!startupLocked) {
           return this.serializeTerminalAdmission(sessionId, () =>
             this.sendAdmittedWithBackend(
@@ -3406,10 +3409,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           )
         }
         const canHandleStartup =
-          (await this.terminalController.canHandleStartupPrompt?.(
-            sessionId,
-            pane,
-          )) ?? false
+          ownsStartup ||
+          (pane
+            ? ((await this.terminalController.canHandleStartupPrompt?.(
+                sessionId,
+                pane,
+              )) ?? false)
+            : false)
         resolvedStartup =
           canHandleStartup &&
           ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??

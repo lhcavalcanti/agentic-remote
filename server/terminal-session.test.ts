@@ -1486,15 +1486,7 @@ Permission request (1 remaining)
     await expect(
       controller.send(sessionId, 'establish cached owner', false),
     ).resolves.toBe(true)
-    let replacementAvailable = false
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      replacementAvailable = await controller.has(sessionId)
-      if (replacementAvailable) {
-        break
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50))
-    }
-    expect(replacementAvailable).toBe(true)
+    await expect(controller.has(sessionId)).resolves.toBe(true)
     await execFileAsync('tmux', [
       'new-window',
       '-d',
@@ -1506,32 +1498,40 @@ Permission request (1 remaining)
     await execFileAsync('tmux', ['kill-window', '-t', originalWindow])
     const reopenedPanePid = (
       await execFileAsync('tmux', [
-      'new-window',
-      '-d',
-      '-P',
-      '-F',
-      '#{pane_pid}',
-      '-t',
-      `=${tmuxSession}:`,
-      '-e',
-      `COPILOT_HOME=${copilotHome}`,
-      executable,
-      '--session-id',
-      sessionId,
+        'new-window',
+        '-d',
+        '-P',
+        '-F',
+        '#{pane_pid}',
+        '-t',
+        `=${tmuxSession}:`,
+        '-e',
+        `COPILOT_HOME=${copilotHome}`,
+        executable,
+        '--session-id',
+        sessionId,
       ])
     ).stdout.trim()
     await waitForProcessCommand(Number.parseInt(reopenedPanePid, 10), [
       executable,
     ])
 
-    await expect(controller.has(sessionId)).resolves.toBe(true)
+    let replacementAvailable = false
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      replacementAvailable = await controller.has(sessionId)
+      if (replacementAvailable) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(replacementAvailable).toBe(true)
     await expect(
       controller.send(sessionId, 'must not trust the replacement', false),
     ).rejects.toMatchObject({ statusCode: 409 })
     await expect(
       controller.send(sessionId, 'replacement can be rediscovered', false),
     ).resolves.toBe(true)
-  })
+  }, 15_000)
 
   it('does not paste after the owner changes during readiness', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))

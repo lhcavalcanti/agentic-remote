@@ -5495,6 +5495,8 @@ describe('AgentService deletion', () => {
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
       capture: vi.fn(async () => '╻▄▄▄▄\n┃\n╹▀▀▀▀'),
+      inputReady: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => true),
     }
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),

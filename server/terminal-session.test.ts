@@ -751,6 +751,12 @@ Permission request (1 remaining)
       location.windowId,
       'Enter',
     ])
+    await expect(
+      Promise.all([
+        controller.resolveStartupPrompt(sessionId),
+        controller.resolveStartupPrompt(sessionId),
+      ]),
+    ).resolves.toEqual([true, true])
 
     const delivered = await controller.send(
       sessionId,
@@ -760,6 +766,62 @@ Permission request (1 remaining)
 
     expect(delivered).toBe(true)
     expect(await readFile(output, 'utf8')).toBe('arrives after both prompts')
+  })
+
+  it('captures an owned startup prompt from its expected pane', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    const copilotHome = path.join(directory, 'copilot-home')
+    const bystander = path.join(directory, 'copilot-bystander')
+    const executable = path.join(directory, 'copilot-owned-startup')
+    await writeFile(
+      bystander,
+      [
+        '#!/usr/bin/env bash',
+        "printf 'Settings\\n❯ allowedUrls (default)\\nesc close\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╭────────────────────────────────────────────────────────────╮\\nConfirm folder trust\\nDo you trust the files in this folder?\\n❯ 1. Yes\\n  2. Yes, and remember this folder for future sessions\\n  3. No (Esc)\\n↑/↓ to navigate · enter to select · esc to cancel\\n╰────────────────────────────────────────────────────────────╯\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await Promise.all([chmod(bystander, 0o755), chmod(executable, 0o755)])
+    const tmuxSession = `agentic-owned-capture-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      '-e',
+      `COPILOT_HOME=${copilotHome}`,
+      bystander,
+      '--session-id',
+      sessionId,
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const controller = new TmuxTerminalSessionController()
+
+    await controller.create(sessionId, directory, 'Owned startup', true)
+
+    await expect(controller.capture(sessionId)).resolves.toContain(
+      'Confirm folder trust',
+    )
   })
 
   it('removes a new window when startup readiness fails', async () => {

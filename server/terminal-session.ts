@@ -648,7 +648,14 @@ export class TmuxTerminalSessionController
   }
 
   async capture(sessionId: string): Promise<string | undefined> {
-    const target = await this.target(sessionId)
+    const readyOwner = this.inputReadySessions.get(sessionId)
+    const automaticOwner = this.automaticStartupSessions.get(sessionId)
+    const expectedTarget = readyOwner?.target ?? automaticOwner?.target
+    const owner = expectedTarget
+      ? await this.owner(sessionId, expectedTarget)
+      : undefined
+    const target =
+      owner?.target ?? (expectedTarget ? undefined : await this.target(sessionId))
     if (!target) {
       return undefined
     }
@@ -686,8 +693,17 @@ export class TmuxTerminalSessionController
 
   async resolveStartupPrompt(sessionId: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const readyOwner = this.inputReadySessions.get(sessionId)
       const automaticOwner = this.automaticStartupSessions.get(sessionId)
+      const expectedTarget = automaticOwner?.target ?? readyOwner?.target
+      const owner = await this.owner(sessionId, expectedTarget)
+      if (
+        owner &&
+        readyOwner?.pid === owner.pid &&
+        readyOwner.target === owner.target
+      ) {
+        return true
+      }
       if (
         !owner ||
         automaticOwner?.pid !== owner.pid ||

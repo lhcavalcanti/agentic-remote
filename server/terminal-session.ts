@@ -4,6 +4,7 @@ import { readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { findActiveCopilotProcesses } from './active-sessions.js'
+import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
 import type {
   ConfigureRuntimeInput,
   PendingPermission,
@@ -1745,15 +1746,7 @@ async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
           : []
       })
   } catch (error) {
-    if (
-      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
-      String((error as { stderr?: string }).stderr).includes(
-        'no server running',
-      ) ||
-      String((error as { stderr?: string }).stderr).includes(
-        'error connecting to',
-      )
-    ) {
+    if (tmuxNotInstalled(error) || noTmuxServer(error)) {
       return []
     }
     throw error
@@ -2163,25 +2156,6 @@ async function waitForComposerPaste(
 
 /** Whether a tmux command failed because there is no server left to ask. */
 
-function noTmuxServer(error: unknown): boolean {
-  const failure = error as { stderr?: unknown }
-  // Only tmux's own "there is nothing to ask" diagnostics. Treating every
-  // exit status of 1 as absence also swallowed a socket that could not be
-  // reached or read, and stopping then reported success without having killed
-  // anything, while the process it was meant to end carried on.
-  return (
-    typeof failure.stderr === 'string' &&
-    // tmux uses "error connecting to" for a socket it cannot reach at all and
-    // for one it is not allowed to open, and only the first means there is
-    // nothing there. Reading both as absence let `stop` report success
-    // without killing anything.
-    (/no server running/i.test(failure.stderr) ||
-      /error connecting to .*\(no such file or directory\)/i.test(
-        failure.stderr,
-      ))
-  )
-}
-
 async function tmuxTargetForPid(
   pid: number,
 ): Promise<{ target: string; rootPid: number } | undefined> {
@@ -2201,7 +2175,7 @@ async function tmuxTargetForPid(
       ])
     ).stdout
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (tmuxNotInstalled(error)) {
       return undefined
     }
     // Killing the last pane in the last session ends tmux itself, and the

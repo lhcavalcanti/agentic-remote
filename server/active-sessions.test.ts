@@ -484,7 +484,93 @@ describe('active Copilot processes', () => {
       },
     ])
   })
+
+  it('reports a tmux socket failure instead of reporting nothing running', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    await stubTmux(
+      directory,
+      'echo "error connecting to /tmp/tmux-1000/default (permission denied)" >&2\nexit 1\n',
+    )
+
+    await expect(findActiveCopilotProcesses()).rejects.toThrow(
+      /permission denied/,
+    )
+  })
+
+  it('reports nothing running when tmux has no server to ask', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    await stubTmux(
+      directory,
+      'echo "no server running on /tmp/tmux-1000/default" >&2\nexit 1\n',
+    )
+
+    await expect(findActiveCopilotProcesses()).resolves.toEqual([])
+  })
+
+  it('leaves a session running when tmux cannot say whether it is', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-unstoppable')
+    await writeFile(executable, '#!/usr/bin/env bash\nsleep 60\n')
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-unstoppable-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      executable,
+    ])
+    const pid = Number.parseInt(
+      (
+        await execFileAsync('tmux', [
+          'display-message',
+          '-p',
+          '-t',
+          tmuxSession,
+          '#{pane_pid}',
+        ])
+      ).stdout,
+      10,
+    )
+    await waitForProcessCommand(pid, [executable])
+    const sessionId = 'a1a1a1a1-1234-1234-1234-123456789abc'
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(path.join(sessionDirectory, `inuse.${pid}.lock`), `${pid}\n`)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await stubTmux(
+      directory,
+      'echo "error connecting to /tmp/tmux-1000/default (permission denied)" >&2\nexit 1\n',
+    )
+
+    // Stopping must not report success it cannot stand behind: the caller
+    // deletes the session afterwards, and a silent no-op leaves the process
+    // running with nothing left pointing at it.
+    await expect(stopActiveCopilotSession(sessionId)).rejects.toThrow(
+      /permission denied/,
+    )
+    expect(await processExists(pid)).toBe(true)
+  })
 })
+
+/**
+ * Puts a tmux that fails in a stated way ahead of the real one on `PATH`, so
+ * the caller's handling of that failure can be observed. `ps` and the rest of
+ * the environment are left reachable.
+ */
+async function stubTmux(directory: string, script: string): Promise<void> {
+  const binDirectory = path.join(directory, 'bin')
+  await mkdir(binDirectory, { recursive: true })
+  const executable = path.join(binDirectory, 'tmux')
+  await writeFile(executable, `#!/usr/bin/env bash\n${script}`)
+  await chmod(executable, 0o755)
+  vi.stubEnv('PATH', `${binDirectory}:${process.env.PATH ?? ''}`)
+}
 
 async function processExists(pid: number): Promise<boolean> {
   try {

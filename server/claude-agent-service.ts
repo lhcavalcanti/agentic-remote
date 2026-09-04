@@ -305,6 +305,11 @@ export class ClaudeAgentService
       })
     }
     this.userInputs.clear()
+    // As on the Copilot side: an aborted turn writes from its own completion
+    // path, and that write is not held by whoever is stopping. Closing settles
+    // what is outstanding and refuses what is still coming, so nothing lands
+    // after stop() has resolved.
+    await this.store.close()
   }
 
   listSessions(): SessionDetail[] {

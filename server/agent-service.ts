@@ -1762,10 +1762,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ),
       ...(await this.client.stop()),
     ]
-    // Sessions and the SDK are down, so settle any write they triggered. Once
-    // stop() resolves no further write can land, which is what lets a caller
-    // safely tear down the data directory.
-    await this.store.flush()
+    // Sessions and the SDK are down, so settle any write they triggered, and
+    // refuse the ones a prompt still finishing has yet to make. Once stop()
+    // resolves no further write can land, which is what lets a caller safely
+    // tear down the data directory.
+    await this.store.close()
     const runtimeTimeouts = errors.filter((error) =>
       error.message.startsWith(
         'Failed to gracefully shut down runtime: runtime.shutdown timed out',

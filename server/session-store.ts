@@ -71,6 +71,7 @@ export class SessionStore {
   private state: StoredState = { version: 1, sessions: {} }
   private writeQueue: Promise<void> = Promise.resolve()
   private pendingPersist?: Promise<void>
+  private closed = false
 
   constructor(
     directory = resolveDataDirectory(),
@@ -918,7 +919,26 @@ export class SessionStore {
     await this.writeQueue
   }
 
+  /**
+   * Settles outstanding writes and refuses any that are still coming.
+   *
+   * Flushing alone is not enough. A prompt that is still finishing writes from
+   * its own completion path, and that work is not held by whoever is stopping:
+   * it can reach `persist` after the flush has already resolved, and land
+   * against a directory the caller believes it is free to remove. Refusing
+   * from here closes that window, and costs nothing that is not recovered --
+   * loading a session normalises a streaming message and a status left
+   * running, which is all those late writes were recording.
+   */
+  async close(): Promise<void> {
+    this.closed = true
+    await this.writeQueue
+  }
+
   private persist(): Promise<void> {
+    if (this.closed) {
+      return Promise.resolve()
+    }
     // Collapse writes queued behind an in-flight one: they would each
     // re-serialise every session, and the snapshot is taken when the write
     // starts, so a single write covers all mutations made until then.

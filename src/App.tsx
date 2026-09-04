@@ -292,6 +292,29 @@ function readStoredOrder<T>(key: string, fallback: T): T {
   }
 }
 
+/**
+ * Remembering something is a convenience, and storage is not always there to
+ * remember it in. Safari with cookies blocked throws on the first access, and
+ * a full quota throws on the write; both happen inside effects, where an
+ * exception unmounts the whole tree and leaves a blank page. Reads were
+ * already guarded, so the writes are guarded the same way.
+ */
+function writeStored(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Losing a remembered preference is not a reason to take the app down.
+  }
+}
+
+function clearStored(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // As above.
+  }
+}
+
 type StatuslineSettings = {
   enabled: boolean
   computer: boolean
@@ -961,6 +984,9 @@ function contextSizeLabel(
   return limit ? `${compactTokens(limit)} tokens` : 'Automatic'
 }
 
+const dialogFocusable =
+  'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+
 function DialogFrame({
   title,
   eyebrow,
@@ -974,6 +1000,62 @@ function DialogFrame({
   children: ReactNode
   className?: string
 }) {
+  const dialog = useRef<HTMLElement>(null)
+  // Held in a ref because most callers pass a fresh arrow every render, and a
+  // dependency on it would re-run the effect mid-typing and pull the focus
+  // back to the frame.
+  const close = useRef(onClose)
+  useEffect(() => {
+    close.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    const restoreTo = document.activeElement as HTMLElement | null
+    // The frame says `aria-modal`, which tells a reader the page behind it is
+    // out of reach. Taking the focus, keeping Tab inside, and answering Escape
+    // are what make that true rather than a claim.
+    dialog.current?.focus()
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        // Bubbling, so a control that handles Escape itself -- an open select,
+        // a form being answered -- stops it before it reaches here.
+        close.current()
+        return
+      }
+      if (event.key !== 'Tab' || !dialog.current) {
+        return
+      }
+      const reachable = [
+        ...dialog.current.querySelectorAll<HTMLElement>(dialogFocusable),
+      ].filter(
+        (element) =>
+          !element.hasAttribute('disabled') &&
+          element.getAttribute('aria-hidden') !== 'true' &&
+          (element.offsetWidth > 0 ||
+            element.offsetHeight > 0 ||
+            element === document.activeElement),
+      )
+      if (reachable.length === 0) {
+        return
+      }
+      const first = reachable[0]
+      const last = reachable[reachable.length - 1]
+      const active = document.activeElement
+      if (event.shiftKey && (active === first || active === dialog.current)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      restoreTo?.focus?.()
+    }
+  }, [])
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -981,7 +1063,9 @@ function DialogFrame({
         aria-modal="true"
         className={`dialog ${className || ''}`}
         onMouseDown={(event) => event.stopPropagation()}
+        ref={dialog}
         role="dialog"
+        tabIndex={-1}
       >
         <div className="dialog__header">
           <div>
@@ -1043,27 +1127,39 @@ function NewSessionDialog({
     () => computers.filter((computer) => computer.online),
     [computers],
   )
+  const initialized = useRef(false)
 
   useEffect(() => {
-    if (open) {
-      const initialComputerId = defaultComputerId || available[0]?.id || ''
-      setComputerId(initialComputerId)
-      setProvider('copilot')
-      setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
-      setDirectoryListing(undefined)
-      setTerminalBacked(true)
-      setAllowAllPermissions(true)
-      setMode('new')
-      setHistoryKey('')
-      setError(undefined)
-      setLoadingHistory(true)
-      void listHistory()
-        .then(setHistory)
-        .catch((caught: unknown) => {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        })
-        .finally(() => setLoadingHistory(false))
+    if (!open) {
+      initialized.current = false
+      return
     }
+    // Opening the dialog is what fills it in. `available` and the stored
+    // folders are rebuilt whenever any computer event arrives -- a node going
+    // online, a status refresh on returning to the tab -- and re-running this
+    // while the dialog is open threw away the provider, mode, folder, and
+    // previous session the reader had already chosen.
+    if (initialized.current) {
+      return
+    }
+    initialized.current = true
+    const initialComputerId = defaultComputerId || available[0]?.id || ''
+    setComputerId(initialComputerId)
+    setProvider('copilot')
+    setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
+    setDirectoryListing(undefined)
+    setTerminalBacked(true)
+    setAllowAllPermissions(true)
+    setMode('new')
+    setHistoryKey('')
+    setError(undefined)
+    setLoadingHistory(true)
+    void listHistory()
+      .then(setHistory)
+      .catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      })
+      .finally(() => setLoadingHistory(false))
   }, [open, defaultComputerId, defaultSessionFolders, available])
 
   useEffect(() => {
@@ -3323,12 +3419,6 @@ function UserInputCard({
   const [values, setValues] = useState<Record<string, UserInputFieldValue>>(
     () => initialUserInputValues(request.form),
   )
-
-  useEffect(() => {
-    setSelected([])
-    setAnswer('')
-    setValues(initialUserInputValues(request.form))
-  }, [request.requestId, request.form])
 
   if (request.form) {
     const canSubmit = request.form.fields.every(
@@ -6505,11 +6595,7 @@ function App() {
   function commitSidebarWidth(width: number) {
     const next = clampSidebarWidth(width)
     setSidebarWidth(next)
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next))
-    } catch {
-      // A blocked storage quota should not stop the drag from working.
-    }
+    writeStored(SIDEBAR_WIDTH_KEY, String(next))
   }
 
   function sidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
@@ -6683,9 +6769,17 @@ function App() {
     Boolean(selected?.pendingPermission || selected?.pendingUserInput)
   selectedRef.current = selected
   sessionsRef.current = sessions
-  const currentTool = selected?.messages.findLast(
-    (message) =>
-      message.role === 'activity' && message.activityStatus === 'running',
+  // Only the running tool is wanted, but finding it walks the whole
+  // transcript, and this sits in the render path -- which every composer
+  // keystroke runs. Held against the messages so typing does not re-scan a
+  // long session for something that has not changed.
+  const currentTool = useMemo(
+    () =>
+      selected?.messages.findLast(
+        (message) =>
+          message.role === 'activity' && message.activityStatus === 'running',
+      ),
+    [selected?.messages],
   )
   const hasRunningTool = currentTool?.activityStatus === 'running'
   const pendingActionId =
@@ -6900,7 +6994,7 @@ function App() {
     if (!knowledgeHydrated.current) {
       return
     }
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-root',
       JSON.stringify(activeRootId),
     )
@@ -6915,21 +7009,21 @@ function App() {
       [activeRootId]: expandedKnowledge,
     }
     restoredKnowledgeExpansion.current = stored
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-expanded',
       JSON.stringify(stored),
     )
   }, [activeRootId, expandedKnowledge])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-roots-open',
       JSON.stringify(knowledgeRootsOpen),
     )
   }, [knowledgeRootsOpen])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-mode',
       JSON.stringify(knowledgeMode),
     )
@@ -7080,7 +7174,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-session-positions',
       JSON.stringify(knowledgePositions),
     )
@@ -7093,7 +7187,7 @@ function App() {
   }, [commandQuery, selectedKey])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       shortcutsStorageKey,
       JSON.stringify(shortcutOverrides),
     )
@@ -7418,7 +7512,7 @@ function App() {
     legacyKnowledgeAdopted.current = true
     const legacy = restoredKnowledge.current
     restoredKnowledge.current = {}
-    localStorage.removeItem('agentic-remote:knowledge-position')
+    clearStored('agentic-remote:knowledge-position')
     if (
       !legacy.rootId ||
       knowledgePositionsRef.current[selectedKey] ||
@@ -7575,35 +7669,35 @@ function App() {
   }, [computers, sessions])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:computer-order',
       JSON.stringify(computerOrder),
     )
   }, [computerOrder])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:session-order',
       JSON.stringify(sessionOrder),
     )
   }, [sessionOrder])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:statusline',
       JSON.stringify(statusline),
     )
   }, [statusline])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:default-models',
       JSON.stringify(defaultRuntimes),
     )
   }, [defaultRuntimes])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       defaultSessionFoldersStorageKey,
       JSON.stringify({ version: 1, folders: defaultSessionFolders }),
     )
@@ -7618,7 +7712,7 @@ function App() {
   }, [accentTheme])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:composer-drafts',
       JSON.stringify(composerDrafts),
     )
@@ -8709,11 +8803,11 @@ function App() {
       ...restoredDraftContents.current,
       [key]: content,
     }
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:composer-draft-failures',
       JSON.stringify(restoredDraftStamps.current),
     )
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:composer-draft-recovered',
       JSON.stringify(restoredDraftContents.current),
     )
@@ -8728,11 +8822,11 @@ function App() {
       restoredDraftContents.current
     restoredDraftStamps.current = remainingStamps
     restoredDraftContents.current = remainingContents
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:composer-draft-failures',
       JSON.stringify(remainingStamps),
     )
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:composer-draft-recovered',
       JSON.stringify(remainingContents),
     )
@@ -11118,6 +11212,11 @@ function App() {
           {selected?.pendingUserInput ? (
             <UserInputCard
               disabled={userInputBusy}
+              // The answer being composed belongs to this request. Keying on
+              // it lets a new question start from a blank card, and keeps the
+              // card the reader is filling in from being emptied by the
+              // session upserts that carry the same request through.
+              key={selected.pendingUserInput.requestId}
               onReply={(input) => void answerUserInput(input)}
               request={selected.pendingUserInput}
             />

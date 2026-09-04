@@ -2734,6 +2734,78 @@ describe('App', () => {
     expect(groups).toContain('worker-node')
   })
 
+  it('keeps what is being filled in when a computer reports in', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    // The dialog fills itself in when it opens, so wait for that to settle
+    // before choosing anything: otherwise the choice races the default.
+    await waitFor(() =>
+      expect(screen.getByLabelText('Agent provider')).toHaveValue('copilot'),
+    )
+    fireEvent.change(screen.getByLabelText('Agent provider'), {
+      target: { value: 'claude' },
+    })
+
+    // A node going online, a status refresh on returning to the tab: routine
+    // traffic that rebuilds the computer list while the dialog is open.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'computer.updated',
+          computer: { ...computer, name: 'development' },
+        }),
+      } as MessageEvent)
+    })
+
+    expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
+  })
+
+  it('takes the focus it claims and gives it back on Escape', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const opener = screen.getAllByRole('button', { name: 'New session' })[0]
+    opener.focus()
+    fireEvent.click(opener)
+
+    // `aria-modal` tells a reader the page behind is out of reach, so the
+    // dialog has to actually hold the focus and answer Escape.
+    const dialog = await screen.findByRole('dialog', { name: 'Choose a folder' })
+    expect(dialog).toHaveFocus()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: 'Choose a folder' }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(opener).toHaveFocus()
+  })
+
+  it('keeps working when the browser refuses to remember anything', async () => {
+    // Safari with cookies blocked throws on the first access, and a full quota
+    // throws on the write. Both happen inside effects, where an exception
+    // takes the whole tree down and leaves a blank page.
+    const setItem = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new DOMException('The quota has been exceeded.')
+      })
+    try {
+      render(<App />)
+      await screen.findAllByText('Project chat')
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+
+      expect(
+        screen.getByRole('button', { name: 'Create session' }),
+      ).toBeInTheDocument()
+    } finally {
+      setItem.mockRestore()
+    }
+  })
+
   it('can create a session without allow-all permissions', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -3118,6 +3190,50 @@ describe('App', () => {
       ),
     )
     expect(screen.queryByText('What should I inspect?')).not.toBeInTheDocument()
+  })
+
+  it('keeps a half-filled form through the upserts that carry it', async () => {
+    const askingSession: ManagedSession = {
+      ...session,
+      status: 'waiting',
+      pendingUserInput: {
+        requestId: 'form-2',
+        question: 'What should I inspect?',
+        choices: [],
+        allowFreeform: false,
+        form: {
+          fields: [
+            {
+              name: 'target',
+              title: 'Inspection target',
+              type: 'string',
+              required: true,
+            },
+          ],
+        },
+      },
+    }
+    vi.mocked(listSessions).mockResolvedValue([askingSession])
+    vi.mocked(getSession).mockResolvedValue(askingSession)
+    render(<App />)
+
+    expect(await screen.findByText('What should I inspect?')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Inspection target'), {
+      target: { value: 'half typed' },
+    })
+
+    // The same question, re-sent whole. A reconnect or a return to the tab
+    // does exactly this, and it must not empty what is being typed into it.
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: structuredClone(askingSession),
+        }),
+      } as MessageEvent)
+    })
+
+    expect(screen.getByLabelText('Inspection target')).toHaveValue('half typed')
   })
 
   it('keeps the newest message in view as the composer grows', async () => {

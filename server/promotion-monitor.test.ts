@@ -319,6 +319,40 @@ describe('promotion monitor', () => {
     await git(context.dev, 'worktree', 'remove', '--force', validate)
   })
 
+  it('clears its validation worktree whether the run passed or failed', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+    const state = path.join(context.root, 'state-lifecycle')
+    await mkdir(state, { recursive: true })
+
+    // A passing run leaves nothing behind.
+    expect(
+      (await monitor(context, { AGENTIC_REMOTE_MONITOR_STATE_DIR: state })).code,
+    ).toBe(0)
+    expect(existsSync(path.join(state, 'validate'))).toBe(false)
+    expect(existsSync(path.join(state, 'validate.owned'))).toBe(false)
+    // Nothing registered either, or the next run could not create it again.
+    expect(await git(context.dev, 'worktree', 'list')).not.toContain(
+      path.join(state, 'validate'),
+    )
+
+    // ...and so does a failing one. The trap runs after the function that
+    // named these paths has been unwound, so holding them in that scope made
+    // every failed validation abort before it cleaned anything up.
+    await writeFile(path.join(context.dev, 'change.txt'), 'again')
+    await git(context.dev, 'add', '-A')
+    await git(context.dev, 'commit', '-m', 'again')
+    await git(context.dev, 'push', 'origin', 'main')
+
+    const failed = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_EXIT: '1',
+    })
+    expect(failed.code).not.toBe(0)
+    expect(existsSync(path.join(state, 'validate'))).toBe(false)
+    expect(existsSync(path.join(state, 'validate.owned'))).toBe(false)
+  })
+
   it('refuses to remove a clean worktree it did not create', async () => {
     const context = await fixture()
     await advanceMain(context)

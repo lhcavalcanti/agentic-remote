@@ -4286,6 +4286,67 @@ describe('App', () => {
     ).toHaveTextContent('Review the implementation')
   })
 
+  it('shows the running tasks first in the panel, then the newest finished', async () => {
+    // The order the sorting produces has to be the order on screen: the panel
+    // is opened to see what is running right now, so anything still going
+    // belongs at the top where it is found at a glance.
+    localStorage.setItem(
+      'agentic-remote:statusline',
+      JSON.stringify({ enabled: false, backgroundTasks: false }),
+    )
+    const mixed: BackgroundTaskSnapshot = {
+      tasks: [
+        {
+          id: 'finished-first',
+          type: 'shell' as const,
+          description: 'Finished a while ago',
+          status: 'completed' as const,
+          startedAt: '2026-01-01T00:00:00.000Z',
+          completedAt: '2026-01-01T00:01:00.000Z',
+          canCancel: false,
+        },
+        {
+          id: 'still-going',
+          type: 'agent' as const,
+          description: 'Still going',
+          status: 'running' as const,
+          startedAt: '2026-01-01T00:02:00.000Z',
+          canCancel: true,
+        },
+        {
+          id: 'finished-last',
+          type: 'shell' as const,
+          description: 'Finished just now',
+          status: 'completed' as const,
+          startedAt: '2026-01-01T00:03:00.000Z',
+          completedAt: '2026-01-01T00:04:00.000Z',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    }
+    vi.mocked(listBackgroundTasks).mockResolvedValue(mixed)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({ ...session, executionMode: 'sdk' })
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.keyDown(window, { code: 'KeyT', altKey: true })
+    await screen.findByRole('dialog', {
+      name: 'Background tasks · Project chat',
+    })
+
+    const list = screen.getByLabelText('Background task list')
+    const order = Array.from(
+      list.querySelectorAll('.background-task'),
+    ).map((card) => card.textContent || '')
+
+    expect(order[0]).toContain('Still going')
+    expect(order[1]).toContain('Finished just now')
+    expect(order[2]).toContain('Finished a while ago')
+  })
+
   it('opens background tasks by touch from the sidebar count', async () => {
     // The status line is a display preference, so it cannot be the only way to
     // reach a panel that describes work still running.

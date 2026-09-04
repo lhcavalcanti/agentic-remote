@@ -44,4 +44,23 @@ describe('mobile safe areas', () => {
       /\.new-session-dialog\s+\.dialog__header\s*\{[^}]*flex:\s*0\s+0\s+auto/s,
     )
   })
+
+  it('scrolls the background tasks, not the panel around them', async () => {
+    const css = await readFile(new URL('../src/index.css', import.meta.url), 'utf8')
+
+    // The whole panel used to scroll as one, so reaching the older tasks took
+    // the heading and the close button off the top with them.
+    expect(css).toMatch(
+      /\.background-tasks-dialog\s*\{[^}]*flex-direction:\s*column[^}]*overflow:\s*hidden/s,
+    )
+    expect(css).not.toMatch(
+      /\.background-tasks-dialog\s*\{[^}]*overflow-y:\s*auto/s,
+    )
+    expect(css).toMatch(
+      /\.background-tasks-dialog\s+\.dialog__header,[^{]*\{[^}]*flex:\s*0\s+0\s+auto/s,
+    )
+    expect(css).toMatch(
+      /\.background-task-list\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s,
+    )
+  })
 })

@@ -4201,6 +4201,14 @@ button {
   justify-content: center;
   width: 22px;
   height: 22px;
+  /* A native button brings its own chrome: without these it renders as a pale
+     platform-styled box, and the default inline padding squeezes the icon
+     inside the control. */
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
   border-radius: 6px;
   color: #74786d;
   opacity: 0;
@@ -4228,9 +4236,16 @@ button {
   outline-offset: 2px;
 }
 
+/* Still hidden until the pointer is near. Fading a disabled control in on its
+   own left every busy session showing a faint pause button at all times. */
 .session-item__suspend:disabled {
-  opacity: 0.35;
   cursor: not-allowed;
+}
+
+.session-item:hover .session-item__suspend:disabled,
+.session-item:focus-within .session-item__suspend:disabled,
+.session-item__suspend:disabled:focus-visible {
+  opacity: 0.35;
 }
 
 /* Nothing hovers on a touch screen, so revealing this on hover hid it

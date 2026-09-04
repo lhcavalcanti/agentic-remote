@@ -9510,6 +9510,14 @@ function App() {
         : await suspendSession(target.computerId, target.id)
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
+      // Offered from the list on purpose, so a session that is not open can be
+      // put down without navigating to it. A refusal has to be seen, though,
+      // and the error banner belongs to the conversation -- which on a narrow
+      // screen is behind the sidebar the reader is looking at. So a failure,
+      // and only a failure, brings them to the session it is about.
+      if (sessionKey(target) !== selectedKey) {
+        selectSession(target)
+      }
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setSuspending(false)

@@ -7114,6 +7114,60 @@ describe('App', () => {
     expect(ordered).toEqual(['no-end', 'ended-earlier'])
   })
 
+  it('counts only what is running, not what is merely tracked', async () => {
+    // A session can carry a long history of finished work. The count exists to
+    // be caught at a glance, so it speaks for what is running now: a hundred
+    // tracked tasks with none of them running is a quiet session and reads as
+    // one.
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const finished = Array.from({ length: 100 }, (_unused, index) => ({
+      id: `shell-${index}`,
+      type: 'shell' as const,
+      description: `finished ${index}`,
+      status: 'completed' as const,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:00:30.000Z',
+      canCancel: false,
+    }))
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.tasks.updated',
+          computerId: 'computer-1',
+          sessionId: 'session-1',
+          tasks: finished,
+          runningCount: 0,
+          supported: true,
+        }),
+      } as MessageEvent)
+    })
+
+    // Nothing is running, so the row says nothing about tasks at all.
+    expect(document.querySelector('.session-item__tasks')).toBeNull()
+
+    // Two of them start, and only those two are counted.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.tasks.updated',
+          computerId: 'computer-1',
+          sessionId: 'session-1',
+          tasks: finished,
+          runningCount: 2,
+          supported: true,
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item__tasks')?.textContent,
+      ).toBe('2 tasks'),
+    )
+  })
+
   it('says nothing in the list when no task is running', async () => {
     // The count is there to be caught in passing. A session with nothing
     // running should read as a session, not as a session with a zero on it.

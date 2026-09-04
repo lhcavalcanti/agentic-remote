@@ -3315,6 +3315,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
+    let resolvedStartup = false
     if (terminalBacked) {
       // A full-screen view takes the keyboard, so a prompt sent now is typed
       // into its search box: it filters a list, a stray Enter can pick from
@@ -3327,7 +3328,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             sessionId,
             pane,
           )) ?? false
-        const resolvedStartup =
+        resolvedStartup =
           canHandleStartup &&
           ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??
             false)
@@ -3346,12 +3347,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (
       enqueue &&
+      !resolvedStartup &&
       terminalBacked &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
       return this.enqueueTerminalPrompt(sessionId, content, false, answers)
     }
-    const nativeEnqueue = this.shouldUseNativeTerminalQueue(sessionId, enqueue)
+    const nativeEnqueue = this.shouldUseNativeTerminalQueue(
+      sessionId,
+      enqueue && !resolvedStartup,
+    )
     const dispatchedAt = new Date().toISOString()
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
       // The terminal has it. Anything that fails from here leaves a send that

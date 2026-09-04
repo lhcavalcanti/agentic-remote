@@ -5307,6 +5307,9 @@ describe('AgentService deletion', () => {
       terminal,
     )
     await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
 
     await service.sendMessage(
       client.session.sessionId,
@@ -5321,6 +5324,14 @@ describe('AgentService deletion', () => {
     expect(terminal.resolveStartupPrompt).toHaveBeenCalledWith(
       client.session.sessionId,
     )
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Continue the work',
+      false,
+    )
+    expect(
+      service.store.get(client.session.sessionId)?.queuedPrompts ?? [],
+    ).toEqual([])
     await service.stop()
   })
 

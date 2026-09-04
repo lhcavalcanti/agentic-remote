@@ -1412,6 +1412,9 @@ interface TmuxSessionInfo {
 }
 
 export function isTerminalSessionInUsePrompt(pane: string): boolean {
+  if (hasTerminalCommandPermissionQuestion(pane)) {
+    return false
+  }
   const lines = pane.split('\n')
   const cleaned = lines.map(cleanDialogLine)
   const prompt = cleaned.findLastIndex((line) =>
@@ -1422,7 +1425,11 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
     return false
   }
   const activeView = lines.slice(frame.start, frame.end + 1).join('\n')
+  const activeLines = cleaned.slice(frame.start, frame.end + 1)
   return (
+    activeLines.some((line) =>
+      /^[>❯]\s*(?:1\.\s+Resume anyway|2\.\s+Go back)/i.test(line),
+    ) &&
     /1\.\s+Resume anyway/i.test(activeView) &&
     /2\.\s+Go back/i.test(activeView) &&
     /↑\/↓\s+(?:to\s+)?navigate/i.test(activeView) &&
@@ -1523,6 +1530,7 @@ async function clearAutomaticStartupPrompts(target: string): Promise<void> {
   for (let prompt = 0; prompt < 10; prompt += 1) {
     const pane = await capture()
     if (
+      hasTerminalCommandPermissionQuestion(pane) ||
       parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
@@ -1558,6 +1566,7 @@ async function waitForTerminalStartup(
   for (let attempt = 0; attempt < 900; attempt += 1) {
     const pane = await capturePane(target)
     if (
+      hasTerminalCommandPermissionQuestion(pane) ||
       parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
@@ -2127,12 +2136,14 @@ export function parseTerminalPermission(
       }
     }
   }
-  const questionIndex = lines.findLastIndex((line) =>
-    /^Do you want to run this command\?/i.test(line),
+  const commandQuestion = findTerminalWrappedText(
+    lines,
+    'Do you want to run this command?',
   )
-  if (questionIndex < 0) {
+  if (!commandQuestion) {
     return undefined
   }
+  const questionIndex = commandQuestion.start
   const nonemptyBeforeQuestion = lines
     .slice(Math.max(0, questionIndex - 40), questionIndex)
     .flatMap((line, offset) =>
@@ -2193,6 +2204,16 @@ export function parseTerminalPermission(
       { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
     ],
   }
+}
+
+function hasTerminalCommandPermissionQuestion(pane: string): boolean {
+  const rawLines = pane.split('\n')
+  const lines = rawLines.map(cleanDialogLine)
+  const question = findTerminalWrappedText(
+    lines,
+    'Do you want to run this command?',
+  )
+  return Boolean(question && activeBottomFrame(rawLines, question.start))
 }
 
 function terminalDialogChoices(

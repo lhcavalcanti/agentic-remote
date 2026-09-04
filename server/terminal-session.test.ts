@@ -120,6 +120,35 @@ describe('TmuxTerminalSessionController', () => {
     ).toBe(false)
     expect(
       isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
+│ Session in use                                             │
+│ This session appears to be in use by another CLI.          │
+│ 1. Resume anyway                                           │
+│ 2. Go back                                                  │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
+│ Run session recovery                                      │
+│ ────────────────────────────────────────────────────────── │
+│ Session in use                                             │
+│ ❯ 1. Resume anyway                                        │
+│   2. Go back                                               │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+│ ────────────────────────────────────────────────────────── │
+│ Do you want to run this                                    │
+│ command?                                                   │
+│ ❯ 1. Yes                                                   │
+│   2. No, and tell Copilot what to do differently           │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
 ● The old panel said Session in use.
 ● It offered 1. Resume anyway and 2. Go back.
 ╭────

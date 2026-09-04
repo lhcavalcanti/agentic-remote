@@ -269,7 +269,7 @@ function configurableModel(): ModelInfo {
         vision: false,
         reasoningEffort: true,
       },
-      tokenizer: 'o200k_base',
+      tokenizer: 'fixture-tokenizer',
       type: 'chat',
     },
     billing: {

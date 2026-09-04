@@ -204,6 +204,68 @@ describe('outlineFromMarkdown edge cases', () => {
     )
     expect(outlineFromMarkdown(content)).toEqual([])
   })
+
+  // The outline is matched to the document by position among the rendered
+  // headings, so an underlined heading that is rendered but not collected
+  // shifts every entry after it onto the heading before the one it names.
+  it('counts headings that are underlined rather than hashed', () => {
+    const content = [
+      'Overview',
+      '========',
+      '',
+      'Some prose.',
+      '',
+      'Details',
+      '-------',
+      '',
+      '### Deeper',
+    ].join('\n')
+
+    expect(
+      outlineFromMarkdown(content).map(({ text, level, index }) => ({
+        text,
+        level,
+        index,
+      })),
+    ).toEqual([
+      { text: 'Overview', level: 1, index: 0 },
+      { text: 'Details', level: 2, index: 1 },
+      { text: 'Deeper', level: 3, index: 2 },
+    ])
+  })
+
+  it('does not read a rule or a list dash as an underline', () => {
+    const content = [
+      'Intro paragraph.',
+      '',
+      '---',
+      '',
+      '- item',
+      '- other',
+      '',
+      '# Real',
+    ].join('\n')
+
+    expect(outlineFromMarkdown(content).map((entry) => entry.text)).toEqual([
+      'Real',
+    ])
+  })
+
+  it('does not read front matter as an underlined heading', () => {
+    const content = ['---', 'title: Notes', '---', '', '# Real'].join('\n')
+
+    expect(outlineFromMarkdown(content).map((entry) => entry.text)).toEqual([
+      'Real',
+    ])
+  })
+
+  it('does not read an underline inside a fence as a heading', () => {
+    const content = ['```', 'Fake', '====', '```', '', '# Real'].join('\n')
+
+    expect(outlineFromMarkdown(content).map((entry) => entry.text)).toEqual([
+      'Real',
+    ])
+  })
 })
 
 describe('resolveDocumentPath', () => {

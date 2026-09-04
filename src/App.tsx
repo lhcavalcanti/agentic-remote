@@ -1001,27 +1001,19 @@ function DialogFrame({
   className?: string
 }) {
   const dialog = useRef<HTMLElement>(null)
-  // Held in a ref because most callers pass a fresh arrow every render, and a
-  // dependency on it would re-run the effect mid-typing and pull the focus
-  // back to the frame.
-  const close = useRef(onClose)
-  useEffect(() => {
-    close.current = onClose
-  }, [onClose])
 
   useEffect(() => {
     const restoreTo = document.activeElement as HTMLElement | null
     // The frame says `aria-modal`, which tells a reader the page behind it is
-    // out of reach. Taking the focus, keeping Tab inside, and answering Escape
-    // are what make that true rather than a claim.
+    // out of reach. Taking the focus, keeping Tab inside it, and handing the
+    // focus back on the way out are what make that true rather than a claim.
+    //
+    // Escape is deliberately not answered here. The app closes the topmost
+    // layer itself, in the order they are stacked and only when nothing
+    // nearer has already answered the key, and a second closer on the frame
+    // would be the same decision made again with less to go on.
     dialog.current?.focus()
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        // Bubbling, so a control that handles Escape itself -- an open select,
-        // a form being answered -- stops it before it reaches here.
-        close.current()
-        return
-      }
       if (event.key !== 'Tab' || !dialog.current) {
         return
       }

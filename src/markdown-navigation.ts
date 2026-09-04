@@ -88,18 +88,52 @@ export function inlineText(markdown: string): string {
 }
 
 /**
- * Collects ATX headings from Markdown source, skipping fenced code blocks so a
- * commented `# line` inside a snippet is not mistaken for a heading. Reading the
- * source rather than the rendered DOM keeps the outline available immediately
- * and independent of layout.
+ * Collects headings from Markdown source, skipping fenced code blocks so a
+ * commented `# line` inside a snippet is not mistaken for a heading. Reading
+ * the source rather than the rendered DOM keeps the outline available
+ * immediately and independent of layout.
+ *
+ * Both spellings are read. An outline entry is matched to the document by its
+ * position among the rendered headings, so a setext heading -- a line
+ * underlined with `=` or `-`, which GFM renders as a real heading -- has to be
+ * counted here too. Reading only `#` left it out of the outline while it
+ * stayed in the document, and every entry after it then scrolled to the
+ * heading before the one it named.
  */
 export function outlineFromMarkdown(content: string): DocumentHeading[] {
   const headings: DocumentHeading[] = []
   let fence: { marker: string; length: number } | undefined
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.replace(/\t/g, '    ').trimEnd()
+  // The line above, when it could still be the body of a setext heading.
+  // Anything that opens a block of its own clears it.
+  let paragraph: string | undefined
+  const lines = content.split(/\r?\n/)
+  let first = 0
+  // Front matter opens the file with a `---` of its own, and closes under a
+  // `key: value` pair that would otherwise read as a setext heading.
+  if (/^---\s*$/.test(lines[0] ?? '')) {
+    const closing = lines.findIndex(
+      (line, index) => index > 0 && /^(---|\.\.\.)\s*$/.test(line),
+    )
+    if (closing > 0) {
+      first = closing + 1
+    }
+  }
+  const record = (text: string, level: number) => {
+    if (!text) {
+      return
+    }
+    headings.push({
+      id: headingSlug(text),
+      text,
+      level,
+      index: headings.length,
+    })
+  }
+  for (let index = first; index < lines.length; index += 1) {
+    const line = lines[index].replace(/\t/g, '    ').trimEnd()
     const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
     if (fenceMatch) {
+      paragraph = undefined
       const marker = fenceMatch[1][0]
       const length = fenceMatch[1].length
       const rest = fenceMatch[2]
@@ -124,22 +158,28 @@ export function outlineFromMarkdown(content: string): DocumentHeading[] {
       }
     }
     if (fence !== undefined) {
+      paragraph = undefined
       continue
     }
-    const match = line.match(/^ {0,3}(#{1,6})(?:\s+(.*?))?\s*$/)
-    if (!match) {
+    const atx = line.match(/^ {0,3}(#{1,6})(?:\s+(.*?))?\s*$/)
+    if (atx) {
+      paragraph = undefined
+      record(inlineText((atx[2] ?? '').replace(/\s+#+\s*$/, '')), atx[1].length)
       continue
     }
-    const text = inlineText((match[2] ?? '').replace(/\s+#+\s*$/, ''))
-    if (!text) {
+    const underline = line.match(/^ {0,3}(=+|-+)\s*$/)
+    if (underline && paragraph !== undefined) {
+      record(inlineText(paragraph), underline[1].startsWith('=') ? 1 : 2)
+      paragraph = undefined
       continue
     }
-    headings.push({
-      id: headingSlug(text),
-      text,
-      level: match[1].length,
-      index: headings.length,
-    })
+    // A blank line ends the paragraph; a quote, a list marker, or an indented
+    // code line begins something an underline below it would not be part of.
+    paragraph =
+      line.trim() && !/^ {4,}/.test(line) &&
+      !/^ {0,3}(>|[-+*][ \t]|\d+[.)][ \t])/.test(line)
+        ? line
+        : undefined
   }
   return headings
 }

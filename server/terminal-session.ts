@@ -1328,11 +1328,23 @@ export class TmuxTerminalSessionController
   ): Promise<TerminalOwner | undefined> {
     const ready = this.inputReadySessions.get(sessionId)
     const automatic = this.automaticStartupSessions.get(sessionId)
-    return this.owner(
+    const expectedTarget = ready?.target ?? automatic?.target
+    const owner = await this.owner(
       sessionId,
-      ready?.target ?? automatic?.target,
+      expectedTarget,
       fresh,
     )
+    if (owner || !expectedTarget) {
+      return owner
+    }
+    if (await this.owner(sessionId, undefined, true)) {
+      // The session moved to a pane this controller did not authorize. Refuse
+      // the operation that observed the move, but release the dead binding so
+      // a later operation can deliberately rediscover the replacement.
+      this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
+    }
+    return undefined
   }
 
   private async boundTarget(

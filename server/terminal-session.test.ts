@@ -1384,6 +1384,9 @@ Permission request (1 remaining)
     await expect(
       controller.send(sessionId, 'must not trust the replacement', false),
     ).rejects.toMatchObject({ statusCode: 409 })
+    await expect(
+      controller.send(sessionId, 'replacement can be rediscovered', false),
+    ).resolves.toBe(true)
   })
 
   it('does not paste after the owner changes during readiness', async () => {

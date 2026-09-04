@@ -1463,22 +1463,42 @@ function terminalFormTabsIndex(
   if (question && !lines.slice(header + 1).includes(question)) {
     return -1
   }
-  for (let index = header + 1; index < lines.length; index += 1) {
+  const rows = lines
+    .slice(header + 1)
     // Tabs sit on one line separated by runs of spaces, so a title containing
     // a single space stays intact.
-    const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
-    // A form of one field prints no row of tabs: the field's own heading is
-    // all there is, and the CLI writes a heading with a colon after it.
-    // Reading that heading as the tab is what lets a single question be
-    // recognised. Only there, and only the trailing colon the heading is
-    // printed with: taking one off every tab stopped a field whose own title
-    // ends in a colon from ever matching the row it is printed in.
-    if (tabs.length === 1 && form.fields.length === 1) {
-      tabs[0] = tabs[0].replace(/:$/, '')
+    .map((line) => line.split(/\s{2,}/).filter(Boolean))
+  // A form of more than one field prints them as a row of tabs. Whether the
+  // pane holds such a row says which kind of form is on screen, and that is
+  // decided once for the whole pane rather than line by line.
+  const printsTabRow = rows.some((tabs) => tabs.length > 1)
+  for (let position = 0; position < rows.length; position += 1) {
+    const tabs = rows[position]
+    const index = header + 1 + position
+    if (form.fields.length === 1) {
+      // A form of one field prints no row of tabs: the field's own heading is
+      // all there is, and the CLI writes a heading with a colon after it.
+      // Reading that heading as the tab is what lets a single question be
+      // recognised.
+      //
+      // Only in a pane that prints no tab row at all. Every line was a
+      // candidate before, so a single-field identity could match a lone
+      // heading inside a form of several fields -- and answering it submitted
+      // that whole form, the other fields left at their defaults.
+      if (printsTabRow || tabs.length !== 1) {
+        continue
+      }
+      // Only the trailing colon the heading is printed with: taking one off
+      // every tab stopped a field whose own title ends in a colon from ever
+      // matching the row it is printed in.
+      if (tabs[0].replace(/:$/, '') === form.fields[0]) {
+        return index
+      }
+      continue
     }
     if (
       tabs.length === form.fields.length &&
-      tabs.every((tab, position) => tab === form.fields[position])
+      tabs.every((tab, slot) => tab === form.fields[slot])
     ) {
       return index
     }

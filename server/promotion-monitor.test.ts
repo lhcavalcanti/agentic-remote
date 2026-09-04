@@ -134,6 +134,15 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       '    fi',
       '  done',
       'fi',
+      // Leaves the worktree clean but standing on a different commit.
+      'if [[ "${*: -1}" == "build" && -n "${PNPM_TEST_MOVE_HEAD:-}" ]]; then',
+      '  for ((j = 1; j <= $#; j++)); do',
+      '    if [[ "${!j}" == "--dir" ]]; then',
+      '      k=$((j + 1))',
+      '      git -C "${!k}" checkout --detach HEAD~1 >/dev/null 2>&1',
+      '    fi',
+      '  done',
+      'fi',
       'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
       'exit "${COREPACK_EXIT:-0}"',
     ].join('\n'),
@@ -486,6 +495,64 @@ describe('promotion monitor', () => {
     expect(await git(context.dev, 'worktree', 'list')).not.toContain(
       path.join(state, 'validate'),
     )
+  })
+
+  it('will not promote a commit other than the one it validated', async () => {
+    const context = await fixture()
+    const candidate = await advanceMain(context)
+    const state = path.join(context.root, 'state-moved-head')
+    await mkdir(state, { recursive: true })
+
+    // Clean is not the same as unchanged. Something moved the validation
+    // worktree to another commit and left it perfectly tidy, so cleanliness
+    // alone said everything was in order while a different revision had been
+    // tested.
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_MOVE_HEAD: '1',
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('moved to')
+    expect((await git(context.runtime, 'rev-parse', 'HEAD')).trim()).not.toBe(
+      candidate,
+    )
+  })
+
+  it('finishes a removal of its own worktree that was interrupted partway', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // `git worktree remove` takes the worktree's own pointer away before it
+    // has finished deleting. Ownership is read from that pointer while the
+    // directory still stands, so a run killed inside that window left a
+    // directory that no later run would agree to finish -- promotion wedged
+    // until somebody cleared it by hand.
+    const state = path.join(context.root, 'state-partial-removal')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+
+    // Exactly what a removal killed partway through leaves: files still here,
+    // the pointer already gone.
+    await rm(path.join(validate, '.git'), { force: true })
+    await writeFile(path.join(state, 'validate.owned'), (await readFile(path.join(state, 'validate.owned'), 'utf8')) + 'removing\n')
+
+    await writeFile(path.join(context.dev, 'change.txt'), 'again')
+    await git(context.dev, 'add', '-A')
+    await git(context.dev, 'commit', '-m', 'again')
+    await git(context.dev, 'push', 'origin', 'main')
+
+    const next = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+    expect(next.output).not.toContain('not a validation worktree')
+    expect(next.code).toBe(0)
+    expect(existsSync(validate)).toBe(false)
   })
 
   it('refuses a replacement checkout standing where its worktree was', async () => {

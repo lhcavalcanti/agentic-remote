@@ -302,14 +302,25 @@ validation_worktree_removable() {
   # vouch for whatever is at the path now -- a checkout somebody put there
   # since, which cleanup would then delete.
   if [[ -e "$VALIDATE_ROOT" ]]; then
-    [[ -f "$VALIDATE_ROOT/.git" ]] || return 1
-    pointer="$(sed -n 's/^gitdir: *//p' "$VALIDATE_ROOT/.git" 2>/dev/null || true)"
-    [[ -n "$pointer" ]] || return 1
-    case "$pointer" in
-      /*) ;;
-      *) pointer="$VALIDATE_ROOT/$pointer" ;;
-    esac
-    [[ "$(resolve_path "$pointer")" == "$(resolve_path "$record")" ]] || return 1
+    if [[ -f "$VALIDATE_ROOT/.git" ]]; then
+      pointer="$(sed -n 's/^gitdir: *//p' "$VALIDATE_ROOT/.git" 2>/dev/null || true)"
+      [[ -n "$pointer" ]] || return 1
+      case "$pointer" in
+        /*) ;;
+        *) pointer="$VALIDATE_ROOT/$pointer" ;;
+      esac
+      [[ "$(resolve_path "$pointer")" == "$(resolve_path "$record")" ]] || return 1
+    else
+      # No pointer at all, on a path that still holds something. `worktree
+      # remove` takes the pointer away before it has finished deleting, so a
+      # run killed inside that window leaves exactly this. Only a removal this
+      # monitor had already begun and recorded is recognised, and a checkout
+      # somebody else puts here has a pointer of its own, so it never reaches
+      # this branch.
+      [[ -n "${VALIDATE_MARKER:-}" && -f "$VALIDATE_MARKER" ]] || return 1
+      [[ "$(sed -n '3p' -- "$VALIDATE_MARKER" 2>/dev/null)" == removing ]] ||
+        return 1
+    fi
   fi
   reason="$(cat -- "$record/locked" 2>/dev/null || true)"
   [[ "$reason" == "$VALIDATE_LOCK_SIGNATURE "* ]] || return 1
@@ -359,6 +370,14 @@ cleanup_validation_worktree() {
   fi
   if ! validation_worktree_removable; then
     die "refusing to remove $VALIDATE_ROOT: it is not a validation worktree this monitor created"
+  fi
+  # Written down before the removal starts, because the removal takes the
+  # worktree's own pointer away partway through and that pointer is what
+  # ownership is read from while the directory still exists. Without this, a
+  # run killed mid-deletion left a directory no later run would agree to
+  # finish.
+  if [[ -n "${VALIDATE_MARKER:-}" && -f "$VALIDATE_MARKER" ]]; then
+    printf 'removing\n' >>"$VALIDATE_MARKER"
   fi
   # `--force` twice is how git removes a worktree that is locked. Unlocking
   # first would have thrown away the very thing that says the worktree is this
@@ -531,6 +550,15 @@ run() {
   log "building validation release"
   CI=true run_pnpm "$VALIDATE_ROOT" build
   assert_clean "$VALIDATE_ROOT"
+  # Clean is not the same as unchanged. A validation command, or anything else
+  # reaching into the worktree, can leave it detached at some other commit and
+  # perfectly tidy -- and the whole point of validating here is that what was
+  # tested is what gets promoted.
+  local validated_head
+  validated_head="$(git -C "$VALIDATE_ROOT" rev-parse HEAD)" ||
+    die "validation worktree HEAD could not be read"
+  [[ "$validated_head" == "$candidate_commit" ]] ||
+    die "validation worktree moved to $validated_head, not $candidate_commit"
   cleanup_validation_worktree
   trap - EXIT
   assert_clean "$DEV_ROOT"

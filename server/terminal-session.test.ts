@@ -1018,6 +1018,19 @@ describe('single field forms', () => {
     expect(parseTerminalFormActiveField(singleFieldPane, form)).toBe(0)
   })
 
+  it('refuses a one-field identity against a form of several fields', () => {
+    // The heading of the focused field is printed on its own line inside a
+    // multi-field form too. Treated as the whole of a one-field form, the
+    // controller answers it and submits that form -- every other field left at
+    // whatever it defaulted to.
+    expect(
+      terminalFormShowsFields(formPaneFirstField, {
+        question: 'Configure the deployment request.',
+        fields: ['Deployment name'],
+      }),
+    ).toBe(false)
+  })
+
   it('keeps a multi-field title that ends in a colon', () => {
     // The colon a single-field heading is printed with is structural. A title
     // that ends in one is not, and taking the colon off every tab stopped such

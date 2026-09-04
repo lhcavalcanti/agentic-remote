@@ -3552,7 +3552,7 @@ function SortableSessionItem({
         {...attributes}
         {...listeners}
       >
-        <GripVertical size={13} />
+        <GripVertical size={16} />
       </span>
       <button
         aria-current={selected ? 'page' : undefined}

@@ -76,8 +76,14 @@ assert_repository() {
 }
 
 assert_clean() {
-  local root="$1"
-  [[ -z "$(git -C "$root" status --porcelain)" ]] ||
+  local root="$1" changes
+  # Assigned first so that a git that failed fails the check. Testing the
+  # output on its own read an unreadable or corrupt worktree as a clean one,
+  # and this gate is what says the commit that was tested is the commit being
+  # promoted.
+  changes="$(git -C "$root" status --porcelain)" ||
+    die "worktree could not be read: $root"
+  [[ -z "$changes" ]] ||
     die "worktree is not clean: $root"
 }
 
@@ -220,6 +226,248 @@ print(version)
 PY
 }
 
+resolve_path() {
+  readlink -f -- "$1" 2>/dev/null || printf '%s' "$1"
+}
+
+# Tidies a path by text alone, without asking the filesystem about it.
+#
+# `readlink -f` gives up and prints nothing once a directory in the middle of
+# the path has gone -- which is exactly the state cleanup is called on: the
+# validation directory removed, its record left behind pointing at where it
+# used to be. Comparing against nothing matched nothing, so the record was
+# never taken away and every later `worktree add` at that path failed.
+# Canonicalises as much of the path as exists, and tidies the rest by text.
+#
+# Git records the real path, so a state directory reached through a symlink is
+# written down canonically while this was still spelling it the way the profile
+# does -- and the two never matched, leaving the monitor unable to find its own
+# record. The deepest part that exists is asked of the filesystem; whatever is
+# missing below it, which is the case this is needed for, is appended.
+canonical_path() {
+  local path="$1" head tail_part=""
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  head="$(normalize_path "$path")"
+  while [[ "$head" != / && ! -e "$head" ]]; do
+    tail_part="${head##*/}${tail_part:+/$tail_part}"
+    head="${head%/*}"
+    [[ -n "$head" ]] || head=/
+  done
+  local resolved
+  resolved="$(readlink -f -- "$head" 2>/dev/null || printf '%s' "$head")"
+  [[ -n "$resolved" ]] || resolved="$head"
+  if [[ -z "$tail_part" ]]; then
+    printf '%s' "$resolved"
+  elif [[ "$resolved" == / ]]; then
+    printf '/%s' "$tail_part"
+  else
+    printf '%s/%s' "$resolved" "$tail_part"
+  fi
+}
+
+normalize_path() {
+  local path="$1" part
+  local -a parts=() kept=()
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  IFS='/' read -r -a parts <<<"$path"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      '' | '.') ;;
+      '..')
+        [[ ${#kept[@]} -eq 0 ]] || unset 'kept[${#kept[@]}-1]'
+        ;;
+      *) kept+=("$part") ;;
+    esac
+  done
+  printf '/%s' "${kept[@]+${kept[@]}}" | sed 's|^//*$|/|'
+}
+
+# Refuses a path that is, or contains, something the monitor is responsible
+# for. Cleanup removes this directory outright, so naming a checkout here
+# would delete it.
+# The signature git carries for a worktree this monitor made. Written as the
+# lock reason by `worktree add --lock`, so it exists from the moment the
+# worktree does rather than a moment later.
+VALIDATE_LOCK_SIGNATURE='agentic-remote promotion monitor validation worktree'
+
+# This repository's shared git directory, where the record of every linked
+# worktree is kept. Asked of git rather than assumed: a development root that
+# is itself a linked worktree, or uses a separate git directory, keeps those
+# records somewhere other than `$DEV_ROOT/.git`.
+validate_common_dir() {
+  local common
+  common="$(git -C "$DEV_ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+  [[ -n "$common" ]] || return 1
+  case "$common" in
+    /*) ;;
+    *) common="$DEV_ROOT/$common" ;;
+  esac
+  resolve_path "$common"
+}
+
+# The record git keeps for the worktree at $VALIDATE_ROOT, or nothing.
+#
+# Found by reading the records rather than by asking the worktree, because the
+# answer is still needed when the worktree is gone from disk and only its
+# record remains -- which is the case that blocks the next `worktree add`.
+# Each record's `gitdir` file names the `.git` file of the worktree it belongs
+# to, and may legally be relative when `worktree.useRelativePaths` is set, so
+# it is resolved from the record's own directory.
+validate_worktree_record() {
+  local common record pointer target
+  common="$(validate_common_dir)" || return 1
+  target="$(canonical_path "$VALIDATE_ROOT")/.git"
+  for record in "$common"/worktrees/*; do
+    [[ -d "$record" ]] || continue
+    pointer="$(cat -- "$record/gitdir" 2>/dev/null || true)"
+    [[ -n "$pointer" ]] || continue
+    case "$pointer" in
+      /*) ;;
+      *) pointer="$record/$pointer" ;;
+    esac
+    # Tidied by text, because the worktree this points at may already be gone
+    # -- which is the very case this record has to be found for.
+    [[ "$(canonical_path "$pointer")" == "$target" ]] || continue
+    printf '%s' "$record"
+    return 0
+  done
+  return 1
+}
+
+# Whether the validation worktree is this monitor's to remove.
+#
+# Two things have to agree. Git's own record for the path has to carry this
+# monitor's lock reason, which nothing but `worktree add --lock` here writes,
+# and which is in place from the moment the worktree is registered -- so a run
+# killed straight after creating one still leaves something later runs can
+# recognise and clear away. And the marker has to name the same run, which is
+# what tells this run's worktree from one another run of the monitor is using
+# at the same path.
+#
+# Cleanliness is deliberately not required. Validation installs and builds in
+# there, so the monitor's own worktree is expected to be untidy; ownership is
+# what decides, and refusing on tidiness left the monitor unable to clear its
+# own scratch space.
+validation_worktree_removable() {
+  local record reason token resolved pointer
+  record="$(validate_worktree_record)" || return 1
+  # The record points at this path; this path has to point back at the record.
+  # Matching one way only means a record left behind by an interrupted run can
+  # vouch for whatever is at the path now -- a checkout somebody put there
+  # since, which cleanup would then delete.
+  if [[ -e "$VALIDATE_ROOT" ]]; then
+    if [[ -e "$VALIDATE_ROOT/.git" ]]; then
+      # A repository of its own keeps `.git` as a directory rather than the
+      # file a linked worktree leaves, and either way its presence says this is
+      # somebody's checkout and not the remains of one of ours.
+      [[ -f "$VALIDATE_ROOT/.git" ]] || return 1
+      pointer="$(sed -n 's/^gitdir: *//p' "$VALIDATE_ROOT/.git" 2>/dev/null || true)"
+      [[ -n "$pointer" ]] || return 1
+      case "$pointer" in
+        /*) ;;
+        *) pointer="$VALIDATE_ROOT/$pointer" ;;
+      esac
+      [[ "$(resolve_path "$pointer")" == "$(resolve_path "$record")" ]] || return 1
+    else
+      # Nothing named `.git` at all, on a path that still holds something. `worktree
+      # remove` takes the pointer away before it has finished deleting, so a
+      # run killed inside that window leaves exactly this. Only a removal this
+      # monitor had already begun and recorded is recognised, and a checkout
+      # somebody else puts here has a pointer of its own, so it never reaches
+      # this branch.
+      [[ -n "${VALIDATE_MARKER:-}" && -f "$VALIDATE_MARKER" ]] || return 1
+      [[ "$(sed -n '3p' -- "$VALIDATE_MARKER" 2>/dev/null)" == removing ]] ||
+        return 1
+    fi
+  fi
+  reason="$(cat -- "$record/locked" 2>/dev/null || true)"
+  [[ "$reason" == "$VALIDATE_LOCK_SIGNATURE "* ]] || return 1
+  if [[ -n "${VALIDATE_MARKER:-}" && -f "$VALIDATE_MARKER" ]]; then
+    resolved="$(resolve_path "$VALIDATE_ROOT")"
+    [[ "$(sed -n '1p' -- "$VALIDATE_MARKER" 2>/dev/null)" == "$resolved" ]] || return 1
+    token="$(sed -n '2p' -- "$VALIDATE_MARKER" 2>/dev/null)"
+    [[ -n "$token" ]] || return 1
+    [[ "$reason" == "$VALIDATE_LOCK_SIGNATURE $token" ]] || return 1
+  fi
+  return 0
+}
+
+# Takes git's record of the validation worktree away, and nothing else.
+#
+# A record whose worktree is missing keeps every later `worktree add` at that
+# path failing, and git keeps such a record for three months by default.
+# `worktree prune` would clear it, but prunes the whole repository: any
+# unrelated worktree that happened to be unreachable at that moment -- an
+# unmounted drive, a detached one holding the only reference to its commits --
+# would lose its record too. Only the one record known to be the monitor's is
+# removed, which is all git's own prune does to it.
+deregister_validation_worktree() {
+  local record
+  record="$(validate_worktree_record)" || return 0
+  [[ "$(cat -- "$record/locked" 2>/dev/null || true)" == "$VALIDATE_LOCK_SIGNATURE "* ]] ||
+    return 0
+  rm -rf -- "$record"
+}
+
+cleanup_validation_worktree() {
+  # The trap fires however the run ended, including before any of this was set.
+  [[ -n "${VALIDATE_ROOT:-}" ]] || return 0
+  if [[ ! -e "$VALIDATE_ROOT" ]]; then
+    rm -f -- "${VALIDATE_MARKER:-}"
+    deregister_validation_worktree
+    return 0
+  fi
+  # An empty directory holds nothing to lose, and a previous run can leave one
+  # behind. Refusing it would wedge every run that followed.
+  if [[ -d "$VALIDATE_ROOT" && ! -L "$VALIDATE_ROOT" ]] &&
+    [[ -z "$(ls -A -- "$VALIDATE_ROOT" 2>/dev/null)" ]]; then
+    rmdir -- "$VALIDATE_ROOT" 2>/dev/null || true
+    rm -f -- "${VALIDATE_MARKER:-}"
+    deregister_validation_worktree
+    return 0
+  fi
+  if ! validation_worktree_removable; then
+    die "refusing to remove $VALIDATE_ROOT: it is not a validation worktree this monitor created"
+  fi
+  # Written down before the removal starts, because the removal takes the
+  # worktree's own pointer away partway through and that pointer is what
+  # ownership is read from while the directory still exists. Without this, a
+  # run killed mid-deletion left a directory no later run would agree to
+  # finish.
+  if [[ -n "${VALIDATE_MARKER:-}" && -f "$VALIDATE_MARKER" ]]; then
+    printf 'removing\n' >>"$VALIDATE_MARKER"
+  fi
+  # `--force` twice is how git removes a worktree that is locked. Unlocking
+  # first would have thrown away the very thing that says the worktree is this
+  # monitor's, and an interruption in that gap left one no later run would
+  # touch.
+  git -C "$DEV_ROOT" worktree remove --force --force "$VALIDATE_ROOT" 2>/dev/null ||
+    true
+  if [[ -e "$VALIDATE_ROOT" ]]; then
+    rm -rf -- "$VALIDATE_ROOT"
+  fi
+  rm -f -- "$VALIDATE_MARKER"
+  # `worktree remove` normally takes the record with it. This covers the case
+  # where it declined and the directory was removed here instead.
+  deregister_validation_worktree
+}
+
+assert_disposable() {
+  local target resolved protected other
+  target="$1"
+  resolved="$(resolve_path "$target")"
+  [[ -n "$resolved" && "$resolved" != "/" ]] ||
+    die "validation worktree path is not usable: $target"
+  for protected in "$DEV_ROOT" "$PROD_ROOT" "$RELEASE_ROOT" "$USER_HOME"; do
+    [[ -n "$protected" ]] || continue
+    other="$(resolve_path "$protected")"
+    [[ "$resolved" != "$other" ]] ||
+      die "validation worktree would be $protected"
+    [[ "$other" != "$resolved"/* ]] ||
+      die "validation worktree would contain $protected"
+  done
+}
+
 run_pnpm() {
   local root="$1"
   shift
@@ -302,17 +550,75 @@ run() {
     log "main advanced to $candidate_commit"
   fi
 
-  log "installing development dependencies"
-  CI=true run_pnpm "$DEV_ROOT" install --frozen-lockfile
-  log "running development lint"
-  CI=true run_pnpm "$DEV_ROOT" lint
+  # Validation runs in a worktree of its own, pinned to the commit being
+  # promoted, under the state directory.
+  #
+  # The development checkout is where someone works, and it can be on a
+  # filesystem chosen for that rather than for speed: on a Windows drive seen
+  # through WSL the same suite takes 531 seconds instead of 77, and the test
+  # runner gives up waiting for its own workers to start. That ends the run
+  # with `Timeout waiting for worker to respond` while every test passes,
+  # which stops a release over where the checkout happens to live.
+  #
+  # Pinning also means what passed is what is promoted, rather than whatever
+  # the development checkout became while the suite was running.
+  # Script scope, not the run's. The EXIT trap fires after this function has
+  # been unwound, so locals are gone by then and `set -u` turned every failed
+  # validation into an unbound-variable abort that cleaned up nothing.
+  VALIDATE_ROOT="$STATE_DIR/validate"
+  VALIDATE_MARKER="$STATE_DIR/validate.owned"
+  # The state directory comes from the profile, so this path is not trusted to
+  # be somewhere disposable. It is checked before anything is created, while
+  # refusing still costs nothing.
+  assert_disposable "$VALIDATE_ROOT"
+
+  trap cleanup_validation_worktree EXIT
+  cleanup_validation_worktree
+  log "preparing validation worktree at $VALIDATE_ROOT"
+  # The token is this run's, and goes into both the marker and the worktree's
+  # own lock reason. A worktree somebody else makes at this path after an
+  # interrupted run carries no such reason, so a marker left behind cannot
+  # vouch for it.
+  local validate_token
+  validate_token="$(date +%s)-$$-${RANDOM}"
+  printf '%s\n%s\n' "$(resolve_path "$VALIDATE_ROOT")" "$validate_token" \
+    >"$VALIDATE_MARKER"
+  # `--lock --reason` writes the signature as part of registering the worktree,
+  # so there is no moment where a worktree exists that nothing vouches for. A
+  # run killed immediately after this line still leaves a worktree the next run
+  # recognises as the monitor's and clears away, rather than one it refuses to
+  # touch for ever.
+  #
+  # The lock earns its keep twice over: git will not prune a locked worktree,
+  # so an unrelated `git worktree prune` in this repository cannot take the
+  # record away while validation is using it.
+  git -C "$DEV_ROOT" worktree add --detach \
+    --lock --reason "$VALIDATE_LOCK_SIGNATURE $validate_token" \
+    "$VALIDATE_ROOT" "$candidate_commit"
+
+  log "installing validation dependencies"
+  CI=true run_pnpm "$VALIDATE_ROOT" install --frozen-lockfile
+  log "running validation lint"
+  CI=true run_pnpm "$VALIDATE_ROOT" lint
   # The repository has no hosted CI, so the suite that used to gate promotion
   # remotely has to run here. Without it nothing would exercise the tests
   # before a commit reaches production.
-  log "running development tests"
-  CI=true run_pnpm "$DEV_ROOT" test
-  log "building development release"
-  CI=true run_pnpm "$DEV_ROOT" build
+  log "running validation tests"
+  CI=true run_pnpm "$VALIDATE_ROOT" test
+  log "building validation release"
+  CI=true run_pnpm "$VALIDATE_ROOT" build
+  assert_clean "$VALIDATE_ROOT"
+  # Clean is not the same as unchanged. A validation command, or anything else
+  # reaching into the worktree, can leave it detached at some other commit and
+  # perfectly tidy -- and the whole point of validating here is that what was
+  # tested is what gets promoted.
+  local validated_head
+  validated_head="$(git -C "$VALIDATE_ROOT" rev-parse HEAD)" ||
+    die "validation worktree HEAD could not be read"
+  [[ "$validated_head" == "$candidate_commit" ]] ||
+    die "validation worktree moved to $validated_head, not $candidate_commit"
+  cleanup_validation_worktree
+  trap - EXIT
   assert_clean "$DEV_ROOT"
 
   assert_clean "$PROD_ROOT"

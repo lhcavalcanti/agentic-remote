@@ -37,5 +37,11 @@ describe('mobile safe areas', () => {
     expect(css).toMatch(
       /\.new-session-dialog\s*>\s*form\s*\{[^}]*touch-action:\s*pan-y/s,
     )
+    expect(css).toMatch(
+      /\.new-session-dialog\s*\{[^}]*max-height:\s*100%[^}]*overflow:\s*hidden/s,
+    )
+    expect(css).toMatch(
+      /\.new-session-dialog\s+\.dialog__header\s*\{[^}]*flex:\s*0\s+0\s+auto/s,
+    )
   })
 })

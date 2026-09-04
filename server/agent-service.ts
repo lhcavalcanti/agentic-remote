@@ -3437,7 +3437,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         startupIdle = !isTerminalAgentWorking(currentPane)
       } else if (startupLocked && pane) {
         terminalWorking = isTerminalAgentWorking(pane)
+        startupIdle =
+          !terminalWorking &&
+          !this.terminalAdmissionDispatched.has(sessionId)
       }
+    }
+    const startupReady = (resolvedStartup || startupLocked) && startupIdle
+    if (
+      startupReady &&
+      this.store.get(sessionId)?.status !== 'idle'
+    ) {
+      const idle = await this.store.update(sessionId, (session) => {
+        session.status = 'idle'
+        session.activity = undefined
+      })
+      this.publish(idle)
     }
     if (
       enqueue &&
@@ -3453,20 +3467,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (
       enqueue &&
-      resolvedStartup &&
-      startupIdle &&
+      startupReady &&
       this.store.get(sessionId)?.queuedPrompts?.length
     ) {
-      const idle = await this.store.update(sessionId, (session) => {
-        session.status = 'idle'
-        session.activity = undefined
-      })
-      this.publish(idle)
       return this.enqueueTerminalPrompt(sessionId, content, false, answers)
     }
     if (
       enqueue &&
-      !(resolvedStartup && startupIdle) &&
+      !startupReady &&
       terminalBacked &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
@@ -3474,14 +3482,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const nativeEnqueue = this.shouldUseNativeTerminalQueue(
       sessionId,
-      enqueue && !(resolvedStartup && startupIdle),
+      enqueue && !startupReady,
     )
     const dispatchedAt = new Date().toISOString()
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
       this.deliveredSends.add(sessionId)
-      if (startupLocked && resolvedStartup && startupIdle && !nativeEnqueue) {
+      if (startupLocked && startupReady && !nativeEnqueue) {
         this.terminalAdmissionDispatched.add(sessionId)
       }
       if (nativeEnqueue) {

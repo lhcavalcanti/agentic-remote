@@ -5482,6 +5482,58 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('reconciles stale running state after a startup blocker closes', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-idle-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      ownsStartupPrompt: vi.fn(() => true),
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => '╻▄▄▄▄\n┃\n╹▀▀▀▀'),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Startup blocker closed',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
+
+    await service.sendMessage(
+      client.session.sessionId,
+      'Send after blocker',
+      true,
+    )
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Send after blocker',
+      false,
+    )
+    expect(
+      service.store.get(client.session.sessionId)?.queuedPrompts ?? [],
+    ).toEqual([])
+    await service.stop()
+  })
+
   it('serializes sends that overlap startup resolution', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-startup-overlap-'),

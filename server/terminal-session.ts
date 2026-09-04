@@ -2262,8 +2262,22 @@ export function parseTerminalPermission(
   if (!commandQuestion) {
     return undefined
   }
-  const questionIndex = commandQuestion.start
-  const nonemptyBeforeQuestion = lines
+  const commandFrame = activeBottomFrame(rawLines, commandQuestion.start)
+  if (!commandFrame && hasComposerAfter(rawLines, commandQuestion.end)) {
+    return undefined
+  }
+  const commandLines = commandFrame
+    ? lines.slice(commandFrame.start, commandFrame.end + 1)
+    : lines
+  const framedQuestion = findTerminalWrappedText(
+    commandLines,
+    'Do you want to run this command?',
+  )
+  if (!framedQuestion) {
+    return undefined
+  }
+  const questionIndex = framedQuestion.start
+  const nonemptyBeforeQuestion = commandLines
     .slice(Math.max(0, questionIndex - 40), questionIndex)
     .flatMap((line, offset) =>
       line ? [{ line, index: Math.max(0, questionIndex - 40) + offset }] : [],
@@ -2289,7 +2303,7 @@ export function parseTerminalPermission(
   if (!title) {
     return undefined
   }
-  const dialog = lines.slice(dialogStart)
+  const dialog = commandLines.slice(dialogStart)
   const choices = terminalDialogChoices(dialog)
   const hasYes = choices.some(
     (choice) => choice.index === 1 && /^Yes\b/i.test(choice.label),

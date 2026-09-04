@@ -349,6 +349,22 @@ Permission request (1 remaining)
     expect(
       parseTerminalPermission(`
 ╭────────────────────────────────────────────────────────────╮
+│ Run stale diagnostics                                      │
+│ ────────────────────────────────────────────────────────── │
+│ printf 'stale'                                             │
+│ Do you want to run this command?                           │
+│ ❯ 1. Yes                                                   │
+│   2. No, and tell Copilot what to do differently           │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+╻▄▄▄▄
+┃
+╹▀▀▀▀
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
 │ Confirm folder trust                                       │
 │ Do you trust the files in this folder?                     │
 │ 1. Yes                                                     │

@@ -7314,9 +7314,13 @@ function App() {
       'agentic-remote:composer-drafts',
       JSON.stringify(
         Object.fromEntries(
+          // Written out in full. This is what an older build reads, and it
+          // knows nothing of placeholders -- given the display text it would
+          // show the labels as though the reader had typed them, and the
+          // pasted text would be gone.
           Object.entries(composerDrafts).map(([key, draft]) => [
             key,
-            draft.text,
+            expandComposerPastes(draft.text, draft.pastes),
           ]),
         ),
       ),
@@ -9494,9 +9498,14 @@ function App() {
       submissionsInFlight.current.delete(targetKey)
     }
 
-    const isCommand = trimmedDisplay.startsWith('/')
+    // Asked of the text that is actually sent, not of what the composer shows.
+    // A pasted command longer than the threshold is shown as a placeholder, so
+    // reading the display meant it was never recognised as a command and went
+    // as an ordinary message.
+    const trimmedContent = content.trim()
+    const isCommand = trimmedContent.startsWith('/')
     const commandName = isCommand
-      ? trimmedDisplay.slice(1).split(/\s+/, 1)[0].toLowerCase()
+      ? trimmedContent.slice(1).split(/\s+/, 1)[0].toLowerCase()
       : ''
     const command = isCommand
       ? commands.find(
@@ -10080,13 +10089,19 @@ function App() {
       return
     }
     const lineCount = pastedLineCount(content)
+    // Anything short is left to the textarea. Taking every paste over meant
+    // rebuilding the value by hand, which throws away the undo history the
+    // browser keeps for a paste it performed itself.
+    if (lineCount <= collapsedPasteLineThreshold) {
+      return
+    }
     event.preventDefault()
     const textarea = event.currentTarget
     const value = textarea.value
     const targetKey = followReplacementsRef.current(selectedKey)
     const start = textarea.selectionStart ?? value.length
     const end = textarea.selectionEnd ?? start
-    const longPaste = lineCount > collapsedPasteLineThreshold
+    const longPaste = true
     const currentPastes = composerDrafts[targetKey]?.pastes || []
     const paste = longPaste
       ? {

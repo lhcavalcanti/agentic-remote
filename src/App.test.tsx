@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import {
   act,
   cleanup,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -2124,7 +2125,68 @@ describe('App', () => {
     ])
   })
 
-  it('does not expand a paste label copied before the tracked one', async () => {
+  it('sends a pasted command as a command', async () => {
+    // The composer shows a placeholder for a long paste, so reading the
+    // display to decide what was typed meant a pasted command was never
+    // recognised as one and went to the model as ordinary words.
+    const pasted = ['/clear', ...Array.from({ length: 21 }, (_, i) => `line ${i}`)].join(
+      '\n',
+    )
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+    fireEvent.paste(textarea, {
+      clipboardData: { getData: () => pasted },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    // Recognised from the text that is actually sent.
+    await waitFor(() => expect(sendMessage).not.toHaveBeenCalled())
+  })
+
+  it('leaves a short paste to the textarea', async () => {
+    // Taking every paste over meant rebuilding the value by hand, which
+    // throws away the undo history the browser keeps for a paste it performed
+    // itself.
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+    const short = ['one', 'two', 'three'].join('\n')
+    const event = createEvent.paste(textarea, {
+      clipboardData: { getData: () => short },
+    })
+    fireEvent(textarea, event)
+
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('writes long pastes out in full for an older build to read', async () => {
+    // The key an older build reads knows nothing of placeholders. Given the
+    // display text it would show the labels as though the reader had typed
+    // them, and the pasted text would be gone.
+    const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join(
+      '\n',
+    )
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+    fireEvent.paste(textarea, {
+      clipboardData: { getData: () => pasted },
+    })
+
+    await waitFor(() => {
+      const legacy = JSON.parse(
+        localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+      )
+      expect(legacy['computer-1:session-1']).toContain('line 20')
+    })
+  })
+
+  it('does not expand a copy of a paste label the reader pasted themselves', async () => {
     const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join(
       '\n',
     )
@@ -2136,16 +2198,23 @@ describe('App', () => {
     fireEvent.paste(textarea, {
       clipboardData: { getData: () => pasted },
     })
-    textarea.setSelectionRange(0, 0)
+    // A short paste is left to the textarea, which performs it itself and so
+    // keeps its own undo history. jsdom does not perform it, so what a browser
+    // would have written is written here instead.
     fireEvent.paste(textarea, {
-      clipboardData: { getData: () => `${label}\n` },
+      clipboardData: { getData: () => `\n${label}` },
+    })
+    fireEvent.change(textarea, {
+      target: { value: `${textarea.value}\n${label}` },
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
+    // The tracked one is written out; the copy of its label is just text.
     await waitFor(() =>
       expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
-        content: `${label}\n${pasted}`,
+        acknowledgesFailure: undefined,
+        content: `${pasted}\n${label}`,
         enqueue: false,
       }),
     )

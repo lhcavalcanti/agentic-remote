@@ -3022,10 +3022,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
-    const content = rawContent.trim()
-    if (!content) {
+    // Emptiness is judged on the trimmed text; what is sent is what was
+    // written. Trimming the message itself quietly rewrote it, which matters
+    // for pasted text whose leading indentation or trailing newline is part of
+    // what was meant.
+    if (!rawContent.trim()) {
       throw new Error('Message cannot be empty')
     }
+    const content = rawContent
     if (
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)

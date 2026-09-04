@@ -1223,21 +1223,36 @@ async function clearAutomaticStartupPrompts(target: string): Promise<void> {
       await execFileAsync('tmux', ['capture-pane', '-p', '-t', target])
     ).stdout
 
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const waitUntilClosed = async (
+    isOpen: (pane: string) => boolean,
+  ): Promise<void> => {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      if (!isOpen(await capture())) {
+        return
+      }
+    }
+    throw new Error('Copilot startup prompt did not close')
+  }
+
+  // More than one known prompt can appear in sequence. Handle each once, then
+  // re-read the screen to decide whether another distinct prompt followed it.
+  for (let prompt = 0; prompt < 10; prompt += 1) {
     const pane = await capture()
     if (isTerminalSessionInUsePrompt(pane)) {
       await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
+      await waitUntilClosed(isTerminalSessionInUsePrompt)
     } else if (isTerminalDesktopInstallPrompt(pane)) {
       // Agentic Remote already supplies the remote supervision UI. Opening a
       // browser to install a separate desktop app cannot help this headless
       // terminal and keeps the first real prompt from reaching the composer.
       await execFileAsync('tmux', ['send-keys', '-t', target, 'n'])
+      await waitUntilClosed(isTerminalDesktopInstallPrompt)
     } else {
       return
     }
-    await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error('Copilot startup prompt did not close')
+  throw new Error('Too many Copilot startup prompts appeared in sequence')
 }
 
 async function waitForTerminalStartup(target: string): Promise<void> {
@@ -2097,7 +2112,8 @@ export function composerHoldsOtherText(
 // instead. Only a send past this size can account for one.
 const PASTE_ECHO_LIMIT = 800
 
-const PASTED_PLACEHOLDER = /\[(?:Pastedtext|Paste)[^\]]*\]/u
+const PASTED_PLACEHOLDER =
+  /\[(?:Pastedtext|Paste)#\d+(?:[+-][^\]]+)?\]/u
 
 function occurrences(text: string, needle: string): number {
   if (!needle) {
@@ -2107,7 +2123,9 @@ function occurrences(text: string, needle: string): number {
 }
 
 function pastedPlaceholderCount(text: string): number {
-  return (text.match(/\[(?:Pastedtext|Paste)[^\]]*\]/gu) || []).length
+  return (
+    text.match(/\[(?:Pastedtext|Paste)#\d+(?:[+-][^\]]+)?\]/gu) || []
+  ).length
 }
 
 /** The composer's contents, or nothing when the pane cannot be read. */

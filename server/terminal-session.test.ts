@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -398,7 +399,9 @@ Permission request (1 remaining)
         "printf 'Install it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n'",
         'IFS= read -r -n 1 answer',
         `printf '%s' "$answer" >"${response}"`,
+        'sleep 0.5',
         "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        `if IFS= read -r -t 0.2 -n 1 extra; then printf '%s' "$extra" >"${response}.extra"; fi`,
         'sleep 60',
       ].join('\n'),
     )
@@ -434,6 +437,7 @@ Permission request (1 remaining)
     )
 
     expect(await readFile(response, 'utf8')).toBe('n')
+    expect(existsSync(`${response}.extra`)).toBe(false)
   })
 
   it('kills only the owning pane when panes are renumbered while confirming', async () => {
@@ -692,6 +696,7 @@ describe('paneShowsText', () => {
     const huge = 'a very long message '.repeat(60)
     expect(paneShowsText('> [Pasted text #1 +40 lines]', huge)).toBe(true)
     expect(paneShowsText('> [Paste #1 - 24 lines]', huge)).toBe(true)
+    expect(paneShowsText('> [Paste recipe]', huge)).toBe(false)
   })
 
   it('recognises a placeholder for a long paste ending in a short line', () => {

@@ -515,6 +515,17 @@ Permission request (1 remaining)
         },
       ],
     })
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ 1. Yes                                                     │
+│ 2. Yes, and remember this folder for future sessions       │
+│ 3. No (Esc)                                                │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
   })
 
   it('creates a Copilot window in the configured existing tmux session', async () => {
@@ -660,6 +671,74 @@ Permission request (1 remaining)
       ),
     ).toBe(true)
     expect(cleared).toBe(true)
+  })
+
+  it('reauthorizes the restored owner when reset fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const count = path.join(directory, 'starts.txt')
+    const response = path.join(directory, 'response.txt')
+    const executable = path.join(directory, 'copilot-reset-rollback')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        `starts=$(cat "${count}" 2>/dev/null || printf 0)`,
+        'starts=$((starts + 1))',
+        `printf '%s' "$starts" >"${count}"`,
+        'if [[ "$starts" -eq 1 ]]; then',
+        "  printf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        '  sleep 60',
+        'fi',
+        "printf '╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
+        'IFS= read -r -n 1 answer',
+        `printf '%s' "$answer" >"${response}"`,
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-reset-rollback-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
+    await controller.create(sessionId, directory, 'Reset rollback', true)
+
+    await expect(
+      controller.reset(
+        sessionId,
+        randomUUID(),
+        directory,
+        undefined,
+        async () => {
+          throw new Error('state clear failed')
+        },
+      ),
+    ).rejects.toThrow('state clear failed')
+    await expect(
+      controller.resolveStartupPrompt(sessionId),
+    ).resolves.toBe(true)
+
+    expect(await readFile(response, 'utf8')).toBe('n')
   })
 
   it('declines the desktop-app promotion before returning a new session', async () => {
@@ -1211,6 +1290,7 @@ Permission request (1 remaining)
     await expect(
       controller.send(sessionId, 'establish cached owner', false),
     ).resolves.toBe(true)
+    await expect(controller.has(sessionId)).resolves.toBe(true)
     await execFileAsync('tmux', [
       'new-window',
       '-d',
@@ -1220,9 +1300,13 @@ Permission request (1 remaining)
       '60',
     ])
     await execFileAsync('tmux', ['kill-window', '-t', originalWindow])
-    await execFileAsync('tmux', [
+    const reopenedPanePid = (
+      await execFileAsync('tmux', [
       'new-window',
       '-d',
+      '-P',
+      '-F',
+      '#{pane_pid}',
       '-t',
       `=${tmuxSession}:`,
       '-e',
@@ -1230,8 +1314,11 @@ Permission request (1 remaining)
       executable,
       '--session-id',
       sessionId,
+      ])
+    ).stdout.trim()
+    await waitForProcessCommand(Number.parseInt(reopenedPanePid, 10), [
+      executable,
     ])
-    await new Promise((resolve) => setTimeout(resolve, 600))
 
     await expect(controller.has(sessionId)).resolves.toBe(true)
     await expect(

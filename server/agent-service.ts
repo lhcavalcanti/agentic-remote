@@ -3338,6 +3338,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     let resolvedStartup = false
     let startupIdle = false
+    let terminalWorking = false
     if (terminalBacked) {
       if (
         !startupLocked &&
@@ -3417,7 +3418,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           )
         }
         startupIdle = !isTerminalAgentWorking(currentPane)
+      } else if (startupLocked && pane) {
+        terminalWorking = isTerminalAgentWorking(pane)
       }
+    }
+    if (
+      enqueue &&
+      startupLocked &&
+      terminalWorking &&
+      this.store.get(sessionId)?.status === 'idle'
+    ) {
+      const running = await this.store.update(sessionId, (session) => {
+        session.status = 'running'
+        session.activity = 'Working in terminal'
+      })
+      this.publish(running)
     }
     if (
       enqueue &&

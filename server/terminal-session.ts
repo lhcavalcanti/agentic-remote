@@ -172,7 +172,9 @@ export class TmuxTerminalSessionController
   }
 
   async has(sessionId: string): Promise<boolean> {
-    return Boolean(await this.target(sessionId))
+    return Boolean(
+      (await this.target(sessionId)) ?? (await this.target(sessionId, true)),
+    )
   }
 
   async rename(sessionId: string, title: string): Promise<boolean> {
@@ -324,15 +326,31 @@ export class TmuxTerminalSessionController
           target: nextOwner.target,
         })
       } catch (error) {
-        await execFileAsync('tmux', [
-          'respawn-pane',
-          '-k',
-          '-t',
-          owner.target,
-          '-c',
-          cwd,
-          ...originalCommand,
-        ]).catch(() => undefined)
+        try {
+          await execFileAsync('tmux', [
+            'respawn-pane',
+            '-k',
+            '-t',
+            owner.target,
+            '-c',
+            cwd,
+            ...originalCommand,
+          ])
+          const restoredOwner = await this.waitForNewOwner(
+            sessionId,
+            owner.pid,
+            owner.target,
+          )
+          this.automaticStartupSessions.set(sessionId, {
+            pid: restoredOwner.pid,
+            target: restoredOwner.target,
+          })
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            'Conversation reset failed and the terminal session could not be restored',
+          )
+        }
         throw error
       }
       return true
@@ -973,7 +991,7 @@ export class TmuxTerminalSessionController
       if (!owner) {
         this.inputReadySessions.delete(sessionId)
         this.automaticStartupSessions.delete(sessionId)
-        if (expectedTarget && (await this.owner(sessionId))) {
+        if (expectedTarget && (await this.owner(sessionId, undefined, true))) {
           throw Object.assign(
             new Error(
               'The terminal session reopened in a different pane. Check it there before sending another message.',
@@ -1174,8 +1192,11 @@ export class TmuxTerminalSessionController
       return true
   }
 
-  private async target(sessionId: string): Promise<string | undefined> {
-    return (await this.owner(sessionId))?.target
+  private async target(
+    sessionId: string,
+    fresh = false,
+  ): Promise<string | undefined> {
+    return (await this.owner(sessionId, undefined, fresh))?.target
   }
 
   /**
@@ -1223,8 +1244,9 @@ export class TmuxTerminalSessionController
   private async owner(
     sessionId: string,
     expectedTarget?: string,
+    fresh = false,
   ): Promise<TerminalOwner | undefined> {
-    const candidates = (await this.activeProcesses()).filter(
+    const candidates = (await this.activeProcesses(fresh)).filter(
       (candidate) => candidate.sessionId === sessionId,
     )
     for (const processInfo of candidates) {
@@ -1240,9 +1262,15 @@ export class TmuxTerminalSessionController
     return undefined
   }
 
-  private activeProcesses(): ReturnType<typeof findActiveCopilotProcesses> {
+  private activeProcesses(
+    fresh = false,
+  ): ReturnType<typeof findActiveCopilotProcesses> {
     const now = Date.now()
-    if (this.activeProcessCache && this.activeProcessCache.expiresAt > now) {
+    if (
+      !fresh &&
+      this.activeProcessCache &&
+      this.activeProcessCache.expiresAt > now
+    ) {
       return this.activeProcessCache.processes
     }
     const processes = findActiveCopilotProcesses()
@@ -2092,7 +2120,20 @@ export function parseTerminalPermission(
     }
     const dialog = frameLines.slice(heading)
     const choices = terminalDialogChoices(dialog)
+    const hasSelection = dialog.some((line) =>
+      /^[>❯]\s*(?:1\.\s+Yes|2\.\s+Yes,\s+and remember|3\.\s+No\b)/i.test(
+        line,
+      ),
+    )
+    const hasFooter = dialog.some(
+      (line) =>
+        /↑\/↓\s+(?:to\s+)?navigate/i.test(line) &&
+        /enter\s+(?:to\s+)?select/i.test(line) &&
+        /esc\s+(?:to\s+)?cancel/i.test(line),
+    )
     if (
+      hasSelection &&
+      hasFooter &&
       choices.some(
         (choice) => choice.index === 1 && /^Yes$/i.test(choice.label),
       ) &&

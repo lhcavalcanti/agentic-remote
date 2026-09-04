@@ -10476,52 +10476,53 @@ function App() {
 
   async function queueDragEnded(event: DragEndEvent) {
     const { active, over } = event
-    const queue = selected?.queuedPrompts
-    if (!selected || !queue || !over || active.id === over.id) {
+    if (!selected || !over || active.id === over.id) {
       return
     }
-    // One at a time for a session. A second drag begun before the first has
-    // settled took its own snapshot of a queue the server had not accepted
-    // yet, so when both failed the later one put the earlier drag's order back
-    // as though it had been agreed to.
+    // One drag at a time for a session, and the whole of it inside that lane:
+    // the list it is worked out from, the order shown while it is in flight,
+    // the request, and whatever is shown if it is refused. Reading the list
+    // before waiting for the drag ahead meant working from an arrangement the
+    // server had not accepted -- and then persisting it, or putting it back
+    // when the recovery read failed.
     const lane = sessionKey(selected)
-    const ids = queue.map((prompt) => `queued:${prompt.id}`)
-    const from = ids.indexOf(String(active.id))
-    const to = ids.indexOf(String(over.id))
-    if (from < 0 || to < 0) {
-      return
-    }
-    const next = [...queue]
-    next.splice(to, 0, ...next.splice(from, 1))
-    const order = next.map((prompt) => prompt.id)
-    const target = selected
-    // Shown in the new order straight away: the drag is the answer, and
-    // waiting for the round trip makes the list snap back under the pointer.
-    setSessions((current) =>
-      upsertSession(current, { ...target, queuedPrompts: next }),
-    )
-    setError(undefined)
-    // Chained into the lane before waiting on what is ahead, so two drags that
-    // end while a third is still running queue behind each other rather than
-    // both taking the same promise and resuming together.
     let settle: () => void = () => {}
     const mine = new Promise<void>((resolve) => {
       settle = resolve
     })
     const ahead = reorderInFlight.current.get(lane)
     reorderInFlight.current.set(lane, mine)
-    if (ahead) {
-      await ahead.catch(() => undefined)
-    }
-    // Taken now that whatever was ahead has settled, rather than from the list
-    // as it looked before the drag. That earlier snapshot could hold an order
-    // the server had refused, and putting it back showed the reader an
-    // arrangement nothing had ever agreed to.
-    const settled =
-      sessionsRef.current.find(
-        (candidate) => sessionKey(candidate) === lane,
-      ) || target
     try {
+      if (ahead) {
+        await ahead.catch(() => undefined)
+      }
+      // Now that whatever was ahead has settled, this is the queue as it
+      // actually stands.
+      const target = sessionsRef.current.find(
+        (candidate) => sessionKey(candidate) === lane,
+      )
+      const queue = target?.queuedPrompts
+      if (!target || !queue) {
+        return
+      }
+      const ids = queue.map((prompt) => `queued:${prompt.id}`)
+      const from = ids.indexOf(String(active.id))
+      const to = ids.indexOf(String(over.id))
+      // Either end of the drag has gone: sent, removed, or moved by the drag
+      // ahead of this one. There is no order to build from it.
+      if (from < 0 || to < 0) {
+        return
+      }
+      const next = [...queue]
+      next.splice(to, 0, ...next.splice(from, 1))
+      const order = next.map((prompt) => prompt.id)
+      // Shown in the new order straight away: the drag is the answer, and
+      // waiting for the round trip makes the list snap back under the pointer.
+      setSessions((current) =>
+        upsertSession(current, { ...target, queuedPrompts: next }),
+      )
+      setError(undefined)
+      try {
       const updated = await reorderQueuedPrompts(
         target.computerId,
         target.id,
@@ -10529,26 +10530,28 @@ function App() {
       )
       if (stillListed(updated)) {
         setSessions((current) => upsertSession(current, updated))
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-      // Asked for rather than assumed. The refusal usually means the queue has
-      // moved on, so putting back the list as it was before the drag would
-      // show work that is already gone, or hide work that has just arrived.
-      try {
-        const fresh = await getSession(target.computerId, target.id)
-        if (stillListed(fresh)) {
-          setSessions((current) => upsertSession(current, fresh))
         }
-      } catch {
-        // Even the re-read failed, so the best available answer is the list as
-        // it was before the drag -- but only if it is still a session at all.
-        // Put back after its removal has already been seen, the snapshot
-        // reappears as a session nothing can be done with and no later event
-        // will clear.
-        setSessions((current) =>
-          stillListed(settled) ? upsertSession(current, settled) : current,
-        )
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+        // Asked for rather than assumed. The refusal usually means the queue
+        // has moved on, so putting back the list as it was before the drag
+        // would show work that is already gone, or hide work that has just
+        // arrived.
+        try {
+          const fresh = await getSession(target.computerId, target.id)
+          if (stillListed(fresh)) {
+            setSessions((current) => upsertSession(current, fresh))
+          }
+        } catch {
+          // Even the re-read failed, so the best available answer is the queue
+          // as it stood when this drag began -- which, inside the lane, is an
+          // order the server had accepted. Only if it is still a session at
+          // all: put back after its removal has been seen, the snapshot
+          // reappears as one nothing can act on and no later event will clear.
+          setSessions((current) =>
+            stillListed(target) ? upsertSession(current, target) : current,
+          )
+        }
       }
     } finally {
       settle()

@@ -485,6 +485,14 @@ function bindingLabel(value: ShortcutBinding): string {
 }
 
 /** The keys that are only ever held down beside another one. */
+/** Whether the editor could ever have recorded this key. */
+// Escape leaves the editor rather than being captured, and Tab moves on, so
+// neither can be reached however they are held. Stored, they were shortcuts
+// that showed in the list and could never be pressed.
+function capturableCode(code: string): boolean {
+  return !isModifierCode(code) && code !== 'Escape' && code !== 'Tab'
+}
+
 function isModifierCode(code: string): boolean {
   return (
     code.startsWith('Alt') ||
@@ -500,14 +508,26 @@ function isModifierCode(code: string): boolean {
 // same bar as something typed into the editor, or a rule the reader cannot
 // break by hand is one they can break by reloading.
 function usableBinding(value: unknown): value is ShortcutBinding {
-  if (!value || typeof value !== 'object') {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false
   }
   const candidate = value as Partial<ShortcutBinding>
   if (typeof candidate.code !== 'string' || !candidate.code) {
     return false
   }
-  if (isModifierCode(candidate.code)) {
+  // Booleans, not merely things that look true. `alt: "no"` is a string, and
+  // reading it through `Boolean` turned it into a shortcut nobody asked for.
+  for (const flag of [
+    candidate.alt,
+    candidate.shift,
+    candidate.ctrl,
+    candidate.meta,
+  ]) {
+    if (flag !== undefined && typeof flag !== 'boolean') {
+      return false
+    }
+  }
+  if (!capturableCode(candidate.code)) {
     return false
   }
   // Held with nothing, it would fire while typing anywhere outside a text box.
@@ -535,28 +555,41 @@ function readStoredShortcuts(): Partial<Record<ShortcutId, ShortcutBinding>> {
     })
   }
   // Two rows answering to the same keys means only the first is ever reached,
-  // and the other can no longer be pressed at all. Whichever is read second
-  // goes back to its default, which is always free by construction.
-  const taken: ShortcutBinding[] = []
-  for (const entry of shortcutDefaults) {
-    const chosen = clean[entry.id]
-    if (!chosen) {
-      continue
+  // and the other can no longer be pressed at all. What matters is the set the
+  // handler ends up with, defaults included -- checking the overrides against
+  // each other left one free to collide with a default that had been fallen
+  // back to, which is the same fault one step along.
+  //
+  // Dropping an override is always enough, because the defaults are unique
+  // among themselves: with every override gone the set is sound, so removing
+  // them until nothing collides terminates.
+  for (;;) {
+    const effective = shortcutDefaults.map((entry) => ({
+      id: entry.id,
+      binding: clean[entry.id] || entry.binding,
+    }))
+    const clash = effective.find((entry, index) =>
+      effective.some(
+        (other, otherIndex) =>
+          otherIndex < index && sameBinding(other.binding, entry.binding),
+      ),
+    )
+    // Whichever of the pair was chosen rather than inherited gives way; if
+    // both were, it is the later one.
+    const giving =
+      clash && clean[clash.id]
+        ? clash.id
+        : effective.find(
+            (entry) =>
+              clash &&
+              entry.id !== clash.id &&
+              clean[entry.id] &&
+              sameBinding(entry.binding, clash.binding),
+          )?.id
+    if (!clash || !giving) {
+      break
     }
-    const collides =
-      taken.some((held) => sameBinding(held, chosen)) ||
-      shortcutDefaults.some(
-        (other) =>
-          other.id !== entry.id &&
-          !clean[other.id] &&
-          sameBinding(other.binding, chosen),
-      )
-    if (collides) {
-      delete clean[entry.id]
-      taken.push(entry.binding)
-      continue
-    }
-    taken.push(chosen)
+    delete clean[giving]
   }
   return clean
 }
@@ -8962,6 +8995,13 @@ function App() {
     setKnowledgeModeState(mode)
   }
 
+  /** Whether the sidebar is the drawer that slides over everything. */
+  function drawerIsOverlay(): boolean {
+    return typeof window.matchMedia === 'function'
+      ? window.matchMedia('(max-width: 960px)').matches
+      : window.innerWidth <= 960
+  }
+
   /** What a shortcut answers to now, for anything that tells the reader. */
   // Read rather than written out, or a remapped shortcut goes on being
   // advertised by keys that no longer do anything.
@@ -9001,10 +9041,11 @@ function App() {
       open[1]()
       return true
     }
-    // Before the knowledge panel. The drawer only exists on a narrow screen,
-    // and there it slides over everything else -- so closing what is behind it
-    // first put away something the reader could not even see.
-    if (sidebarOpen) {
+    // Before the knowledge panel, but only where it is actually an overlay.
+    // Widening the window past the breakpoint leaves the drawer flag set while
+    // the sidebar is simply part of the layout, and Escape then spent the
+    // press on something invisible instead of closing what was in front.
+    if (sidebarOpen && drawerIsOverlay()) {
       setSidebarOpen(false)
       return true
     }

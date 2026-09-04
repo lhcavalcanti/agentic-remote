@@ -5819,6 +5819,63 @@ describe('App', () => {
     ).toHaveTextContent('Alt + \u2193')
   })
 
+  it('drops stored shortcut keys that could never be pressed', async () => {
+    // Escape leaves the editor and Tab moves on, so neither can be recorded
+    // however they are held -- stored, they showed in the list as shortcuts
+    // that did nothing. A modifier that is a string rather than a boolean is
+    // not a choice anybody made either.
+    localStorage.setItem(
+      'agentic-remote:shortcuts',
+      JSON.stringify({
+        toggleKnowledge: { code: 'Escape', ctrl: true, alt: false, shift: false, meta: false },
+        backgroundTasks: { code: 'KeyM', alt: 'yes', shift: false, ctrl: false, meta: false },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    expect(
+      await screen.findByLabelText('Change the keys for Open or close knowledge'),
+    ).toHaveTextContent('Alt + K')
+    expect(
+      screen.getByLabelText('Change the keys for View background tasks'),
+    ).toHaveTextContent('Alt + T')
+  })
+
+  it('drops a stored override that collides with a default it fell back to', async () => {
+    // The override that survives and the default that another row falls back
+    // to have to be checked against each other, not only the overrides among
+    // themselves. Otherwise the same fault reappears one step along.
+    localStorage.setItem(
+      'agentic-remote:shortcuts',
+      JSON.stringify({
+        // Takes the keys "View background tasks" answers to by default...
+        nextSession: { code: 'KeyT', alt: true, shift: false, ctrl: false, meta: false },
+        // ...while this one is discarded for duplicating another override, so
+        // it falls back to exactly those keys.
+        backgroundTasks: { code: 'KeyT', alt: true, shift: false, ctrl: false, meta: false },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    // Both back to their defaults, so each can still be pressed.
+    expect(
+      await screen.findByLabelText('Change the keys for Next session'),
+    ).toHaveTextContent('Alt + \u2193')
+    expect(
+      screen.getByLabelText('Change the keys for View background tasks'),
+    ).toHaveTextContent('Alt + T')
+  })
+
   it('will not reset a shortcut onto keys another row has taken', async () => {
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(getSession).mockResolvedValue(session)
@@ -6015,6 +6072,11 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 700,
+      writable: true,
+    })
     fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
     expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
       'hidden',
@@ -6042,6 +6104,44 @@ describe('App', () => {
         'hidden',
       ),
     )
+  })
+
+  it('ignores the drawer flag once the sidebar is part of the layout again', async () => {
+    // Widening past the breakpoint leaves the drawer flag set while the
+    // sidebar is simply part of the page. Escape then spent the press on
+    // something invisible and left what was in front of the reader open.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    const setWidth = (width: number) => {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: width,
+        writable: true,
+      })
+    }
+    const original = window.innerWidth
+    setWidth(700)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    fireEvent.click(screen.getByLabelText('Open sessions'))
+    await waitFor(() =>
+      expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open'),
+    )
+
+    // The window is widened; the sidebar is no longer an overlay.
+    setWidth(1400)
+
+    // The press closes what is actually in front, not the flag behind it.
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
+        'hidden',
+      ),
+    )
+    setWidth(original)
   })
 
   it('closes an open dialog on Escape, from a field inside it', async () => {

@@ -558,26 +558,42 @@ export class SessionStore {
         stored.queuedPrompts = next
       })
     } catch (error) {
-      const current = this.state.sessions[sessionId]
-      // Only if the queue is still exactly what this reorder installed, and
-      // the revision still the one it wrote. Anything else means another
-      // change landed while this was being written down, and putting the old
-      // queue back would drop what it added and take the revision backwards.
-      const installed =
-        current?.queuedPrompts?.length === order.length &&
-        current.queuedPrompts.every((prompt, index) => prompt.id === order[index])
-      if (
-        current &&
-        before &&
-        installed &&
-        current.revision === (beforeRevision ?? 0) + 1
-      ) {
+      const undo = () => {
+        const current = this.state.sessions[sessionId]
+        if (!current || !before) {
+          return
+        }
+        // Whether this reorder's own arrangement is still the one installed,
+        // judged on the queue itself rather than on the revision: an unrelated
+        // in-memory change can move the revision on while leaving the refused
+        // order exactly where it is.
+        const installed =
+          current.queuedPrompts?.length === order.length &&
+          current.queuedPrompts.every(
+            (prompt, index) => prompt.id === order[index],
+          )
+        if (!installed) {
+          return
+        }
         current.queuedPrompts = before
         current.queuedCount = before.length
-        if (beforeRevision !== undefined) {
+        // Only if nothing else has written since; otherwise this would take
+        // somebody else's revision backwards.
+        if (
+          beforeRevision !== undefined &&
+          current.revision === beforeRevision + 1
+        ) {
           current.revision = beforeRevision
         }
       }
+      // Put in the write queue rather than run here. `persist` collapses
+      // writes and takes its snapshot when the write starts, so a mutation
+      // queued behind this one would otherwise serialise the refused order to
+      // disk before it had been undone -- and a restart would come back to an
+      // order the caller was told was refused.
+      const settled = this.writeQueue.then(undo, undo)
+      this.writeQueue = settled.catch(() => undefined)
+      await settled
       throw error
     }
   }

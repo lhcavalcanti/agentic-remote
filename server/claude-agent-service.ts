@@ -730,6 +730,12 @@ export class ClaudeAgentService
       return session
     } finally {
       this.drainingSessions.delete(sessionId)
+      // A turn that finished while this held the marker found the drain
+      // already marked as running and turned back, and nothing else was going
+      // to call it -- so the queue stood still until something unrelated
+      // happened. It is asked again now the marker is free; it does nothing
+      // if the session is busy.
+      void this.drainQueue(sessionId).catch(() => undefined)
     }
   }
 

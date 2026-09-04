@@ -866,12 +866,18 @@ export class ClaudeAgentService
         statusCode: 409,
       })
     }
+    const titleSource = content.trim()
     const running = await this.store.update(sessionId, (stored) => {
       stored.status = 'running'
       stored.activity = 'Thinking'
       if (stored.messages.filter((message) => message.role === 'user').length === 1) {
         stored.title =
-          content.length > 52 ? `${content.slice(0, 52)}…` : content
+          // From a trimmed copy. The message keeps its own leading whitespace,
+          // which is part of what was written, but a title made of it is
+          // blank.
+          titleSource.length > 52
+            ? `${titleSource.slice(0, 52)}…`
+            : titleSource
       }
     })
     this.publish(running)

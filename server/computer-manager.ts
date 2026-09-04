@@ -68,6 +68,15 @@ function managedSession(
   }
 }
 
+function sessionAtLeastAsNew(
+  incoming: ManagedSession,
+  current: ManagedSession | undefined,
+): boolean {
+  return incoming.revision === undefined ||
+    current?.revision === undefined ||
+    incoming.revision >= current.revision
+}
+
 export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   private readonly clients = new Map<string, RemoteNodeClient>()
   private readonly sessionCache = new Map<string, ManagedSession[]>()
@@ -753,11 +762,13 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         const merged = new Map(
           sessions.map((session) => [session.id, managedSession(session, computer)]),
         )
-        // WebSocket events observed after this read began are newer than its
-        // snapshot, including removals that must not be resurrected.
+        // Reconcile in-flight events without erasing deletions. An explicitly
+        // newer snapshot revision still wins over an earlier event.
         for (const [id, session] of read.changes) {
           if (session) {
-            merged.set(id, session)
+            if (sessionAtLeastAsNew(session, merged.get(id))) {
+              merged.set(id, session)
+            }
           } else {
             merged.delete(id)
           }
@@ -847,8 +858,11 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     if (event.type === 'session.upserted') {
       const session = managedSession(event.session, computer)
       if (computer.id !== this.identity.info.id) {
-        this.sessionReads.get(computer.id)?.changes.set(session.id, session)
         const cached = this.sessionCache.get(computer.id) ?? []
+        if (!sessionAtLeastAsNew(session, cached.find((entry) => entry.id === session.id))) {
+          return
+        }
+        this.sessionReads.get(computer.id)?.changes.set(session.id, session)
         this.sessionCache.set(computer.id, [
           session,
           ...cached.filter((entry) => entry.id !== session.id),

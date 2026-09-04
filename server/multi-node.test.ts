@@ -1645,6 +1645,23 @@ describe('remote snapshot consistency', () => {
     manager.stop()
   })
 
+  it('keeps a snapshot revision newer than an event observed during its read', async () => {
+    const { manager, client, computer } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted',
+      session: { ...session('kept', 'Revision two'), revision: 2 },
+    })
+    response.resolve([{ ...session('kept', 'Revision three'), revision: 3 }])
+    expect((await listing).sessions).toEqual([
+      expect.objectContaining({ id: 'kept', title: 'Revision three', revision: 3 }),
+    ])
+    manager.stop()
+  })
+
   it('does not recreate an unpaired computer from a late listing', async () => {
     const { manager, client, computer } = await remoteSnapshotFixture()
     const response = deferred<SessionDetail[]>()
@@ -1658,6 +1675,22 @@ describe('remote snapshot consistency', () => {
     expect(result.sessions).toEqual([])
     expect(result.answeredComputerIds).not.toContain(computer.id)
     expect(manager['sessionCache'].has(computer.id)).toBe(false)
+  })
+
+  it('ignores an older event arriving after a newer snapshot revision', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([
+      { ...session('kept', 'Revision three'), revision: 3 },
+    ])
+    await manager.listSessionsWithAuthority()
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted',
+      session: { ...session('kept', 'Revision two'), revision: 2 },
+    })
+    expect(manager['sessionCache'].get(computer.id)?.[0])
+      .toMatchObject({ title: 'Revision three', revision: 3 })
+    expect(events).toEqual([])
+    manager.stop()
   })
 
   it('does not accept a listing from a replaced node client', async () => {

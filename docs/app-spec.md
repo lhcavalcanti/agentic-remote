@@ -294,6 +294,11 @@ switches, failed sends, and clear replacement IDs.
 
 - Knowledge MUST be the single place for reading files; there is no separate
   saved-paths panel.
+- Root creation MUST be entered from Knowledge itself, not from the Sessions
+  sidebar.
+- Opening Knowledge with an active session and no configured roots MUST open
+  the root picker on that session's computer and current working folder. The
+  user MAY add that folder directly or browse to another readable folder.
 - A knowledge root is a computer plus an absolute folder and MUST be browsable
   with no session in existence.
 - Choosing a root MUST allow any folder on the owning computer that the user can

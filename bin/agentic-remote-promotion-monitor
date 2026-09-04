@@ -342,13 +342,20 @@ run() {
   # be somewhere disposable. It is checked before anything is created, while
   # refusing still costs nothing.
   assert_disposable "$validate_root"
-  # Whether the path is a worktree this repository registered, holding nothing
-  # that would be lost by removing it. Asked before anything is removed: a
-  # forced removal deletes a worktree's uncommitted and untracked files, so
-  # doing it first and inspecting afterwards inspects what is already gone.
+  # Proof that this monitor made the worktree, written once it exists and
+  # removed with it. Registration and a clean status are not proof of
+  # ownership: a detached worktree somebody made by hand can be clean and still
+  # be the only reference to a commit, and removing it takes that commit's last
+  # reachable name with it.
+  local validate_marker="$STATE_DIR/validate.owned"
+
+  # Whether the worktree is this monitor's to remove: made here, still
+  # registered to this repository, and holding nothing that would be lost.
   validation_worktree_removable() {
-    local resolved entry registered=""
+    local resolved entry registered="" status="" rc=0
+    [[ -f "$validate_marker" ]] || return 1
     resolved="$(resolve_path "$validate_root")"
+    [[ "$(cat -- "$validate_marker" 2>/dev/null)" == "$resolved" ]] || return 1
     while IFS= read -r entry; do
       [[ -n "$entry" ]] || continue
       if [[ "$(resolve_path "$entry")" == "$resolved" ]]; then
@@ -358,14 +365,19 @@ run() {
     done < <(git -C "$DEV_ROOT" worktree list --porcelain 2>/dev/null |
       sed -n 's/^worktree //p')
     [[ -n "$registered" ]] || return 1
+    # Asked for separately from its exit status. Reading only the output takes
+    # a git that failed and printed nothing as a clean tree.
+    status="$(git -C "$validate_root" status --porcelain 2>/dev/null)" || rc=$?
+    [[ "$rc" -eq 0 ]] || return 1
     # Somebody may have been working in it. Ignored build output does not
     # count, which is the same rule the post-build check already applies.
-    [[ -z "$(git -C "$validate_root" status --porcelain 2>/dev/null)" ]] || return 1
+    [[ -z "$status" ]] || return 1
     return 0
   }
 
   cleanup_validation_worktree() {
     if [[ ! -e "$validate_root" ]]; then
+      rm -f -- "$validate_marker"
       return 0
     fi
     # An empty directory holds nothing to lose, and a previous run can leave
@@ -373,21 +385,26 @@ run() {
     if [[ -d "$validate_root" && ! -L "$validate_root" ]] &&
       [[ -z "$(ls -A -- "$validate_root" 2>/dev/null)" ]]; then
       rmdir -- "$validate_root" 2>/dev/null || true
+      rm -f -- "$validate_marker"
       return 0
     fi
     if ! validation_worktree_removable; then
-      die "refusing to remove $validate_root: it is not a clean worktree of $DEV_ROOT"
+      die "refusing to remove $validate_root: it is not a validation worktree this monitor created"
     fi
     git -C "$DEV_ROOT" worktree remove --force "$validate_root" 2>/dev/null || true
     if [[ -e "$validate_root" ]]; then
       rm -rf -- "$validate_root"
     fi
+    rm -f -- "$validate_marker"
   }
 
   trap cleanup_validation_worktree EXIT
   cleanup_validation_worktree
   log "preparing validation worktree at $validate_root"
   git -C "$DEV_ROOT" worktree add --detach "$validate_root" "$candidate_commit"
+  # Written only once the worktree exists, so nothing that was already here can
+  # be mistaken for something this run made.
+  resolve_path "$validate_root" >"$validate_marker"
 
   log "installing validation dependencies"
   CI=true run_pnpm "$validate_root" install --frozen-lockfile

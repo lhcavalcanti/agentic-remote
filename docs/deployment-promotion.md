@@ -32,7 +32,7 @@ credentials, pairing tokens, repositories, or SSH keys.
 | --- | --- |
 | `profile_name` | Human-readable machine/setup name |
 | `repository` | GitHub repository to monitor |
-| `development_root` | Writable checkout used for pull and validation |
+| `development_root` | Writable checkout the candidate commit is pulled into |
 | `production_runtime_root` | Separate runtime source or deployment worktree |
 | `release_root` | Immutable releases and the `current` pointer |
 | `service_name` | Managed systemd service to restart |

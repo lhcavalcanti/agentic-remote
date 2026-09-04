@@ -287,7 +287,7 @@ describe('promotion monitor', () => {
     })
 
     expect(result.code).not.toBe(0)
-    expect(result.output).toContain('not a clean worktree')
+    expect(result.output).toContain('not a validation worktree this monitor created')
     // Everything that was there is still there.
     expect(existsSync(unsaved)).toBe(true)
     expect(existsSync(path.join(state, 'validate', 'kept.txt'))).toBe(true)
@@ -313,8 +313,36 @@ describe('promotion monitor', () => {
     })
 
     expect(result.code).not.toBe(0)
-    expect(result.output).toContain('not a clean worktree')
+    expect(result.output).toContain('not a validation worktree this monitor created')
     expect(existsSync(unsaved)).toBe(true)
+
+    await git(context.dev, 'worktree', 'remove', '--force', validate)
+  })
+
+  it('refuses to remove a clean worktree it did not create', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Clean, registered to this repository, and still not the monitor's: a
+    // detached worktree somebody made by hand can be the only reference to a
+    // commit, and removing it takes that commit's last reachable name with it.
+    const state = path.join(context.root, 'state-unowned-clean')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    await git(context.dev, 'worktree', 'add', '--detach', validate, 'HEAD')
+    await writeFile(path.join(validate, 'only-here.txt'), 'unique\n')
+    await git(validate, 'add', '-A')
+    await git(validate, 'commit', '-m', 'only reachable from this worktree')
+    const orphan = (await git(validate, 'rev-parse', 'HEAD')).trim()
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    // The commit is still reachable, because its worktree is still there.
+    expect((await git(validate, 'rev-parse', 'HEAD')).trim()).toBe(orphan)
 
     await git(context.dev, 'worktree', 'remove', '--force', validate)
   })

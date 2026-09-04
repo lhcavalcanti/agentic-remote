@@ -123,6 +123,7 @@ export class TmuxTerminalSessionController
   implements TerminalSessionController
 {
   private readonly operations = new Map<string, Promise<unknown>>()
+  private readonly inputReadySessions = new Set<string>()
   private creationQueue: Promise<void> = Promise.resolve()
   private activeProcessCache?: {
     expiresAt: number
@@ -205,6 +206,7 @@ export class TmuxTerminalSessionController
       const originalCommand = await processCommand(owner.pid)
       const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, sessionId, input)
+      this.inputReadySessions.delete(sessionId)
       try {
         await execFileAsync('tmux', [
           'respawn-pane',
@@ -254,6 +256,8 @@ export class TmuxTerminalSessionController
       }
       const originalCommand = await processCommand(owner.pid)
       const command = await copilotCommand(owner.pid, replacementId, input)
+      this.inputReadySessions.delete(sessionId)
+      this.inputReadySessions.delete(replacementId)
       await execFileAsync('tmux', [
         'respawn-pane',
         '-k',
@@ -354,6 +358,7 @@ export class TmuxTerminalSessionController
       // that somebody else's work was ended.
       for (let attempt = 0; attempt < 50; attempt += 1) {
         if (await this.paneStopped(owner)) {
+          this.inputReadySessions.delete(sessionId)
           return true
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
@@ -396,6 +401,7 @@ export class TmuxTerminalSessionController
         return false
       }
       const command = await processCommand(owner.pid)
+      this.inputReadySessions.delete(sessionId)
       await execFileAsync('tmux', [
         'respawn-pane',
         '-k',
@@ -842,7 +848,12 @@ export class TmuxTerminalSessionController
       if (!target) {
         return false
       }
-      await clearAutomaticStartupPrompts(target)
+      if (this.inputReadySessions.has(sessionId)) {
+        await clearAutomaticStartupPrompts(target)
+      } else {
+        await waitForTerminalStartup(target)
+        this.inputReadySessions.add(sessionId)
+      }
       // What the pane already holds is not evidence that this message
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
@@ -1164,6 +1175,7 @@ export class TmuxTerminalSessionController
       if (target) {
         try {
           await waitForTerminalStartup(target)
+          this.inputReadySessions.add(sessionId)
           return { sessionName, windowId }
         } catch (error) {
           await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(

@@ -607,7 +607,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nIFS= read -r line\nprintf '%s' "$line" >"${output}"\nsleep 60\n`,
+      `#!/usr/bin/env bash\nprintf '╻▄▄▄▄\\n┃\\n'\nIFS= read -r line\nprintf '%s' "$line" >"${output}"\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = `agentic-test-${process.pid}`
@@ -688,7 +688,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-concurrent-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nIFS= read -r first\nIFS= read -r second\nprintf '%s\\n%s' "$first" "$second" >"${output}"\nsleep 60\n`,
+      `#!/usr/bin/env bash\nprintf '╻▄▄▄▄\\n┃\\n'\nIFS= read -r first\nIFS= read -r second\nprintf '%s\\n%s' "$first" "$second" >"${output}"\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = `agentic-concurrent-${process.pid}`
@@ -742,6 +742,69 @@ Permission request (1 remaining)
     expect(await readFile(output, 'utf8')).toBe(
       'MESSAGE-AAAA\nMESSAGE-BBBB',
     )
+  })
+
+  it('waits through a delayed startup promotion before sending', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const output = path.join(directory, 'received.txt')
+    const executable = path.join(directory, 'copilot-delayed-promotion')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╻▄▄▄▄\\n┃\\n'",
+        'sleep 0.5',
+        "printf '\\033[2J\\033[HInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n'",
+        'IFS= read -r -n 1 answer',
+        '[[ "$answer" == n ]] || exit 2',
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
+        'IFS= read -r line',
+        `printf '%s' "$line" >"${output}"`,
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-delayed-promotion-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      executable,
+    ])
+    const panePid = (
+      await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        tmuxSession,
+        '#{pane_pid}',
+      ])
+    ).stdout.trim()
+    const sessionId = 'fedcba98-abcd-abcd-abcd-abcdef654321'
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(
+      copilotHome,
+      'session-state',
+      sessionId,
+    )
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(
+      path.join(sessionDirectory, `inuse.${panePid}.lock`),
+      `${panePid}\n`,
+    )
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+
+    const delivered = await new TmuxTerminalSessionController().send(
+      sessionId,
+      'arrives after startup',
+      false,
+    )
+
+    expect(delivered).toBe(true)
+    expect(await readFile(output, 'utf8')).toBe('arrives after startup')
   })
 })
 

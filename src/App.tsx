@@ -1181,6 +1181,21 @@ function NewSessionDialog({
       .finally(() => setLoadingHistory(false))
   }, [open, defaultComputerId, defaultSessionFolders, available])
 
+  // The chosen computer can be unpaired, or go offline, while the dialog is
+  // still open. Left alone the selection stays truthy and Create stays
+  // enabled, so submitting aimed at a computer that is no longer there. Only
+  // the selection is reconciled; the folder, provider, and mode already
+  // chosen are still what the reader wants.
+  useEffect(() => {
+    if (!open || !initialized.current) {
+      return
+    }
+    if (computerId && available.some((computer) => computer.id === computerId)) {
+      return
+    }
+    setComputerId(available[0]?.id || '')
+  }, [open, computerId, available])
+
   useEffect(() => {
     if (!open || mode !== 'new' || !computerId) {
       return
@@ -6172,6 +6187,9 @@ function App() {
   // close over whichever roots existed when it was bound.
   const rootsRef = useRef<KnowledgeRoot[]>([])
   const activeRootIdRef = useRef<string | undefined>(undefined)
+  // Computers this browser has been told to forget. Held so an answer still
+  // on its way can be discarded rather than restoring what was removed.
+  const forgottenComputers = useRef(new Set<string>())
   useEffect(() => {
     rootsRef.current = roots
   }, [roots])
@@ -8446,6 +8464,8 @@ function App() {
             event.computer.id,
             eventSequenceRef.current,
           )
+          // Paired again, so answers about it are wanted again.
+          forgottenComputers.current.delete(event.computer.id)
           setComputers((current) => upsertComputer(current, event.computer))
         } else if (event.type === 'computer.removed') {
           eventSequenceRef.current += 1
@@ -8470,27 +8490,7 @@ function App() {
           // A root names a folder on a computer. The hub drops the roots of a
           // computer that has been unpaired, so a tab still listing one would
           // offer a document it can no longer fetch.
-          const orphanedRoots = new Set(
-            rootsRef.current
-              .filter((root) => root.computerId === event.computerId)
-              .map((root) => root.id),
-          )
-          if (orphanedRoots.size > 0) {
-            setRoots((current) =>
-              current.filter((root) => !orphanedRoots.has(root.id)),
-            )
-            if (
-              activeRootIdRef.current &&
-              orphanedRoots.has(activeRootIdRef.current)
-            ) {
-              knowledgeRequest.current += 1
-              setActiveRootId(undefined)
-              setKnowledgeFolders({})
-              setExpandedKnowledge([])
-              setKnowledgePath(knowledgeRootPath)
-              setKnowledgeFile(undefined)
-            }
-          }
+          forgetComputerKnowledge(event.computerId)
           // Nothing on a computer that has gone is still on its way.
           for (const key of [...pendingReplacements.current]) {
             if (key.slice(0, key.indexOf(':')) === event.computerId) {
@@ -9683,6 +9683,12 @@ function App() {
 
   async function createRoot(computerId: string, path: string) {
     const root = await addKnowledgeRoot({ computerId, path })
+    // Adding a root is a round trip, and the computer can be unpaired while
+    // it is in flight. The hub drops the root in that case, so accepting this
+    // answer would put back something that no longer exists.
+    if (forgottenComputers.current.has(computerId)) {
+      return
+    }
     setRoots((current) =>
       current.some((entry) => entry.id === root.id)
         ? current
@@ -9690,6 +9696,35 @@ function App() {
     )
     setAddRootOpen(false)
     await selectRoot(root.id)
+  }
+
+  /**
+   * Everything this browser holds for a computer that is no longer paired.
+   *
+   * Reached from the socket event and from the button that does the removing,
+   * because only one of those two arrives when the hub is the one being asked.
+   * Pending work is invalidated as well: a listing or a newly created root
+   * still on its way would otherwise land afterwards and put the computer's
+   * knowledge back.
+   */
+  function forgetComputerKnowledge(computerId: string) {
+    forgottenComputers.current.add(computerId)
+    knowledgeRequest.current += 1
+    const orphaned = new Set(
+      rootsRef.current
+        .filter((root) => root.computerId === computerId)
+        .map((root) => root.id),
+    )
+    setRoots((current) =>
+      current.filter((root) => root.computerId !== computerId),
+    )
+    if (activeRootIdRef.current && orphaned.has(activeRootIdRef.current)) {
+      setActiveRootId(undefined)
+      setKnowledgeFolders({})
+      setExpandedKnowledge([])
+      setKnowledgePath(knowledgeRootPath)
+      setKnowledgeFile(undefined)
+    }
   }
 
   function selectSession(session: ManagedSession) {
@@ -11762,6 +11797,7 @@ function App() {
           setComputers((current) =>
             current.filter((computer) => computer.id !== computerId),
           )
+          forgetComputerKnowledge(computerId)
           setSessions((current) =>
             current.filter((session) => session.computerId !== computerId),
           )

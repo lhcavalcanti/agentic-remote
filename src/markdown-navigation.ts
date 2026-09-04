@@ -1,3 +1,8 @@
+import remarkGfm from 'remark-gfm'
+import remarkParse from 'remark-parse'
+import { unified } from 'unified'
+import type { Root, RootContent } from 'mdast'
+
 export interface DocumentHeading {
   id: string
   text: string
@@ -88,94 +93,60 @@ export function inlineText(markdown: string): string {
 }
 
 /**
- * Collects headings from Markdown source, skipping fenced code blocks so a
- * commented `# line` inside a snippet is not mistaken for a heading. Reading
- * the source rather than the rendered DOM keeps the outline available
- * immediately and independent of layout.
+ * Collects the document's headings, in the order they are rendered.
  *
- * Both spellings are read. An outline entry is matched to the document by its
- * position among the rendered headings, so a setext heading -- a line
- * underlined with `=` or `-`, which GFM renders as a real heading -- has to be
- * counted here too. Reading only `#` left it out of the outline while it
- * stayed in the document, and every entry after it then scrolled to the
- * heading before the one it named.
+ * Parsed with the same grammar the page is rendered with -- remark, plus GFM
+ * -- rather than by matching lines. An outline entry is matched to the
+ * document by its position among the rendered headings, so anything the
+ * renderer calls a heading has to be counted here and nothing else may be.
+ * Reading the source by hand kept diverging from that in both directions: it
+ * missed underlined headings, and it read front matter and a link reference
+ * definition above a rule as headings the renderer never draws.
  */
 export function outlineFromMarkdown(content: string): DocumentHeading[] {
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(content)
   const headings: DocumentHeading[] = []
-  let fence: { marker: string; length: number } | undefined
-  // The line above, when it could still be the body of a setext heading.
-  // Anything that opens a block of its own clears it.
-  let paragraph: string | undefined
-  const lines = content.split(/\r?\n/)
-  const record = (text: string, level: number) => {
-    if (!text) {
+  const visit = (node: RootContent | Root) => {
+    if (node.type === 'heading') {
+      const text = nodeText(node)
+      if (text) {
+        headings.push({
+          id: headingSlug(text),
+          text,
+          level: node.depth,
+          index: headings.length,
+        })
+      }
       return
     }
-    headings.push({
-      id: headingSlug(text),
-      text,
-      level,
-      index: headings.length,
-    })
-  }
-  // Front matter is deliberately not skipped. The document is rendered by
-  // remark without a front-matter plugin, so `---\ntitle: x\n---` is drawn as
-  // a rule and a setext heading, and an outline that quietly passed over it
-  // would put every later entry one heading out -- the very thing counting
-  // setext headings is here to prevent.
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index].replace(/\t/g, '    ').trimEnd()
-    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
-    if (fenceMatch) {
-      paragraph = undefined
-      const marker = fenceMatch[1][0]
-      const length = fenceMatch[1].length
-      const rest = fenceMatch[2]
-      if (fence === undefined) {
-        // An info string may follow an opening fence, but never a backtick.
-        if (marker !== '`' || !rest.includes('`')) {
-          fence = { marker, length }
-          continue
-        }
-      } else if (
-        fence.marker === marker &&
-        length >= fence.length &&
-        rest.trim() === ''
-      ) {
-        // Only a run at least as long as the opener, with nothing after it,
-        // closes the block.
-        fence = undefined
-        continue
-      }
-      if (fence !== undefined) {
-        continue
+    if ('children' in node) {
+      for (const child of node.children as RootContent[]) {
+        visit(child)
       }
     }
-    if (fence !== undefined) {
-      paragraph = undefined
-      continue
-    }
-    const atx = line.match(/^ {0,3}(#{1,6})(?:\s+(.*?))?\s*$/)
-    if (atx) {
-      paragraph = undefined
-      record(inlineText((atx[2] ?? '').replace(/\s+#+\s*$/, '')), atx[1].length)
-      continue
-    }
-    const underline = line.match(/^ {0,3}(=+|-+)\s*$/)
-    if (underline && paragraph !== undefined) {
-      record(inlineText(paragraph), underline[1].startsWith('=') ? 1 : 2)
-      paragraph = undefined
-      continue
-    }
-    // A blank line ends the paragraph; a quote, a list marker, or an indented
-    // code line begins something an underline below it would not be part of.
-    paragraph =
-      line.trim() && !/^ {4,}/.test(line) &&
-      !/^ {0,3}(>|[-+*][ \t]|\d+[.)][ \t])/.test(line)
-        ? line
-        : undefined
   }
+  visit(tree)
   return headings
+}
+
+/** The text a reader sees for a node, matching what the renderer draws. */
+function nodeText(node: RootContent): string {
+  if (node.type === 'text' || node.type === 'inlineCode') {
+    return node.value
+  }
+  if (node.type === 'image') {
+    return node.alt || ''
+  }
+  if (node.type === 'break') {
+    return ' '
+  }
+  if (node.type === 'html') {
+    return ''
+  }
+  if ('children' in node) {
+    return (node.children as RootContent[]).map(nodeText).join('')
+  }
+  return ''
 }
 
 export interface NavigationEntry {

@@ -2798,6 +2798,43 @@ describe('App', () => {
     ).toBeEnabled()
   })
 
+  it('lets go of a knowledge root when its computer is unpaired', async () => {
+    const remote: ComputerSummary = {
+      ...computer,
+      id: 'computer-2',
+      name: 'worker-node',
+      isLocal: false,
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-remote',
+        computerId: remote.id,
+        computerName: remote.name,
+        path: '/home/tester/docs',
+        name: 'worker docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
+    render(<App />)
+    expect(await screen.findAllByText('worker docs')).not.toHaveLength(0)
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'computer.removed',
+          computerId: remote.id,
+        }),
+      } as MessageEvent)
+    })
+
+    // The hub drops the roots of a computer that has been unpaired, so a tab
+    // still listing one would offer a document it can no longer fetch.
+    await waitFor(() =>
+      expect(screen.queryByText('worker docs')).not.toBeInTheDocument(),
+    )
+  })
+
   it('takes the focus it claims and gives it back on Escape', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

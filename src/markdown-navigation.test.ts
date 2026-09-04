@@ -251,6 +251,17 @@ describe('outlineFromMarkdown edge cases', () => {
     ])
   })
 
+  it('does not read a rule under a link definition as a heading', () => {
+    // A link reference definition is not a paragraph, so the renderer draws a
+    // rule here rather than a heading. Reading it as one shifted every later
+    // outline entry by a heading.
+    const content = ['[ref]: /url', '---', '', '# Real'].join('\n')
+
+    expect(outlineFromMarkdown(content).map((entry) => entry.text)).toEqual([
+      'Real',
+    ])
+  })
+
   it('reads front matter the way the renderer draws it', () => {
     // remark is used without a front-matter plugin, so this is a rule, a
     // paragraph, and the underline that turns it into a heading. Skipping it

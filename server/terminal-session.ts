@@ -2679,10 +2679,7 @@ export function paneEvidenceCount(
   // end in a short one: judged by that line alone, the placeholder it really
   // did produce went unrecognised and the paste was left behind to be sent
   // twice.
-  if (!couldRenderPastePlaceholder(pasted)) {
-    return found
-  }
-  return found + pastedPlaceholderCount(haystack)
+  return found + pastePlaceholderEvidenceCount(haystack, pasted)
 }
 
 /**
@@ -2774,12 +2771,21 @@ export function composerHoldsOtherText(
   // received, and compaction removes every space and newline: hundreds of
   // one-character lines are a large paste that measures small once joined, and
   // the placeholder it produced was then refused as evidence.
-  const couldHavePlaceholder = couldRenderPastePlaceholder(pasted)
-  if (
-    couldHavePlaceholder &&
-    pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1
-  ) {
-    remainder = remainder.replace(PASTED_PLACEHOLDER, ' ')
+  const legacyAdded =
+    placeholderCount(remainder, LEGACY_PASTED_PLACEHOLDER_GLOBAL) -
+    placeholderCount(before, LEGACY_PASTED_PLACEHOLDER_GLOBAL)
+  const currentAdded =
+    placeholderCount(remainder, CURRENT_PASTED_PLACEHOLDER_GLOBAL) -
+    placeholderCount(before, CURRENT_PASTED_PLACEHOLDER_GLOBAL)
+  if (legacyAdded + currentAdded === 1) {
+    if (couldRenderLegacyPastePlaceholder(pasted) && legacyAdded === 1) {
+      remainder = remainder.replace(LEGACY_PASTED_PLACEHOLDER, ' ')
+    } else if (
+      couldRenderCurrentPastePlaceholder(pasted) &&
+      currentAdded === 1
+    ) {
+      remainder = remainder.replace(CURRENT_PASTED_PLACEHOLDER, ' ')
+    }
   }
   // Likewise for the text itself, and at most once per line. This paste put
   // each line there once, so a second copy is somebody else typing the same
@@ -2807,8 +2813,14 @@ export function composerHoldsOtherText(
 const PASTE_ECHO_LIMIT = 800
 const PASTE_LINE_LIMIT = 10
 
-const PASTED_PLACEHOLDER =
-  /\[(?:Pastedtext|Paste)#\d+(?:[+-][^\]]+)?\]/u
+const LEGACY_PASTED_PLACEHOLDER =
+  /\[Pastedtext#\d+(?:[+-][^\]]+)?\]/u
+const CURRENT_PASTED_PLACEHOLDER =
+  /\[Paste#\d+(?:[+-][^\]]+)?\]/u
+const LEGACY_PASTED_PLACEHOLDER_GLOBAL =
+  /\[Pastedtext#\d+(?:[+-][^\]]+)?\]/gu
+const CURRENT_PASTED_PLACEHOLDER_GLOBAL =
+  /\[Paste#\d+(?:[+-][^\]]+)?\]/gu
 
 function occurrences(text: string, needle: string): number {
   if (!needle) {
@@ -2817,16 +2829,32 @@ function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1
 }
 
-function pastedPlaceholderCount(text: string): number {
-  return (
-    text.match(/\[(?:Pastedtext|Paste)#\d+(?:[+-][^\]]+)?\]/gu) || []
-  ).length
+function placeholderCount(text: string, pattern: RegExp): number {
+  return (text.match(pattern) || []).length
 }
 
-function couldRenderPastePlaceholder(pasted: string): boolean {
+function couldRenderLegacyPastePlaceholder(pasted: string): boolean {
+  return pasted.length > PASTE_ECHO_LIMIT
+}
+
+function couldRenderCurrentPastePlaceholder(pasted: string): boolean {
   return (
     pasted.length > PASTE_ECHO_LIMIT ||
     pasted.split('\n').length > PASTE_LINE_LIMIT
+  )
+}
+
+function pastePlaceholderEvidenceCount(
+  text: string,
+  pasted: string,
+): number {
+  return (
+    (couldRenderLegacyPastePlaceholder(pasted)
+      ? placeholderCount(text, LEGACY_PASTED_PLACEHOLDER_GLOBAL)
+      : 0) +
+    (couldRenderCurrentPastePlaceholder(pasted)
+      ? placeholderCount(text, CURRENT_PASTED_PLACEHOLDER_GLOBAL)
+      : 0)
   )
 }
 
@@ -2930,9 +2958,12 @@ export function composerTookPaste(
   const before = composerHoldsText(paneBefore) ? compact(drawnBefore || '') : ''
   // A paste too large to echo is shown as a placeholder instead of its text,
   // and only a send big enough to have produced one may claim it.
-  if (couldRenderPastePlaceholder(pasted)) {
-    const drawn = pastedPlaceholderCount(after)
-    const had = pastedPlaceholderCount(before)
+  if (
+    couldRenderLegacyPastePlaceholder(pasted) ||
+    couldRenderCurrentPastePlaceholder(pasted)
+  ) {
+    const drawn = pastePlaceholderEvidenceCount(after, pasted)
+    const had = pastePlaceholderEvidenceCount(before, pasted)
     if (drawn > had) {
       return true
     }

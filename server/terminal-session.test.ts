@@ -1587,6 +1587,9 @@ describe('paneShowsText', () => {
     expect(
       paneShowsText('> [Paste #1 - 11 lines]', 'line 11', 0, content),
     ).toBe(true)
+    expect(
+      paneShowsText('> [Pasted text #1 +11 lines]', 'line 11', 0, content),
+    ).toBe(false)
   })
 
   it('measures a paste by what the CLI received, not by what it renders', () => {
@@ -2567,6 +2570,19 @@ describe('composerHoldsOtherText', () => {
         framed(['│ >  │']),
         framed(['│ > [Pasted text #7] │']),
         'short',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not claim a legacy placeholder from an eleven-line paste', () => {
+    const content = Array.from({ length: 11 }, (_, index) =>
+      `line ${index + 1}`,
+    ).join('\n')
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Pasted text #7 +11 lines] │']),
+        content,
       ),
     ).toBe(true)
   })

@@ -5434,17 +5434,8 @@ describe('AgentService deletion', () => {
     const terminal = {
       has: vi.fn(async () => true),
       send: vi.fn(
-        async (_sessionId: string, content: string, enqueue: boolean) =>
+        async (_sessionId: string, _content: string, _enqueue: boolean) =>
           new Promise<boolean>((resolve) => {
-            if (content === 'First startup prompt' && !enqueue) {
-              currentPane = [
-                ' ● Reading files',
-                '╻▄▄▄▄',
-                '┃',
-                '╹▀▀▀▀',
-                ' ◉ Working - autopilot · 132.7 KiB esc interrupt',
-              ].join('\n')
-            }
             activeSends += 1
             maximumActiveSends = Math.max(maximumActiveSends, activeSends)
             gates.push(() => {

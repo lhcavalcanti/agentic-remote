@@ -1033,12 +1033,23 @@ export class TmuxTerminalSessionController
             { statusCode: 409 },
           )
         }
-        this.inputReadySessions.set(sessionId, {
-          pid: owner.pid,
-          target: owner.target,
-        })
-        this.automaticStartupSessions.delete(sessionId)
       }
+      const currentOwner = await this.owner(sessionId, owner.target, true)
+      if (!currentOwner || currentOwner.pid !== owner.pid) {
+        this.inputReadySessions.delete(sessionId)
+        this.automaticStartupSessions.delete(sessionId)
+        throw Object.assign(
+          new Error(
+            'The terminal owner changed while it was becoming ready. Check the terminal before sending this message again.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      this.inputReadySessions.set(sessionId, {
+        pid: currentOwner.pid,
+        target: currentOwner.target,
+      })
+      this.automaticStartupSessions.delete(sessionId)
       // What the pane already holds is not evidence that this message
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
@@ -2087,7 +2098,7 @@ export function parseTerminalPermission(
     lines,
     'Do you trust the files in this folder?',
   )
-  if (trustQuestion) {
+  folderTrust: if (trustQuestion) {
     const frame = activeBottomFrame(rawLines, trustQuestion.start)
     if (!frame) {
       return undefined
@@ -2102,7 +2113,7 @@ export function parseTerminalPermission(
     // wraps too: matched line by line it survived being broken across two, and
     // the frame was read as trust after all.
     if (findTerminalWrappedText(frameLines, 'Do you want to run this command?')) {
-      return undefined
+      break folderTrust
     }
     const frameQuestion = findTerminalWrappedText(
       frameLines,

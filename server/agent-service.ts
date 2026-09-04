@@ -1510,6 +1510,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     string,
     Promise<unknown>
   >()
+  private readonly terminalAdmissionDispatched = new Set<string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
   private readonly backgroundTaskTracker = new BackgroundTaskTracker()
@@ -3425,7 +3426,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       enqueue &&
       startupLocked &&
-      terminalWorking &&
+      (terminalWorking || this.terminalAdmissionDispatched.has(sessionId)) &&
       this.store.get(sessionId)?.status === 'idle'
     ) {
       const running = await this.store.update(sessionId, (session) => {
@@ -3464,6 +3465,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
       this.deliveredSends.add(sessionId)
+      if (startupLocked && resolvedStartup && startupIdle && !nativeEnqueue) {
+        this.terminalAdmissionDispatched.add(sessionId)
+      }
       if (nativeEnqueue) {
         const queued = await this.store.update(sessionId, (session) => {
           session.activity = 'Queued in terminal'
@@ -6007,6 +6011,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       if (this.terminalAdmissionOperations.get(sessionId) === current) {
         this.terminalAdmissionOperations.delete(sessionId)
+        this.terminalAdmissionDispatched.delete(sessionId)
       }
     }
   }

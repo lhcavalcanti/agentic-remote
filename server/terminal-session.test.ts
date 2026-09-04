@@ -472,7 +472,7 @@ Permission request (1 remaining)
 │ \u2191/\u2193 to navigate \u00B7 enter to select \u00B7 esc to cancel          │
 ╰────────────────────────────────────────────────────────────╯
       `),
-    ).not.toMatchObject({ kind: 'folder-trust' })
+    ).toMatchObject({ kind: 'terminal', title: 'Run a script' })
 
     expect(
       parseTerminalPermission(`
@@ -1324,6 +1324,78 @@ Permission request (1 remaining)
     await expect(
       controller.send(sessionId, 'must not trust the replacement', false),
     ).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('does not paste after the owner changes during readiness', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const initial = path.join(directory, 'copilot-readiness-initial')
+    const replacement = path.join(directory, 'copilot-readiness-replacement')
+    const received = path.join(directory, 'replacement-received.txt')
+    await writeFile(
+      initial,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await writeFile(
+      replacement,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        'if IFS= read -r -t 5 line; then',
+        `  printf '%s' "$line" >"${received}"`,
+        'fi',
+        'sleep 60',
+      ].join('\n'),
+    )
+    await Promise.all([chmod(initial, 0o755), chmod(replacement, 0o755)])
+    const tmuxSession = `agentic-readiness-owner-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    const sessionId = randomUUID()
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      '-e',
+      `COPILOT_HOME=${copilotHome}`,
+      initial,
+      '--session-id',
+      sessionId,
+    ])
+    const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
+
+    const sending = controller.send(
+      sessionId,
+      'must not reach the replacement',
+      false,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    await execFileAsync('tmux', [
+      'respawn-pane',
+      '-k',
+      '-t',
+      tmuxSession,
+      '-e',
+      `COPILOT_HOME=${copilotHome}`,
+      replacement,
+      '--session-id',
+      sessionId,
+    ])
+
+    await expect(sending).rejects.toMatchObject({ statusCode: 409 })
+    expect(existsSync(received)).toBe(false)
   })
 
   it('does not dismiss a delayed startup promotion for a discovered session', async () => {

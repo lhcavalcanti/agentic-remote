@@ -1688,7 +1688,17 @@ function containsCopiedInteractiveFrame(lines: string[]): boolean {
     const copiedCancelable =
       /(Session in use|Do you trust the files in this folder\?)/i.test(copied) &&
       /esc\s+(?:to\s+)?cancel/i.test(copied)
-    if (hasSelect && (copiedDesktop || copiedCancelable)) {
+    const copiedCommand =
+      /Do you want to run this command\?/i.test(copied) &&
+      /esc\s+(?:to\s+)?cancel/i.test(copied)
+    const copiedQuestion =
+      /\bQuestion\b/i.test(copied) &&
+      /enter\s+(?:to\s+)?(?:confirm|submit)/i.test(copied) &&
+      /esc\s+(?:to\s+)?cancel/i.test(copied)
+    if (
+      (hasSelect && (copiedDesktop || copiedCancelable || copiedCommand)) ||
+      copiedQuestion
+    ) {
       return true
     }
   }
@@ -2858,6 +2868,13 @@ function pastePlaceholderEvidenceCount(
   )
 }
 
+function allPastePlaceholderCount(text: string): number {
+  return (
+    placeholderCount(text, LEGACY_PASTED_PLACEHOLDER_GLOBAL) +
+    placeholderCount(text, CURRENT_PASTED_PLACEHOLDER_GLOBAL)
+  )
+}
+
 /** The composer's contents, or nothing when the pane cannot be read. */
 function composerText(pane: string): string | undefined {
   const lines = pane.split('\n').map((line) => line.trimEnd())
@@ -2939,6 +2956,19 @@ export function composerTookPaste(
     // No composer to read. Not every pane draws one -- an agent mid-dialog, or
     // something that is not the CLI at all -- and the pane itself is then the
     // only evidence there is.
+    const compactAfter = compact(paneAfter)
+    const compactBefore = compact(paneBefore)
+    const allAdded =
+      allPastePlaceholderCount(compactAfter) -
+      allPastePlaceholderCount(compactBefore)
+    if (allAdded > 0) {
+      return (
+        allAdded === 1 &&
+        pastePlaceholderEvidenceCount(compactAfter, pasted) -
+          pastePlaceholderEvidenceCount(compactBefore, pasted) ===
+          1
+      )
+    }
     return (
       paneEvidenceCount(paneAfter, expected, pasted) >
       paneEvidenceCount(paneBefore, expected, pasted)
@@ -2964,7 +2994,9 @@ export function composerTookPaste(
   ) {
     const drawn = pastePlaceholderEvidenceCount(after, pasted)
     const had = pastePlaceholderEvidenceCount(before, pasted)
-    if (drawn > had) {
+    const allDrawn = allPastePlaceholderCount(after)
+    const allHad = allPastePlaceholderCount(before)
+    if (drawn - had === 1 && allDrawn - allHad === 1) {
       return true
     }
   }

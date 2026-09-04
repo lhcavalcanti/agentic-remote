@@ -198,6 +198,19 @@ describe('TmuxTerminalSessionController', () => {
     expect(
       isTerminalDesktopInstallPrompt('❯ Ready for a prompt'),
     ).toBe(false)
+    expect(
+      parseTerminalUserInput(`
+╭─────────────────────────────────────────────────╮
+│ ╭─────────────────────────────────────────────╮ │
+│ │ Question                                    │ │
+│ │ Which environment?                          │ │
+│ │ ❯ 1. Production                             │ │
+│ │   2. Development                            │ │
+│ │ ↑/↓ to select · enter to confirm · esc cancel│ │
+│ ╰─────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
     // The composer draws itself as a frame too, and what is typed in it can be
     // anything -- this panel's own words among them, pasted or recalled. It is
     // drawn without a prompt marker while it holds no caret, which is exactly
@@ -1581,14 +1594,27 @@ describe('paneShowsText', () => {
 
   it('recognises a short eleven-line paste placeholder', () => {
     const content = Array.from({ length: 11 }, (_, index) =>
-      `line ${index + 1}`,
+      index === 10 ? 'final token z' : `line ${index + 1}`,
     ).join('\n')
     expect(content.length).toBeLessThan(801)
     expect(
-      paneShowsText('> [Paste #1 - 11 lines]', 'line 11', 0, content),
+      paneShowsText('> [Paste #1 - 11 lines]', 'final token z', 0, content),
     ).toBe(true)
     expect(
-      paneShowsText('> [Pasted text #1 +11 lines]', 'line 11', 0, content),
+      paneShowsText(
+        '> [Pasted text #1 +11 lines]',
+        'final token z',
+        0,
+        content,
+      ),
+    ).toBe(false)
+    expect(
+      composerTookPaste(
+        '> ',
+        '> [Paste #1 - 11 lines] [Pasted text #2 +11 lines]',
+        'final token z',
+        content,
+      ),
     ).toBe(false)
   })
 

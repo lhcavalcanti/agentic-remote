@@ -4328,6 +4328,18 @@ describe('AgentService deletion', () => {
       service.updateQueuedPrompt(created.id, 'p1', '/nosuchcommand'),
     ).rejects.toMatchObject({ statusCode: 409 })
 
+    // A catalog that cannot be read is not permission to store anything: an
+    // invalid command goes back to the head after every failed drain, and
+    // nothing behind it moves again. Refusing a rewrite the reader can repeat
+    // is the cheaper of the two.
+    const listing = vi
+      .spyOn(service, 'listCommands')
+      .mockRejectedValue(new Error('runtime unreachable'))
+    await expect(
+      service.updateQueuedPrompt(created.id, 'p1', '/usage'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    listing.mockRestore()
+
     // A shortcut is written out in full: the queue's drain expands nothing, so
     // one stored as typed reached the runtime as a command it never heard of.
     const expanded = await service.updateQueuedPrompt(created.id, 'p1', '/aa on')

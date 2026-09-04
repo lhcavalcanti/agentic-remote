@@ -3646,6 +3646,7 @@ function SortableQueuedPrompt({
   index,
   editing,
   busy,
+  suspended,
   onEdit,
   onRemove,
 }: {
@@ -3653,6 +3654,7 @@ function SortableQueuedPrompt({
   index: number
   editing: boolean
   busy: boolean
+  suspended: boolean
   onEdit: () => void
   onRemove: () => void
 }) {
@@ -3684,8 +3686,12 @@ function SortableQueuedPrompt({
       <button
         aria-label={`Edit queued prompt ${index + 1}`}
         className={`icon-button${editing ? ' icon-button--active' : ''}`}
-        disabled={busy}
+        // The composer is closed while a session is put down, so opening a
+        // message for rewriting there gave a banner over a box that could not
+        // be typed in.
+        disabled={busy || suspended}
         onClick={onEdit}
+        title={suspended ? 'Resume this session to rewrite it' : undefined}
         type="button"
       >
         <Pencil size={14} />
@@ -11130,6 +11136,7 @@ function App() {
                           onRemove={() =>
                             void manageQueuedPrompt(prompt.id, false)
                           }
+                          suspended={selected.suspended === true}
                           prompt={prompt}
                         />
                       ))}
@@ -11222,7 +11229,9 @@ function App() {
                     selected.suspended
                       ? 'Suspended · resume to send'
                       : editingQueuedPromptId
-                        ? 'Editing a queued message · Enter puts it back'
+                        ? phoneEnterCreatesNewline()
+                          ? 'Editing a queued message · Save puts it back'
+                          : 'Editing a queued message · Enter puts it back'
                         : `Message agent on ${selected.computerName}…`
                   }
                   ref={composerRef}
@@ -11405,10 +11414,14 @@ function App() {
                   : (
                     <>
                       <span className="composer-hint__desktop">
-                        Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue
+                        {editingQueuedPromptId
+                          ? 'Enter saves it back · Shift+Enter newline · Esc leaves it as it was'
+                          : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue'}
                       </span>
                       <span className="composer-hint__mobile">
-                        Tap ↑ to send · Return adds a line
+                        {editingQueuedPromptId
+                          ? 'Tap Save to put it back · Return adds a line'
+                          : 'Tap ↑ to send · Return adds a line'}
                       </span>
                     </>
                   )}

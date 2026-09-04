@@ -3372,6 +3372,33 @@ describe('App', () => {
     )
   })
 
+  it('does not offer to rewrite a queued message while the session is put down', async () => {
+    // The composer is closed while a session is suspended, so opening a
+    // message for rewriting there gave a banner over a box nothing could be
+    // typed into.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const suspended = {
+      ...session,
+      status: 'idle' as const,
+      suspended: true,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([suspended])
+    vi.mocked(getSession).mockResolvedValue(suspended)
+
+    render(<App />)
+    await screen.findByText('the original text')
+
+    expect(
+      screen.getByRole('button', { name: 'Edit queued prompt 1' }),
+    ).toBeDisabled()
+  })
+
   it('lets the edit go when its message is deliberately removed', async () => {
     // Every other absence is a drain's doing and is waited out. This one is
     // the reader taking the message off themselves, and it is acknowledged --

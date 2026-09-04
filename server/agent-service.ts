@@ -3414,10 +3414,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // drain when it reaches it, with everything behind it waiting.
     if (content.startsWith('/')) {
       const name = content.slice(1).split(/\s+/, 1)[0]
-      // Undefined means it is not there; a catalog that could not be read at
-      // all says nothing, and a message is not refused over that.
+      // A catalog that cannot be read is not permission to store anything: an
+      // invalid command goes back to the head of the queue after every failed
+      // drain, and nothing behind it ever moves again. Better to refuse a
+      // rewrite now, which the reader can repeat, than to wedge the queue.
       const known = await this.knownQueueCommand(sessionId, name).catch(
-        () => name,
+        () => undefined,
       )
       if (!known) {
         throw Object.assign(

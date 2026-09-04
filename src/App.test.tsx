@@ -48,7 +48,6 @@ import {
   moveSessionToTmux,
   removeQueuedPrompt,
   reorderQueuedPrompts,
-  sendQueuedPrompt,
   updateQueuedPrompt,
   renameSession,
   readWorkspaceFile,
@@ -73,7 +72,6 @@ vi.mock('./api', () => ({
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
   reorderQueuedPrompts: vi.fn(),
-  sendQueuedPrompt: vi.fn(),
   updateQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
@@ -3129,116 +3127,8 @@ describe('App', () => {
     await screen.findAllByText(/answered by this app rather than the agent/i)
     // Nothing carried out, nothing removed, and the rewrite still in hand.
     expect(removeQueuedPrompt).not.toHaveBeenCalled()
-    expect(sendQueuedPrompt).not.toHaveBeenCalled()
+    expect(updateQueuedPrompt).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Message')).toHaveValue('/cwd')
-  })
-
-  it('lets the server take the message off the queue and send it as one act', async () => {
-    // A read, a delete and a send from here left room between each pair for
-    // another client to queue work or start a turn: the delete lands, and the
-    // send is either appended behind what arrived or never happens at all.
-    const queued = {
-      id: 'q1',
-      content: 'the original text',
-      createdAt: '2026-07-25T01:00:00.000Z',
-    }
-    const withQueue = {
-      ...session,
-      status: 'idle' as const,
-      queuedCount: 1,
-      queuedPrompts: [queued],
-    }
-    vi.mocked(listSessions).mockResolvedValue([withQueue])
-    vi.mocked(getSession).mockResolvedValue(withQueue)
-    vi.mocked(sendQueuedPrompt).mockResolvedValue({
-      ...withQueue,
-      status: 'running' as const,
-      queuedCount: 0,
-      queuedPrompts: [],
-    })
-
-    render(<App />)
-    await screen.findByText('the original text')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
-    await waitFor(() =>
-      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
-    )
-    fireEvent.change(screen.getByLabelText('Message'), {
-      target: { value: 'send this one now' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-
-    await waitFor(() =>
-      expect(sendQueuedPrompt).toHaveBeenCalledWith(
-        withQueue.computerId,
-        withQueue.id,
-        'q1',
-        'send this one now',
-      ),
-    )
-    // One request, not a removal followed by a send.
-    expect(removeQueuedPrompt).not.toHaveBeenCalled()
-    await waitFor(() =>
-      expect(screen.getByLabelText('Message')).toHaveValue(''),
-    )
-  })
-
-  it('keeps the edit while its send is still in flight', async () => {
-    // The drain takes the prompt off before it dispatches and puts it back if
-    // it cannot go, so the queue arrives here without it for a moment. Reading
-    // that as the message being gone let go of the rewrite just before the
-    // server gave the message back.
-    const queued = {
-      id: 'q1',
-      content: 'the original text',
-      createdAt: '2026-07-25T01:00:00.000Z',
-    }
-    const withQueue = {
-      ...session,
-      status: 'idle' as const,
-      queuedCount: 1,
-      queuedPrompts: [queued],
-    }
-    vi.mocked(listSessions).mockResolvedValue([withQueue])
-    vi.mocked(getSession).mockResolvedValue(withQueue)
-    let failSend: (error: Error) => void = () => {}
-    vi.mocked(sendQueuedPrompt).mockImplementation(
-      () =>
-        new Promise((_resolve, reject) => {
-          failSend = reject
-        }),
-    )
-
-    render(<App />)
-    await screen.findByText('the original text')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
-    await waitFor(() =>
-      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
-    )
-    fireEvent.change(screen.getByLabelText('Message'), {
-      target: { value: 'send this one now' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    await waitFor(() => expect(sendQueuedPrompt).toHaveBeenCalled())
-
-    // The queue arrives without it, mid-send.
-    await act(async () => {
-      MockWebSocket.instances[0]?.onmessage?.({
-        data: JSON.stringify({
-          type: 'session.upserted',
-          session: { ...withQueue, queuedCount: 0, queuedPrompts: [] },
-        }),
-      } as MessageEvent)
-    })
-    expect(localStorage.getItem('agentic-remote:queued-edit')).not.toBeNull()
-
-    // It could not go, and comes back.
-    await act(async () => {
-      failSend(new Error('Session is suspended, so nothing can be sent to it'))
-    })
-    await screen.findAllByText(/suspended/i)
-    expect(screen.getByLabelText('Message')).toHaveValue('send this one now')
   })
 
   it('queues an edit rather than sending it when Queue is used', async () => {
@@ -3274,8 +3164,135 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Queue message' }))
 
     await waitFor(() => expect(updateQueuedPrompt).toHaveBeenCalled())
-    // Queued, not sent past the messages already waiting.
-    expect(sendQueuedPrompt).not.toHaveBeenCalled()
+    // Written back where it stands, not taken off and sent past the rest.
+    expect(removeQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('saves the rewriting when Send is used while editing', async () => {
+    // Sending a queued message now means claiming that exact prompt and
+    // dispatching it where the queue is held, which the browser cannot do.
+    // Writing it back is the one outcome that cannot lose it.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'idle' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+    vi.mocked(updateQueuedPrompt).mockResolvedValue({
+      session: withQueue,
+      prompt: { ...queued, content: 'my rewritten text' },
+    })
+
+    render(<App />)
+    await screen.findByText('the original text')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
+    )
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'my rewritten text' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(updateQueuedPrompt).toHaveBeenCalledWith(
+        withQueue.computerId,
+        withQueue.id,
+        'q1',
+        'my rewritten text',
+      ),
+    )
+    // Never taken off the queue, so there is nothing to lose.
+    expect(removeQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('lets go of an edit whose computer is no longer paired', async () => {
+    // One marker serves every session. Left set for a computer that has gone,
+    // it refuses every later edit with no editor on screen to cancel from.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+
+    const first = render(<App />)
+    await screen.findByText('the original text')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(localStorage.getItem('agentic-remote:queued-edit')).not.toBeNull(),
+    )
+    first.unmount()
+
+    // Back, with that computer no longer paired at all.
+    vi.mocked(listComputers).mockResolvedValue([secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([secondSession])
+    vi.mocked(getSession).mockResolvedValue(secondSession)
+
+    render(<App />)
+    await screen.findAllByText('Second chat')
+    await waitFor(() =>
+      expect(localStorage.getItem('agentic-remote:queued-edit')).toBeNull(),
+    )
+  })
+
+  it('will not leave the editor while the rewriting is being written back', async () => {
+    // Leaving is meant to leave the message as it was. Closing the editor here
+    // only hides it: the request already on its way still lands, and the
+    // message changes with nothing on screen saying so.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+    vi.mocked(updateQueuedPrompt).mockImplementation(
+      () => new Promise(() => {}),
+    )
+
+    render(<App />)
+    await screen.findByText('the original text')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
+    )
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'my rewritten text' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+    await waitFor(() => expect(updateQueuedPrompt).toHaveBeenCalled())
+
+    expect(
+      screen.getByLabelText('Stop editing this queued message'),
+    ).toBeDisabled()
+    fireEvent.keyDown(screen.getByLabelText('Message'), {
+      key: 'Escape',
+      code: 'Escape',
+    })
+    // Still editing the same message.
+    expect(document.querySelector('.queued-edit-banner')).not.toBeNull()
+    expect(screen.getByLabelText('Message')).toHaveValue('my rewritten text')
   })
 
   it('keeps the edit when the computer holding its message is not answering', async () => {
@@ -3319,45 +3336,6 @@ describe('App', () => {
     await screen.findAllByText('Second chat')
     await new Promise((resolve) => setTimeout(resolve, 60))
     expect(localStorage.getItem('agentic-remote:queued-edit')).not.toBeNull()
-  })
-
-  it('keeps the message and the rewrite when the server refuses the send', async () => {
-    // The server puts it back where it was if it cannot be sent, so there is
-    // nothing to put right here -- but the rewriting has to survive, or the
-    // refusal costs the reader their text.
-    const queued = {
-      id: 'q1',
-      content: 'the original text',
-      createdAt: '2026-07-25T01:00:00.000Z',
-    }
-    const withQueue = {
-      ...session,
-      status: 'idle' as const,
-      queuedCount: 1,
-      queuedPrompts: [queued],
-    }
-    vi.mocked(listSessions).mockResolvedValue([withQueue])
-    vi.mocked(getSession).mockResolvedValue(withQueue)
-    vi.mocked(sendQueuedPrompt).mockRejectedValue(
-      new Error('Other messages are waiting, so this cannot be sent ahead of them.'),
-    )
-
-    render(<App />)
-    await screen.findByText('the original text')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
-    await waitFor(() =>
-      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
-    )
-    fireEvent.change(screen.getByLabelText('Message'), {
-      target: { value: 'send this one now' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-
-    await screen.findAllByText(/Other messages are waiting/i)
-    expect(screen.getByLabelText('Message')).toHaveValue('send this one now')
-    // Still being edited, so it can be saved instead.
-    expect(document.querySelector('.queued-edit-banner')).not.toBeNull()
   })
 
   it('finishes the edit even if the reader moved to another session mid-save', async () => {

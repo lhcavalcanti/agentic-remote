@@ -157,7 +157,6 @@ import {
   removeComputer,
   removeQueuedPrompt,
   reorderQueuedPrompts,
-  sendQueuedPrompt,
   updateQueuedPrompt,
   renameSession,
   readWorkspaceFile,
@@ -5793,10 +5792,6 @@ function App() {
   // bare id left the next session in edit mode, and Enter, Send and Escape all
   // acted on a message that was not in front of the reader.
   const [queueActionId, setQueueActionId] = useState<string>()
-  // The prompt a send is carrying right now. The drain takes it off the queue
-  // before it dispatches and puts it back if it cannot go, so for a moment the
-  // queue arrives here without it -- which is not the message being gone.
-  const [sendingQueuedPromptId, setSendingQueuedPromptId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [restarting, setRestarting] = useState(false)
@@ -9217,69 +9212,17 @@ function App() {
       reofferFailedPrompt(targetKey)
       return
     }
-    // This message is already waiting, and is about to be sent instead.
-    //
-    // The server does the whole of it: taking it off the queue and sending it
-    // are one operation there, so there is no moment where the message has
-    // been removed and not yet sent. Doing it from here meant a read, a
-    // delete and a send, and between any two of them another client could
-    // queue work or start a turn -- leaving the message appended behind what
-    // arrived, or gone with nothing sent.
-    // Queue means queue, even while rewriting: it is the button that says
-    // "keep its place", so it writes the rewriting back rather than sending
-    // it. Falling through to the ordinary path instead would have left the
-    // message queued and added a second copy of it.
-    if (editingQueuedPromptId && enqueue) {
+    // This message is already waiting. Sending it now would mean taking it off
+    // the queue and dispatching it as one act, and that has to happen where the
+    // queue is held rather than across requests from here -- the drains are
+    // what know each provider, hold admission for the turn they start, and put
+    // a prompt back when it cannot go, and none of that is reachable from the
+    // browser. Until there is a server operation that claims a named prompt and
+    // reports what became of it, Send writes the rewriting back, which is the
+    // one outcome that cannot lose it.
+    if (editingQueuedPromptId) {
       settleSubmission()
       void saveQueuedPromptEdit()
-      return
-    }
-    // A save already on its way carries the same text, and sending now would
-    // race it: the send takes the message, the save then writes to something
-    // that is no longer there, and whichever lands second decides what the
-    // reader ends up with.
-    if (editingQueuedPromptId && queueActionId) {
-      setError('This message is still being saved. Try again in a moment.')
-      settleSubmission()
-      return
-    }
-    if (editingQueuedPromptId) {
-      const sentId = editingQueuedPromptId
-      // Closed for the whole of it, so a second Enter cannot arrive during the
-      // request and send the same text again.
-      setSending(true)
-      setSendingQueuedPromptId(sentId)
-      try {
-        // The rewriting goes with it. Sending by id alone sent whatever the
-        // server still had, so a message rewritten and then sent went out as
-        // the text it used to be.
-        const updated = await sendQueuedPrompt(
-          selected.computerId,
-          selected.id,
-          sentId,
-          content,
-        )
-        setSessions((current) => upsertSession(current, updated))
-        // Only if it is still the one this send took out. Editing stays
-        // available while a send is in flight, so a reader can open another
-        // session and start rewriting there -- and clearing whatever marker
-        // happens to be set would leave that one queued with its text sitting
-        // in the composer, ready to go twice.
-        setEditingQueuedPrompt((current) =>
-          current?.promptId === sentId ? undefined : current,
-        )
-        setComposer('')
-        followLatest()
-      } catch (caught) {
-        // It is still waiting, and the rewriting is still in the composer, so
-        // nothing has been lost and it can be sent again or saved.
-        setError(caught instanceof Error ? caught.message : String(caught))
-      } finally {
-        setSending(false)
-        setSendingQueuedPromptId(undefined)
-      }
-      settleSubmission()
-      reofferFailedPrompt(targetKey)
       return
     }
     const shouldEnqueue =
@@ -9664,6 +9607,14 @@ function App() {
   }
 
   function cancelQueuedPromptEdit() {
+    // Not while the rewriting is being written back. Leaving is meant to leave
+    // the message as it was, and letting go here only closes the editor -- the
+    // request already on its way still lands, and the message changes anyway,
+    // with nothing on screen saying so.
+    if (queueActionId) {
+      setError('This message is still being saved. Try again in a moment.')
+      return
+    }
     setEditingQueuedPrompt(undefined)
     setComposer('')
   }
@@ -9686,11 +9637,6 @@ function App() {
     // at the selection alone meant a message that drained while another
     // session was open left its marker set for ever -- and a single marker
     // blocks editing anywhere.
-    if (sendingQueuedPromptId === editing.promptId) {
-      // Being sent right now. The drain takes it off before dispatching, so
-      // the queue arrives without it for a moment even when it is coming back.
-      return
-    }
     if (!sessions.length) {
       // Nothing has been loaded yet. An empty list is not evidence that the
       // session is gone, and reading it as such threw the marker away on every
@@ -9710,6 +9656,13 @@ function App() {
       const ownerComputer = computers.find(
         (computer) => computer.id === ownerComputerId,
       )
+      // Its computer is not paired any more, so neither is the message. One
+      // marker serves every session, so leaving it set would refuse every
+      // later edit with no editor on screen to cancel it from.
+      if (computers.length && !ownerComputer) {
+        setEditingQueuedPrompt(undefined)
+        return
+      }
       if (!ownerComputer || !ownerComputer.online) {
         return
       }
@@ -9730,7 +9683,7 @@ function App() {
       return
     }
     setEditingQueuedPrompt(undefined)
-  }, [editingQueuedPrompt, sessions, computers, sendingQueuedPromptId])
+  }, [editingQueuedPrompt, sessions, computers])
 
   /** Whether the text names a command this app answers rather than the agent. */
   function isWebOnlyCommand(text: string): boolean {
@@ -11209,6 +11162,7 @@ function App() {
                 <button
                   aria-label="Stop editing this queued message"
                   className="icon-button"
+                  disabled={Boolean(queueActionId)}
                   onClick={cancelQueuedPromptEdit}
                   title="Leave it as it was (Escape)"
                   type="button"

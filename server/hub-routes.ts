@@ -68,12 +68,6 @@ const updateQueuedPromptSchema = z.object({
   content: z.string().trim().min(1).max(200_000),
 })
 
-// Sending a rewritten message carries the rewriting with it. Held to the same
-// shape a message is, since that is what it becomes.
-const sendQueuedPromptSchema = z.object({
-  content: z.string().trim().min(1).max(200_000).optional(),
-})
-
 const reorderQueueSchema = z.object({
   order: z.array(z.string().min(1)),
 })
@@ -595,21 +589,6 @@ export async function registerHubRoutes(
         request.params.promptId,
         input.content,
       )
-    },
-  )
-
-  app.post<{ Params: SessionParams & { promptId: string } }>(
-    '/api/computers/:computerId/sessions/:sessionId/queue/:promptId/send',
-    async (request) => {
-      const input = sendQueuedPromptSchema.parse(request.body ?? {})
-      return {
-        session: await manager.sendQueuedPrompt(
-          request.params.computerId,
-          request.params.sessionId,
-          request.params.promptId,
-          input.content,
-        ),
-      }
     },
   )
 

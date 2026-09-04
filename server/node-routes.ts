@@ -52,12 +52,6 @@ const updateQueuedPromptSchema = z.object({
   content: z.string().trim().min(1).max(200_000),
 })
 
-// Sending a rewritten message carries the rewriting with it. Held to the same
-// shape a message is, since that is what it becomes.
-const sendQueuedPromptSchema = z.object({
-  content: z.string().trim().min(1).max(200_000).optional(),
-})
-
 const reorderQueueSchema = z.object({
   order: z.array(z.string().min(1)),
 })
@@ -424,18 +418,6 @@ export async function registerNodeRoutes(
         async (request) => {
           const input = updateQueuedPromptSchema.parse(request.body)
           return service.updateQueuedPrompt(
-            request.params.sessionId,
-            request.params.promptId,
-            input.content,
-          )
-        },
-      )
-
-      node.post<{ Params: { sessionId: string; promptId: string } }>(
-        '/sessions/:sessionId/queue/:promptId/send',
-        async (request) => {
-          const input = sendQueuedPromptSchema.parse(request.body ?? {})
-          return service.sendQueuedPrompt(
             request.params.sessionId,
             request.params.promptId,
             input.content,

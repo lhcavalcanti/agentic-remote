@@ -1018,6 +1018,22 @@ describe('single field forms', () => {
     expect(parseTerminalFormActiveField(singleFieldPane, form)).toBe(0)
   })
 
+  it('keeps a multi-field title that ends in a colon', () => {
+    // The colon a single-field heading is printed with is structural. A title
+    // that ends in one is not, and taking the colon off every tab stopped such
+    // a form from ever matching the row it prints.
+    const pane = formPaneFirstField.replace(
+      '  Deployment name   Catalog scope   Confirm deployment',
+      '  Deployment name:   Catalog scope   Confirm deployment',
+    )
+    expect(
+      terminalFormShowsFields(pane, {
+        question: 'Configure the deployment request.',
+        fields: ['Deployment name:', 'Catalog scope', 'Confirm deployment'],
+      }),
+    ).toBe(true)
+  })
+
   it('still refuses a single-field form belonging to another question', () => {
     expect(
       terminalFormShowsFields(singleFieldPane, {

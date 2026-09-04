@@ -76,8 +76,14 @@ assert_repository() {
 }
 
 assert_clean() {
-  local root="$1"
-  [[ -z "$(git -C "$root" status --porcelain)" ]] ||
+  local root="$1" changes
+  # Assigned first so that a git that failed fails the check. Testing the
+  # output on its own read an unreadable or corrupt worktree as a clean one,
+  # and this gate is what says the commit that was tested is the commit being
+  # promoted.
+  changes="$(git -C "$root" status --porcelain)" ||
+    die "worktree could not be read: $root"
+  [[ -z "$changes" ]] ||
     die "worktree is not clean: $root"
 }
 
@@ -289,8 +295,22 @@ validate_worktree_record() {
 # what decides, and refusing on tidiness left the monitor unable to clear its
 # own scratch space.
 validation_worktree_removable() {
-  local record reason token resolved
+  local record reason token resolved pointer
   record="$(validate_worktree_record)" || return 1
+  # The record points at this path; this path has to point back at the record.
+  # Matching one way only means a record left behind by an interrupted run can
+  # vouch for whatever is at the path now -- a checkout somebody put there
+  # since, which cleanup would then delete.
+  if [[ -e "$VALIDATE_ROOT" ]]; then
+    [[ -f "$VALIDATE_ROOT/.git" ]] || return 1
+    pointer="$(sed -n 's/^gitdir: *//p' "$VALIDATE_ROOT/.git" 2>/dev/null || true)"
+    [[ -n "$pointer" ]] || return 1
+    case "$pointer" in
+      /*) ;;
+      *) pointer="$VALIDATE_ROOT/$pointer" ;;
+    esac
+    [[ "$(resolve_path "$pointer")" == "$(resolve_path "$record")" ]] || return 1
+  fi
   reason="$(cat -- "$record/locked" 2>/dev/null || true)"
   [[ "$reason" == "$VALIDATE_LOCK_SIGNATURE "* ]] || return 1
   if [[ -n "${VALIDATE_MARKER:-}" && -f "$VALIDATE_MARKER" ]]; then
@@ -340,10 +360,12 @@ cleanup_validation_worktree() {
   if ! validation_worktree_removable; then
     die "refusing to remove $VALIDATE_ROOT: it is not a validation worktree this monitor created"
   fi
-  # Unlocked first: the lock is what marks the worktree as this monitor's, and
-  # git refuses to remove a locked worktree.
-  git -C "$DEV_ROOT" worktree unlock "$VALIDATE_ROOT" 2>/dev/null || true
-  git -C "$DEV_ROOT" worktree remove --force "$VALIDATE_ROOT" 2>/dev/null || true
+  # `--force` twice is how git removes a worktree that is locked. Unlocking
+  # first would have thrown away the very thing that says the worktree is this
+  # monitor's, and an interruption in that gap left one no later run would
+  # touch.
+  git -C "$DEV_ROOT" worktree remove --force --force "$VALIDATE_ROOT" 2>/dev/null ||
+    true
   if [[ -e "$VALIDATE_ROOT" ]]; then
     rm -rf -- "$VALIDATE_ROOT"
   fi

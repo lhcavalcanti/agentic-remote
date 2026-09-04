@@ -121,6 +121,19 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       '  kill -KILL "$PPID"',
       '  exit 137',
       'fi',
+      // Leaves the validation worktree unreadable to git, the way a truncated
+      // write or a failing disk would.
+      'if [[ "${*: -1}" == "build" && -n "${PNPM_TEST_CORRUPT_INDEX:-}" ]]; then',
+      '  for ((j = 1; j <= $#; j++)); do',
+      '    if [[ "${!j}" == "--dir" ]]; then',
+      '      k=$((j + 1))',
+      // A linked worktree keeps its index in the shared git directory, which
+      // its own `.git` file names.
+      '      target="$(sed -n "s/^gitdir: *//p" "${!k}/.git")"',
+      '      printf "not an index" >"$target/index"',
+      '    fi',
+      '  done',
+      'fi',
       'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
       'exit "${COREPACK_EXIT:-0}"',
     ].join('\n'),
@@ -472,6 +485,60 @@ describe('promotion monitor', () => {
     expect(existsSync(path.join(state, 'validate'))).toBe(false)
     expect(await git(context.dev, 'worktree', 'list')).not.toContain(
       path.join(state, 'validate'),
+    )
+  })
+
+  it('refuses a replacement checkout standing where its worktree was', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // A record left behind says the monitor owned this path. Somebody has put
+    // a checkout there since. Matching the record's stored path alone lets it
+    // vouch for whatever occupies the path now, and cleanup deletes outright.
+    const state = path.join(context.root, 'state-replacement')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+
+    // The worktree goes; its record stays, which is what an interrupted run
+    // leaves behind.
+    await rm(validate, { recursive: true, force: true })
+    await mkdir(validate, { recursive: true })
+    const theirs = path.join(validate, 'work.txt')
+    await writeFile(theirs, 'somebody put this here\n')
+    await writeFile(path.join(validate, '.git'), 'gitdir: /somewhere/else\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    expect(existsSync(theirs)).toBe(true)
+  })
+
+  it('will not promote a validation worktree it could not read', async () => {
+    const context = await fixture()
+    const candidate = await advanceMain(context)
+    const state = path.join(context.root, 'state-unreadable')
+    await mkdir(state, { recursive: true })
+
+    // The gate that says the tested worktree is still the commit being
+    // promoted. Reading only git's output treated a worktree it could not read
+    // at all as a clean one, and the candidate went out unproven.
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_CORRUPT_INDEX: '1',
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('could not be read')
+    expect((await git(context.runtime, 'rev-parse', 'HEAD')).trim()).not.toBe(
+      candidate,
     )
   })
 

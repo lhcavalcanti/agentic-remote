@@ -1466,13 +1466,16 @@ function terminalFormTabsIndex(
   for (let index = header + 1; index < lines.length; index += 1) {
     // Tabs sit on one line separated by runs of spaces, so a title containing
     // a single space stays intact.
-    const tabs = lines[index]
-      .split(/\s{2,}/)
-      .filter(Boolean)
-      // A form of one field prints no row of tabs: the field's own heading is
-      // all there is, and the CLI writes a heading with a colon after it.
-      // Reading that as a tab is what lets a single question be recognised.
-      .map((tab) => tab.replace(/:$/, ''))
+    const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
+    // A form of one field prints no row of tabs: the field's own heading is
+    // all there is, and the CLI writes a heading with a colon after it.
+    // Reading that heading as the tab is what lets a single question be
+    // recognised. Only there, and only the trailing colon the heading is
+    // printed with: taking one off every tab stopped a field whose own title
+    // ends in a colon from ever matching the row it is printed in.
+    if (tabs.length === 1 && form.fields.length === 1) {
+      tabs[0] = tabs[0].replace(/:$/, '')
+    }
     if (
       tabs.length === form.fields.length &&
       tabs.every((tab, position) => tab === form.fields[position])

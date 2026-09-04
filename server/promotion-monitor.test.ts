@@ -353,6 +353,32 @@ describe('promotion monitor', () => {
     expect(existsSync(path.join(state, 'validate.owned'))).toBe(false)
   })
 
+  it('refuses a worktree made at its path after an interrupted run', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // An interrupted run leaves the marker claiming the path. Somebody then
+    // makes a worktree of this same repository there. The marker cannot vouch
+    // for it: it was never the one this monitor created.
+    const state = path.join(context.root, 'state-stale-marker')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    // Exactly what an interrupted run of the previous revision left behind.
+    await writeFile(path.join(state, 'validate.owned'), `${validate}\n`)
+    await git(context.dev, 'worktree', 'add', '--detach', validate, 'HEAD')
+    await writeFile(path.join(validate, 'theirs.txt'), 'not ours\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    expect(existsSync(path.join(validate, 'theirs.txt'))).toBe(true)
+
+    await git(context.dev, 'worktree', 'remove', '--force', validate)
+  })
+
   it('refuses to remove a clean worktree it did not create', async () => {
     const context = await fixture()
     await advanceMain(context)

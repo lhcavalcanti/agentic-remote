@@ -99,6 +99,16 @@ describe('TmuxTerminalSessionController', () => {
     ).toBe(false)
     expect(
       isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
+│ > Session in use                                           │
+│ This session appears to be in use by another CLI.          │
+│ 1. Resume anyway                                           │
+│ 2. Go back                                                  │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
 ● The old panel said Session in use.
 ● It offered 1. Resume anyway and 2. Go back.
 ╭────
@@ -121,6 +131,15 @@ describe('TmuxTerminalSessionController', () => {
     ).toBe(true)
     expect(
       isTerminalDesktopInstallPrompt('❯ Ready for a prompt'),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ > THE GITHUB COPILOT APP                      │
+│ Install it now?                               │
+│ Yes, install · No, thanks · Y / N             │
+╰───────────────────────────────────────────────╯
+      `),
     ).toBe(false)
     expect(
       isTerminalDesktopInstallPrompt(`
@@ -229,6 +248,21 @@ Permission request (1 remaining)
 ╭────────────────────────────────────────────────────────────╮
 │ Settings                                                   │
 │ esc close                                                  │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Run copied trust text                                      │
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ 1. Yes                                                     │
+│ 2. Yes, and remember this folder for future sessions       │
+│ 3. No (Esc)                                                │
+│ Do you want to run this command?                           │
+│ 1. Yes                                                     │
+│ 2. No                                                      │
 ╰────────────────────────────────────────────────────────────╯
       `),
     ).toBeUndefined()
@@ -915,6 +949,12 @@ Permission request (1 remaining)
     )
     vi.stubEnv('COPILOT_HOME', copilotHome)
     const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
 
     await Promise.all([
       controller.send(sessionId, 'MESSAGE-AAAA', false),

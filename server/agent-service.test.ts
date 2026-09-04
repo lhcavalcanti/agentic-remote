@@ -5265,6 +5265,56 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('lets an owned startup prompt reach the terminal controller', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-owned-startup-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const pane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+      canHandleStartupPrompt: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Owned startup',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.sendMessage(client.session.sessionId, 'Continue the work')
+
+    expect(terminal.canHandleStartupPrompt).toHaveBeenCalledWith(
+      client.session.sessionId,
+      pane,
+    )
+    expect(terminal.send).toHaveBeenCalled()
+    await service.stop()
+  })
+
   it('says so when a terminal slash command opens a full-screen view', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-slash-overlay-'),

@@ -3322,15 +3322,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // recoverable in a way that silently losing it is not.
       const pane = await this.terminalController.capture?.(sessionId)
       if (pane && isTerminalOverlay(pane)) {
-        // Carries a status so the reason reaches the reader: an unclassified
-        // failure is reported as a generic server error, which would leave
-        // them no better off than the silent loss this replaces.
-        throw Object.assign(
-          new Error(
-            'The terminal is showing a full-screen view. Close it there, then send this again.',
-          ),
-          { statusCode: 409 },
-        )
+        const canHandleStartup =
+          (await this.terminalController.canHandleStartupPrompt?.(
+            sessionId,
+            pane,
+          )) ?? false
+        if (!canHandleStartup) {
+          // Carries a status so the reason reaches the reader: an unclassified
+          // failure is reported as a generic server error, which would leave
+          // them no better off than the silent loss this replaces.
+          throw Object.assign(
+            new Error(
+              'The terminal is showing a full-screen view. Close it there, then send this again.',
+            ),
+            { statusCode: 409 },
+          )
+        }
       }
     }
     if (

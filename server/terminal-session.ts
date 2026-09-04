@@ -109,6 +109,10 @@ export interface TerminalSessionController {
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
+  canHandleStartupPrompt?(
+    sessionId: string,
+    pane: string,
+  ): Promise<boolean>
   /**
    * Whether a prompt is already inside the controller for this session.
    *
@@ -621,6 +625,17 @@ export class TmuxTerminalSessionController
     } catch {
       return undefined
     }
+  }
+
+  async canHandleStartupPrompt(
+    sessionId: string,
+    pane: string,
+  ): Promise<boolean> {
+    return (
+      this.automaticStartupSessions.has(sessionId) &&
+      (isTerminalSessionInUsePrompt(pane) ||
+        isTerminalDesktopInstallPrompt(pane))
+    )
   }
 
   async fillUserInputForm(
@@ -1282,7 +1297,10 @@ interface TmuxSessionInfo {
 
 export function isTerminalSessionInUsePrompt(pane: string): boolean {
   const lines = pane.split('\n')
-  const prompt = lines.findLastIndex((line) => /Session in use/i.test(line))
+  const cleaned = lines.map(cleanDialogLine)
+  const prompt = cleaned.findLastIndex((line) =>
+    /^Session in use$/i.test(line),
+  )
   const frame = activeBottomFrame(lines, prompt)
   if (!frame) {
     return false
@@ -1296,14 +1314,18 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
 
 export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   const lines = pane.split('\n')
-  const prompt = lines.findLastIndex((line) => /Install it now\?/i.test(line))
+  const cleaned = lines.map(cleanDialogLine)
+  const prompt = cleaned.findLastIndex((line) =>
+    /^Install it now\?$/i.test(line),
+  )
   const frame = activeBottomFrame(lines, prompt)
   if (!frame) {
     return false
   }
   const activeView = lines.slice(frame.start, frame.end + 1).join('\n')
+  const activeLines = cleaned.slice(frame.start, frame.end + 1)
   return (
-    /THE GITHUB COPILOT APP/i.test(activeView) &&
+    activeLines.some((line) => /^THE GITHUB COPILOT APP$/i.test(line)) &&
     /Yes,\s*install/i.test(activeView) &&
     /No,\s*thanks/i.test(activeView) &&
     /Y\s*\/\s*N/i.test(activeView)
@@ -1891,6 +1913,13 @@ export function parseTerminalPermission(
       return undefined
     }
     const frameLines = lines.slice(frame.start, frame.end + 1)
+    if (
+      frameLines.some((line) =>
+        /^Do you want to run this command\?$/i.test(line),
+      )
+    ) {
+      return undefined
+    }
     const frameQuestion = findTerminalWrappedText(
       frameLines,
       'Do you trust the files in this folder?',

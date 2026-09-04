@@ -5819,6 +5819,37 @@ describe('App', () => {
     ).toHaveTextContent('Alt + \u2193')
   })
 
+  it('refuses a key at capture that a reload would throw away', async () => {
+    // The editor and the stored form have to agree. Accepting a key here that
+    // reloading discards gave a shortcut that worked until the page was opened
+    // again, and then quietly was not there.
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(
+      await screen.findByLabelText('Change the keys for View background tasks'),
+    )
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for View background tasks'),
+      { key: 'Enter', code: 'NumpadEnter', altKey: true },
+    )
+
+    await screen.findByText(/cannot be used for a shortcut/i)
+    // Still listening, so another key can be tried; nothing was changed.
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for View background tasks'),
+      { key: 'Escape', code: 'Escape' },
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for View background tasks'),
+      ).toHaveTextContent('Alt + T'),
+    )
+  })
+
   it('drops a stored shortcut whose key is not a real one', async () => {
     // Any nonempty string was accepted, so a code no keyboard produces came
     // back as a shortcut that showed in the list and could never be pressed.
@@ -6137,6 +6168,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
+    const originalWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 700,
@@ -6169,6 +6201,12 @@ describe('App', () => {
         'hidden',
       ),
     )
+    // Put back, or every test after this one runs at a phone's width.
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalWidth,
+      writable: true,
+    })
   })
 
   it('ignores the drawer flag once the sidebar is part of the layout again', async () => {

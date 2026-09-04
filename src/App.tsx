@@ -2195,6 +2195,13 @@ function ShortcutEditor({
   }
 
   function capture(id: ShortcutId, event: KeyboardEvent<HTMLButtonElement>) {
+    // Before anything is prevented, so Tab still moves on as it always does.
+    // Stopping capture and swallowing the press left the reader recording on a
+    // control they could not leave by keyboard.
+    if (event.key === 'Tab') {
+      stopRecording()
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     if (event.key === 'Escape') {
@@ -2206,16 +2213,19 @@ function ShortcutEditor({
     if (isModifierCode(event.code)) {
       return
     }
-    if (event.key === 'Tab') {
-      stopRecording()
-      return
-    }
     const chosen = binding(event.code, {
       alt: event.altKey,
       shift: event.shiftKey,
       ctrl: event.ctrlKey,
       meta: event.metaKey,
     })
+    // The same rule the stored ones are held to. Accepting a key here that a
+    // reload would throw away meant a shortcut that worked until the page was
+    // opened again.
+    if (!capturableCode(chosen.code)) {
+      setRefused('That key cannot be used for a shortcut.')
+      return
+    }
     // A bare letter would be swallowed the moment it was typed anywhere
     // outside a text box, so the shortcut has to be held with something.
     if (!chosen.alt && !chosen.ctrl && !chosen.meta) {

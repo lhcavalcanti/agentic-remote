@@ -42,6 +42,10 @@ const sendMessageSchema = z.object({
   enqueue: z.boolean().optional(),
 })
 
+const reorderQueueSchema = z.object({
+  order: z.array(z.string().min(1)),
+})
+
 const permissionReplySchema = z.object({
   optionId: z.string().trim().min(1).max(500),
 })
@@ -566,6 +570,20 @@ export async function registerHubRoutes(
         request.params.sessionId,
         request.params.promptId,
       ),
+  )
+
+  app.put<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue',
+    async (request) => {
+      const input = reorderQueueSchema.parse(request.body)
+      return {
+        session: await manager.reorderQueuedPrompts(
+          request.params.computerId,
+          request.params.sessionId,
+          input.order,
+        ),
+      }
+    },
   )
 
   app.post<{ Params: SessionParams }>(

@@ -678,6 +678,15 @@ export class ClaudeAgentService
     return { session: result.session, prompt: result.prompt }
   }
 
+  async reorderQueuedPrompts(
+    sessionId: string,
+    order: string[],
+  ): Promise<SessionDetail> {
+    const session = await this.store.reorderQueuedPrompts(sessionId, order)
+    this.publish(session)
+    return session
+  }
+
   async sendMessage(
     sessionId: string,
     content: string,

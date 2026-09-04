@@ -47,6 +47,7 @@ import {
   validateSessionDirectory,
   moveSessionToTmux,
   removeQueuedPrompt,
+  reorderQueuedPrompts,
   renameSession,
   readWorkspaceFile,
   restartSession,
@@ -69,6 +70,7 @@ vi.mock('./api', () => ({
   listBackgroundTasks: vi.fn(),
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
+  reorderQueuedPrompts: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
   listKnowledgeRoots: vi.fn(),
@@ -2869,6 +2871,35 @@ describe('App', () => {
       ),
     )
     expect(await screen.findAllByText('Renamed project')).not.toHaveLength(0)
+  })
+
+  it('puts the queue in the order it is dragged into', async () => {
+    const first = { id: 'q1', content: 'one', createdAt: '2026-07-25T01:00:00.000Z' }
+    const second = { id: 'q2', content: 'two', createdAt: '2026-07-25T01:00:01.000Z' }
+    const queuedSession = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 2,
+      queuedPrompts: [first, second],
+    }
+    vi.mocked(listSessions).mockResolvedValue([queuedSession])
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+    vi.mocked(reorderQueuedPrompts).mockResolvedValue({
+      ...queuedSession,
+      queuedPrompts: [second, first],
+    })
+
+    render(<App />)
+    await screen.findByText('one')
+
+    // Each waiting message carries a handle, which is what the order is
+    // changed by.
+    expect(
+      screen.getByRole('button', { name: 'Reorder queued prompt 1' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Reorder queued prompt 2' }),
+    ).toBeInTheDocument()
   })
 
   it('shows queued prompts and supports edit and remove actions', async () => {

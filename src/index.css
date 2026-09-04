@@ -2170,11 +2170,14 @@ button {
 
 .queued-prompt {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px 30px;
+  /* Handle, the message, and the two controls. The handle is what the queue
+     is put in order by, so it comes first and stays the same width. */
+  grid-template-columns: 16px minmax(0, 1fr) 30px 30px;
   align-items: center;
   gap: 4px;
-  padding: 6px 7px 6px 10px;
+  padding: 6px 7px 6px 6px;
   border-bottom: 1px solid var(--border);
+  background: transparent;
 }
 
 .queued-prompt:last-child {

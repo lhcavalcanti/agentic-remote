@@ -478,6 +478,50 @@ export class SessionStore {
   }
 
   /**
+   * Puts the queue in the order given.
+   *
+   * Only a rearrangement: every prompt named has to be one that is already
+   * waiting, and every prompt waiting has to be named. Anything else is an
+   * order built from a list the caller has since stopped agreeing with -- a
+   * prompt sent or removed while they were dragging -- and applying it would
+   * drop work or resurrect it.
+   */
+  async reorderQueuedPrompts(
+    sessionId: string,
+    order: string[],
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (stored) => {
+      const queue = stored.queuedPrompts || []
+      if (order.length !== queue.length) {
+        throw Object.assign(
+          new Error('The queue changed while it was being reordered'),
+          // Carries a status so the reason reaches the reader: unclassified it
+          // arrives as a generic server error, which says nothing about what
+          // happened or what to do about it.
+          { statusCode: 409 },
+        )
+      }
+      const byId = new Map(queue.map((prompt) => [prompt.id, prompt]))
+      const next: QueuedPrompt[] = []
+      for (const id of order) {
+        const prompt = byId.get(id)
+        if (!prompt) {
+          throw Object.assign(
+          new Error('The queue changed while it was being reordered'),
+          // Carries a status so the reason reaches the reader: unclassified it
+          // arrives as a generic server error, which says nothing about what
+          // happened or what to do about it.
+          { statusCode: 409 },
+        )
+        }
+        byId.delete(id)
+        next.push(prompt)
+      }
+      stored.queuedPrompts = next
+    })
+  }
+
+  /**
    * Takes a prompt off the queue and records it as needing recovery, together.
    *
    * Two writes would leave a window where both copies are on disk: a restart

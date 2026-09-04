@@ -103,6 +103,10 @@ const knowledgeFileQuerySchema = z.object({
 const workspaceFileQuerySchema = z.object({
   path: z.string().trim().min(1).max(4096),
 })
+const reorderQueueSchema = z.object({
+  order: z.array(z.string().min(1)),
+})
+
 const workspaceSearchQuerySchema = z.object({
   query: z.string().trim().min(2).max(200),
   path: z.string().trim().max(4096).optional(),
@@ -400,6 +404,17 @@ export async function registerNodeRoutes(
             request.params.sessionId,
             request.params.promptId,
           ),
+      )
+
+      node.put<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/queue',
+        async (request) => {
+          const input = reorderQueueSchema.parse(request.body)
+          return service.reorderQueuedPrompts(
+            request.params.sessionId,
+            input.order,
+          )
+        },
       )
 
       node.post<{ Params: { sessionId: string } }>(

@@ -447,6 +447,22 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     }
   }
 
+  async reorderQueuedPrompts(
+    computerId: string,
+    sessionId: string,
+    order: string[],
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.reorderQueuedPrompts(sessionId, order)
+        : await this.requireClient(computerId).reorderQueuedPrompts(
+            sessionId,
+            order,
+          )
+    return managedSession(session, computer)
+  }
+
   async runtimeOptions(
     computerId: string,
     sessionId: string,

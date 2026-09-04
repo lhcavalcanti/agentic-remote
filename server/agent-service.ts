@@ -3399,6 +3399,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
   }
 
+  async reorderQueuedPrompts(
+    sessionId: string,
+    order: string[],
+  ): Promise<SessionDetail> {
+    return this.serializeQueue(sessionId, async () => {
+      const session = await this.store.reorderQueuedPrompts(sessionId, order)
+      this.publish(session)
+      return session
+    })
+  }
+
   private async enqueuePrompt(
     sessionId: string,
     content: string,

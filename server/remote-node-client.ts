@@ -297,6 +297,16 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
+  async reorderQueuedPrompts(
+    sessionId: string,
+    order: string[],
+  ): Promise<SessionDetail> {
+    return this.request<SessionDetail>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/queue`,
+      { method: 'PUT', body: JSON.stringify({ order }) },
+    )
+  }
+
   async runtimeOptions(sessionId: string): Promise<RuntimeOptions> {
     return this.request<RuntimeOptions>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/runtime`,

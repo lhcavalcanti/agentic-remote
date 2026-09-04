@@ -99,6 +99,7 @@ import {
 } from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
 import type {
+  QueuedPrompt,
   AgentProvider,
   AgentProviderCapability,
   ActivityKind,
@@ -155,6 +156,7 @@ import {
   moveSessionToTmux,
   removeComputer,
   removeQueuedPrompt,
+  reorderQueuedPrompts,
   renameSession,
   readWorkspaceFile,
   restartSession,
@@ -2882,6 +2884,65 @@ function AppSettingsDialog({
       </section>
       </div>
     </DialogFrame>
+  )
+}
+
+/** A waiting message, which can be picked up and moved in the queue. */
+function SortableQueuedPrompt({
+  prompt,
+  index,
+  busy,
+  onEdit,
+  onRemove,
+}: {
+  prompt: QueuedPrompt
+  index: number
+  busy: boolean
+  onEdit: () => void
+  onRemove: () => void
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `queued:${prompt.id}` })
+  return (
+    <div
+      className={`queued-prompt${isDragging ? ' sortable-dragging' : ''}`}
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <span
+        aria-label={`Reorder queued prompt ${index + 1}`}
+        className="drag-handle"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={13} />
+      </span>
+      <span>{prompt.content}</span>
+      <button
+        aria-label={`Edit queued prompt ${index + 1}`}
+        className="icon-button"
+        disabled={busy}
+        onClick={onEdit}
+        type="button"
+      >
+        <Pencil size={14} />
+      </button>
+      <button
+        aria-label={`Remove queued prompt ${index + 1}`}
+        className="icon-button icon-button--danger"
+        disabled={busy}
+        onClick={onRemove}
+        type="button"
+      >
+        <X size={15} />
+      </button>
+    </div>
   )
 }
 
@@ -6142,6 +6203,9 @@ function App() {
   // Sessions somebody said outright are gone, as opposed to ones a list did
   // not mention. Absence and removal are different things.
   const removedSessions = useRef(new Set<string>())
+  // One reorder at a time for a session, so a second drag does not take its
+  // snapshot from a queue the server has not accepted yet.
+  const reorderInFlight = useRef(new Map<string, Promise<void>>())
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -10019,6 +10083,100 @@ function App() {
 
 
 
+  /** Whether a session is still one the app knows about. */
+  // A reply can come back after the session it is about has been deleted.
+  // Upserting then puts the session back: one nothing can be done with, that
+  // no later event will clear, because its removal has already been and gone.
+  function stillListed(session: ManagedSession): boolean {
+    const key = sessionKey(session)
+    if (removedSessions.current.has(key)) {
+      return false
+    }
+    return sessionsRef.current.some(
+      (candidate) => sessionKey(candidate) === key,
+    )
+  }
+
+  async function queueDragEnded(event: DragEndEvent) {
+    const { active, over } = event
+    const queue = selected?.queuedPrompts
+    if (!selected || !queue || !over || active.id === over.id) {
+      return
+    }
+    // One at a time for a session. A second drag begun before the first has
+    // settled took its own snapshot of a queue the server had not accepted
+    // yet, so when both failed the later one put the earlier drag's order back
+    // as though it had been agreed to.
+    const lane = sessionKey(selected)
+    const ids = queue.map((prompt) => `queued:${prompt.id}`)
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from < 0 || to < 0) {
+      return
+    }
+    const next = [...queue]
+    next.splice(to, 0, ...next.splice(from, 1))
+    const order = next.map((prompt) => prompt.id)
+    const target = selected
+    // Shown in the new order straight away: the drag is the answer, and
+    // waiting for the round trip makes the list snap back under the pointer.
+    setSessions((current) =>
+      upsertSession(current, { ...target, queuedPrompts: next }),
+    )
+    setError(undefined)
+    // Chained into the lane before waiting on what is ahead, so two drags that
+    // end while a third is still running queue behind each other rather than
+    // both taking the same promise and resuming together.
+    let settle: () => void = () => {}
+    const mine = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    const ahead = reorderInFlight.current.get(lane)
+    reorderInFlight.current.set(lane, mine)
+    if (ahead) {
+      await ahead.catch(() => undefined)
+    }
+    try {
+      const updated = await reorderQueuedPrompts(
+        target.computerId,
+        target.id,
+        order,
+      )
+      if (stillListed(updated)) {
+        setSessions((current) => upsertSession(current, updated))
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+      // Asked for rather than assumed. The refusal usually means the queue has
+      // moved on, so putting back the list as it was before the drag would
+      // show work that is already gone, or hide work that has just arrived.
+      try {
+        const fresh = await getSession(target.computerId, target.id)
+        if (stillListed(fresh)) {
+          setSessions((current) => upsertSession(current, fresh))
+        }
+      } catch {
+        // Even the re-read failed, so the best available answer is the list as
+        // it was before the drag -- but only if it is still a session at all.
+        // Put back after its removal has already been seen, the snapshot
+        // reappears as a session nothing can be done with and no later event
+        // will clear.
+        setSessions((current) =>
+          stillListed(target) ? upsertSession(current, target) : current,
+        )
+      }
+    } finally {
+      settle()
+      // Only while it is still this operation's. Deleting whatever is there
+      // threw away a later drag's place in the lane, and the two then ran
+      // together after all.
+      if (reorderInFlight.current.get(lane) === mine) {
+        reorderInFlight.current.delete(lane)
+      }
+    }
+  }
+
+
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
     if (!selected || queueActionId) {
       return
@@ -11222,35 +11380,35 @@ function App() {
                   <strong>Queued</strong>
                   <span>{selected.queuedPrompts.length}</span>
                 </header>
-                <div className="queued-prompts__list">
-                  {selected.queuedPrompts.map((prompt, index) => (
-                    <div className="queued-prompt" key={prompt.id}>
-                      <span>{prompt.content}</span>
-                      <button
-                        aria-label={`Edit queued prompt ${index + 1}`}
-                        className="icon-button"
-                        disabled={Boolean(queueActionId)}
-                        onClick={() =>
-                          void manageQueuedPrompt(prompt.id, true)
-                        }
-                        type="button"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        aria-label={`Remove queued prompt ${index + 1}`}
-                        className="icon-button icon-button--danger"
-                        disabled={Boolean(queueActionId)}
-                        onClick={() =>
-                          void manageQueuedPrompt(prompt.id, false)
-                        }
-                        type="button"
-                      >
-                        <X size={15} />
-                      </button>
+                <DndContext
+                  collisionDetection={closestCenter}
+                  onDragEnd={(event) => void queueDragEnded(event)}
+                  sensors={sensors}
+                >
+                  <SortableContext
+                    items={selected.queuedPrompts.map(
+                      (prompt) => `queued:${prompt.id}`,
+                    )}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="queued-prompts__list">
+                      {selected.queuedPrompts.map((prompt, index) => (
+                        <SortableQueuedPrompt
+                          busy={Boolean(queueActionId)}
+                          index={index}
+                          key={prompt.id}
+                          onEdit={() =>
+                            void manageQueuedPrompt(prompt.id, true)
+                          }
+                          onRemove={() =>
+                            void manageQueuedPrompt(prompt.id, false)
+                          }
+                          prompt={prompt}
+                        />
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </SortableContext>
+                </DndContext>
               </section>
             ) : null}
             {showCommandMenu ? (

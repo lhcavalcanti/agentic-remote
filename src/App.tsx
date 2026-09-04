@@ -334,6 +334,33 @@ type StoredDefaultSessionFolders = {
 const defaultSessionFoldersStorageKey =
   'agentic-remote:default-session-folders'
 
+type AccentTheme = 'agentic' | 'ocean' | 'violet' | 'ember' | 'rose' | 'gold'
+
+const accentThemeStorageKey = 'agentic-remote:accent-theme'
+const accentThemes: Array<{
+  id: AccentTheme
+  name: string
+  color: string
+}> = [
+  { id: 'agentic', name: 'Agentic', color: '#b8f36b' },
+  { id: 'ocean', name: 'Ocean', color: '#6eb7ff' },
+  { id: 'violet', name: 'Violet', color: '#ad92ff' },
+  { id: 'ember', name: 'Ember', color: '#ff9c64' },
+  { id: 'rose', name: 'Rose', color: '#ff83b6' },
+  { id: 'gold', name: 'Gold', color: '#f2c96d' },
+]
+
+function readAccentTheme(): AccentTheme {
+  try {
+    const stored = sessionStorage.getItem(accentThemeStorageKey)
+    return accentThemes.some((theme) => theme.id === stored)
+      ? (stored as AccentTheme)
+      : 'agentic'
+  } catch {
+    return 'agentic'
+  }
+}
+
 type ComposerHistoryState = {
   messages: string[]
   index: number
@@ -1901,6 +1928,8 @@ function AppSettingsDialog({
   onDefaultRuntimesChange,
   defaultSessionFolders,
   onDefaultSessionFoldersChange,
+  accentTheme,
+  onAccentThemeChange,
   statusline,
   onStatuslineChange,
   updateRegistration,
@@ -1915,6 +1944,8 @@ function AppSettingsDialog({
   onDefaultRuntimesChange: (settings: DefaultRuntimeSettings) => void
   defaultSessionFolders: DefaultSessionFolders
   onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
+  accentTheme: AccentTheme
+  onAccentThemeChange: (theme: AccentTheme) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
   updateRegistration?: ServiceWorkerRegistration
@@ -2189,6 +2220,44 @@ function AppSettingsDialog({
           </button>
         </section>
       )}
+
+      <section className="app-settings-section">
+        <h3>Appearance</h3>
+        <p className="dialog-message">
+          Choose an accent for this tab. Other Agentic Remote tabs keep their
+          own color.
+        </p>
+        <div
+          aria-label="Accent color"
+          className="accent-theme-list"
+          role="radiogroup"
+        >
+          {accentThemes.map((theme) => (
+            <label
+              className={`accent-theme-option ${
+                accentTheme === theme.id
+                  ? 'accent-theme-option--selected'
+                  : ''
+              }`}
+              key={theme.id}
+            >
+              <input
+                aria-label={`${theme.name} accent`}
+                checked={accentTheme === theme.id}
+                name="accent-theme"
+                onChange={() => onAccentThemeChange(theme.id)}
+                type="radio"
+              />
+              <span
+                aria-hidden="true"
+                className="accent-theme-option__swatch"
+                style={{ '--accent-choice': theme.color } as CSSProperties}
+              />
+              <strong>{theme.name}</strong>
+            </label>
+          ))}
+        </div>
+      </section>
 
       <section className="app-settings-section">
         <h3>Session defaults</h3>
@@ -5760,6 +5829,8 @@ function App() {
   )
   const [defaultSessionFolders, setDefaultSessionFolders] =
     useState<DefaultSessionFolders>(readDefaultSessionFolders)
+  const [accentTheme, setAccentTheme] =
+    useState<AccentTheme>(readAccentTheme)
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
     readStoredOrder('agentic-remote:computer-order', []),
@@ -7047,6 +7118,14 @@ function App() {
       JSON.stringify({ version: 1, folders: defaultSessionFolders }),
     )
   }, [defaultSessionFolders])
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(accentThemeStorageKey, accentTheme)
+    } catch {
+      // A blocked storage quota should not stop this tab from changing color.
+    }
+  }, [accentTheme])
 
   useEffect(() => {
     localStorage.setItem(
@@ -9882,6 +9961,7 @@ function App() {
       className={`app-shell ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
       }`}
+      data-accent-theme={accentTheme}
       onKeyDown={appKeyDown}
       onTouchCancel={() => {
         sidebarGestureRef.current = undefined
@@ -11005,7 +11085,9 @@ function App() {
         />
       ) : null}
       <AppSettingsDialog
+        accentTheme={accentTheme}
         onApplyUpdate={() => void applyPwaUpdate()}
+        onAccentThemeChange={setAccentTheme}
         onClose={() => setSettingsOpen(false)}
         computers={computers}
         defaultRuntimes={defaultRuntimes}

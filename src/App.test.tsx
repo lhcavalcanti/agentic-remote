@@ -324,6 +324,7 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    sessionStorage.clear()
     // The address now carries the selected session, so it has to be reset or
     // one test's deep link selects a session in the next.
     window.history.replaceState({}, '', '/')
@@ -1256,6 +1257,32 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'App updates' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
+  })
+
+  it('keeps an accent choice within the current browser tab', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const shell = document.querySelector('.app-shell')
+    expect(shell).toHaveAttribute('data-accent-theme', 'agentic')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
+
+    expect(shell).toHaveAttribute('data-accent-theme', 'violet')
+    expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBe('violet')
+    expect(localStorage.getItem('agentic-remote:accent-theme')).toBeNull()
+  })
+
+  it('ignores an unknown stored accent', async () => {
+    sessionStorage.setItem('agentic-remote:accent-theme', 'infrared')
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelector('.app-shell')).toHaveAttribute(
+      'data-accent-theme',
+      'agentic',
+    )
   })
 
   it('falls back to blank runtime defaults when stored settings are null', async () => {

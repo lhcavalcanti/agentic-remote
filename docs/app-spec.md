@@ -360,6 +360,17 @@ switches, failed sends, and clear replacement IDs.
   merge, translate, or claim to transfer conversation history between Copilot
   and Claude.
 
+### 9.1 Appearance
+
+- App settings MUST offer named, accessible accent-color presets including the
+  original Agentic green.
+- The selected accent MUST apply to primary actions, focus states, activity
+  indicators, and other non-semantic accent treatments.
+- Warning, error, computer-identity, and background-task colors MUST retain
+  their semantic meaning.
+- The accent choice MUST be scoped to the current browser tab, persist across
+  reloads in that tab, and fall back to Agentic green for an unknown value.
+
 ## 10. Notifications
 
 - Notification settings MUST be discoverable under App settings.

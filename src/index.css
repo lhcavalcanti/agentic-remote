@@ -20,6 +20,7 @@
   --muted-strong: #b8baaf;
   --accent: #b8f36b;
   --accent-deep: #93cb4f;
+  --accent-contrast: #11130e;
   --danger: #ef816f;
   --radius: 16px;
 }
@@ -58,11 +59,22 @@ textarea {
   font: inherit;
 }
 
+.app-shell input[type='checkbox'],
+.app-shell input[type='radio'] {
+  accent-color: var(--accent);
+}
+
 button {
   -webkit-tap-highlight-color: transparent;
 }
 
 .app-shell {
+  --accent-hover: color-mix(in srgb, var(--accent) 86%, white);
+  --accent-border-soft: color-mix(in srgb, var(--accent) 24%, transparent);
+  --accent-border-strong: color-mix(in srgb, var(--accent) 42%, transparent);
+  --accent-tint: color-mix(in srgb, var(--accent) 8%, transparent);
+  --accent-tint-strong: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-focus: color-mix(in srgb, var(--accent) 36%, var(--border));
   --app-safe-area-top: env(safe-area-inset-top, 0px);
   --app-content-safe-area-top: var(--app-safe-area-top);
   /* Both are tuned here rather than in the six places that used to hard-code
@@ -79,8 +91,42 @@ button {
   max-width: 100%;
   overflow: hidden;
   background:
-    radial-gradient(circle at 70% -15%, rgba(184, 243, 107, 0.045), transparent 35%),
+    radial-gradient(
+      circle at 70% -15%,
+      color-mix(in srgb, var(--accent) 4.5%, transparent),
+      transparent 35%
+    ),
     var(--bg);
+}
+
+.app-shell[data-accent-theme='ocean'] {
+  --accent: #6eb7ff;
+  --accent-deep: #4a93dc;
+  --accent-contrast: #0b1824;
+}
+
+.app-shell[data-accent-theme='violet'] {
+  --accent: #ad92ff;
+  --accent-deep: #8d6ce5;
+  --accent-contrast: #140f22;
+}
+
+.app-shell[data-accent-theme='ember'] {
+  --accent: #ff9c64;
+  --accent-deep: #d97945;
+  --accent-contrast: #211108;
+}
+
+.app-shell[data-accent-theme='rose'] {
+  --accent: #ff83b6;
+  --accent-deep: #d86092;
+  --accent-contrast: #250d17;
+}
+
+.app-shell[data-accent-theme='gold'] {
+  --accent: #f2c96d;
+  --accent-deep: #caa54e;
+  --accent-contrast: #211a08;
 }
 
 .sidebar {
@@ -146,7 +192,7 @@ button {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  color: #111210;
+  color: var(--accent-contrast);
   background: var(--accent);
   border-radius: 10px;
 }
@@ -204,16 +250,16 @@ button {
 
 .icon-button--active {
   color: var(--accent);
-  border-color: rgba(184, 243, 107, 0.24);
-  background: rgba(184, 243, 107, 0.08);
+  border-color: var(--accent-border-soft);
+  background: var(--accent-tint);
 }
 
 /* `.icon-button:hover` outranks a single class, so an active toggle would
    lose its accent under the pointer and read as though it were off. */
 .icon-button--active:hover {
   color: var(--accent);
-  border-color: rgba(184, 243, 107, 0.42);
-  background: rgba(184, 243, 107, 0.16);
+  border-color: var(--accent-border-strong);
+  background: var(--accent-tint-strong);
 }
 
 .icon-button:disabled {
@@ -233,7 +279,7 @@ button {
   gap: 8px;
   min-height: 42px;
   margin: 4px 14px 18px;
-  color: #12140f;
+  color: var(--accent-contrast);
   border: 0;
   border-radius: 11px;
   background: var(--accent);
@@ -663,7 +709,7 @@ button {
 .new-session-button:hover,
 .primary-button:hover:not(:disabled),
 .send-button:hover:not(:disabled) {
-  background: #c5ff78;
+  background: var(--accent-hover);
 }
 
 .session-list {
@@ -951,7 +997,7 @@ button {
 
 .status-dot--running {
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(184, 243, 107, 0.1);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .session-item--background-running {
@@ -1298,7 +1344,7 @@ button {
 }
 
 .primary-button {
-  color: #11130e;
+  color: var(--accent-contrast);
   border: 0;
   background: var(--accent);
 }
@@ -1446,7 +1492,7 @@ button {
 }
 
 .activity-message--completed .activity-message__glyph {
-  color: #89b66c;
+  color: var(--accent-deep);
 }
 
 .activity-message--failed .activity-message__glyph,
@@ -1600,7 +1646,7 @@ button {
 .message__content code,
 .markdown-body code {
   padding: 2px 5px;
-  color: #d8efb9;
+  color: color-mix(in srgb, var(--accent) 58%, white);
   border: 1px solid #34392f;
   border-radius: 5px;
   background: #1a1d17;
@@ -1807,16 +1853,16 @@ button {
   height: 7px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 0 rgba(184, 243, 107, 0.35);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 35%, transparent);
   animation: pulse 1.5s infinite;
 }
 
 @keyframes pulse {
   70% {
-    box-shadow: 0 0 0 7px rgba(184, 243, 107, 0);
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(184, 243, 107, 0);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
   }
 }
 
@@ -1892,7 +1938,7 @@ button {
 }
 
 .user-input-card__form input:focus {
-  border-color: #59634c;
+  border-color: var(--accent-focus);
 }
 
 .user-input-card__structured-form {
@@ -1949,7 +1995,7 @@ button {
 
 .user-input-card__field input:focus,
 .user-input-card__field select:focus {
-  border-color: #59634c;
+  border-color: var(--accent-focus);
 }
 
 .user-input-card__field--checkbox {
@@ -1978,12 +2024,12 @@ button {
 
 .user-input-card__field-options:focus {
   border-color: var(--accent-deep);
-  box-shadow: 0 0 0 2px rgba(184, 243, 107, 0.14);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .user-input-card__option--highlighted {
   border-radius: 7px;
-  background: rgba(184, 243, 107, 0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .user-input-card__select {
@@ -1999,22 +2045,22 @@ button {
   gap: 12px;
   padding: 8px 11px;
   color: #f4f7ed;
-  border: 1px solid #68765a;
+  border: 1px solid var(--accent-focus);
   border-radius: 10px;
   outline: 0;
-  background: #20271d;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-raised));
   color-scheme: dark;
   text-align: left;
 }
 
 .user-input-card__select-trigger:hover {
-  border-color: #8da879;
-  background: #293522;
+  border-color: var(--accent-deep);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-raised));
 }
 
 .user-input-card__select-trigger:focus-visible {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(184, 243, 107, 0.2);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .user-input-card__select-trigger:disabled {
@@ -2031,10 +2077,10 @@ button {
   max-height: 220px;
   overflow-y: auto;
   padding: 5px;
-  border: 1px solid #68765a;
+  border: 1px solid var(--accent-focus);
   border-radius: 10px;
   outline: 0;
-  background: #181d16;
+  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
   color-scheme: dark;
 }
@@ -2042,7 +2088,7 @@ button {
 .user-input-card__select-menu:focus-visible {
   border-color: var(--accent);
   box-shadow:
-    0 0 0 2px rgba(184, 243, 107, 0.2),
+    0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent),
     0 12px 28px rgba(0, 0, 0, 0.42);
 }
 
@@ -2059,13 +2105,13 @@ button {
 .user-input-card__select-option:hover,
 .user-input-card__select-option--highlighted {
   color: #ffffff;
-  background: #3c542d;
+  background: color-mix(in srgb, var(--accent) 25%, var(--panel-raised));
 }
 
 .user-input-card__select-option--selected {
-  color: #d9f8b9;
+  color: color-mix(in srgb, var(--accent) 64%, white);
   font-weight: 650;
-  background: #2d4025;
+  background: color-mix(in srgb, var(--accent) 17%, var(--panel-raised));
 }
 
 .user-input-card__actions {
@@ -2746,6 +2792,66 @@ button {
   font-size: 11px;
 }
 
+.accent-theme-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.accent-theme-option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  color: var(--muted-strong);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  cursor: pointer;
+}
+
+.accent-theme-option:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.accent-theme-option--selected {
+  color: var(--text);
+  border-color: var(--accent-border-strong);
+  background: var(--accent-tint);
+}
+
+.accent-theme-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.accent-theme-option:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.accent-theme-option__swatch {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in srgb, var(--accent-choice) 72%, white);
+  border-radius: 50%;
+  background: var(--accent-choice);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--accent-choice) 22%, transparent);
+}
+
+.accent-theme-option strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .default-session-folder-list {
   display: grid;
   gap: 10px;
@@ -2884,8 +2990,8 @@ button {
 }
 
 .composer-text-panel:focus-within {
-  border-color: #59634c;
-  box-shadow: 0 0 0 3px rgba(184, 243, 107, 0.055);
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 5.5%, transparent);
 }
 
 .composer textarea {
@@ -2924,7 +3030,7 @@ button {
   height: 40px;
   padding: 0;
   place-items: center;
-  color: #11130e;
+  color: var(--accent-contrast);
   border: 0;
   border-radius: 11px;
   background: var(--accent);
@@ -2975,8 +3081,8 @@ button {
   }
 
   .composer:focus-within {
-    border-color: #59634c;
-    box-shadow: 0 0 0 3px rgba(184, 243, 107, 0.055);
+    border-color: var(--accent-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 5.5%, transparent);
   }
 
   .composer > .composer-text-panel,
@@ -3598,7 +3704,7 @@ button {
 
 .dialog-input:focus,
 .dialog-select:focus {
-  border-color: #59634c;
+  border-color: var(--accent-focus);
 }
 
 .computer-list {
@@ -3776,7 +3882,7 @@ button {
 }
 
 .path-input:focus-within {
-  border-color: #59634c;
+  border-color: var(--accent-focus);
 }
 
 .path-input input {

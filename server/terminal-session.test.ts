@@ -533,14 +533,14 @@ Permission request (1 remaining)
       copilotHome,
     ])
 
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
     await expect(
-      new TmuxTerminalSessionController().create(
-        randomUUID(),
-        directory,
-        'Structured form',
-        true,
-      ),
+      controller.create(sessionId, directory, 'Structured form', true),
     ).resolves.toMatchObject({ sessionName: tmuxSession })
+    await expect(
+      controller.send(sessionId, 'must not enter the form', false),
+    ).resolves.toBe(false)
   })
 
   it('rechecks readiness after an actionable startup prompt is answered', async () => {
@@ -1675,6 +1675,31 @@ describe('submitTerminalForm', () => {
     await expect(
       submitTerminalForm(async () => openForm, async () => {}, 10),
     ).resolves.toBe(false)
+  })
+
+  it('recognizes a single-field form whose footer wraps', () => {
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Choose a target.',
+        ' Target:',
+        ' ↑/↓ select · enter accept',
+        ' · esc cancel',
+      ].join('\n')),
+    ).toBe(true)
+  })
+
+  it('rejects a quoted structured form above a live composer', () => {
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Choose a target.',
+        ' enter accept · esc cancel',
+        '╻▄▄▄▄',
+        '┃',
+        '╹▀▀▀▀',
+      ].join('\n')),
+    ).toBe(false)
   })
 })
 

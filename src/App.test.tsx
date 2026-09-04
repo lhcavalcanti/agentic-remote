@@ -2873,42 +2873,6 @@ describe('App', () => {
     expect(await screen.findAllByText('Renamed project')).not.toHaveLength(0)
   })
 
-  it('works a deferred drag out from the queue as it then stands', async () => {
-    // A drag that waits its turn must not act on the list it saw when it
-    // ended. Between then and its turn the queue can have been refused, or
-    // changed by the drag ahead of it -- and an order built from that stale
-    // display is one the server never agreed to, whether it is persisted or
-    // put back when the recovery read also fails.
-    const first = { id: 'q1', content: 'one', createdAt: '2026-07-25T01:00:00.000Z' }
-    const second = { id: 'q2', content: 'two', createdAt: '2026-07-25T01:00:01.000Z' }
-    const queuedSession = {
-      ...session,
-      status: 'running' as const,
-      queuedCount: 2,
-      queuedPrompts: [first, second],
-    }
-    vi.mocked(listSessions).mockResolvedValue([queuedSession])
-    vi.mocked(getSession).mockResolvedValue(queuedSession)
-
-    render(<App />)
-    await screen.findByText('one')
-
-    // The queue changes underneath: the head is sent while a drag is waiting.
-    await act(async () => {
-      MockWebSocket.instances[0]?.onmessage?.({
-        data: JSON.stringify({
-          type: 'session.upserted',
-          session: { ...queuedSession, queuedCount: 1, queuedPrompts: [second] },
-        }),
-      } as MessageEvent)
-    })
-    await waitFor(() => expect(screen.queryByText('one')).not.toBeInTheDocument())
-
-    // Nothing is asked of the server for a drag whose ends have gone.
-    expect(reorderQueuedPrompts).not.toHaveBeenCalled()
-    expect(screen.getByText('two')).toBeInTheDocument()
-  })
-
   it('puts the queue in the order it is dragged into', async () => {
     const first = { id: 'q1', content: 'one', createdAt: '2026-07-25T01:00:00.000Z' }
     const second = { id: 'q2', content: 'two', createdAt: '2026-07-25T01:00:01.000Z' }

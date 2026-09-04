@@ -9541,23 +9541,6 @@ function App() {
     selected && editingQueuedPrompt?.sessionKey === sessionKey(selected)
       ? editingQueuedPrompt.promptId
       : undefined
-  const editedSendRefusal = (() => {
-    if (!editingQueuedPromptId || !selected) {
-      return undefined
-    }
-    if (
-      (selected.queuedPrompts || []).some(
-        (prompt) => prompt.id !== editingQueuedPromptId,
-      )
-    ) {
-      return 'Other messages are waiting. Save this to keep its place, or remove the others first.'
-    }
-    if (selected.status === 'running' || selected.status === 'waiting') {
-      return 'The agent is working. Save this to keep its place in the queue.'
-    }
-    return undefined
-  })()
-
   function editQueuedPrompt(prompt: QueuedPrompt) {
     if (queueActionId || sending) {
       return
@@ -9575,7 +9558,16 @@ function App() {
     // Asked of the marker itself rather than of this session's view of it: it
     // becomes undefined when the reader is looking elsewhere, so checking that
     // let an edit started in another session quietly replace one in progress.
-    if (editingQueuedPrompt) {
+    // Only while the reader can actually get back to it. Its session can be on
+    // a computer that is not answering, and then there is no banner to see and
+    // no Escape to press -- so refusing here left the one marker there is
+    // stuck, and every queue in the app refusing to be edited.
+    const editedOwnerReachable =
+      editingQueuedPrompt &&
+      sessions.some(
+        (candidate) => sessionKey(candidate) === editingQueuedPrompt.sessionKey,
+      )
+    if (editingQueuedPrompt && editedOwnerReachable) {
       setError(
         'Finish with the message you are editing first: save it, or press Escape to leave it as it was.',
       )
@@ -9664,6 +9656,13 @@ function App() {
         return
       }
       if (!ownerComputer || !ownerComputer.online) {
+        return
+      }
+      // Online is not the same as answered. A listing that failed to reach the
+      // node carries none of its sessions, and reading that as deletion turned
+      // the rewrite into an ordinary draft beside a message still queued --
+      // which is how the same thing gets delivered twice.
+      if (!authoritativeNow.current.has(ownerComputerId)) {
         return
       }
       // Its computer answered and did not list it, which is deletion.
@@ -11140,15 +11139,11 @@ function App() {
                 <span>
                   Editing a queued message.{' '}
                   {phoneEnterCreatesNewline() ? (
-                    <>
-                      <strong>Save to queue</strong> puts it back;
-                    </>
+                    <strong>Save to queue</strong>
                   ) : (
-                    <>
-                      <strong>Enter</strong> puts it back in the queue;
-                    </>
+                    <strong>Enter</strong>
                   )}{' '}
-                  <strong>Send</strong> takes it out and sends it now.
+                  puts it back in the queue, where it keeps its place.
                 </span>
                 <button
                   className="queued-edit-banner__save"
@@ -11286,15 +11281,12 @@ function App() {
                   <button
                     aria-label="Send message"
                     className="send-button"
-                    disabled={
-                      !composer.trim() || sending || editedSendRefusal !== undefined
-                    }
+                    disabled={!composer.trim() || sending}
                     onClick={() => void submitMessage()}
                     title={
-                      editedSendRefusal ??
-                      (editingQueuedPromptId
-                        ? 'Take this out of the queue and send it now'
-                        : 'Send immediately')
+                      editingQueuedPromptId
+                        ? 'Put this back in the queue'
+                        : 'Send immediately'
                     }
                     type="button"
                   >

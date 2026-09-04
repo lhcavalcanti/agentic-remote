@@ -3213,6 +3213,93 @@ describe('App', () => {
     expect(removeQueuedPrompt).not.toHaveBeenCalled()
   })
 
+  it('says only that Send puts the message back in the queue', async () => {
+    // The banner and the button have to describe what actually happens. They
+    // promised an immediate send while the action wrote the rewriting back.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'idle' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+
+    render(<App />)
+    await screen.findByText('the original text')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(document.querySelector('.queued-edit-banner')).not.toBeNull(),
+    )
+
+    const banner = document.querySelector('.queued-edit-banner')!
+    expect(banner.textContent).toContain('puts it back in the queue')
+    expect(banner.textContent).not.toMatch(/sends it now/i)
+    expect(
+      screen.getByRole('button', { name: 'Send message' }),
+    ).toHaveAttribute('title', 'Put this back in the queue')
+  })
+
+  it('lets another message be edited when the first one cannot be reached', async () => {
+    // One marker serves every session. Its owner can be on a computer that is
+    // not answering, and then there is no banner to see and no Escape to
+    // press -- so refusing here left every queue in the app uneditable.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+
+    const first = render(<App />)
+    await screen.findByText('the original text')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(localStorage.getItem('agentic-remote:queued-edit')).not.toBeNull(),
+    )
+    first.unmount()
+
+    // Back, with that computer offline and a queued message on another one.
+    const otherQueued = {
+      id: 'q2',
+      content: 'a message over here',
+      createdAt: '2026-07-25T02:00:00.000Z',
+    }
+    const otherWithQueue = {
+      ...secondSession,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [otherQueued],
+    }
+    vi.mocked(listComputers).mockResolvedValue([
+      { ...computer, online: false },
+      secondComputer,
+    ])
+    vi.mocked(listSessions).mockResolvedValue([otherWithQueue])
+    vi.mocked(getSession).mockResolvedValue(otherWithQueue)
+
+    render(<App />)
+    await screen.findByText('a message over here')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+
+    // Taken over, rather than refused with nothing on screen to cancel.
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('a message over here'),
+    )
+  })
+
   it('lets go of an edit whose computer is no longer paired', async () => {
     // One marker serves every session. Left set for a computer that has gone,
     // it refuses every later edit with no editor on screen to cancel from.

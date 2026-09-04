@@ -220,6 +220,29 @@ print(version)
 PY
 }
 
+resolve_path() {
+  readlink -f -- "$1" 2>/dev/null || printf '%s' "$1"
+}
+
+# Refuses a path that is, or contains, something the monitor is responsible
+# for. Cleanup removes this directory outright, so naming a checkout here
+# would delete it.
+assert_disposable() {
+  local target resolved protected other
+  target="$1"
+  resolved="$(resolve_path "$target")"
+  [[ -n "$resolved" && "$resolved" != "/" ]] ||
+    die "validation worktree path is not usable: $target"
+  for protected in "$DEV_ROOT" "$PROD_ROOT" "$RELEASE_ROOT" "$USER_HOME"; do
+    [[ -n "$protected" ]] || continue
+    other="$(resolve_path "$protected")"
+    [[ "$resolved" != "$other" ]] ||
+      die "validation worktree would be $protected"
+    [[ "$other" != "$resolved"/* ]] ||
+      die "validation worktree would contain $protected"
+  done
+}
+
 run_pnpm() {
   local root="$1"
   shift
@@ -315,9 +338,22 @@ run() {
   # Pinning also means what passed is what is promoted, rather than whatever
   # the development checkout became while the suite was running.
   local validate_root="$STATE_DIR/validate"
+  # The state directory comes from the profile, so this path is not trusted to
+  # be somewhere disposable. It is checked before anything is created, while
+  # refusing still costs nothing.
+  assert_disposable "$validate_root"
   cleanup_validation_worktree() {
     git -C "$DEV_ROOT" worktree remove --force "$validate_root" 2>/dev/null || true
-    rm -rf -- "$validate_root"
+    if [[ -e "$validate_root" ]]; then
+      # A linked worktree keeps `.git` as a file; a checkout keeps it as a
+      # directory. Refusing the latter means a path that turned out to name a
+      # repository cannot be deleted along with its history.
+      if [[ -d "$validate_root/.git" ]]; then
+        log "refusing to remove $validate_root: it holds a repository"
+        return 0
+      fi
+      rm -rf -- "$validate_root"
+    fi
   }
   trap cleanup_validation_worktree EXIT
   cleanup_validation_worktree

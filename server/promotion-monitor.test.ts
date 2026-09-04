@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -241,6 +241,24 @@ async function advanceMain(context: Fixture): Promise<string> {
 }
 
 describe('promotion monitor', () => {
+  it('refuses a validation path that names a checkout it would delete', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Cleanup removes that directory outright, so a state directory whose
+    // `validate` entry leads to the development checkout would delete it.
+    const state = path.join(context.root, 'state-over-dev')
+    await mkdir(state, { recursive: true })
+    await symlink(context.dev, path.join(state, 'validate'))
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('validation worktree would be')
+    expect(existsSync(path.join(context.dev, '.git'))).toBe(true)
+  })
+
   it('validates somewhere of its own rather than in the development checkout', async () => {
     const context = await fixture()
     const candidate = await advanceMain(context)

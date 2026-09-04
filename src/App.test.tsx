@@ -18,7 +18,7 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
-import App from './App'
+import App, { orderTasksForReading } from './App'
 import {
   activateSession,
   cancelBackgroundTask,
@@ -2496,16 +2496,18 @@ describe('App', () => {
     const composer = screen.getByLabelText('Message')
     expect(composer).toBeDisabled()
     expect(composer).toHaveAttribute('placeholder', 'Suspended · resume to send')
+    // Offered beside the conversation in the list, so a session can be picked
+    // up again without opening it first.
     expect(
-      screen.getByRole('button', { name: 'Resume session' }),
+      screen.getByRole('button', { name: 'Resume Project chat' }),
     ).toBeInTheDocument()
   })
 
-  it('suspends the selected session and offers to start it again', async () => {
+  it('suspends a session from the list and offers to start it again', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
 
     await waitFor(() =>
       expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-1'),
@@ -2513,7 +2515,7 @@ describe('App', () => {
     // The session is kept, so the way back has to be offered where the way
     // out was.
     const resume = await screen.findByRole('button', {
-      name: 'Resume session',
+      name: 'Resume Project chat',
     })
     fireEvent.click(resume)
     await waitFor(() =>
@@ -2535,8 +2537,8 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     expect(
-      await screen.findByRole('button', { name: 'Resume session' }),
-    ).toBeEnabled()
+      await screen.findByRole('button', { name: 'Resume Project chat' }),
+    ).toBeInTheDocument()
   })
 
   it('mutes notifications for the selected session from the header', async () => {
@@ -5664,13 +5666,15 @@ describe('App', () => {
 
     // Reading survives a session switch instead of being dismissed.
     fireEvent.click(
-      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+      screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!,
     )
     await waitFor(() =>
       expect(
         screen
           .getAllByRole('button', { name: /Second chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
     expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
@@ -5777,7 +5781,7 @@ describe('App', () => {
     const sessionItem = (title: RegExp) =>
       screen
         .getAllByRole('button', { name: title })
-        .find((item) => item.classList.contains('session-item'))!
+        .find((item) => item.classList.contains('session-item__open'))!
     expect(sessionItem(/Project chat/)).toHaveAttribute('aria-current', 'page')
 
     fireEvent.keyDown(shell, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
@@ -5836,7 +5840,9 @@ describe('App', () => {
     )
 
     fireEvent.click(
-      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+      screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!,
     )
     await waitFor(() =>
       expect(window.location.search).toBe(
@@ -5855,7 +5861,7 @@ describe('App', () => {
       expect(
         screen
           .getAllByRole('button', { name: /Project chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
   })
@@ -5931,13 +5937,15 @@ describe('App', () => {
     // Selecting another session must not stamp the previous session's reader
     // state over its own remembered one.
     fireEvent.click(
-      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+      screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!,
     )
     await waitFor(() =>
       expect(
         screen
           .getAllByRole('button', { name: /Second chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
     expect(
@@ -5967,7 +5975,7 @@ describe('App', () => {
     expect(
       screen
         .getAllByRole('button', { name: /Project chat/ })
-        .find((item) => item.classList.contains('session-item')),
+        .find((item) => item.classList.contains('session-item__open')),
     ).toHaveAttribute('aria-current', 'page')
     expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
   })
@@ -6029,7 +6037,7 @@ describe('App', () => {
       expect(
         screen
           .getAllByRole('button', { name: /Second chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
     expect(window.location.search).toBe(
@@ -6116,7 +6124,9 @@ describe('App', () => {
 
     // Both sessions share the active root, so nothing has to be reloaded, but
     // the second session was left at the root and must be taken back there.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
 
     await waitFor(() =>
       expect(
@@ -7043,6 +7053,133 @@ describe('App', () => {
     )
   })
 
+  it('puts running tasks first and the newest finished one above older ones', () => {
+    // What is still going is the only part worth a glance, so it leads
+    // whatever it started. The rest is history, and history reads newest
+    // first: the one that just finished is what a reader is looking for.
+    const task = (
+      id: string,
+      status: 'running' | 'queued' | 'completed' | 'failed',
+      startedAt: string,
+      completedAt?: string,
+    ) => ({
+      id,
+      type: 'shell' as const,
+      description: id,
+      status,
+      startedAt,
+      canCancel: false,
+      ...(completedAt ? { completedAt } : {}),
+    })
+
+    const ordered = orderTasksForReading([
+      task('done-old', 'completed', '2026-01-01T00:00:00.000Z', '2026-01-01T00:01:00.000Z'),
+      task('run-new', 'running', '2026-01-01T00:05:00.000Z'),
+      task('done-new', 'completed', '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z'),
+      task('run-old', 'running', '2026-01-01T00:04:00.000Z'),
+      task('queued', 'queued', '2026-01-01T00:06:00.000Z'),
+    ]).map((entry) => entry.id)
+
+    expect(ordered).toEqual([
+      // Still going, oldest first so nothing long-running is buried.
+      'run-old',
+      'run-new',
+      'queued',
+      // Finished, newest first.
+      'done-new',
+      'done-old',
+    ])
+  })
+
+  it('places a finished task with no end time by when it began', () => {
+    const ordered = orderTasksForReading([
+      {
+        id: 'no-end',
+        type: 'shell' as const,
+        description: 'no-end',
+        status: 'failed' as const,
+        startedAt: '2026-01-01T00:09:00.000Z',
+        canCancel: false,
+      },
+      {
+        id: 'ended-earlier',
+        type: 'shell' as const,
+        description: 'ended-earlier',
+        status: 'completed' as const,
+        startedAt: '2026-01-01T00:01:00.000Z',
+        completedAt: '2026-01-01T00:02:00.000Z',
+        canCancel: false,
+      },
+    ]).map((entry) => entry.id)
+    expect(ordered).toEqual(['no-end', 'ended-earlier'])
+  })
+
+  it('counts only what is running, not what is merely tracked', async () => {
+    // A session can carry a long history of finished work. The count exists to
+    // be caught at a glance, so it speaks for what is running now: a hundred
+    // tracked tasks with none of them running is a quiet session and reads as
+    // one.
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const finished = Array.from({ length: 100 }, (_unused, index) => ({
+      id: `shell-${index}`,
+      type: 'shell' as const,
+      description: `finished ${index}`,
+      status: 'completed' as const,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:00:30.000Z',
+      canCancel: false,
+    }))
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.tasks.updated',
+          computerId: 'computer-1',
+          sessionId: 'session-1',
+          tasks: finished,
+          runningCount: 0,
+          supported: true,
+        }),
+      } as MessageEvent)
+    })
+
+    // Nothing is running, so the row says nothing about tasks at all.
+    expect(document.querySelector('.session-item__tasks')).toBeNull()
+
+    // Two of them start, and only those two are counted.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.tasks.updated',
+          computerId: 'computer-1',
+          sessionId: 'session-1',
+          tasks: finished,
+          runningCount: 2,
+          supported: true,
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('.session-item__tasks')?.textContent,
+      ).toBe('2 tasks'),
+    )
+  })
+
+  it('says nothing in the list when no task is running', async () => {
+    // The count is there to be caught in passing. A session with nothing
+    // running should read as a session, not as a session with a zero on it.
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelector('.session-item__tasks')).toBeNull()
+    expect(screen.queryByText(/running task/)).not.toBeInTheDocument()
+    // The folder still shows, and the count would sit beside it.
+    expect(document.querySelector('.session-item__where')).not.toBeNull()
+  })
+
   it('retries a knowledge restore that failed', async () => {
     localStorage.setItem(
       'agentic-remote:knowledge-mode',
@@ -7377,7 +7514,7 @@ describe('App', () => {
     expect(
       screen
         .getAllByRole('button', { name: /Project chat/ })
-        .find((item) => item.classList.contains('session-item')),
+        .find((item) => item.classList.contains('session-item__open')),
     ).toHaveAttribute('aria-current', 'page')
 
     // Going back to a session that has since been closed must land on one
@@ -7389,7 +7526,7 @@ describe('App', () => {
         expect(
           screen
             .getAllByRole('button', { name: /Project chat/ })
-            .find((item) => item.classList.contains('session-item')),
+            .find((item) => item.classList.contains('session-item__open')),
         ).toHaveAttribute('aria-current', 'page'),
       { timeout: 250 },
     )
@@ -7740,7 +7877,9 @@ describe('App', () => {
 
     // The second session has never opened anything, so the panel must not
     // leave the first session's document on screen under its name.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     await waitFor(() =>
       expect(
         screen.queryByRole('heading', { name: 'Setup guide' }),
@@ -7803,12 +7942,14 @@ describe('App', () => {
 
     // Before it lands, the reader moves to a session that has never opened
     // anything at all.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     await waitFor(() =>
       expect(
         screen
           .getAllByRole('button', { name: /Second chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
 
@@ -8110,7 +8251,9 @@ describe('App', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Close knowledge panel' }),
     )
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
 
     await waitFor(() =>
@@ -8218,7 +8361,9 @@ describe('App', () => {
     // Switching session supersedes the startup load, which then writes
     // nothing. The panel must still end up with a listing rather than sit
     // blank until the root is picked again by hand.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     releaseRoot?.()
 
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
@@ -8400,7 +8545,9 @@ describe('App', () => {
     // Changing session abandons the load. The new session has nothing to
     // restore, so nothing else asks for the root: the discarded reply would
     // otherwise leave the folder marked loading for ever.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     switched = true
     await act(async () => {
       for (const resolve of stalled) {

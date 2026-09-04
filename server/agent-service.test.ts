@@ -4355,6 +4355,41 @@ describe('AgentService deletion', () => {
     expect(client.session.sentPrompts).not.toContain('/plan')
   })
 
+  it('keeps draining after a command that started no turn', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-qrest-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // `/usage` answers with text rather than starting a turn, so nothing comes
+    // back later to take the next prompt off the queue.
+    await service.store.enqueuePrompt(created.id, {
+      id: 'cmd-1',
+      content: '/usage',
+      createdAt: '2026-09-02T00:00:00.000Z',
+      command: true,
+    })
+    await service.store.enqueuePrompt(created.id, {
+      id: 'after',
+      content: 'the one behind it',
+      createdAt: '2026-09-02T00:00:01.000Z',
+    })
+
+    await service.sendMessage(created.id, 'wake the queue', true)
+
+    // Everything queued behind the command goes out too, instead of waiting
+    // for an unrelated send to start another drain.
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('the one behind it')
+    })
+  })
+
   it('refuses an order built from a queue that has since changed', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-order-'))
     directories.push(directory)

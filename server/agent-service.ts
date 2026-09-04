@@ -3911,7 +3911,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const now = this.store.get(sessionId)
       if (
         this.activePrompts.has(sessionId) ||
-        this.drainingSessions.has(sessionId) ||
+        // As above: the queue's own command is the work this marker stands
+        // for, so it is not something for that command to wait behind.
+        (!fromQueue && this.drainingSessions.has(sessionId)) ||
         // Another prompt already inside the controller has not come back to
         // record itself yet, so the stored status still says idle. The
         // controller knows, and asking it is the only reading that is true at
@@ -3979,7 +3981,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           createdAt: new Date().toISOString(),
         })
         this.publish(notice)
-        return this.sendMessage(sessionId, result.prompt, busy)
+        // A command the queue dispatched holds the drain marker, and the
+        // ordinary send path reads that as the session already responding. The
+        // prompt this command generated is the same piece of work, so it goes
+        // in the way the queue's own messages do -- otherwise the command ran,
+        // said so, and then produced nothing.
+        return fromQueue
+          ? this.startMessage(sessionId, result.prompt, true)
+          : this.sendMessage(sessionId, result.prompt, busy)
       }
       const content =
         result.kind === 'text'
@@ -5742,6 +5751,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publishError(sessionId, error)
     } finally {
       this.drainingSessions.delete(sessionId)
+    }
+    // A command that answered without starting a turn leaves nothing to call
+    // this again when the turn ends, because there was no turn. Everything
+    // behind it would wait for an unrelated send, resume or restart.
+    const remaining = this.store.get(sessionId)
+    if (
+      remaining?.queuedPrompts?.length &&
+      remaining.status === 'idle' &&
+      !this.activePrompts.has(sessionId) &&
+      !this.drainingSessions.has(sessionId)
+    ) {
+      void this.drainSdkQueue(sessionId).catch(() => undefined)
     }
   }
 

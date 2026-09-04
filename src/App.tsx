@@ -9180,7 +9180,19 @@ function App() {
       // Rather than move it back afterwards -- which races the queue draining
       // and still was not a send -- this says what is true and leaves the
       // message where it is.
-      if (waiting.some((prompt) => prompt.id !== removedId)) {
+      //
+      // Asked of the server rather than of what is on screen. Another client
+      // can queue something between the two, and by then this one has already
+      // been taken off the queue and cleared from the composer.
+      let live = waiting
+      try {
+        const fresh = await getSession(selected.computerId, selected.id)
+        setSessions((current) => upsertSession(current, fresh))
+        live = fresh.queuedPrompts || []
+      } catch {
+        // The read failed, so what is on screen is the only account there is.
+      }
+      if (live.some((prompt) => prompt.id !== removedId)) {
         setError(
           'Other messages are waiting, so this cannot be sent ahead of them. Save it to keep its place, or remove the others first.',
         )

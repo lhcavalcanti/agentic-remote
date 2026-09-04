@@ -3306,6 +3306,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // other with a crash possible in between.
     answers?: string,
   ): Promise<SessionDetail> {
+    if (
+      this.terminalController.ownsStartupPrompt?.(sessionId) ||
+      this.terminalAdmissionOperations.has(sessionId)
+    ) {
+      return this.serializeTerminalAdmission(sessionId, async () => {
+        const terminalBacked = await this.terminalController.has(sessionId)
+        return this.sendAdmittedWithBackend(
+          sessionId,
+          content,
+          enqueue,
+          answers,
+          terminalBacked,
+          true,
+        )
+      })
+    }
     const terminalBacked = await this.terminalController.has(sessionId)
     return this.sendAdmittedWithBackend(
       sessionId,
@@ -3906,6 +3922,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // to get there, so it holds the session for the whole of it.
     const releaseDispatch = this.holdDispatch(sessionId)
     try {
+      if (
+        this.terminalController.ownsStartupPrompt?.(sessionId) ||
+        this.terminalAdmissionOperations.has(sessionId)
+      ) {
+        return await this.serializeTerminalAdmission(sessionId, async () => {
+          await this.prepareTerminalCommandAdmission(sessionId)
+          return this.dispatchCommand(
+            sessionId,
+            name,
+            argument,
+            enqueue,
+            answers,
+          )
+        })
+      }
       return await this.dispatchCommand(
         sessionId,
         name,
@@ -3915,6 +3946,62 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     } finally {
       releaseDispatch()
+    }
+  }
+
+  private async prepareTerminalCommandAdmission(
+    sessionId: string,
+  ): Promise<void> {
+    const pane = await this.terminalController.capture?.(sessionId)
+    if (!pane) {
+      return
+    }
+    let currentPane = pane
+    if (isTerminalOverlay(currentPane)) {
+      const canHandle =
+        (await this.terminalController.canHandleStartupPrompt?.(
+          sessionId,
+          currentPane,
+        )) ?? false
+      const resolved =
+        canHandle &&
+        ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??
+          false)
+      if (!resolved) {
+        throw Object.assign(
+          new Error(
+            'The terminal is showing a full-screen view. Close it there, then run this command again.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      const refreshed = await this.terminalController.capture?.(sessionId)
+      if (!refreshed || isTerminalOverlay(refreshed)) {
+        throw Object.assign(
+          new Error(
+            'The terminal changed while its startup prompt was being resolved. Check it, then run this command again.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      currentPane = refreshed
+    }
+    const working =
+      isTerminalAgentWorking(currentPane) ||
+      this.terminalAdmissionDispatched.has(sessionId)
+    const current = this.store.get(sessionId)
+    if (working && current?.status === 'idle') {
+      const running = await this.store.update(sessionId, (session) => {
+        session.status = 'running'
+        session.activity = 'Working in terminal'
+      })
+      this.publish(running)
+    } else if (!working && current?.status !== 'idle') {
+      const idle = await this.store.update(sessionId, (session) => {
+        session.status = 'idle'
+        session.activity = undefined
+      })
+      this.publish(idle)
     }
   }
 

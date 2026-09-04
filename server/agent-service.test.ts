@@ -5412,6 +5412,76 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('resolves owned startup before queueing a terminal command', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-command-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let currentPane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    const terminal = {
+      ownsStartupPrompt: vi.fn(() => true),
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        currentPane = [
+          ' ● Usage this month: 42 requests',
+          '╻▄▄▄▄',
+          '┃',
+          '╹▀▀▀▀',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      canHandleStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Owned startup command',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
+
+    await service.executeCommand(client.session.sessionId, '/usage', true)
+
+    expect(terminal.resolveStartupPrompt).toHaveBeenCalledWith(
+      client.session.sessionId,
+    )
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      '/usage',
+      false,
+    )
+    await service.stop()
+  })
+
   it('serializes sends that overlap startup resolution', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-startup-overlap-'),

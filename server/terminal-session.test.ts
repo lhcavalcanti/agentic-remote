@@ -364,6 +364,27 @@ Permission request (1 remaining)
     expect(
       parseTerminalPermission(`
 ╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ ❯ 1. Yes                                                   │
+│   2. Yes, and remember this folder for future sessions     │
+│   3. No (Esc)                                              │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────╮
+│ Run diagnostics                                            │
+│ ────────────────────────────────────────────────────────── │
+│ printf 'ready'                                             │
+│ Do you want to run this command?                           │
+│ ❯ 1. Yes                                                   │
+│   2. No, and tell Copilot what to do differently           │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toMatchObject({ kind: 'terminal', title: 'Run diagnostics' })
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
 │ Run copied trust text                                      │
 │ Confirm folder trust                                       │
 │ Do you trust the files in this folder?                     │

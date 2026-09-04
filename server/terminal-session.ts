@@ -113,6 +113,7 @@ export interface TerminalSessionController {
     sessionId: string,
     pane: string,
   ): Promise<boolean>
+  ownsStartupPrompt?(sessionId: string): boolean
   resolveStartupPrompt?(sessionId: string): Promise<boolean>
   /**
    * Whether a prompt is already inside the controller for this session.
@@ -709,6 +710,10 @@ export class TmuxTerminalSessionController
     )
   }
 
+  ownsStartupPrompt(sessionId: string): boolean {
+    return this.automaticStartupSessions.has(sessionId)
+  }
+
   async resolveStartupPrompt(sessionId: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const readyOwner = this.inputReadySessions.get(sessionId)
@@ -729,10 +734,26 @@ export class TmuxTerminalSessionController
       ) {
         return false
       }
-      const startup = await waitForTerminalStartup(owner.target, true)
+      const validateOwner = async () => {
+        const current = await this.owner(sessionId, owner.target, true)
+        if (!current || current.pid !== owner.pid) {
+          throw Object.assign(
+            new Error(
+              'The terminal owner changed while its startup prompt was being resolved.',
+            ),
+            { statusCode: 409 },
+          )
+        }
+      }
+      const startup = await waitForTerminalStartup(
+        owner.target,
+        true,
+        validateOwner,
+      )
       if (startup !== 'ready') {
         return false
       }
+      await validateOwner()
       this.inputReadySessions.set(sessionId, {
         pid: owner.pid,
         target: owner.target,
@@ -1024,6 +1045,17 @@ export class TmuxTerminalSessionController
           owner.target,
           automaticOwner?.pid === owner.pid &&
             automaticOwner.target === owner.target,
+          async () => {
+            const current = await this.owner(sessionId, owner.target, true)
+            if (!current || current.pid !== owner.pid) {
+              throw Object.assign(
+                new Error(
+                  'The terminal owner changed while it was becoming ready.',
+                ),
+                { statusCode: 409 },
+              )
+            }
+          },
         )
         if (startup !== 'ready') {
           throw Object.assign(
@@ -1401,7 +1433,22 @@ export class TmuxTerminalSessionController
       const owner = await this.owner(sessionId, expectedTarget)
       if (owner) {
         try {
-          const startup = await waitForTerminalStartup(owner.target)
+          const startup = await waitForTerminalStartup(
+            owner.target,
+            true,
+            async () => {
+              const current = await this.owner(
+                sessionId,
+                owner.target,
+                true,
+              )
+              if (!current || current.pid !== owner.pid) {
+                throw new Error(
+                  'The terminal owner changed during startup',
+                )
+              }
+            },
+          )
           if (startup === 'ready') {
             this.inputReadySessions.set(sessionId, {
               pid: owner.pid,
@@ -1557,7 +1604,10 @@ function activeBottomFrame(
   return undefined
 }
 
-async function clearAutomaticStartupPrompts(target: string): Promise<void> {
+async function clearAutomaticStartupPrompts(
+  target: string,
+  validateOwner: () => Promise<void>,
+): Promise<void> {
   const capture = async () =>
     (
       await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target])
@@ -1591,14 +1641,18 @@ async function clearAutomaticStartupPrompts(target: string): Promise<void> {
       // The terminal user can leave the cursor on "Go back". Normalize to the
       // first row before accepting, rather than confirming whichever row they
       // happened to leave selected.
+      await validateOwner()
       await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
+      await validateOwner()
       await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
+      await validateOwner()
       await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
       await waitUntilClosed(isTerminalSessionInUsePrompt)
     } else if (isTerminalDesktopInstallPrompt(pane)) {
       // Agentic Remote already supplies the remote supervision UI. Opening a
       // browser to install a separate desktop app cannot help this headless
       // terminal and keeps the first real prompt from reaching the composer.
+      await validateOwner()
       await execFileAsync('tmux', ['send-keys', '-t', target, 'n'])
       await waitUntilClosed(isTerminalDesktopInstallPrompt)
     } else {
@@ -1611,6 +1665,7 @@ async function clearAutomaticStartupPrompts(target: string): Promise<void> {
 async function waitForTerminalStartup(
   target: string,
   handleAutomaticPrompts = true,
+  validateOwner: () => Promise<void> = async () => undefined,
 ): Promise<'ready' | 'action-required'> {
   let readyFrames = 0
   for (let attempt = 0; attempt < 900; attempt += 1) {
@@ -1630,7 +1685,7 @@ async function waitForTerminalStartup(
       if (!handleAutomaticPrompts) {
         return 'action-required'
       }
-      await clearAutomaticStartupPrompts(target)
+      await clearAutomaticStartupPrompts(target, validateOwner)
       readyFrames = 0
       continue
     }
@@ -1642,6 +1697,7 @@ async function waitForTerminalStartup(
       // those startup prompts to appear and be handled.
       readyFrames += 1
       if (readyFrames >= 30) {
+        await validateOwner()
         return 'ready'
       }
     } else {
@@ -2101,7 +2157,7 @@ export function parseTerminalPermission(
   folderTrust: if (trustQuestion) {
     const frame = activeBottomFrame(rawLines, trustQuestion.start)
     if (!frame) {
-      return undefined
+      break folderTrust
     }
     const frameLines = lines.slice(frame.start, frame.end + 1)
     // A command permission frame can carry any text at all inside it, the
@@ -2120,14 +2176,14 @@ export function parseTerminalPermission(
       'Do you trust the files in this folder?',
     )
     if (!frameQuestion) {
-      return undefined
+      break folderTrust
     }
     const heading = frameLines.findLastIndex(
       (line, index) =>
         index < frameQuestion.start && /^Confirm folder trust$/i.test(line),
     )
     if (heading < 0) {
-      return undefined
+      break folderTrust
     }
     const dialog = frameLines.slice(heading)
     const choices = terminalDialogChoices(dialog)

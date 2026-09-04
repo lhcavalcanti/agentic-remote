@@ -2169,56 +2169,6 @@ describe('App', () => {
     )
   })
 
-  it('gives a queued paste back as a label, not as every line of it', async () => {
-    // The queue stores what will be delivered, which is the paste in full.
-    // Taking the message back for rewriting put all of that into the composer,
-    // so the box the reader has to work in filled with the payload they had
-    // just collapsed.
-    const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join(
-      '\n',
-    )
-    const label = '[Paste #1 - 21 lines]'
-    const queued = {
-      id: 'q1',
-      content: pasted,
-      createdAt: '2026-07-25T01:00:00.000Z',
-      display: label,
-      pastes: [
-        { key: 'p1', id: 1, content: pasted, lineCount: 21, start: 0 },
-      ],
-    }
-    const withQueue = {
-      ...session,
-      status: 'running' as const,
-      queuedCount: 1,
-      queuedPrompts: [queued],
-    }
-    vi.mocked(listSessions).mockResolvedValue([withQueue])
-    vi.mocked(getSession).mockResolvedValue(withQueue)
-    vi.mocked(removeQueuedPrompt).mockResolvedValue({
-      session: { ...withQueue, queuedCount: 0, queuedPrompts: [] },
-      prompt: queued,
-    })
-
-    render(<App />)
-    await screen.findByLabelText('Queued prompts')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
-
-    await waitFor(() =>
-      expect(screen.getByLabelText('Message')).toHaveValue(label),
-    )
-
-    // Still the whole paste when it goes back out.
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    await waitFor(() =>
-      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
-        acknowledgesFailure: undefined,
-        content: pasted,
-        enqueue: false,
-      }),
-    )
-  })
-
   it('keeps what was typed around a collapsed paste', async () => {
     // Indentation before a paste and a newline after it are part of the
     // message. Trimming the ends of the reconstructed prompt quietly rewrote

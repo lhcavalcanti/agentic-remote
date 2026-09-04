@@ -100,7 +100,6 @@ import {
 } from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
 import type {
-  CollapsedPaste,
   AgentProvider,
   AgentProviderCapability,
   ActivityKind,
@@ -343,6 +342,13 @@ type ComposerHistoryState = {
   draftPastes: CollapsedPaste[]
 }
 
+type CollapsedPaste = {
+  key: string
+  id: number
+  content: string
+  lineCount: number
+  start: number
+}
 
 type ComposerDraft = {
   text: string
@@ -9593,11 +9599,6 @@ function App() {
             acknowledgesFailure: restoredFailures.current.get(targetKey),
             content,
             enqueue: shouldEnqueue,
-            // Only worth carrying for a message that may come back to be
-            // rewritten, and only when it was shown as something shorter.
-            ...(shouldEnqueue && submittedPastes.length > 0
-              ? { display: displayContent, pastes: submittedPastes }
-              : {}),
           })
       const acknowledged = restoredFailures.current.get(targetKey)
       acknowledgedStamp = acknowledged
@@ -9906,23 +9907,7 @@ function App() {
       )
       setSessions((current) => upsertSession(current, result.session))
       if (edit) {
-        // Given back the way it was written. A message with a long paste in it
-        // was stored expanded, so putting the stored text into the composer
-        // unfolded every line of it into the box the reader has to work in.
-        const shown = result.prompt.display
-        const pastes = result.prompt.pastes
-        if (shown && pastes?.length && selectedKey) {
-          const targetKey = followReplacementsRef.current(selectedKey)
-          updateComposerDrafts([targetKey], (current) => ({
-            ...current,
-            [targetKey]: {
-              text: shown,
-              pastes: validComposerPastes(shown, pastes),
-            },
-          }))
-        } else {
-          setComposer(result.prompt.content)
-        }
+        setComposer(result.prompt.content)
         window.requestAnimationFrame(() => composerRef.current?.focus())
       }
     } catch (caught) {

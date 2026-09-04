@@ -3624,6 +3624,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     name: string,
   ): Promise<string | undefined> {
     const wanted = name.toLowerCase()
+    // A lone slash names nothing. Every single-word command has an empty
+    // shortcut, so an empty name matched the first of them.
+    if (!wanted) {
+      return undefined
+    }
     const shortcut = (value: string) => {
       const parts = value.split(/[-_]/)
       return parts.length > 1

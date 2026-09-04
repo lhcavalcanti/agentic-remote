@@ -4332,6 +4332,13 @@ describe('AgentService deletion', () => {
     // invalid command goes back to the head after every failed drain, and
     // nothing behind it moves again. Refusing a rewrite the reader can repeat
     // is the cheaper of the two.
+    // A lone slash names nothing, and every single-word command has an empty
+    // shortcut -- so an empty name matched the first of them and would have
+    // been stored, and run, as that command.
+    await expect(
+      service.updateQueuedPrompt(created.id, 'p1', '/'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+
     const listing = vi
       .spyOn(service, 'listCommands')
       .mockRejectedValue(new Error('runtime unreachable'))

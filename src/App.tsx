@@ -6225,6 +6225,9 @@ function App() {
   // Sessions somebody said outright are gone, as opposed to ones a list did
   // not mention. Absence and removal are different things.
   const removedSessions = useRef(new Set<string>())
+  // One reorder at a time for a session, so a second drag does not take its
+  // snapshot from a queue the server has not accepted yet.
+  const reorderInFlight = useRef(new Map<string, Promise<void>>())
   const loadKnowledgeFolderRef = useRef<
     (rootId: string, path: string) => Promise<unknown>
   >(async () => undefined)
@@ -10347,6 +10350,12 @@ function App() {
     }
     if (content.startsWith('/')) {
       const name = content.slice(1).split(/\s+/, 1)[0]
+      // A lone slash names nothing, and every single-word command has an empty
+      // shortcut -- so it matched the first of them and would have run it.
+      if (!name) {
+        setError('That is not a command.')
+        return false
+      }
       // The queue is drained by the agent, so a command it does not have stops
       // the drain when it reaches it -- and everything behind it waits. The
       // ones this app answers are never the agent's; the rest are checked
@@ -10447,10 +10456,10 @@ function App() {
         // marker -- leaving the rewriting in the composer.
         try {
           const fresh = await getSession(target.computerId, target.id)
-          setSessions((current) => upsertSession(current, fresh))
+          if (stillListed(fresh)) {
+            setSessions((current) => upsertSession(current, fresh))
+          }
         } catch {
-          // Even the re-read failed. The marker is let go of directly so the
-          // banner stops offering a Save that cannot succeed.
           // Left as it is. A re-read that failed says nothing about the
           // message, and letting the marker go on the strength of it detached
           // the rewrite from a message that may still be waiting.
@@ -10471,6 +10480,15 @@ function App() {
     if (!selected || !queue || !over || active.id === over.id) {
       return
     }
+    // One at a time for a session. A second drag begun before the first has
+    // settled took its own snapshot of a queue the server had not accepted
+    // yet, so when both failed the later one put the earlier drag's order back
+    // as though it had been agreed to.
+    const lane = sessionKey(selected)
+    const waitFor = reorderInFlight.current.get(lane)
+    if (waitFor) {
+      await waitFor.catch(() => undefined)
+    }
     const ids = queue.map((prompt) => `queued:${prompt.id}`)
     const from = ids.indexOf(String(active.id))
     const to = ids.indexOf(String(over.id))
@@ -10487,6 +10505,13 @@ function App() {
       upsertSession(current, { ...target, queuedPrompts: next }),
     )
     setError(undefined)
+    let settle: () => void = () => {}
+    reorderInFlight.current.set(
+      lane,
+      new Promise<void>((resolve) => {
+        settle = resolve
+      }),
+    )
     try {
       const updated = await reorderQueuedPrompts(
         target.computerId,
@@ -10513,12 +10538,13 @@ function App() {
         // reappears as a session nothing can be done with and no later event
         // will clear.
         setSessions((current) =>
-          current.some(
-            (candidate) => sessionKey(candidate) === sessionKey(target),
-          )
-            ? upsertSession(current, target)
-            : current,
+          stillListed(target) ? upsertSession(current, target) : current,
         )
+      }
+    } finally {
+      settle()
+      if (reorderInFlight.current.get(lane)) {
+        reorderInFlight.current.delete(lane)
       }
     }
   }

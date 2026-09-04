@@ -211,6 +211,23 @@ describe('TmuxTerminalSessionController', () => {
 ╰─────────────────────────────────────────────────╯
       `),
     ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+╭─────────────────────────────────────────────────╮
+│ ╭─────────────────────────────────────────────╮ │
+│ │ Confirm folder trust                        │ │
+│ │ Do you trust the files in this              │ │
+│ │ folder?                                     │ │
+│ │ ❯ 1. Yes                                    │ │
+│ │   2. Yes, and remember this folder for      │ │
+│ │      future sessions                        │ │
+│ │   3. No (Esc)                               │ │
+│ │ ↑/↓ to navigate · enter to select · esc to  │ │
+│ │ cancel                                      │ │
+│ ╰─────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
     // The composer draws itself as a frame too, and what is typed in it can be
     // anything -- this panel's own words among them, pasted or recalled. It is
     // drawn without a prompt marker while it holds no caret, which is exactly

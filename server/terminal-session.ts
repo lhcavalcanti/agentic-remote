@@ -1682,19 +1682,21 @@ function containsCopiedInteractiveFrame(lines: string[]): boolean {
       continue
     }
     const copied = lines.slice(start + 1, index).join('\n')
-    const hasSelect = /enter\s+(?:to\s+)?select/i.test(copied)
+    const normalized = copied.replace(/\s+/gu, ' ')
+    const hasSelect = /enter\s+(?:to\s+)?select/i.test(normalized)
     const copiedDesktop =
-      /Install it now\?/i.test(copied) && /Y\s*\/\s*N/i.test(copied)
+      /Install it now\?/i.test(normalized) && /Y\s*\/\s*N/i.test(normalized)
     const copiedCancelable =
-      /(Session in use|Do you trust the files in this folder\?)/i.test(copied) &&
-      /esc\s+(?:to\s+)?cancel/i.test(copied)
+      /(Session in use|Do you trust the files in this folder\?)/i.test(
+        normalized,
+      ) && /esc\s+(?:to\s+)?cancel/i.test(normalized)
     const copiedCommand =
-      /Do you want to run this command\?/i.test(copied) &&
-      /esc\s+(?:to\s+)?cancel/i.test(copied)
+      /Do you want to run this command\?/i.test(normalized) &&
+      /esc\s+(?:to\s+)?cancel/i.test(normalized)
     const copiedQuestion =
       /\bQuestion\b/i.test(copied) &&
-      /enter\s+(?:to\s+)?(?:confirm|submit)/i.test(copied) &&
-      /esc\s+(?:to\s+)?cancel/i.test(copied)
+      /enter\s+(?:to\s+)?(?:confirm|submit)/i.test(normalized) &&
+      /esc\s+(?:to\s+)?cancel/i.test(normalized)
     if (
       (hasSelect && (copiedDesktop || copiedCancelable || copiedCommand)) ||
       copiedQuestion

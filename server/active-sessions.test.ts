@@ -102,10 +102,16 @@ describe('active Copilot processes', () => {
     )
     await waitForProcessCommand(pid, [executable, sessionId])
 
+    const processes = await eventually(
+      () => findActiveCopilotProcesses(),
+      (entries) =>
+        entries.some(
+          (processInfo) =>
+            processInfo.pid === pid && processInfo.sessionId === sessionId,
+        ),
+    )
     expect(
-      (await findActiveCopilotProcesses()).filter(
-        (processInfo) => processInfo.sessionId === sessionId,
-      ),
+      processes.filter((processInfo) => processInfo.sessionId === sessionId),
     ).toEqual([{ pid, sessionId, source: 'argument' }])
 
     await stopActiveCopilotSession(sessionId)

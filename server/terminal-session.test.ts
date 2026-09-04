@@ -895,20 +895,11 @@ Permission request (1 remaining)
       controller.send(sessionId, 'MESSAGE-AAAA', false),
       controller.send(sessionId, 'MESSAGE-BBBB', false),
     ])
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      try {
-        if ((await readFile(output, 'utf8')).includes('MESSAGE-BBBB')) {
-          break
-        }
-      } catch {
-        // The fake terminal has not consumed both lines yet.
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50))
-    }
-
-    expect(await readFile(output, 'utf8')).toBe(
-      'MESSAGE-AAAA\nMESSAGE-BBBB',
+    const received = await eventually(
+      () => readFile(output, 'utf8').catch(() => ''),
+      (value) => value.includes('MESSAGE-BBBB'),
     )
+    expect(received).toBe('MESSAGE-AAAA\nMESSAGE-BBBB')
   })
 
   it('waits through a delayed startup promotion before sending', async () => {
@@ -1544,15 +1535,12 @@ describe('terminal form identity', () => {
     expect(parseTerminalFormActiveField(wrapped, wrappedForm)).toBe(0)
   })
 
-  it('recognizes a question hard-wrapped inside an unbroken URL', () => {
+  it('recognizes a tmux-joined question containing an unbroken URL', () => {
     const question =
       'Inspect https://example.test/a-very-long-unbroken-resource-identifier before continuing.'
     const wrapped = formPaneFirstField.replace(
       ' Configure the deployment request.',
-      [
-        ' Inspect https://example.test/a-very-long-unbroken-resour',
-        ' ce-identifier before continuing.',
-      ].join('\n'),
+      ` ${question}`,
     )
     const wrappedForm = { ...form, question }
 
@@ -1620,16 +1608,12 @@ describe('terminal form identity', () => {
     ).toBe(true)
   })
 
-  it('keeps viable hard-wrap prefixes across several URL lines', () => {
+  it('keeps the exact question after tmux joins several URL wraps', () => {
     const question =
       'Inspect https://example.test/a-very-long-resource-identifier-that-spans-several-terminal-lines before continuing.'
     const wrapped = formPaneFirstField.replace(
       ' Configure the deployment request.',
-      [
-        ' Inspect https://example.test/a-very-long-resource-ident',
-        ' ifier-that-spans-several-terminal-lines before',
-        ' continuing.',
-      ].join('\n'),
+      ` ${question}`,
     )
 
     expect(

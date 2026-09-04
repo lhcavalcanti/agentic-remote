@@ -430,6 +430,7 @@ export class TmuxTerminalSessionController
     const pane = (
       await execFileAsync('tmux', [
         'capture-pane',
+        '-J',
         '-p',
         '-t',
         target,
@@ -450,6 +451,7 @@ export class TmuxTerminalSessionController
     const pane = (
       await execFileAsync('tmux', [
         'capture-pane',
+        '-J',
         '-p',
         '-t',
         target,
@@ -486,6 +488,7 @@ export class TmuxTerminalSessionController
       const pane = (
         await execFileAsync('tmux', [
           'capture-pane',
+          '-J',
           '-p',
           '-t',
           owner.target,
@@ -537,6 +540,7 @@ export class TmuxTerminalSessionController
       const pane = (
         await execFileAsync('tmux', [
           'capture-pane',
+          '-J',
           '-p',
           '-t',
           owner.target,
@@ -599,6 +603,7 @@ export class TmuxTerminalSessionController
       return (
         await execFileAsync('tmux', [
           'capture-pane',
+          '-J',
           '-p',
           '-t',
           target,
@@ -632,6 +637,7 @@ export class TmuxTerminalSessionController
         (
           await execFileAsync('tmux', [
             'capture-pane',
+            '-J',
             '-p',
             '-t',
             owner.target,
@@ -812,6 +818,7 @@ export class TmuxTerminalSessionController
         const pane = (
           await execFileAsync('tmux', [
             'capture-pane',
+            '-J',
             '-p',
             '-t',
             owner.target,
@@ -1278,7 +1285,7 @@ function hasComposerAfter(lines: string[], index: number): boolean {
 async function clearAutomaticStartupPrompts(target: string): Promise<void> {
   const capture = async () =>
     (
-      await execFileAsync('tmux', ['capture-pane', '-p', '-t', target])
+      await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target])
     ).stdout
 
   const waitUntilClosed = async (
@@ -1661,10 +1668,7 @@ function terminalQuestionEndIndex(
   for (let end = header + 1; end < lines.length; end += 1) {
     const rendered = lines.slice(header + 1, end + 1)
     const normalized = rendered.join(' ').replace(/\s+/gu, ' ').trim()
-    if (
-      normalized === question ||
-      terminalHardWrappedTextMatches(rendered, question)
-    ) {
+    if (normalized === question) {
       return end
     }
   }
@@ -2000,48 +2004,6 @@ function findTerminalWrappedText(
     }
   }
   return found
-}
-
-function terminalHardWrappedTextMatches(
-  lines: string[],
-  expected: string,
-): boolean {
-  const normalizedExpected = expected.replace(/\s+/gu, ' ').trim()
-  const parts = lines
-    .map((line) => line.replace(/\s+/gu, ' ').trim())
-    .filter(Boolean)
-  if (parts.length < 2) {
-    return false
-  }
-  let candidates = new Map<string, boolean>()
-  candidates.set(parts[0], true)
-  for (let index = 1; index < parts.length; index += 1) {
-    const previousPart = parts[index - 1]
-    const nextPart = parts[index]
-    const previousToken = previousPart.split(' ').at(-1) || ''
-    const nextToken = nextPart.split(' ')[0] || ''
-    const combinedToken = `${previousToken}${nextToken}`
-    const hardBoundary =
-      /[/:\\]/u.test(previousToken) ||
-      /[/:\\]/u.test(nextToken) ||
-      /[a-z][A-Z]/u.test(combinedToken) ||
-      combinedToken.length >= 20
-    const nextCandidates = new Map<string, boolean>()
-    for (const candidate of candidates.keys()) {
-      const soft = `${candidate} ${nextPart}`
-      if (normalizedExpected.startsWith(soft)) {
-        nextCandidates.set(soft, true)
-      }
-      if (hardBoundary) {
-        const hard = `${candidate}${nextPart}`
-        if (normalizedExpected.startsWith(hard)) {
-          nextCandidates.set(hard, true)
-        }
-      }
-    }
-    candidates = nextCandidates
-  }
-  return candidates.has(normalizedExpected)
 }
 
 async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
@@ -2405,7 +2367,15 @@ export function composerHoldsText(pane: string): boolean {
 
 async function capturePane(target: string): Promise<string> {
   return (
-    await execFileAsync('tmux', ['capture-pane', '-p', '-t', target, '-S', '-30'])
+    await execFileAsync('tmux', [
+      'capture-pane',
+      '-J',
+      '-p',
+      '-t',
+      target,
+      '-S',
+      '-30',
+    ])
   ).stdout
 }
 

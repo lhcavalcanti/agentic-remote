@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   isTerminalAgentWorking,
+  isTerminalDesktopInstallPrompt,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
   composerHoldsOtherText,
@@ -83,6 +84,20 @@ describe('TmuxTerminalSessionController', () => {
       `),
     ).toBe(true)
     expect(isTerminalSessionInUsePrompt('❯ Ready for a prompt')).toBe(false)
+  })
+
+  it('detects the Copilot desktop-app startup promotion', () => {
+    expect(
+      isTerminalDesktopInstallPrompt(`
+│ THE GITHUB COPILOT APP                         │
+│ Install it now?                               │
+│ ❯ Yes, install      No, thanks                │
+│ ←/→ to choose · Enter to select · Y / N       │
+      `),
+    ).toBe(true)
+    expect(
+      isTerminalDesktopInstallPrompt('❯ Ready for a prompt'),
+    ).toBe(false)
   })
 
   it('parses Copilot ask-user choice and freeform dialogs', () => {
@@ -183,6 +198,47 @@ Permission request (1 remaining)
         { optionId: 'terminal:stop', name: 'Stop' },
       ],
     })
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ ────────────────────────────────────────────────────────── │
+│ ╭────────────────────────────────────────────────────────╮ │
+│ │ /home/user/project                                     │ │
+│ ╰────────────────────────────────────────────────────────╯ │
+│                                                            │
+│ Do you trust the files in this folder?                     │
+│                                                            │
+│ ❯ 1. Yes                                                   │
+│   2. Yes, and remember this folder for future sessions     │
+│   3. No (Esc)                                              │
+│                                                            │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toMatchObject({
+      requestId: expect.stringMatching(/^terminal-permission:/),
+      title: 'Confirm folder trust',
+      kind: 'folder-trust',
+      choiceCount: 3,
+      options: [
+        {
+          optionId: 'terminal:trust-once',
+          name: 'Trust once',
+          kind: 'allow_once',
+        },
+        {
+          optionId: 'terminal:trust-always',
+          name: 'Trust and remember',
+          kind: 'allow_always',
+        },
+        {
+          optionId: 'terminal:stop',
+          name: 'Do not trust',
+          kind: 'reject_once',
+        },
+      ],
+    })
   })
 
   it('creates a Copilot window in the configured existing tmux session', async () => {
@@ -192,7 +248,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-window-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nprintf '%s' "$PWD" >"${output}"\nsleep 60\n`,
+      `#!/usr/bin/env bash\nprintf '%s' "$PWD" >"${output}"\nprintf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = String(process.pid)
@@ -328,6 +384,56 @@ Permission request (1 remaining)
       ),
     ).toBe(true)
     expect(cleared).toBe(true)
+  })
+
+  it('declines the desktop-app promotion before returning a new session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const response = path.join(directory, 'response.txt')
+    const executable = path.join(directory, 'copilot-promotion-fake')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf 'Install it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n'",
+        'IFS= read -r -n 1 answer',
+        `printf '%s' "$answer" >"${response}"`,
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-promotion-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+
+    const controller = new TmuxTerminalSessionController()
+    await controller.create(
+      randomUUID(),
+      directory,
+      'Promotion prompt',
+      true,
+    )
+
+    expect(await readFile(response, 'utf8')).toBe('n')
   })
 
   it('kills only the owning pane when panes are renumbered while confirming', async () => {
@@ -585,6 +691,7 @@ describe('paneShowsText', () => {
     // Only a send too large to echo can account for a placeholder.
     const huge = 'a very long message '.repeat(60)
     expect(paneShowsText('> [Pasted text #1 +40 lines]', huge)).toBe(true)
+    expect(paneShowsText('> [Paste #1 - 24 lines]', huge)).toBe(true)
   })
 
   it('recognises a placeholder for a long paste ending in a short line', () => {
@@ -595,6 +702,9 @@ describe('paneShowsText', () => {
     const content = `${'a very long message '.repeat(60)}\nok`
     expect(
       paneShowsText('> [Pasted text #1 +40 lines]', 'ok', 0, content),
+    ).toBe(true)
+    expect(
+      paneShowsText('> [Paste #1 - 24 lines]', 'ok', 0, content),
     ).toBe(true)
   })
 
@@ -639,6 +749,7 @@ describe('paneShowsText', () => {
     expect(
       paneShowsText('> [Pasted text #1 +40 lines]', 'ship it'),
     ).toBe(false)
+    expect(paneShowsText('> [Paste #1 - 24 lines]', 'ship it')).toBe(false)
   })
 
   it('does not accept the same message sent earlier as this one arriving', () => {
@@ -998,6 +1109,24 @@ describe('terminal form identity', () => {
     expect(terminalFormShowsFields(formPaneLastField, form)).toBe(true)
   })
 
+  it('recognizes a question wrapped to the terminal width', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [
+        ' Configure the deployment request with a long explanation that',
+        ' wraps across terminal lines before the fields are shown.',
+      ].join('\n'),
+    )
+    const wrappedForm = {
+      ...form,
+      question:
+        'Configure the deployment request with a long explanation that wraps across terminal lines before the fields are shown.',
+    }
+
+    expect(terminalFormShowsFields(wrapped, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(wrapped, wrappedForm)).toBe(0)
+  })
+
   it('rejects a form that belongs to another request', () => {
     // A prompt that replaced the one being answered shows its own fields, so
     // an answer written for the old form must not reach it.
@@ -1022,6 +1151,24 @@ describe('terminal form identity', () => {
       ' Configure the rollback request.',
     )
     expect(terminalFormShowsFields(reasked, form)).toBe(false)
+  })
+
+  it('rejects a different wrapped question with the same fields', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [
+        ' Configure the rollback request with a long explanation that',
+        ' wraps across terminal lines before the fields are shown.',
+      ].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question:
+          'Configure the deployment request with a long explanation that wraps across terminal lines before the fields are shown.',
+      }),
+    ).toBe(false)
   })
 
   it('reads which field the form has focused, by position', () => {
@@ -1200,6 +1347,13 @@ describe('composerHoldsOtherText', () => {
       composerHoldsOtherText(
         framed(['│ >  │']),
         framed(['│ > [Pasted text #3] │']),
+        'a very long message '.repeat(60),
+      ),
+    ).toBe(false)
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Paste #1 - 24 lines] │']),
         'a very long message '.repeat(60),
       ),
     ).toBe(false)

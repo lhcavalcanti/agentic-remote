@@ -467,7 +467,8 @@ export class TmuxTerminalSessionController
     sessionId: string,
     request: PendingPermission,
     optionId: string,
-  ): Promise<boolean> {    return this.serialize(sessionId, async () => {
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
       const owner = await this.owner(sessionId)
       if (!owner) {
         return false
@@ -490,12 +491,22 @@ export class TmuxTerminalSessionController
         await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Escape'])
         return true
       }
-      if (optionId !== 'terminal:allow') {
+      const choiceIndex =
+        optionId === 'terminal:allow' || optionId === 'terminal:trust-once'
+          ? 0
+          : optionId === 'terminal:trust-always'
+            ? 1
+            : undefined
+      if (choiceIndex === undefined) {
         throw new Error('The selected permission option is not available')
       }
       for (let index = 0; index < (current.choiceCount || 2); index += 1) {
         await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Up'])
         await new Promise((resolve) => setTimeout(resolve, 30))
+      }
+      for (let index = 0; index < choiceIndex; index += 1) {
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Down'])
+        await new Promise((resolve) => setTimeout(resolve, 40))
       }
       await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
       return true
@@ -831,7 +842,7 @@ export class TmuxTerminalSessionController
       if (!target) {
         return false
       }
-      await resumeSessionIfPrompted(target)
+      await clearAutomaticStartupPrompts(target)
       // What the pane already holds is not evidence that this message
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
@@ -1149,7 +1160,9 @@ export class TmuxTerminalSessionController
       'off',
     ])
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      if (await this.target(sessionId)) {
+      const target = await this.target(sessionId)
+      if (target) {
+        await waitForTerminalStartup(target)
         return { sessionName, windowId }
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
@@ -1195,30 +1208,62 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
   )
 }
 
-async function resumeSessionIfPrompted(target: string): Promise<void> {
+export function isTerminalDesktopInstallPrompt(pane: string): boolean {
+  return (
+    /Install it now\?/i.test(pane) &&
+    /Yes,\s*install/i.test(pane) &&
+    /No,\s*thanks/i.test(pane) &&
+    /Y\s*\/\s*N/i.test(pane)
+  )
+}
+
+async function clearAutomaticStartupPrompts(target: string): Promise<void> {
   const capture = async () =>
     (
-      await execFileAsync('tmux', [
-        'capture-pane',
-        '-p',
-        '-t',
-        target,
-        '-S',
-        '-80',
-      ])
+      await execFileAsync('tmux', ['capture-pane', '-p', '-t', target])
     ).stdout
 
-  if (!isTerminalSessionInUsePrompt(await capture())) {
-    return
-  }
-  await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    if (!isTerminalSessionInUsePrompt(await capture())) {
+    const pane = await capture()
+    if (isTerminalSessionInUsePrompt(pane)) {
+      await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
+    } else if (isTerminalDesktopInstallPrompt(pane)) {
+      // Agentic Remote already supplies the remote supervision UI. Opening a
+      // browser to install a separate desktop app cannot help this headless
+      // terminal and keeps the first real prompt from reaching the composer.
+      await execFileAsync('tmux', ['send-keys', '-t', target, 'n'])
+    } else {
       return
     }
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error('Copilot session-use confirmation did not close')
+  throw new Error('Copilot startup prompt did not close')
+}
+
+async function waitForTerminalStartup(target: string): Promise<void> {
+  let readyFrames = 0
+  for (let attempt = 0; attempt < 900; attempt += 1) {
+    await clearAutomaticStartupPrompts(target)
+    const pane = await capturePane(target)
+    if (parseTerminalPermission(pane) || parseTerminalUserInput(pane)) {
+      return
+    }
+    if (composerText(pane) !== undefined && !isTerminalOverlay(pane)) {
+      // Copilot briefly paints an empty composer before opening delayed
+      // startup prompts such as the desktop-app promotion. Returning on that
+      // first frame lets the first message be pasted into the prompt that
+      // replaces it. Require the composer to remain available long enough for
+      // those startup prompts to appear and be handled.
+      readyFrames += 1
+      if (readyFrames >= 30) {
+        return
+      }
+    } else {
+      readyFrames = 0
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error('Copilot did not become ready for terminal input')
 }
 
 function cleanDialogLine(line: string): string {
@@ -1459,10 +1504,9 @@ function terminalFormTabsIndex(
   }
   // The CLI prints the request's own question between the header and the tabs.
   // Two requests can share a schema, so the question is what separates them.
-  const question = form.question.trim()
-  if (question && !lines.slice(header + 1).includes(question)) {
-    return -1
-  }
+  // Long questions wrap to the pane width, so compare the complete rendered
+  // region instead of requiring the original text to fit on one line.
+  const question = form.question.replace(/\s+/gu, ' ').trim()
   for (let index = header + 1; index < lines.length; index += 1) {
     // Tabs sit on one line separated by runs of spaces, so a title containing
     // a single space stays intact.
@@ -1471,6 +1515,14 @@ function terminalFormTabsIndex(
       tabs.length === form.fields.length &&
       tabs.every((tab, position) => tab === form.fields[position])
     ) {
+      const renderedQuestion = lines
+        .slice(header + 1, index)
+        .join(' ')
+        .replace(/\s+/gu, ' ')
+        .trim()
+      if (question && renderedQuestion !== question) {
+        continue
+      }
       return index
     }
   }
@@ -1604,6 +1656,80 @@ export function parseTerminalPermission(
   pane: string,
 ): PendingPermission | undefined {
   const lines = pane.split('\n').map(cleanDialogLine)
+  const trustQuestionIndex = lines.findLastIndex((line) =>
+    /^Do you trust the files in this folder\?$/i.test(line),
+  )
+  if (trustQuestionIndex >= 0) {
+    const dialog = lines.slice(
+      Math.max(
+        0,
+        lines.findLastIndex(
+          (line, index) =>
+            index < trustQuestionIndex && /^Confirm folder trust$/i.test(line),
+        ),
+      ),
+    )
+    const choices = dialog.flatMap((line) => {
+      const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
+      return choice
+        ? [{ index: Number.parseInt(choice[1], 10), label: choice[2].trim() }]
+        : []
+    })
+    if (
+      choices.some(
+        (choice) => choice.index === 1 && /^Yes$/i.test(choice.label),
+      ) &&
+      choices.some(
+        (choice) =>
+          choice.index === 2 &&
+          /^Yes, and remember this folder for future sessions$/i.test(
+            choice.label,
+          ),
+      ) &&
+      choices.some(
+        (choice) => choice.index === 3 && /^No\b/i.test(choice.label),
+      )
+    ) {
+      const fingerprint = createHash('sha256')
+        .update(
+          dialog
+            .filter(
+              (line) =>
+                line &&
+                !(
+                  /to navigate/i.test(line) &&
+                  /enter to select/i.test(line)
+                ),
+            )
+            .join('\n'),
+        )
+        .digest('hex')
+        .slice(0, 24)
+      return {
+        requestId: `terminal-permission:${fingerprint}`,
+        title: 'Confirm folder trust',
+        kind: 'folder-trust',
+        choiceCount: 3,
+        options: [
+          {
+            optionId: 'terminal:trust-once',
+            name: 'Trust once',
+            kind: 'allow_once',
+          },
+          {
+            optionId: 'terminal:trust-always',
+            name: 'Trust and remember',
+            kind: 'allow_always',
+          },
+          {
+            optionId: 'terminal:stop',
+            name: 'Do not trust',
+            kind: 'reject_once',
+          },
+        ],
+      }
+    }
+  }
   const questionIndex = lines.findLastIndex((line) =>
     /^Do you want to run this command\?/i.test(line),
   )
@@ -1847,7 +1973,7 @@ export function paneEvidenceCount(
   if (pasted.length <= PASTE_ECHO_LIMIT) {
     return found
   }
-  return found + (pane.match(/\[Pasted text/g) || []).length
+  return found + pastedPlaceholderCount(haystack)
 }
 
 /**
@@ -1971,7 +2097,7 @@ export function composerHoldsOtherText(
 // instead. Only a send past this size can account for one.
 const PASTE_ECHO_LIMIT = 800
 
-const PASTED_PLACEHOLDER = /\[Pastedtext[^\]]*\]/u
+const PASTED_PLACEHOLDER = /\[(?:Pastedtext|Paste)[^\]]*\]/u
 
 function occurrences(text: string, needle: string): number {
   if (!needle) {
@@ -1981,7 +2107,7 @@ function occurrences(text: string, needle: string): number {
 }
 
 function pastedPlaceholderCount(text: string): number {
-  return (text.match(/\[Pastedtext[^\]]*\]/gu) || []).length
+  return (text.match(/\[(?:Pastedtext|Paste)[^\]]*\]/gu) || []).length
 }
 
 /** The composer's contents, or nothing when the pane cannot be read. */
@@ -2077,8 +2203,8 @@ export function composerTookPaste(
   // A paste too large to echo is shown as a placeholder instead of its text,
   // and only a send big enough to have produced one may claim it.
   if (pasted.length > PASTE_ECHO_LIMIT) {
-    const drawn = (after.match(/\[Pastedtext/gu) || []).length
-    const had = (before.match(/\[Pastedtext/gu) || []).length
+    const drawn = pastedPlaceholderCount(after)
+    const had = pastedPlaceholderCount(before)
     if (drawn > had) {
       return true
     }

@@ -5172,6 +5172,100 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('lets the terminal resume its session-use startup dialog before sending', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-resume-prompt-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const pane = [
+      ' Session in use',
+      ' This session appears to be in use by another CLI or application.',
+      ' ❯ 1. Resume anyway',
+      '   2. Go back (Esc)',
+      ' ↑/↓ to navigate · enter to select · esc to cancel',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.sendMessage(client.session.sessionId, 'Continue the work')
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Continue the work',
+      false,
+    )
+    await service.stop()
+  })
+
+  it('lets the terminal dismiss its desktop-app promotion before sending', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-promotion-prompt-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const pane = [
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await service.sendMessage(client.session.sessionId, 'Continue the work')
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Continue the work',
+      false,
+    )
+    await service.stop()
+  })
+
   it('says so when a terminal slash command opens a full-screen view', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-slash-overlay-'),

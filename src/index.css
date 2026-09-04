@@ -2710,6 +2710,68 @@ button {
   white-space: nowrap;
 }
 
+/* Each row can be given different keys, so its keys are a control rather than
+   a label, and the rows line up on their middles instead of their baselines. */
+.shortcut-list--editable li {
+  align-items: center;
+  min-height: 28px;
+}
+
+.shortcut-list__controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shortcut-key {
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.shortcut-key:hover kbd,
+.shortcut-key:focus-visible kbd {
+  border-color: var(--border-strong);
+  background: var(--panel-soft);
+}
+
+.shortcut-key:focus-visible {
+  outline: 2px solid var(--accent, var(--border-strong));
+  outline-offset: 2px;
+}
+
+/* Listening for the keys to be pressed. */
+.shortcut-key--recording {
+  padding: 2px 8px;
+  border: 1px dashed #6ea8fe;
+  color: #6ea8fe;
+  font-size: 11px;
+}
+
+.shortcut-reset {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.shortcut-reset:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.shortcut-refused {
+  color: #e0a06c;
+}
+
 .app-settings-section {
   padding: 18px 0;
   border-top: 1px solid var(--border);

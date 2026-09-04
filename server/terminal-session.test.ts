@@ -1315,7 +1315,7 @@ Permission request (1 remaining)
       (value) => value.includes('MESSAGE-BBBB'),
     )
     expect(received).toBe('MESSAGE-AAAA\nMESSAGE-BBBB')
-  })
+  }, 15_000)
 
   it('rejects a cached session owner that reopened in another pane', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))

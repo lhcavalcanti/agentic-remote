@@ -1621,10 +1621,16 @@ function activeBottomFrame(
       marker < index &&
       lines.slice(index + 1).every((line) => !line.trim())
     ) {
-      const firstContent = lines
-        .slice(start + 1, index)
-        .map(cleanDialogLine)
-        .find(Boolean)
+      const rawContent = lines.slice(start + 1, index)
+      if (
+        containsCopiedInteractiveFrame(
+          rawContent.map(stripOuterFrameEdge),
+        )
+      ) {
+        continue
+      }
+      const content = rawContent.map(cleanDialogLine)
+      const firstContent = content.find(Boolean)
       if (firstContent && /^[>❯](?:\s|$)/u.test(firstContent)) {
         continue
       }
@@ -1632,6 +1638,42 @@ function activeBottomFrame(
     }
   }
   return undefined
+}
+
+function stripOuterFrameEdge(line: string): string {
+  return line
+    .trim()
+    .replace(/^│\s?/u, '')
+    .replace(/\s?│$/u, '')
+    .trim()
+}
+
+function containsCopiedInteractiveFrame(lines: string[]): boolean {
+  const frames: number[] = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^╭[\u2500-\u257f]*╮?$/u.test(lines[index])) {
+      frames.push(index)
+      continue
+    }
+    if (!/^╰[\u2500-\u257f]*╯?$/u.test(lines[index])) {
+      continue
+    }
+    const start = frames.pop()
+    if (start === undefined) {
+      continue
+    }
+    const copied = lines.slice(start + 1, index).join('\n')
+    if (
+      /(Session in use|Install it now\?|Do you trust the files in this folder\?)/i.test(
+        copied,
+      ) &&
+      /enter\s+(?:to\s+)?select/i.test(copied) &&
+      /esc\s+(?:to\s+)?cancel/i.test(copied)
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 async function clearAutomaticStartupPrompts(

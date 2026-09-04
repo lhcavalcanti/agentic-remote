@@ -216,6 +216,20 @@ describe('TmuxTerminalSessionController', () => {
     ).toBe(false)
     expect(
       isTerminalDesktopInstallPrompt(`
+╭─────────────────────────────────────────────────╮
+│ ╭─────────────────────────────────────────────╮ │
+│ │ THE GITHUB COPILOT APP                      │ │
+│ │ Now generally available!                    │ │
+│ │ Install it now?                             │ │
+│ │ ❯ Yes, install      No, thanks              │ │
+│ │ ←/→ to choose · Enter to select · Y / N     │ │
+│ │ esc to cancel                               │ │
+│ ╰─────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
 ╭───────────────────────────────────────────────╮
 │ > THE GITHUB COPILOT APP                      │
 │ Install it now?                               │

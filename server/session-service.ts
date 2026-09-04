@@ -1,6 +1,7 @@
 import type { DirectoryScope } from './directory-browser.js'
 import type {
   AgentProvider,
+  CollapsedPaste,
   AgentProviderCapability,
   BackgroundTaskSnapshot,
   DirectoryListing,
@@ -68,6 +69,7 @@ export interface SessionService {
     content: string,
     enqueue?: boolean,
     acknowledgesFailure?: string,
+    shown?: { display?: string; pastes?: CollapsedPaste[] },
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
   executeCommand(

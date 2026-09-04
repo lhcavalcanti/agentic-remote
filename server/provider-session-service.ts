@@ -2,6 +2,7 @@ import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
   AgentProvider,
+  CollapsedPaste,
   AgentProviderCapability,
   BackgroundTaskSnapshot,
   ConfigureRuntimeInput,
@@ -188,12 +189,14 @@ export class ProviderSessionService
     content: string,
     enqueue?: boolean,
     acknowledgesFailure?: string,
+    shown?: { display?: string; pastes?: CollapsedPaste[] },
   ): Promise<SessionDetail> {
     return this.serviceFor(sessionId).sendMessage(
       sessionId,
       content,
       enqueue,
       acknowledgesFailure,
+      shown,
     )
   }
 

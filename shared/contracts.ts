@@ -82,10 +82,27 @@ export interface PendingUserInput {
   form?: UserInputForm
 }
 
+/** A long paste the composer shows as a short label instead of in full. */
+export interface CollapsedPaste {
+  key: string
+  id: number
+  content: string
+  lineCount: number
+  start: number
+}
+
 export interface QueuedPrompt {
   id: string
   content: string
   createdAt: string
+  // How the composer showed this message: the same text with each long paste
+  // standing as a short label, and where those labels were. Kept so that
+  // taking the message back for rewriting gives back what was written rather
+  // than the whole payload unfolded into the box.
+  //
+  // `content` is still what gets delivered. These only describe how it looked.
+  display?: string
+  pastes?: CollapsedPaste[]
   // A slash command reports what it printed rather than starting a turn, so
   // draining it has to follow the command path and not the prompt one.
   command?: boolean
@@ -363,6 +380,9 @@ export interface SendMessageInput {
    * marker for good, and the marker stops the queue draining.
    */
   acknowledgesFailure?: string
+  /** How the composer showed it, kept with a queued message. */
+  display?: string
+  pastes?: CollapsedPaste[]
 }
 
 export interface AudioTranscription {

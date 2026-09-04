@@ -43,6 +43,21 @@ const sendMessageSchema = z.object({
     .max(200_000)
     .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
   enqueue: z.boolean().optional(),
+  // How the composer showed the message, for a queued one that may be taken
+  // back for rewriting. What is delivered is still `content`.
+  display: z.string().max(200_000).optional(),
+  pastes: z
+    .array(
+      z.object({
+        key: z.string().max(128),
+        id: z.number(),
+        content: z.string().max(200_000),
+        lineCount: z.number(),
+        start: z.number(),
+      }),
+    )
+    .max(64)
+    .optional(),
 })
 
 const permissionReplySchema = z.object({

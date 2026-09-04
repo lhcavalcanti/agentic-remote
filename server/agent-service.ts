@@ -18,6 +18,7 @@ import {
 } from '@github/copilot-sdk'
 import type {
   AgentProvider,
+  CollapsedPaste,
   AgentProviderCapability,
   ActivityKind,
   BackgroundTask,
@@ -3021,6 +3022,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     rawContent: string,
     enqueue = false,
     acknowledgedFailure?: string,
+    shown?: { display?: string; pastes?: CollapsedPaste[] },
   ): Promise<SessionDetail> {
     // Emptiness is judged on the trimmed text; what is sent is what was
     // written. Trimming the message itself quietly rewrote it, which matters
@@ -3079,6 +3081,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           content,
           enqueue,
           claim ? before : undefined,
+          shown,
         )
       } finally {
         releaseDispatch()
@@ -3304,6 +3307,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // the marker it answers are written together rather than one after the
     // other with a crash possible in between.
     answers?: string,
+    // How the composer showed it, kept only if this ends up on the queue.
+    shown?: { display?: string; pastes?: CollapsedPaste[] },
   ): Promise<SessionDetail> {
     const terminalBacked = await this.terminalController.has(sessionId)
     // Detection is awaited, and suspending can finish while it is: the guard
@@ -3380,10 +3385,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!enqueue) {
         throw new Error('This session is already responding')
       }
-      return this.enqueuePrompt(sessionId, content, false, answers)
+      return this.enqueuePrompt(sessionId, content, false, answers, shown)
     }
 
-    return this.startMessage(sessionId, content)
+    return this.startMessage(sessionId, content, false, shown)
   }
 
   async removeQueuedPrompt(
@@ -3408,12 +3413,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     content: string,
     command = false,
     answers?: string,
+    shown?: { display?: string; pastes?: CollapsedPaste[] },
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
       content,
       createdAt: new Date().toISOString(),
       ...(command ? { command: true } : {}),
+      // Only when it was actually shown as something shorter. Kept so that
+      // taking the message back for rewriting gives back what was written,
+      // rather than every pasted line unfolded into the composer.
+      ...(shown?.display && shown.pastes?.length
+        ? { display: shown.display, pastes: shown.pastes }
+        : {}),
     }
     return this.serializeQueue(sessionId, async () => {
       // One write when this is the answer to a failure. Queued first and the
@@ -3511,12 +3523,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     fromQueue = false,
+    shown?: { display?: string; pastes?: CollapsedPaste[] },
   ): Promise<SessionDetail> {
     // Anything already waiting goes first. A resume whose drain failed leaves
     // the prompt back on the queue, and a message written afterwards would
     // otherwise start straight away and run ahead of one written before it.
     if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
-      const queued = await this.enqueuePrompt(sessionId, content)
+      const queued = await this.enqueuePrompt(
+        sessionId,
+        content,
+        false,
+        undefined,
+        shown,
+      )
       // A drain that failed put its prompt back and left nothing running to
       // take it off again. Without this the queue stays where it is, and every
       // message written afterwards joins it rather than starting anything.

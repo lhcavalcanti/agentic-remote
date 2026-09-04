@@ -348,6 +348,32 @@ Permission request (1 remaining)
         { optionId: 'terminal:stop', name: 'Stop' },
       ],
     })
+    // A command permission frame can display any text at all, the command's
+    // own included. One printing the trust dialog word for word would be
+    // answered as trust, and "Trust once" would send Enter to whatever the
+    // command dialog actually had selected. The command's own question wraps
+    // like any other line, so it is looked for the same way.
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Run a script                                               │
+│ ────────────────────────────────────────────────────────── │
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ \u276F 1. Yes                                                   │
+│   2. Yes, and remember this folder for future sessions     │
+│   3. No (Esc)                                              │
+│ ────────────────────────────────────────────────────────── │
+│ Do you want to run this                                    │
+│ command?                                                   │
+│ \u276F 1. Yes                                                   │
+│   2. Yes, and allow similar commands this session          │
+│   3. No, and tell Copilot what to do differently           │
+│ \u2191/\u2193 to navigate \u00B7 enter to select \u00B7 esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).not.toMatchObject({ kind: 'folder-trust' })
+
     expect(
       parseTerminalPermission(`
 ╭────────────────────────────────────────────────────────────╮

@@ -1958,11 +1958,15 @@ export function parseTerminalPermission(
       return undefined
     }
     const frameLines = lines.slice(frame.start, frame.end + 1)
-    if (
-      frameLines.some((line) =>
-        /^Do you want to run this command\?$/i.test(line),
-      )
-    ) {
+    // A command permission frame can carry any text at all inside it, the
+    // command's own included -- so one that prints the trust dialog word for
+    // word would be answered as trust, and "Trust once" would send Enter to
+    // whatever the command dialog actually had selected.
+    //
+    // Found the same way the trust question is, because the command question
+    // wraps too: matched line by line it survived being broken across two, and
+    // the frame was read as trust after all.
+    if (findTerminalWrappedText(frameLines, 'Do you want to run this command?')) {
       return undefined
     }
     const frameQuestion = findTerminalWrappedText(

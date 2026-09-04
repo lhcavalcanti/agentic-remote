@@ -344,16 +344,32 @@ run() {
   assert_disposable "$validate_root"
   cleanup_validation_worktree() {
     git -C "$DEV_ROOT" worktree remove --force "$validate_root" 2>/dev/null || true
-    if [[ -e "$validate_root" ]]; then
-      # A linked worktree keeps `.git` as a file; a checkout keeps it as a
-      # directory. Refusing the latter means a path that turned out to name a
-      # repository cannot be deleted along with its history.
-      if [[ -d "$validate_root/.git" ]]; then
-        log "refusing to remove $validate_root: it holds a repository"
-        return 0
-      fi
-      rm -rf -- "$validate_root"
+    if [[ ! -e "$validate_root" ]]; then
+      return 0
     fi
+    # Still here, so this repository could not account for it. Anything named
+    # `.git` means somebody's checkout: a linked worktree keeps it as a file
+    # and an ordinary clone keeps it as a directory, so testing for a directory
+    # alone let another repository's worktree -- with whatever uncommitted and
+    # untracked work was in it -- fall through to `rm -rf`.
+    #
+    # The one exception is a worktree of this repository that git has lost
+    # track of, which is ours to clear away. It is recognised by its
+    # administrative directory living inside DEV_ROOT, not by the shape of the
+    # entry.
+    if [[ -e "$validate_root/.git" ]]; then
+      local gitdir="" owner=""
+      if [[ -f "$validate_root/.git" ]]; then
+        gitdir="$(sed -n 's/^gitdir: *//p' "$validate_root/.git" 2>/dev/null || true)"
+      fi
+      if [[ -n "$gitdir" ]]; then
+        owner="$(resolve_path "$gitdir")"
+      fi
+      if [[ -z "$owner" || "$owner" != "$(resolve_path "$DEV_ROOT")/.git/worktrees/"* ]]; then
+        die "refusing to remove $validate_root: it belongs to another checkout"
+      fi
+    fi
+    rm -rf -- "$validate_root"
   }
   trap cleanup_validation_worktree EXIT
   cleanup_validation_worktree

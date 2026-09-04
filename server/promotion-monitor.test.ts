@@ -259,6 +259,40 @@ describe('promotion monitor', () => {
     expect(existsSync(path.join(context.dev, '.git'))).toBe(true)
   })
 
+  it('refuses to delete a worktree belonging to another repository', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Another repository's linked worktree, parked where validation wants to
+    // work. `git worktree remove` cannot remove it, because it belongs to a
+    // different repository -- and a linked worktree keeps `.git` as a file, so
+    // a check for a directory let it fall through to `rm -rf` along with
+    // whatever was not committed in it.
+    const state = path.join(context.root, 'state-foreign')
+    await mkdir(state, { recursive: true })
+    const other = path.join(context.root, 'other-repo')
+    await mkdir(other, { recursive: true })
+    await git(other, 'init', '--initial-branch=main')
+    await git(other, 'config', 'user.email', 'other@example.test')
+    await git(other, 'config', 'user.name', 'Other')
+    await writeFile(path.join(other, 'kept.txt'), 'committed\n')
+    await git(other, 'add', '-A')
+    await git(other, 'commit', '-m', 'base')
+    await git(other, 'worktree', 'add', '--detach', path.join(state, 'validate'), 'HEAD')
+    const unsaved = path.join(state, 'validate', 'unsaved.txt')
+    await writeFile(unsaved, 'work nobody has committed\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('belongs to another checkout')
+    // Everything that was there is still there.
+    expect(existsSync(unsaved)).toBe(true)
+    expect(existsSync(path.join(state, 'validate', 'kept.txt'))).toBe(true)
+  })
+
   it('validates somewhere of its own rather than in the development checkout', async () => {
     const context = await fixture()
     const candidate = await advanceMain(context)

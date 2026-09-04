@@ -39,6 +39,7 @@ credentials, pairing tokens, repositories, or SSH keys.
 | `health_url` | Local health endpoint after promotion |
 | `external_check` | Optional tunnel or external access check |
 | `validation_policy` | Local lint, test, and build that gate promotion |
+| `state_dir` | Run markers, and the pinned worktree validation runs in |
 | `promotion_policy` | How the exact validated commit is installed |
 | `rollback_policy` | Previous-release and failure behavior |
 
@@ -55,7 +56,11 @@ AGENTIC_REMOTE_MONITOR_PROD_ROOT=/path/to/production/runtime
 AGENTIC_REMOTE_MONITOR_RELEASE_ROOT=/path/to/releases
 AGENTIC_REMOTE_MONITOR_SERVICE=agentic-remote.service
 AGENTIC_REMOTE_MONITOR_HEALTH_URL=http://127.0.0.1:4317/health
+AGENTIC_REMOTE_MONITOR_STATE_DIR=/path/to/monitor/state
 ```
+
+Validation runs in a worktree under `state_dir`, so put it on a filesystem
+that is fast enough to run the suite.
 
 ### Inherit the runtime identity by default
 
@@ -148,9 +153,18 @@ A local-only monitor may run this sequence on an opt-in machine:
 2. Require the development checkout to be a clean `main` worktree.
 3. Fetch and fast-forward `main`; never merge or rewrite local development
    changes.
-4. Install dependencies and run the configured development validation. Nothing
-   runs the suite remotely, so this is the only gate a commit passes before
-   production and it has to include the tests.
+4. Prepare a validation worktree under `state_dir`, pinned to the candidate
+   commit, and install dependencies and run the configured validation there.
+   Validating in the development checkout ties the result to a workspace: it
+   can sit on a filesystem chosen for working rather than for running a suite,
+   where the runner gives up waiting for its own workers and reports a timeout
+   while every test passes. Pinning also means what passed is what is
+   promoted, rather than whatever the checkout became while the suite ran.
+   `state_dir` therefore decides which filesystem validation runs on.
+   Nothing runs the suite remotely, so this is the only gate a commit passes
+   before production and it has to include the tests.
+5. Remove the validation worktree afterwards, refusing to delete anything that
+   turns out to be a checkout this repository cannot account for.
 6. Verify the production runtime worktree is clean and intentionally detached.
 7. Promote the exact validated commit, publish an immutable release, and
    restart the managed service.
@@ -169,7 +183,8 @@ runtime.
 
 ## Connection-continuity invariants
 
-- Build and test only from the development root.
+- Build and test from a checkout pinned to the commit being promoted, never
+  from the production runtime or a release.
 - Serve the UI from `release_root/current`, not from a checkout.
 - Switch the release pointer only after build and validation succeed.
 - Keep the external tunnel pointed at the managed service, not at a

@@ -92,4 +92,45 @@ describe('hub routes', () => {
     expect(mutes.muted).toEqual([])
     await app.close()
   })
+
+  it('does not keep a root for a computer unpaired while it was being added', async () => {
+    let paired = true
+    const stored = new Map<string, { id: string; computerId: string }>()
+    const knowledge = {
+      addRoot: async (root: { computerId: string }) => {
+        const created = { ...root, id: `root-${stored.size + 1}` }
+        stored.set(created.id, created)
+        return created
+      },
+      removeRoot: async (id: string) => stored.delete(id),
+    } as unknown as KnowledgeStore
+    const app = Fastify()
+    await registerHubRoutes(
+      app,
+      {
+        listComputers: () =>
+          paired ? [{ id: 'worker', name: 'worker-node' }] : [],
+        // Browsing the folder is a round trip to the other computer, and the
+        // computer can be unpaired while it is in flight.
+        listKnowledge: async () => {
+          paired = false
+          return { path: '.', entries: [] }
+        },
+        on: () => undefined,
+        off: () => undefined,
+      } as unknown as ComputerManager,
+      knowledge,
+    )
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/knowledge/roots',
+      headers: { host: 'localhost' },
+      payload: { computerId: 'worker', path: '/home/tester/docs' },
+    })
+
+    expect(response.statusCode).toBe(404)
+    expect([...stored.keys()]).toEqual([])
+    await app.close()
+  })
 })

@@ -251,11 +251,17 @@ describe('outlineFromMarkdown edge cases', () => {
     ])
   })
 
-  it('does not read front matter as an underlined heading', () => {
+  it('reads front matter the way the renderer draws it', () => {
+    // remark is used without a front-matter plugin, so this is a rule, a
+    // paragraph, and the underline that turns it into a heading. Skipping it
+    // here would put every later entry one heading out.
     const content = ['---', 'title: Notes', '---', '', '# Real'].join('\n')
 
-    expect(outlineFromMarkdown(content).map((entry) => entry.text)).toEqual([
-      'Real',
+    expect(
+      outlineFromMarkdown(content).map(({ text, level }) => ({ text, level })),
+    ).toEqual([
+      { text: 'title: Notes', level: 2 },
+      { text: 'Real', level: 1 },
     ])
   })
 

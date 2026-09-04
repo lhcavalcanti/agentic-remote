@@ -107,17 +107,6 @@ export function outlineFromMarkdown(content: string): DocumentHeading[] {
   // Anything that opens a block of its own clears it.
   let paragraph: string | undefined
   const lines = content.split(/\r?\n/)
-  let first = 0
-  // Front matter opens the file with a `---` of its own, and closes under a
-  // `key: value` pair that would otherwise read as a setext heading.
-  if (/^---\s*$/.test(lines[0] ?? '')) {
-    const closing = lines.findIndex(
-      (line, index) => index > 0 && /^(---|\.\.\.)\s*$/.test(line),
-    )
-    if (closing > 0) {
-      first = closing + 1
-    }
-  }
   const record = (text: string, level: number) => {
     if (!text) {
       return
@@ -129,7 +118,12 @@ export function outlineFromMarkdown(content: string): DocumentHeading[] {
       index: headings.length,
     })
   }
-  for (let index = first; index < lines.length; index += 1) {
+  // Front matter is deliberately not skipped. The document is rendered by
+  // remark without a front-matter plugin, so `---\ntitle: x\n---` is drawn as
+  // a rule and a setext heading, and an outline that quietly passed over it
+  // would put every later entry one heading out -- the very thing counting
+  // setext headings is here to prevent.
+  for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index].replace(/\t/g, '    ').trimEnd()
     const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
     if (fenceMatch) {

@@ -1001,18 +1001,38 @@ function DialogFrame({
   className?: string
 }) {
   const dialog = useRef<HTMLElement>(null)
+  // Read while rendering, before the dialog is committed, so this is whatever
+  // opened it. Reading it from the effect instead named a field inside the
+  // dialog that React had already focused, and handing the focus back to
+  // something that is about to unmount is the same as dropping it.
+  const [opener] = useState<HTMLElement | null>(() =>
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  )
 
   useEffect(() => {
-    const restoreTo = document.activeElement as HTMLElement | null
     // The frame says `aria-modal`, which tells a reader the page behind it is
     // out of reach. Taking the focus, keeping Tab inside it, and handing the
     // focus back on the way out are what make that true rather than a claim.
+    //
+    // A dialog that has already put the focus somewhere of its own -- a title
+    // being renamed, a search field -- is left alone. Pulling it back to the
+    // frame would take the reader out of the field they were placed in, and
+    // typing straight away would go nowhere.
     //
     // Escape is deliberately not answered here. The app closes the topmost
     // layer itself, in the order they are stacked and only when nothing
     // nearer has already answered the key, and a second closer on the frame
     // would be the same decision made again with less to go on.
-    dialog.current?.focus()
+    if (
+      !(
+        document.activeElement instanceof HTMLElement &&
+        dialog.current?.contains(document.activeElement)
+      )
+    ) {
+      dialog.current?.focus()
+    }
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Tab' || !dialog.current) {
         return
@@ -1044,7 +1064,7 @@ function DialogFrame({
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      restoreTo?.focus?.()
+      opener?.focus?.()
     }
   }, [])
 
@@ -1134,8 +1154,15 @@ function NewSessionDialog({
     if (initialized.current) {
       return
     }
-    initialized.current = true
     const initialComputerId = defaultComputerId || available[0]?.id || ''
+    // Opening before the first computer snapshot has landed leaves nothing to
+    // choose. Marking the dialog filled in at that point stranded it: the
+    // computers arrived, this returned at the guard above, and Create stayed
+    // disabled with no computer selected until the dialog was reopened.
+    if (!initialComputerId) {
+      return
+    }
+    initialized.current = true
     setComputerId(initialComputerId)
     setProvider('copilot')
     setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
@@ -6141,6 +6168,16 @@ function App() {
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
+  // Read from the socket handler, which is bound once and would otherwise
+  // close over whichever roots existed when it was bound.
+  const rootsRef = useRef<KnowledgeRoot[]>([])
+  const activeRootIdRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    rootsRef.current = roots
+  }, [roots])
+  useEffect(() => {
+    activeRootIdRef.current = activeRootId
+  }, [activeRootId])
   // A single generation for every asynchronous knowledge operation. Anything
   // that changes what the panel should show bumps it once; every loader
   // captures it and checks it before writing. Three separate counters could
@@ -8430,6 +8467,30 @@ function App() {
           setComputers((current) =>
             current.filter((computer) => computer.id !== event.computerId),
           )
+          // A root names a folder on a computer. The hub drops the roots of a
+          // computer that has been unpaired, so a tab still listing one would
+          // offer a document it can no longer fetch.
+          const orphanedRoots = new Set(
+            rootsRef.current
+              .filter((root) => root.computerId === event.computerId)
+              .map((root) => root.id),
+          )
+          if (orphanedRoots.size > 0) {
+            setRoots((current) =>
+              current.filter((root) => !orphanedRoots.has(root.id)),
+            )
+            if (
+              activeRootIdRef.current &&
+              orphanedRoots.has(activeRootIdRef.current)
+            ) {
+              knowledgeRequest.current += 1
+              setActiveRootId(undefined)
+              setKnowledgeFolders({})
+              setExpandedKnowledge([])
+              setKnowledgePath(knowledgeRootPath)
+              setKnowledgeFile(undefined)
+            }
+          }
           // Nothing on a computer that has gone is still on its way.
           for (const key of [...pendingReplacements.current]) {
             if (key.slice(0, key.indexOf(':')) === event.computerId) {
@@ -11204,11 +11265,15 @@ function App() {
           {selected?.pendingUserInput ? (
             <UserInputCard
               disabled={userInputBusy}
-              // The answer being composed belongs to this request. Keying on
-              // it lets a new question start from a blank card, and keeps the
-              // card the reader is filling in from being emptied by the
-              // session upserts that carry the same request through.
-              key={selected.pendingUserInput.requestId}
+              // The answer being composed belongs to this question on this
+              // session. Keying on it lets a new question start from a blank
+              // card, and keeps the card being filled in from being emptied
+              // by the session upserts that carry the same request through.
+              // The session is part of the key because a terminal request id
+              // describes the question, not the session, so the same question
+              // on two sessions would otherwise share one card -- and the
+              // answer typed into the first would appear in the second.
+              key={`${selected.computerId}:${selected.id}:${selected.pendingUserInput.requestId}`}
               onReply={(input) => void answerUserInput(input)}
               request={selected.pendingUserInput}
             />

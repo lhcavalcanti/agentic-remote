@@ -2761,6 +2761,43 @@ describe('App', () => {
     expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
   })
 
+  it('leaves the focus in the field a dialog opened for', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+
+    // The frame takes the focus only when the dialog has not placed it
+    // itself. Pulling it back here would take the reader out of the field
+    // they were put in, and typing straight away would go nowhere.
+    const name = screen.getByLabelText('Session name')
+    expect(name).toHaveFocus()
+    fireEvent.change(name, { target: { value: 'Typed straight away' } })
+    expect(name).toHaveValue('Typed straight away')
+  })
+
+  it('fills the new-session dialog in once the computers arrive', async () => {
+    // Opening before the first snapshot lands leaves nothing to choose.
+    vi.mocked(listComputers).mockResolvedValue([])
+    render(<App />)
+    await waitFor(() => expect(listComputers).toHaveBeenCalled())
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Computer')).toHaveValue(computer.id),
+    )
+    expect(
+      screen.getByRole('button', { name: 'Create session' }),
+    ).toBeEnabled()
+  })
+
   it('takes the focus it claims and gives it back on Escape', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -2769,9 +2806,10 @@ describe('App', () => {
     fireEvent.click(opener)
 
     // `aria-modal` tells a reader the page behind is out of reach, so the
-    // dialog has to actually hold the focus and answer Escape.
+    // focus has to be inside the dialog -- on the frame, or on whatever the
+    // dialog focused for itself.
     const dialog = await screen.findByRole('dialog', { name: 'Choose a folder' })
-    expect(dialog).toHaveFocus()
+    expect(dialog.contains(document.activeElement)).toBe(true)
 
     fireEvent.keyDown(document, { key: 'Escape' })
 

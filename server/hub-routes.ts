@@ -304,6 +304,14 @@ export async function registerHubRoutes(
         input.path.split('/').filter(Boolean).at(-1) ||
         input.path,
     })
+    // Browsing the folder is a round trip to another computer, and that
+    // computer can be unpaired while it is in flight -- taking its roots with
+    // it. Asking again here keeps the answer from arriving after the cleanup
+    // and storing a root for a computer that is no longer registered.
+    if (!manager.listComputers().some((entry) => entry.id === input.computerId)) {
+      await knowledge.removeRoot(root.id)
+      return reply.code(404).send({ error: 'Computer is not registered' })
+    }
     return reply.code(201).send({ root, listing })
   })
 

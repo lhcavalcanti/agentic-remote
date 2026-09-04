@@ -85,6 +85,15 @@ describe('TmuxTerminalSessionController', () => {
       `),
     ).toBe(true)
     expect(isTerminalSessionInUsePrompt('❯ Ready for a prompt')).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+● The old panel said Session in use.
+● It offered 1. Resume anyway and 2. Go back.
+╻▄▄▄▄
+┃
+╹▀▀▀▀
+      `),
+    ).toBe(false)
   })
 
   it('detects the Copilot desktop-app startup promotion', () => {
@@ -192,7 +201,8 @@ Permission request (1 remaining)
       parseTerminalPermission(`
 ╭────────────────────────────────────────────────────────────╮
 │ Confirm folder trust                                       │
-│ Do you trust the files in this folder?                     │
+│ Do you trust the files in this                             │
+│ folder?                                                    │
 │ ❯ 1. Yes                                                   │
 │   2. Yes, and remember this folder for                     │
 │      future sessions                                       │
@@ -470,6 +480,51 @@ Permission request (1 remaining)
 
     expect(await readFile(response, 'utf8')).toBe('n')
     expect(existsSync(`${response}.extra`)).toBe(false)
+  })
+
+  it('returns a recovered session that is already showing a structured form', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-structured-form')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf 'Copilot needs information.\\nChoose a target.\\n\\nTarget\\n\\nenter accept · esc cancel\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-structured-form-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+
+    await expect(
+      new TmuxTerminalSessionController().create(
+        randomUUID(),
+        directory,
+        'Structured form',
+        true,
+      ),
+    ).resolves.toMatchObject({ sessionName: tmuxSession })
   })
 
   it('removes a new window when startup readiness fails', async () => {
@@ -1289,6 +1344,26 @@ describe('terminal form identity', () => {
 
     expect(terminalFormShowsFields(wrapped, wrappedForm)).toBe(true)
     expect(parseTerminalFormActiveField(wrapped, wrappedForm)).toBe(0)
+  })
+
+  it('does not conflate a word boundary with an unbroken identifier', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [' Choose user', ' name'].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose username',
+      }),
+    ).toBe(false)
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose user name',
+      }),
+    ).toBe(true)
   })
 
   it('rejects a form that belongs to another request', () => {

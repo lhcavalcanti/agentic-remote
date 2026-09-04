@@ -1220,10 +1220,14 @@ interface TmuxSessionInfo {
 }
 
 export function isTerminalSessionInUsePrompt(pane: string): boolean {
+  if (composerText(pane) !== undefined) {
+    return false
+  }
+  const activeView = pane.split('\n').slice(-24).join('\n')
   return (
-    /Session in use/i.test(pane) &&
-    /1\.\s+Resume anyway/i.test(pane) &&
-    /2\.\s+Go back/i.test(pane)
+    /Session in use/i.test(activeView) &&
+    /1\.\s+Resume anyway/i.test(activeView) &&
+    /2\.\s+Go back/i.test(activeView)
   )
 }
 
@@ -1286,7 +1290,11 @@ async function waitForTerminalStartup(target: string): Promise<void> {
   for (let attempt = 0; attempt < 900; attempt += 1) {
     await clearAutomaticStartupPrompts(target)
     const pane = await capturePane(target)
-    if (parseTerminalPermission(pane) || parseTerminalUserInput(pane)) {
+    if (
+      parseTerminalPermission(pane) ||
+      parseTerminalUserInput(pane) ||
+      parseTerminalFormPrompt(pane)
+    ) {
       return
     }
     if (composerText(pane) !== undefined && !isTerminalOverlay(pane)) {
@@ -1561,12 +1569,10 @@ function terminalFormTabsIndex(
         .join(' ')
         .replace(/\s+/gu, ' ')
         .trim()
-      const compactQuestion = (value: string) => value.replace(/\s+/gu, '')
       if (
         question &&
         renderedQuestion !== question &&
-        compactQuestion(renderedQuestionLines.join('')) !==
-          compactQuestion(question)
+        !terminalHardWrappedTextMatches(renderedQuestionLines, question)
       ) {
         continue
       }
@@ -1703,16 +1709,17 @@ export function parseTerminalPermission(
   pane: string,
 ): PendingPermission | undefined {
   const lines = pane.split('\n').map(cleanDialogLine)
-  const trustQuestionIndex = lines.findLastIndex((line) =>
-    /^Do you trust the files in this folder\?$/i.test(line),
+  const trustQuestion = findTerminalWrappedText(
+    lines,
+    'Do you trust the files in this folder?',
   )
-  if (trustQuestionIndex >= 0) {
+  if (trustQuestion) {
     const dialog = lines.slice(
       Math.max(
         0,
         lines.findLastIndex(
           (line, index) =>
-            index < trustQuestionIndex && /^Confirm folder trust$/i.test(line),
+            index < trustQuestion.start && /^Confirm folder trust$/i.test(line),
         ),
       ),
     )
@@ -1867,6 +1874,80 @@ function terminalDialogChoices(
     current.label = `${current.label} ${line}`.replace(/\s+/gu, ' ').trim()
   }
   return choices
+}
+
+function findTerminalWrappedText(
+  lines: string[],
+  expected: string,
+): { start: number; end: number } | undefined {
+  const normalizedExpected = expected.replace(/\s+/gu, ' ').trim()
+  let found: { start: number; end: number } | undefined
+  for (let start = 0; start < lines.length; start += 1) {
+    if (!lines[start]) {
+      continue
+    }
+    for (
+      let end = start;
+      end < Math.min(lines.length, start + 5);
+      end += 1
+    ) {
+      const candidate = lines
+        .slice(start, end + 1)
+        .join(' ')
+        .replace(/\s+/gu, ' ')
+        .trim()
+      if (candidate === normalizedExpected) {
+        found = { start, end }
+      }
+      if (candidate.length > normalizedExpected.length) {
+        break
+      }
+    }
+  }
+  return found
+}
+
+function terminalHardWrappedTextMatches(
+  lines: string[],
+  expected: string,
+): boolean {
+  const normalizedExpected = expected.replace(/\s+/gu, ' ').trim()
+  const parts = lines
+    .map((line) => line.replace(/\s+/gu, ' ').trim())
+    .filter(Boolean)
+  if (parts.length < 2) {
+    return false
+  }
+  let candidates = new Map<string, boolean>()
+  candidates.set(parts[0], true)
+  for (let index = 1; index < parts.length; index += 1) {
+    const previousPart = parts[index - 1]
+    const nextPart = parts[index]
+    const previousToken = previousPart.split(' ').at(-1) || ''
+    const nextToken = nextPart.split(' ')[0] || ''
+    const combinedToken = `${previousToken}${nextToken}`
+    const hardBoundary =
+      /[/:._\\-]/u.test(previousToken) ||
+      /[/:._\\-]/u.test(nextToken) ||
+      /\d/u.test(combinedToken) ||
+      /[a-z][A-Z]/u.test(combinedToken) ||
+      combinedToken.length >= 20
+    const nextCandidates = new Map<string, boolean>()
+    for (const candidate of candidates.keys()) {
+      const soft = `${candidate} ${nextPart}`
+      if (normalizedExpected.startsWith(soft)) {
+        nextCandidates.set(soft, true)
+      }
+      if (hardBoundary) {
+        const hard = `${candidate}${nextPart}`
+        if (normalizedExpected.startsWith(hard)) {
+          nextCandidates.set(hard, true)
+        }
+      }
+    }
+    candidates = nextCandidates
+  }
+  return candidates.has(normalizedExpected)
 }
 
 async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {

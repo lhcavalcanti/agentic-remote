@@ -510,11 +510,11 @@ async function processExists(pid: number): Promise<boolean> {
 }
 
 async function waitForProcessExit(pid: number): Promise<boolean> {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     if (!(await processExists(pid))) {
       return true
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return false
 }

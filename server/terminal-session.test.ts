@@ -111,10 +111,12 @@ describe('TmuxTerminalSessionController', () => {
   it('detects the Copilot desktop-app startup promotion', () => {
     expect(
       isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
 │ THE GITHUB COPILOT APP                         │
 │ Install it now?                               │
 │ ❯ Yes, install      No, thanks                │
 │ ←/→ to choose · Enter to select · Y / N       │
+╰───────────────────────────────────────────────╯
       `),
     ).toBe(true)
     expect(
@@ -122,14 +124,11 @@ describe('TmuxTerminalSessionController', () => {
     ).toBe(false)
     expect(
       isTerminalDesktopInstallPrompt(`
-● I saw a panel that said:
-  Install it now?
-  Yes, install
-  No, thanks
-  Y / N
-╻▄▄▄▄
-┃
-╹▀▀▀▀
+╭───────────────────────────────────────────────╮
+│ Settings                                      │
+│ Search: Install it now? Yes, install No,      │
+│ thanks Y / N                                  │
+╰───────────────────────────────────────────────╯
       `),
     ).toBe(false)
   })
@@ -211,15 +210,17 @@ Permission request (1 remaining)
     })
     expect(
       parseTerminalPermission(`
-● Earlier output quoted:
-  Confirm folder trust
-  Do you trust the files in this folder?
-  1. Yes
-  2. Yes, and remember this folder for future sessions
-  3. No (Esc)
-╻▄▄▄▄
-┃
-╹▀▀▀▀
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ 1. Yes                                                     │
+│ 2. Yes, and remember this folder for future sessions       │
+│ 3. No (Esc)                                                │
+╰────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────╮
+│ Settings                                                   │
+│ esc close                                                  │
+╰────────────────────────────────────────────────────────────╯
       `),
     ).toBeUndefined()
     expect(
@@ -476,7 +477,7 @@ Permission request (1 remaining)
       executable,
       [
         '#!/usr/bin/env bash',
-        "printf 'Install it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n'",
+        "printf '╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
         'IFS= read -r -n 1 answer',
         `printf '%s' "$answer" >"${response}"`,
         'sleep 0.5',
@@ -577,11 +578,11 @@ Permission request (1 remaining)
       executable,
       [
         '#!/usr/bin/env bash',
-        "printf 'Confirm folder trust\\nDo you trust the files in this folder?\\n❯ 1. Yes\\n  2. Yes, and remember this folder for future sessions\\n  3. No (Esc)\\n↑/↓ to navigate · enter to select · esc to cancel\\n'",
+        "printf '╭────────────────────────────────────────────────────────────╮\\nConfirm folder trust\\nDo you trust the files in this folder?\\n❯ 1. Yes\\n  2. Yes, and remember this folder for future sessions\\n  3. No (Esc)\\n↑/↓ to navigate · enter to select · esc to cancel\\n╰────────────────────────────────────────────────────────────╯\\n'",
         'IFS= read -r trust',
         "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
         'sleep 0.5',
-        "printf '\\033[2J\\033[HInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n'",
+        "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
         'IFS= read -r -n 1 answer',
         '[[ "$answer" == n ]] || exit 2',
         "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
@@ -913,7 +914,7 @@ Permission request (1 remaining)
         '#!/usr/bin/env bash',
         "printf '╻▄▄▄▄\\n┃\\n'",
         'sleep 0.5',
-        "printf '\\033[2J\\033[HInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n'",
+        "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
         'IFS= read -r -n 1 answer',
         '[[ "$answer" == n ]] || exit 2',
         "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
@@ -1731,6 +1732,18 @@ describe('submitTerminalForm', () => {
         ' Target:',
         ' ↑/↓ select · enter accept',
         ' · esc cancel',
+      ].join('\n')),
+    ).toBe(true)
+  })
+
+  it('ignores cancel text before the actual form footer', () => {
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Explain why the cancel operation is needed.',
+        ' Target:',
+        ' Cancel deployment',
+        ' enter accept · esc cancel',
       ].join('\n')),
     ).toBe(true)
   })

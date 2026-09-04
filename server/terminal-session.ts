@@ -1254,7 +1254,7 @@ interface TmuxSessionInfo {
 export function isTerminalSessionInUsePrompt(pane: string): boolean {
   const lines = pane.split('\n')
   const prompt = lines.findLastIndex((line) => /Session in use/i.test(line))
-  if (prompt < 0 || hasComposerAfter(lines, prompt)) {
+  if (prompt < 0 || !isInsideActiveBottomFrame(lines, prompt)) {
     return false
   }
   const activeView = lines.slice(prompt).join('\n')
@@ -1267,11 +1267,12 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
 export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   const lines = pane.split('\n')
   const prompt = lines.findLastIndex((line) => /Install it now\?/i.test(line))
-  if (prompt < 0 || hasComposerAfter(lines, prompt)) {
+  if (prompt < 0 || !isInsideActiveBottomFrame(lines, prompt)) {
     return false
   }
   const activeView = lines.slice(prompt).join('\n')
   return (
+    /THE GITHUB COPILOT APP/i.test(lines.slice(0, prompt + 1).join('\n')) &&
     /Yes,\s*install/i.test(activeView) &&
     /No,\s*thanks/i.test(activeView) &&
     /Y\s*\/\s*N/i.test(activeView)
@@ -1280,6 +1281,29 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
 
 function hasComposerAfter(lines: string[], index: number): boolean {
   return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
+}
+
+function isInsideActiveBottomFrame(lines: string[], marker: number): boolean {
+  const frames: number[] = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^\s*╭[\u2500-\u257f]*╮?\s*$/u.test(lines[index])) {
+      frames.push(index)
+      continue
+    }
+    if (!/^\s*╰[\u2500-\u257f]*╯?\s*$/u.test(lines[index])) {
+      continue
+    }
+    const start = frames.pop()
+    if (
+      start !== undefined &&
+      start < marker &&
+      marker < index &&
+      lines.slice(index + 1).every((line) => !line.trim())
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 async function clearAutomaticStartupPrompts(target: string): Promise<void> {
@@ -1570,8 +1594,11 @@ export function parseTerminalFormPrompt(pane: string): boolean {
   if (header < 0) {
     return false
   }
-  const footer = lines.findIndex(
-    (line, index) => index > header && /cancel/i.test(line),
+  const footer = lines.findLastIndex(
+    (line, index) =>
+      index > header &&
+      /cancel/i.test(line) &&
+      /(?:esc|ctrl\+|enter)/i.test(line),
   )
   if (footer < 0 || hasComposerAfter(rawLines, footer)) {
     return false
@@ -1811,7 +1838,7 @@ export function parseTerminalPermission(
   )
   if (
     trustQuestion &&
-    !hasComposerAfter(pane.split('\n'), trustQuestion.end)
+    isInsideActiveBottomFrame(pane.split('\n'), trustQuestion.start)
   ) {
     const dialog = lines.slice(
       Math.max(

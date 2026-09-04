@@ -5180,11 +5180,13 @@ describe('AgentService deletion', () => {
     const client = new FakeCopilotClient()
     client.models = [configurableModel()]
     const pane = [
+      ' ╭────────────────────────────────────────────────────────────╮',
       ' Session in use',
       ' This session appears to be in use by another CLI or application.',
       ' ❯ 1. Resume anyway',
       '   2. Go back (Esc)',
       ' ↑/↓ to navigate · enter to select · esc to cancel',
+      ' ╰────────────────────────────────────────────────────────────╯',
     ].join('\n')
     const terminal = {
       has: vi.fn(async () => true),
@@ -5228,9 +5230,12 @@ describe('AgentService deletion', () => {
     const client = new FakeCopilotClient()
     client.models = [configurableModel()]
     const pane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
       ' Install it now?',
       ' ❯ Yes, install      No, thanks',
       ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
     ].join('\n')
     const terminal = {
       has: vi.fn(async () => true),

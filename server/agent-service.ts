@@ -4157,7 +4157,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           createdAt: new Date().toISOString(),
         })
         this.publish(notice)
-        return this.sendMessage(sessionId, result.prompt, busy)
+        // Command dispatch already owns the terminal-admission slot. Re-entering
+        // sendMessage here can queue behind that same slot when a stale terminal
+        // owner disappeared and the command fell back to the SDK.
+        return this.sendAdmittedWithBackend(
+          sessionId,
+          result.prompt,
+          busy,
+          undefined,
+          false,
+        )
       }
       const content =
         result.kind === 'text'

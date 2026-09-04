@@ -11,25 +11,38 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   findActiveCopilotProcesses,
   stopActiveCopilotSession,
 } from './active-sessions.js'
+import {
+  createIsolatedTmuxRoot,
+  eventually,
+  stopIsolatedTmuxServer,
+  waitForProcessCommand,
+} from './tmux-test-helpers.js'
 
 const execFileAsync = promisify(execFile)
 const directories: string[] = []
 const tmuxSessions: string[] = []
+let tmuxRoot = ''
+
+beforeEach(async () => {
+  tmuxRoot = await createIsolatedTmuxRoot()
+  vi.stubEnv('HOME', tmuxRoot)
+  vi.stubEnv('TMUX_TMPDIR', tmuxRoot)
+  // A client started inside a tmux session reads its socket out of `TMUX` and
+  // talks to that server whatever the temporary directory says. Left set, a
+  // suite run from inside tmux drives the developer's own server -- and the
+  // teardown would kill every session they had open.
+  vi.stubEnv('TMUX', '')
+})
 
 afterEach(async () => {
+  tmuxSessions.splice(0)
+  await stopIsolatedTmuxServer(tmuxRoot)
   vi.unstubAllEnvs()
-  await Promise.all(
-    tmuxSessions.splice(0).map((session) =>
-      execFileAsync('tmux', ['kill-session', '-t', session]).catch(
-        () => undefined,
-      ),
-    ),
-  )
   await Promise.all(
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
@@ -87,6 +100,7 @@ describe('active Copilot processes', () => {
       ).stdout,
       10,
     )
+    await waitForProcessCommand(pid, [executable, sessionId])
 
     expect(
       (await findActiveCopilotProcesses()).filter(
@@ -152,6 +166,7 @@ describe('active Copilot processes', () => {
       }
     }
     expect(childPid).toBeGreaterThan(0)
+    await waitForProcessCommand(childPid, [childScript, sessionId])
 
     expect(
       (await findActiveCopilotProcesses()).filter(
@@ -182,6 +197,19 @@ describe('active Copilot processes', () => {
       '--session-id',
       sessionId,
     ])
+    const pid = Number.parseInt(
+      (
+        await execFileAsync('tmux', [
+          'display-message',
+          '-p',
+          '-t',
+          tmuxSession,
+          '#{pane_pid}',
+        ])
+      ).stdout,
+      10,
+    )
+    await waitForProcessCommand(pid, [executable, sessionId])
 
     expect(
       (await findActiveCopilotProcesses()).some(
@@ -217,6 +245,7 @@ describe('active Copilot processes', () => {
       ).stdout,
       10,
     )
+    await waitForProcessCommand(pid, [executable])
     const sessionId = 'bbbbbbbb-1234-1234-1234-123456789abc'
     const copilotHome = path.join(directory, 'copilot-home')
     const sessionDirectory = path.join(
@@ -263,6 +292,7 @@ describe('active Copilot processes', () => {
       ).stdout,
       10,
     )
+    await waitForProcessCommand(pid, [executable])
     const sessionId = 'cccccccc-1234-1234-1234-123456789abc'
     const copilotHome = path.join(directory, 'copilot-home')
     const sessionDirectory = path.join(
@@ -289,7 +319,9 @@ describe('active Copilot processes', () => {
     await writeFile(
       executable,
       '#!/usr/bin/env node\n' +
-        "require('node:fs').openSync(process.argv[2], 'r')\n" +
+        "const fs = require('node:fs')\n" +
+        "fs.openSync(process.argv[2], 'r')\n" +
+        "fs.writeFileSync(process.argv[3], 'ready')\n" +
         'setTimeout(() => {}, 60_000)\n',
     )
     await chmod(executable, 0o755)
@@ -311,6 +343,7 @@ describe('active Copilot processes', () => {
       mkdir(currentDirectory, { recursive: true }),
     ])
     const currentDatabase = path.join(currentDirectory, 'session.db')
+    const readyFile = path.join(directory, 'multiple-locks-ready')
     await writeFile(currentDatabase, '')
     const tmuxSession = `agentic-multiple-locks-${process.pid}`
     tmuxSessions.push(tmuxSession)
@@ -321,6 +354,7 @@ describe('active Copilot processes', () => {
       tmuxSession,
       executable,
       currentDatabase,
+      readyFile,
     ])
     const pid = Number.parseInt(
       (
@@ -334,7 +368,18 @@ describe('active Copilot processes', () => {
       ).stdout,
       10,
     )
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(
+      await eventually(
+        () =>
+          readFile(readyFile, 'utf8').catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') {
+              return ''
+            }
+            throw error
+          }),
+        (value) => value === 'ready',
+      ),
+    ).toBe('ready')
     const staleLock = path.join(staleDirectory, `inuse.${pid}.lock`)
     const currentLock = path.join(currentDirectory, `inuse.${pid}.lock`)
     await Promise.all([
@@ -395,6 +440,7 @@ describe('active Copilot processes', () => {
       ).stdout,
       10,
     )
+    await waitForProcessCommand(firstPid, [executable])
     await writeFile(
       path.join(sessionDirectory, `inuse.${firstPid}.lock`),
       `${firstPid}\n`,
@@ -419,6 +465,7 @@ describe('active Copilot processes', () => {
       ).stdout,
       10,
     )
+    await waitForProcessCommand(secondPid, [executable])
     await writeFile(
       path.join(sessionDirectory, `inuse.${secondPid}.lock`),
       `${secondPid}\n`,

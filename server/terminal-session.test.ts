@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   isTerminalAgentWorking,
   isTerminalOverlay,
@@ -25,46 +25,51 @@ import {
   terminalFormShowsFields,
   TmuxTerminalSessionController,
 } from './terminal-session.js'
+import {
+  createIsolatedTmuxRoot,
+  isolatedTmuxEnv,
+  eventually,
+  stopIsolatedTmuxServer,
+  waitForProcessCommand,
+} from './tmux-test-helpers.js'
 
 const execFileAsync = promisify(execFile)
 const directories: string[] = []
 const tmuxSessions: string[] = []
+let tmuxRoot = ''
 
-/**
- * Reads system state that a separate process is still settling, retrying until
- * it matches or the deadline passes. tmux windows, `/proc`, and a spawned
- * program's own output all appear when the machine gets round to it, so a
- * single read turns machine load into a test result. A genuine mismatch still
- * fails, just after the deadline rather than before the work happened.
- */
-async function eventually<T>(
-  read: () => Promise<T>,
-  matches: (value: T) => boolean,
-  timeoutMs = 10_000,
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs
-  let value = await read()
-  while (!matches(value) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    value = await read()
-  }
-  return value
-}
+beforeEach(async () => {
+  tmuxRoot = await createIsolatedTmuxRoot()
+  vi.stubEnv('HOME', tmuxRoot)
+  vi.stubEnv('TMUX_TMPDIR', tmuxRoot)
+  // A client started inside a tmux session reads its socket out of `TMUX` and
+  // talks to that server whatever the temporary directory says. Left set, a
+  // suite run from inside tmux drives the developer's own server -- and the
+  // teardown would kill every session they had open.
+  vi.stubEnv('TMUX', '')
+})
 
 afterEach(async () => {
+  tmuxSessions.splice(0)
+  await stopIsolatedTmuxServer(tmuxRoot)
   vi.unstubAllEnvs()
-  await Promise.all(
-    tmuxSessions.splice(0).map((session) =>
-      execFileAsync('tmux', ['kill-session', '-t', session]).catch(
-        () => undefined,
-      ),
-    ),
-  )
   await Promise.all(
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
   )
+})
+
+describe('tmux test isolation', () => {
+  it('never lets a tmux command fall back to the caller\'s own server', () => {
+    // Running the suite from inside tmux used to point every command at the
+    // developer's own server, because a client reads its socket out of `TMUX`
+    // before it looks at the temporary directory. The teardown kills whatever
+    // it reaches, so that was every session they had open.
+    const env = isolatedTmuxEnv('/tmp/example-root')
+    expect(env.TMUX_TMPDIR).toBe('/tmp/example-root')
+    expect(env.TMUX).toBe('')
+  })
 })
 
 describe('TmuxTerminalSessionController', () => {
@@ -341,35 +346,37 @@ Permission request (1 remaining)
       tmuxSession,
       'sleep 60',
     ])
-    await execFileAsync('tmux', [
-      'split-window',
-      '-d',
-      '-t',
-      tmuxSession,
-      '--',
-      executable,
-    ])
-    const panes = (
+    const bystanderTarget = (
       await execFileAsync('tmux', [
-        'list-panes',
+        'display-message',
+        '-p',
         '-t',
         tmuxSession,
         '-F',
-        '#{pane_index}\t#{pane_pid}\t#{pane_id}',
+        '#{pane_id}',
       ])
-    ).stdout
-      .trim()
-      .split('\n')
-      .map((line) => line.split('\t'))
-    const owner = panes[1]
-    const bystander = panes[0]
+    ).stdout.trim()
+    const [ownerPid, ownerTarget] = (
+      await execFileAsync('tmux', [
+        'split-window',
+        '-d',
+        '-P',
+        '-F',
+        '#{pane_pid}\t#{pane_id}',
+        '-t',
+        tmuxSession,
+        '--',
+        executable,
+      ])
+    ).stdout.trim().split('\t')
+    await waitForProcessCommand(Number.parseInt(ownerPid, 10), [executable])
     const sessionId = 'abcdef12-abcd-abcd-abcd-abcdef654321'
     const copilotHome = path.join(directory, 'copilot-home')
     const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
     await mkdir(sessionDirectory, { recursive: true })
     await writeFile(
-      path.join(sessionDirectory, `inuse.${owner[1]}.lock`),
-      `${owner[1]}\n`,
+      path.join(sessionDirectory, `inuse.${ownerPid}.lock`),
+      `${ownerPid}\n`,
     )
     vi.stubEnv('COPILOT_HOME', copilotHome)
 
@@ -383,9 +390,9 @@ Permission request (1 remaining)
           'swap-pane',
           '-d',
           '-s',
-          bystander[2],
+          bystanderTarget,
           '-t',
-          owner[2],
+          ownerTarget,
         ])
       },
     )
@@ -400,7 +407,7 @@ Permission request (1 remaining)
         '#{pane_id}',
       ])
     ).stdout.trim()
-    expect(remaining).toBe(bystander[2])
+    expect(remaining).toBe(bystanderTarget)
   })
 
   it('delivers a prompt into the owning terminal pane', async () => {

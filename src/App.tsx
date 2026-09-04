@@ -9025,6 +9025,7 @@ function App() {
     }
     // Set only when this send is an edited prompt leaving the queue.
     let queuedPlaceBefore = -1
+    let queuedIdsBefore = new Set<string>()
     // This message is already waiting, and is about to be sent instead. It
     // comes off the queue first, or the same text goes out twice: once now and
     // once when the queue reaches it.
@@ -9042,6 +9043,15 @@ function App() {
       queuedPlaceBefore = (selected.queuedPrompts || []).findIndex(
         (prompt) => prompt.id === removedId,
       )
+      // The prompts already waiting. Whatever is here afterwards that was not
+      // here before is the one this send added: matching on the text instead
+      // mistook an identical message already at the end of the queue for it,
+      // and moved somebody else's prompt to this one's old place.
+      queuedIdsBefore = new Set(
+        (selected.queuedPrompts || [])
+          .filter((prompt) => prompt.id !== removedId)
+          .map((prompt) => prompt.id),
+      )
       setSending(true)
       try {
         const result = await removeQueuedPrompt(
@@ -9050,7 +9060,14 @@ function App() {
           removedId,
         )
         setSessions((current) => upsertSession(current, result.session))
-        setEditingQueuedPrompt(undefined)
+        // Only if it is still the one this send took out. Editing stays
+        // available while a send is in flight, so a reader can open another
+        // session and start rewriting there -- and clearing whatever marker
+        // happens to be set would leave that one queued with its text sitting
+        // in the composer, ready to go twice.
+        setEditingQueuedPrompt((current) =>
+          current?.promptId === removedId ? undefined : current,
+        )
       } catch (caught) {
         // It is still waiting, so nothing is sent: sending now would deliver
         // it twice over.
@@ -9173,14 +9190,17 @@ function App() {
       // back: a message edited from the front of the queue coming out last is
       // not what pressing Send asked for.
       const queue = updated.queuedPrompts || []
+      const addedIndex = queue.findIndex(
+        (prompt) => !queuedIdsBefore.has(prompt.id),
+      )
       if (
         queuedPlaceBefore >= 0 &&
         queue.length > 1 &&
-        queue[queue.length - 1]?.content === content &&
-        queuedPlaceBefore < queue.length - 1
+        addedIndex >= 0 &&
+        addedIndex !== queuedPlaceBefore
       ) {
         const restored = [...queue]
-        const [moved] = restored.splice(restored.length - 1, 1)
+        const [moved] = restored.splice(addedIndex, 1)
         restored.splice(queuedPlaceBefore, 0, moved)
         const order = restored.map((prompt) => prompt.id)
         setSessions((current) =>
@@ -9507,7 +9527,11 @@ function App() {
 
   async function saveQueuedPromptEdit(): Promise<boolean> {
     const promptId = editingQueuedPromptId
-    const content = composer.trim()
+    // What the composer held when the save was asked for, and what is sent.
+    // The draft is only cleared if it is still exactly this, so a newline
+    // typed while the request was in flight is not thrown away.
+    const submitted = composer
+    const content = submitted.trim()
     if (!selected || !promptId || !content || queueActionId) {
       return false
     }
@@ -9530,7 +9554,10 @@ function App() {
       // reader moved on before the answer came back.
       const savedKey = sessionKey(target)
       updateComposerDrafts([], (drafts) => {
-        if (drafts[savedKey]?.trim() !== content) {
+        // Exactly what was submitted. Comparing trimmed values threw away a
+        // newline typed while the request was in flight, which on a phone is
+        // what Enter puts there.
+        if (drafts[savedKey] !== submitted) {
           return drafts
         }
         const { [savedKey]: _saved, ...rest } = drafts

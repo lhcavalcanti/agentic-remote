@@ -5705,7 +5705,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publish(queued)
         if (next) {
           try {
-            await this.startMessage(sessionId, next.content, true)
+            if (next.command) {
+              // A queued slash command has to run as one. Handed to the
+              // ordinary message path it reaches the model as text, so a
+              // queued `/clear` became a sentence about clearing rather than
+              // the command it was queued as.
+              await this.runCommand(sessionId, next.content, false)
+            } else {
+              await this.startMessage(sessionId, next.content, true)
+            }
           } catch (error) {
             const restored = await this.serializeQueue(
               sessionId,

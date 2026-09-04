@@ -4325,6 +4325,36 @@ describe('AgentService deletion', () => {
     expect(asText.prompt.command).toBeUndefined()
   })
 
+  it('runs a queued slash command as a command when the queue drains', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-qcmd-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    // Queued as a command, it has to run as one. Handed to the ordinary
+    // message path it reaches the model as text, so the command was never
+    // carried out.
+    await service.store.enqueuePrompt(created.id, {
+      id: 'cmd-1',
+      content: '/plan',
+      createdAt: '2026-09-02T00:00:00.000Z',
+      command: true,
+    })
+    await service.sendMessage(created.id, 'wake the queue', true)
+
+    await vi.waitFor(() => {
+      expect(client.session.invokedCommands).toContain('plan')
+    })
+    expect(client.session.sentPrompts).not.toContain('/plan')
+  })
+
   it('refuses an order built from a queue that has since changed', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-order-'))
     directories.push(directory)

@@ -15,6 +15,7 @@ import {
   paneEvidenceCount,
   paneShowsText,
   parseTerminalFormActiveField,
+  parseTerminalFormPrompt,
   parseTerminalPermission,
   terminalChecklistState,
   submitTerminalForm,
@@ -986,6 +987,46 @@ const formPaneLastField = [
   '',
   ' ↑/↓ select · enter accept · shift+tab prev · ctrl+d decline · esc cancel',
 ].join('\n')
+
+// Captured from a real Copilot CLI form with a single field. There is no row
+// of tabs: the field's own heading is all the form prints.
+const singleFieldPane = [
+  ' Copilot needs information.',
+  ' Which meaning of \u201Csucceeded\u201D should the status file use?',
+  '',
+  ' Rows to retain:',
+  ' Successful executions keeps completed healthy benchmark runs.',
+  ' \u276F Successful executions: historical runs plus completed TSF-0.5',
+  '   Successful experiment outcomes: retained T1 plus C1 control only',
+  '   Other (type your answer)',
+  '',
+  ' \u2191/\u2193 select \u00B7 enter accept \u00B7 ctrl+d decline \u00B7 esc cancel',
+].join('\n')
+
+describe('single field forms', () => {
+  const form = {
+    question: 'Which meaning of \u201Csucceeded\u201D should the status file use?',
+    fields: ['Rows to retain'],
+  }
+
+  it('recognises a question that prints no row of tabs', () => {
+    // Without this the form is never identified, so it is never filled, and
+    // the reply falls back to a path that cannot close a form: the reader
+    // answers and the question stays exactly where it was.
+    expect(parseTerminalFormPrompt(singleFieldPane)).toBe(true)
+    expect(terminalFormShowsFields(singleFieldPane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(singleFieldPane, form)).toBe(0)
+  })
+
+  it('still refuses a single-field form belonging to another question', () => {
+    expect(
+      terminalFormShowsFields(singleFieldPane, {
+        question: 'Something else entirely?',
+        fields: ['Rows to retain'],
+      }),
+    ).toBe(false)
+  })
+})
 
 describe('terminal form identity', () => {
   const form = {

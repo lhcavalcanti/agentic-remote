@@ -1466,7 +1466,13 @@ function terminalFormTabsIndex(
   for (let index = header + 1; index < lines.length; index += 1) {
     // Tabs sit on one line separated by runs of spaces, so a title containing
     // a single space stays intact.
-    const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
+    const tabs = lines[index]
+      .split(/\s{2,}/)
+      .filter(Boolean)
+      // A form of one field prints no row of tabs: the field's own heading is
+      // all there is, and the CLI writes a heading with a colon after it.
+      // Reading that as a tab is what lets a single question be recognised.
+      .map((tab) => tab.replace(/:$/, ''))
     if (
       tabs.length === form.fields.length &&
       tabs.every((tab, position) => tab === form.fields[position])
@@ -1543,7 +1549,10 @@ export function parseTerminalFormActiveField(
       return position
     }
   }
-  return undefined
+  // A form of one field prints its heading once, and that heading is the row
+  // the tabs were read from, so there is nothing below it to find. There is
+  // also nowhere else the focus could be.
+  return form.fields.length === 1 ? 0 : undefined
 }
 
 export function parseTerminalUserInput(

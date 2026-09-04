@@ -713,9 +713,24 @@ export class ClaudeAgentService
     sessionId: string,
     order: string[],
   ): Promise<SessionDetail> {
-    const session = await this.store.reorderQueuedPrompts(sessionId, order)
-    this.publish(session)
-    return session
+    // Under the same marker the drain holds. Without it a turn finishing while
+    // the new order was still being written down let the drain take the head
+    // of an arrangement that had not been accepted yet -- and if writing it
+    // then failed, the prompt already sent was put back on the queue.
+    if (this.drainingSessions.has(sessionId)) {
+      throw Object.assign(
+        new Error('The queue is being worked through; try again in a moment'),
+        { statusCode: 409 },
+      )
+    }
+    this.drainingSessions.add(sessionId)
+    try {
+      const session = await this.store.reorderQueuedPrompts(sessionId, order)
+      this.publish(session)
+      return session
+    } finally {
+      this.drainingSessions.delete(sessionId)
+    }
   }
 
   async sendMessage(

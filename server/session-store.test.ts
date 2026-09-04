@@ -26,6 +26,57 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it('leaves work that arrived while a refused order was being written', async () => {
+    // Putting the old queue back regardless would drop whatever was added in
+    // the meantime, and take the revision backwards with it.
+    const { store } = await createStore()
+    await store.create({
+      id: 'busy-session',
+      cwd: '/tmp/busy-project',
+      title: 'Busy project',
+      updatedAt: '2026-07-22T00:00:01.000Z',
+      status: 'idle',
+      isOpen: true,
+      messages: [],
+    })
+    for (const id of ['a', 'b']) {
+      await store.enqueuePrompt('busy-session', {
+        id,
+        content: id,
+        createdAt: '2026-09-02T00:00:00.000Z',
+      })
+    }
+
+    const failing = vi
+      .spyOn(store as unknown as { persist: () => Promise<void> }, 'persist')
+      .mockImplementation(async () => {
+        // Something else lands while the new order is being written down.
+        const session = store.get('busy-session')
+        const stored = (
+          store as unknown as {
+            state: { sessions: Record<string, { queuedPrompts?: unknown[] }> }
+          }
+        ).state.sessions['busy-session']
+        if (session && stored.queuedPrompts?.length === 2) {
+          stored.queuedPrompts.push({
+            id: 'c',
+            content: 'c',
+            createdAt: '2026-09-02T00:00:02.000Z',
+          })
+        }
+        throw new Error('disk full')
+      })
+    await expect(
+      store.reorderQueuedPrompts('busy-session', ['b', 'a']),
+    ).rejects.toThrow('disk full')
+    failing.mockRestore()
+
+    // The message that arrived is still there.
+    expect(
+      store.get('busy-session')?.queuedPrompts?.map((prompt) => prompt.id),
+    ).toContain('c')
+  })
+
   it('rolls a queue order back when it cannot be written down', async () => {
     // Told the order was refused while the rearrangement still stood in
     // memory, the drain would send in an order the caller had been told was

@@ -10485,10 +10485,6 @@ function App() {
     // yet, so when both failed the later one put the earlier drag's order back
     // as though it had been agreed to.
     const lane = sessionKey(selected)
-    const waitFor = reorderInFlight.current.get(lane)
-    if (waitFor) {
-      await waitFor.catch(() => undefined)
-    }
     const ids = queue.map((prompt) => `queued:${prompt.id}`)
     const from = ids.indexOf(String(active.id))
     const to = ids.indexOf(String(over.id))
@@ -10505,13 +10501,18 @@ function App() {
       upsertSession(current, { ...target, queuedPrompts: next }),
     )
     setError(undefined)
+    // Chained into the lane before waiting on what is ahead, so two drags that
+    // end while a third is still running queue behind each other rather than
+    // both taking the same promise and resuming together.
     let settle: () => void = () => {}
-    reorderInFlight.current.set(
-      lane,
-      new Promise<void>((resolve) => {
-        settle = resolve
-      }),
-    )
+    const mine = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    const ahead = reorderInFlight.current.get(lane)
+    reorderInFlight.current.set(lane, mine)
+    if (ahead) {
+      await ahead.catch(() => undefined)
+    }
     try {
       const updated = await reorderQueuedPrompts(
         target.computerId,
@@ -10543,7 +10544,10 @@ function App() {
       }
     } finally {
       settle()
-      if (reorderInFlight.current.get(lane)) {
+      // Only while it is still this operation's. Deleting whatever is there
+      // threw away a later drag's place in the lane, and the two then ran
+      // together after all.
+      if (reorderInFlight.current.get(lane) === mine) {
         reorderInFlight.current.delete(lane)
       }
     }

@@ -494,32 +494,69 @@ function isModifierCode(code: string): boolean {
   )
 }
 
+/** Whether a binding is one the editor would have accepted. */
+// Storage is not a trusted source: an older version of the app, a hand edit,
+// or another tab can leave anything here. What comes back has to clear the
+// same bar as something typed into the editor, or a rule the reader cannot
+// break by hand is one they can break by reloading.
+function usableBinding(value: unknown): value is ShortcutBinding {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const candidate = value as Partial<ShortcutBinding>
+  if (typeof candidate.code !== 'string' || !candidate.code) {
+    return false
+  }
+  if (isModifierCode(candidate.code)) {
+    return false
+  }
+  // Held with nothing, it would fire while typing anywhere outside a text box.
+  return Boolean(candidate.alt || candidate.ctrl || candidate.meta)
+}
+
 function readStoredShortcuts(): Partial<Record<ShortcutId, ShortcutBinding>> {
-  const stored = readStoredOrder<Partial<Record<ShortcutId, ShortcutBinding>>>(
-    shortcutsStorageKey,
-    {},
-  )
-  const known = new Set(shortcutDefaults.map((entry) => entry.id))
+  const stored: unknown = readStoredOrder<unknown>(shortcutsStorageKey, {})
+  // `null` parses happily out of storage and is an object to `typeof`, so
+  // reading its entries threw before anything had rendered.
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    return {}
+  }
+  const known = new Map(shortcutDefaults.map((entry) => [entry.id, entry]))
   const clean: Partial<Record<ShortcutId, ShortcutBinding>> = {}
   for (const [id, value] of Object.entries(stored)) {
-    // Anything that is not a binding this build knows about is dropped rather
-    // than trusted: this comes back from storage, where an older version of
-    // the app, or a hand edit, may have left something else entirely.
-    if (
-      known.has(id as ShortcutId) &&
-      value &&
-      typeof value === 'object' &&
-      typeof (value as ShortcutBinding).code === 'string' &&
-      !isModifierCode((value as ShortcutBinding).code)
-    ) {
-      const candidate = value as ShortcutBinding
-      clean[id as ShortcutId] = binding(candidate.code, {
-        alt: Boolean(candidate.alt),
-        shift: Boolean(candidate.shift),
-        ctrl: Boolean(candidate.ctrl),
-        meta: Boolean(candidate.meta),
-      })
+    if (!known.has(id as ShortcutId) || !usableBinding(value)) {
+      continue
     }
+    clean[id as ShortcutId] = binding(value.code, {
+      alt: Boolean(value.alt),
+      shift: Boolean(value.shift),
+      ctrl: Boolean(value.ctrl),
+      meta: Boolean(value.meta),
+    })
+  }
+  // Two rows answering to the same keys means only the first is ever reached,
+  // and the other can no longer be pressed at all. Whichever is read second
+  // goes back to its default, which is always free by construction.
+  const taken: ShortcutBinding[] = []
+  for (const entry of shortcutDefaults) {
+    const chosen = clean[entry.id]
+    if (!chosen) {
+      continue
+    }
+    const collides =
+      taken.some((held) => sameBinding(held, chosen)) ||
+      shortcutDefaults.some(
+        (other) =>
+          other.id !== entry.id &&
+          !clean[other.id] &&
+          sameBinding(other.binding, chosen),
+      )
+    if (collides) {
+      delete clean[entry.id]
+      taken.push(entry.binding)
+      continue
+    }
+    taken.push(chosen)
   }
   return clean
 }
@@ -2128,6 +2165,22 @@ function ShortcutEditor({
   }
 
   function reset(id: ShortcutId) {
+    const restored = shortcutDefaults.find((entry) => entry.id === id)?.binding
+    // Its default can have been given to another row in the meantime, and
+    // putting it back regardless left two rows answering to the same keys --
+    // only the first of which is ever reached, so this one could not be
+    // pressed at all.
+    const taken = restored
+      ? shortcuts.find(
+          (entry) => entry.id !== id && sameBinding(entry.binding, restored),
+        )
+      : undefined
+    if (taken && restored) {
+      setRefused(
+        `${bindingLabel(restored)} now does "${taken.label}", so this cannot be put back until that changes.`,
+      )
+      return
+    }
     const { [id]: _removed, ...rest } = overrides
     onChange(rest)
     stopRecording()
@@ -8909,6 +8962,14 @@ function App() {
     setKnowledgeModeState(mode)
   }
 
+  /** What a shortcut answers to now, for anything that tells the reader. */
+  // Read rather than written out, or a remapped shortcut goes on being
+  // advertised by keys that no longer do anything.
+  function shortcutKeys(id: ShortcutId): string {
+    const entry = shortcuts.find((candidate) => candidate.id === id)
+    return entry ? bindingLabel(entry.binding) : ''
+  }
+
   /**
    * Puts away whatever is on top, and says whether there was anything.
    */
@@ -8940,12 +9001,15 @@ function App() {
       open[1]()
       return true
     }
-    if (knowledgeMode !== 'hidden') {
-      setKnowledgeMode('hidden')
-      return true
-    }
+    // Before the knowledge panel. The drawer only exists on a narrow screen,
+    // and there it slides over everything else -- so closing what is behind it
+    // first put away something the reader could not even see.
     if (sidebarOpen) {
       setSidebarOpen(false)
+      return true
+    }
+    if (knowledgeMode !== 'hidden') {
+      setKnowledgeMode('hidden')
       return true
     }
     return false
@@ -10702,8 +10766,8 @@ function App() {
             onClick={toggleKnowledgePanel}
             title={
               selected
-                ? 'Knowledge for this session (Alt+K)'
-                : 'Knowledge (Alt+K)'
+                ? `Knowledge for this session (${shortcutKeys('toggleKnowledge')})`
+                : `Knowledge (${shortcutKeys('toggleKnowledge')})`
             }
             type="button"
           >
@@ -11284,7 +11348,7 @@ function App() {
               knowledgeMode === 'expanded' ? 'icon-button--active' : ''
             }`}
             onClick={toggleKnowledgeExpanded}
-            title="Alt+Shift+K"
+            title={shortcutKeys('expandKnowledge')}
             type="button"
           >
             {knowledgeMode === 'expanded' ? (
@@ -11297,7 +11361,7 @@ function App() {
             aria-label="Close knowledge panel"
             className="icon-button"
             onClick={() => setKnowledgeMode('hidden')}
-            title="Alt+K"
+            title={shortcutKeys('toggleKnowledge')}
             type="button"
           >
             <X size={16} />

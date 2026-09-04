@@ -5769,6 +5769,99 @@ describe('App', () => {
     ).toBe(180)
   })
 
+  it('starts up when the stored shortcuts are nonsense', async () => {
+    // Storage is not a trusted source: another tab, an older version, or a
+    // hand edit can leave anything here. `null` in particular is an object to
+    // `typeof`, and reading its entries threw before anything had rendered --
+    // a blank screen with no way back except clearing site data.
+    localStorage.setItem('agentic-remote:shortcuts', 'null')
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByLabelText('App settings'))
+    expect(
+      await screen.findByLabelText('Change the keys for Open or close knowledge'),
+    ).toHaveTextContent('Alt + K')
+  })
+
+  it('drops stored shortcut keys that the editor would have refused', async () => {
+    // A binding held with nothing would fire while typing, and two rows on the
+    // same keys leave the second unreachable. Neither can be made in the
+    // editor, so neither may arrive by reloading either.
+    localStorage.setItem(
+      'agentic-remote:shortcuts',
+      JSON.stringify({
+        toggleKnowledge: { code: 'KeyG', alt: false, shift: false, ctrl: false, meta: false },
+        backgroundTasks: { code: 'ArrowDown', alt: true, shift: false, ctrl: false, meta: false },
+        nonsense: { code: 'KeyZ', alt: true },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    // Held with nothing: refused, so the default stands.
+    expect(
+      await screen.findByLabelText('Change the keys for Open or close knowledge'),
+    ).toHaveTextContent('Alt + K')
+    // Already what "Next session" answers to: refused for the same reason.
+    expect(
+      screen.getByLabelText('Change the keys for View background tasks'),
+    ).toHaveTextContent('Alt + T')
+    expect(
+      screen.getByLabelText('Change the keys for Next session'),
+    ).toHaveTextContent('Alt + \u2193')
+  })
+
+  it('will not reset a shortcut onto keys another row has taken', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    // Move background tasks off Alt+T...
+    fireEvent.click(
+      await screen.findByLabelText('Change the keys for View background tasks'),
+    )
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for View background tasks'),
+      { key: 'y', code: 'KeyY', altKey: true },
+    )
+    // ...then give Alt+T to another row.
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for Next session'),
+      ).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByLabelText('Change the keys for Next session'))
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for Next session'),
+      { key: 't', code: 'KeyT', altKey: true },
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for Next session'),
+      ).toHaveTextContent('Alt + T'),
+    )
+
+    // Putting the first back would land on the keys the other now holds.
+    fireEvent.click(
+      screen.getByLabelText('Reset the keys for View background tasks'),
+    )
+    await screen.findByText(/now does "Next session"/i)
+    expect(
+      screen.getByLabelText('Change the keys for View background tasks'),
+    ).toHaveTextContent('Alt + Y')
+  })
+
   it('gives a shortcut different keys, and answers to them', async () => {
     // The list and the handler read the same rows, so a shortcut cannot be
     // shown as one thing and answer to another.
@@ -5903,6 +5996,46 @@ describe('App', () => {
       'hidden',
     )
 
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
+        'hidden',
+      ),
+    )
+  })
+
+  it('closes the drawer before the panel it slid over', async () => {
+    // The drawer only exists on a narrow screen, and there it covers
+    // everything else. Closing what is behind it first put away something the
+    // reader could not see, and left the thing they were looking at.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+    fireEvent.click(screen.getByLabelText('Open sessions'))
+    await waitFor(() =>
+      expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open'),
+    )
+
+    // The drawer goes first...
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.sidebar')).not.toHaveClass(
+        'sidebar--open',
+      ),
+    )
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+
+    // ...and the panel it was covering on the next press.
     fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
     await waitFor(() =>
       expect(document.querySelector('.knowledge-panel')).toHaveAttribute(

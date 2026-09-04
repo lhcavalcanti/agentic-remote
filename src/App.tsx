@@ -512,7 +512,7 @@ function expandComposerPastes(
   let offset = 0
   let expanded = ''
   const ordered = [...pastes].sort((left, right) => left.start - right.start)
-  for (const [index, paste] of ordered.entries()) {
+  for (const paste of ordered) {
     const label = collapsedPasteLabel(paste)
     if (
       paste.start < offset ||
@@ -520,15 +520,15 @@ function expandComposerPastes(
     ) {
       continue
     }
-    const visible = value.slice(offset, paste.start)
-    expanded += index === 0 ? visible.trimStart() : visible
+    expanded += value.slice(offset, paste.start)
     expanded += paste.content
     offset = paste.start + label.length
   }
-  if (ordered.length === 0) {
-    return value.trim()
-  }
-  return expanded + value.slice(offset).trimEnd()
+  // Put back exactly as written. What is typed around a paste is part of the
+  // message -- indentation before it, a newline after it -- and trimming the
+  // ends quietly rewrote the prompt. Emptiness and whether it is a command are
+  // decided from a trimmed copy where they are asked, not here.
+  return expanded + value.slice(offset)
 }
 
 function reconcileComposerPastes(

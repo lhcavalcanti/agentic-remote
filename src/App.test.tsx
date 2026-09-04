@@ -2125,6 +2125,37 @@ describe('App', () => {
     ])
   })
 
+  it('keeps what was typed around a collapsed paste', async () => {
+    // Indentation before a paste and a newline after it are part of the
+    // message. Trimming the ends of the reconstructed prompt quietly rewrote
+    // what the reader had written.
+    const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join(
+      '\n',
+    )
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: '  before ' } })
+    textarea.setSelectionRange(9, 9)
+    fireEvent.paste(textarea, {
+      clipboardData: { getData: () => pasted },
+    })
+    fireEvent.change(textarea, {
+      target: { value: `${textarea.value} after \n` },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        acknowledgesFailure: undefined,
+        content: `  before ${pasted} after \n`,
+        enqueue: false,
+      }),
+    )
+  })
+
   it('sends a pasted command as a command', async () => {
     // The composer shows a placeholder for a long paste, so reading the
     // display to decide what was typed meant a pasted command was never

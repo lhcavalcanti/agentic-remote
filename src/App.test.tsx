@@ -4710,6 +4710,132 @@ describe('App', () => {
     })
     expect(loaded).toEqual([computer, secondComputer])
   })
+  it('follows workspace Markdown links without leaving the selected session', async () => {
+    vi.mocked(readWorkspaceFile).mockImplementation(
+      async (_computerId, _sessionId, path) => ({
+        name: path.split('/').at(-1) || path,
+        path,
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 100,
+        content: path === 'README.md'
+          ? '# Start\n\n[Read installation](docs/setup%20guide.md#install)'
+          : '# Setup guide\n\n## Install\n\nInstall the application.',
+      }),
+    )
+    render(<App />)
+    const composer = await screen.findByLabelText('Message')
+    fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Browse current session folder',
+    }))
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    const location = window.location.href
+    fireEvent.click(await screen.findByRole('link', { name: 'Read installation' }))
+
+    const heading = await screen.findByRole('heading', { name: 'Install' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    expect(readWorkspaceFile).toHaveBeenLastCalledWith(
+      computer.id, session.id, 'docs/setup guide.md',
+    )
+    expect(window.location.href).toBe(location)
+    expect(composer).toHaveValue('Keep this draft')
+    expect(sendMessage).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous document' }))
+    expect(await screen.findByRole('heading', { name: 'Start' }))
+      .toBeInTheDocument()
+  })
+
+  it('scopes Markdown fragments to unique headings and refuses escaping links', async () => {
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      name: 'README.md',
+      path: 'README.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 100,
+      content: [
+        '# Start',
+        '[Second install](#install-1)',
+        '[Missing section](#missing)',
+        '[Outside workspace](../outside.md)',
+        '## Install',
+        'First.',
+        '## Install',
+        'Second.',
+        '## Install-1',
+        'A naturally suffixed heading.',
+      ].join('\n\n'),
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Browse current session folder',
+    }))
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    const headings = await screen.findAllByRole('heading', { name: 'Install' })
+    expect(headings.map((heading) => heading.id)).toEqual(['install', 'install-1'])
+    expect(screen.getByRole('heading', { name: 'Install-1' }))
+      .toHaveAttribute('id', 'install-1-1')
+    const location = window.location.href
+    fireEvent.click(screen.getByRole('link', { name: 'Second install' }))
+    expect(headings[1]).toHaveFocus()
+    expect(window.location.href).toBe(location)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Missing section' }))
+    expect(await screen.findByText('Section "missing" was not found in this document.'))
+      .toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link', { name: 'Outside workspace' }))
+    expect(await screen.findByText('This link points outside the document root.'))
+      .toBeInTheDocument()
+    expect(readWorkspaceFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('follows Knowledge Markdown links on the owning root and reports failed reads', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+      id: 'root-1',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/home/tester/docs',
+      name: 'docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    }])
+    vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
+      '.': {
+        path: '.',
+        entries: [{ name: 'README.md', path: 'README.md', kind: 'markdown' }],
+      },
+    }))
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_root, path) => {
+      if (path === 'missing.md') {
+        throw new Error('Document was not found')
+      }
+      return {
+        path,
+        name: path.split('/').at(-1) || path,
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 100,
+        content: path === 'README.md'
+          ? '# Knowledge start\n\n[Open guide](guides/setup.md#r%C3%A9sum%C3%A9)'
+          : '# Setup\n\n## Resume\n\n## R\u00e9sum\u00e9\n\n[Missing file](../missing.md)',
+      }
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /README.md/ }))
+    const location = window.location.href
+    fireEvent.click(await screen.findByRole('link', { name: 'Open guide' }))
+    const heading = await screen.findByRole('heading', { name: 'R\u00e9sum\u00e9' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    expect(readKnowledgeFile).toHaveBeenLastCalledWith('root-1', 'guides/setup.md')
+    expect(window.location.href).toBe(location)
+    expect(sendMessage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('link', { name: 'Missing file' }))
+    expect(await screen.findAllByText('Document was not found')).not.toHaveLength(0)
+    expect(heading).toBeInTheDocument()
+  })
+
   it('navigates with breadcrumbs and offers a document outline', async () => {
     vi.mocked(readWorkspaceFile).mockResolvedValue({
       name: 'knowledge.md',

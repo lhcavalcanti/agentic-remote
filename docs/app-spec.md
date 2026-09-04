@@ -273,6 +273,11 @@ switches, failed sends, and clear replacement IDs.
   root MUST be rejected.
 - Hidden files/directories MUST be omitted by default.
 - Markdown MUST support rendered and raw views.
+- Relative Markdown document links MUST open through the owning workspace or
+  Knowledge root without navigating away from the app. Section links MUST stay
+  inside the displayed document, with unique anchors for repeated headings.
+- Refused links, missing documents, and missing section anchors MUST report an
+  explicit error without discarding the current document or conversation draft.
 - Text previews MUST be limited to 2 MiB.
 - PDF previews MUST be limited to 25 MiB and rendered in the browser with
   PDF.js.

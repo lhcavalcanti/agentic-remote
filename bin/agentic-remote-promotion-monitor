@@ -342,35 +342,48 @@ run() {
   # be somewhere disposable. It is checked before anything is created, while
   # refusing still costs nothing.
   assert_disposable "$validate_root"
+  # Whether the path is a worktree this repository registered, holding nothing
+  # that would be lost by removing it. Asked before anything is removed: a
+  # forced removal deletes a worktree's uncommitted and untracked files, so
+  # doing it first and inspecting afterwards inspects what is already gone.
+  validation_worktree_removable() {
+    local resolved entry registered=""
+    resolved="$(resolve_path "$validate_root")"
+    while IFS= read -r entry; do
+      [[ -n "$entry" ]] || continue
+      if [[ "$(resolve_path "$entry")" == "$resolved" ]]; then
+        registered="yes"
+        break
+      fi
+    done < <(git -C "$DEV_ROOT" worktree list --porcelain 2>/dev/null |
+      sed -n 's/^worktree //p')
+    [[ -n "$registered" ]] || return 1
+    # Somebody may have been working in it. Ignored build output does not
+    # count, which is the same rule the post-build check already applies.
+    [[ -z "$(git -C "$validate_root" status --porcelain 2>/dev/null)" ]] || return 1
+    return 0
+  }
+
   cleanup_validation_worktree() {
-    git -C "$DEV_ROOT" worktree remove --force "$validate_root" 2>/dev/null || true
     if [[ ! -e "$validate_root" ]]; then
       return 0
     fi
-    # Still here, so this repository could not account for it. Anything named
-    # `.git` means somebody's checkout: a linked worktree keeps it as a file
-    # and an ordinary clone keeps it as a directory, so testing for a directory
-    # alone let another repository's worktree -- with whatever uncommitted and
-    # untracked work was in it -- fall through to `rm -rf`.
-    #
-    # The one exception is a worktree of this repository that git has lost
-    # track of, which is ours to clear away. It is recognised by its
-    # administrative directory living inside DEV_ROOT, not by the shape of the
-    # entry.
-    if [[ -e "$validate_root/.git" ]]; then
-      local gitdir="" owner=""
-      if [[ -f "$validate_root/.git" ]]; then
-        gitdir="$(sed -n 's/^gitdir: *//p' "$validate_root/.git" 2>/dev/null || true)"
-      fi
-      if [[ -n "$gitdir" ]]; then
-        owner="$(resolve_path "$gitdir")"
-      fi
-      if [[ -z "$owner" || "$owner" != "$(resolve_path "$DEV_ROOT")/.git/worktrees/"* ]]; then
-        die "refusing to remove $validate_root: it belongs to another checkout"
-      fi
+    # An empty directory holds nothing to lose, and a previous run can leave
+    # one behind. Refusing it would wedge every run that followed.
+    if [[ -d "$validate_root" && ! -L "$validate_root" ]] &&
+      [[ -z "$(ls -A -- "$validate_root" 2>/dev/null)" ]]; then
+      rmdir -- "$validate_root" 2>/dev/null || true
+      return 0
     fi
-    rm -rf -- "$validate_root"
+    if ! validation_worktree_removable; then
+      die "refusing to remove $validate_root: it is not a clean worktree of $DEV_ROOT"
+    fi
+    git -C "$DEV_ROOT" worktree remove --force "$validate_root" 2>/dev/null || true
+    if [[ -e "$validate_root" ]]; then
+      rm -rf -- "$validate_root"
+    fi
   }
+
   trap cleanup_validation_worktree EXIT
   cleanup_validation_worktree
   log "preparing validation worktree at $validate_root"

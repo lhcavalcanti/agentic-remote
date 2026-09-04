@@ -287,10 +287,36 @@ describe('promotion monitor', () => {
     })
 
     expect(result.code).not.toBe(0)
-    expect(result.output).toContain('belongs to another checkout')
+    expect(result.output).toContain('not a clean worktree')
     // Everything that was there is still there.
     expect(existsSync(unsaved)).toBe(true)
     expect(existsSync(path.join(state, 'validate', 'kept.txt'))).toBe(true)
+  })
+
+  it('refuses to force-remove a worktree of its own repository that holds work', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // A worktree of the same repository, made by hand, with work in it that
+    // was never committed. `git worktree remove --force` deletes exactly that,
+    // so asking whether the path was safe to remove only after removing it
+    // asks about something already gone.
+    const state = path.join(context.root, 'state-owned-dirty')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    await git(context.dev, 'worktree', 'add', '--detach', validate, 'HEAD')
+    const unsaved = path.join(validate, 'unsaved.txt')
+    await writeFile(unsaved, 'work nobody has committed\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a clean worktree')
+    expect(existsSync(unsaved)).toBe(true)
+
+    await git(context.dev, 'worktree', 'remove', '--force', validate)
   })
 
   it('validates somewhere of its own rather than in the development checkout', async () => {

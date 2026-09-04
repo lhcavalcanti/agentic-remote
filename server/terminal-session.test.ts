@@ -170,6 +170,20 @@ describe('TmuxTerminalSessionController', () => {
 ╰───────────────────────────────────────────────╯
       `),
     ).toBe(true)
+    // Both choices share a row, so the marker sits mid-line when the second
+    // one is selected. Anchoring it to the start of the line refused a panel
+    // that was really being shown, and startup then timed out.
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
+│ Now generally available!                       │
+│ Install it now?                               │
+│ Yes, install    ❯ No, thanks                  │
+│ ←/→ to choose · Enter to select · Y / N       │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(true)
     expect(
       isTerminalDesktopInstallPrompt(`
 ╭───────────────────────────────────────────────╮
@@ -1188,6 +1202,12 @@ Permission request (1 remaining)
       ])
     ).stdout.trim()
     const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
     await expect(
       controller.send(sessionId, 'establish cached owner', false),
     ).resolves.toBe(true)

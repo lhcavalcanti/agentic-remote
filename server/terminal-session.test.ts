@@ -1148,6 +1148,12 @@ Permission request (1 remaining)
     vi.stubEnv('COPILOT_HOME', copilotHome)
 
     const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
     const delivered = await controller.send(
       sessionId,
       'terminal delivery works',

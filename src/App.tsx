@@ -10513,6 +10513,14 @@ function App() {
     if (ahead) {
       await ahead.catch(() => undefined)
     }
+    // Taken now that whatever was ahead has settled, rather than from the list
+    // as it looked before the drag. That earlier snapshot could hold an order
+    // the server had refused, and putting it back showed the reader an
+    // arrangement nothing had ever agreed to.
+    const settled =
+      sessionsRef.current.find(
+        (candidate) => sessionKey(candidate) === lane,
+      ) || target
     try {
       const updated = await reorderQueuedPrompts(
         target.computerId,
@@ -10539,7 +10547,7 @@ function App() {
         // reappears as a session nothing can be done with and no later event
         // will clear.
         setSessions((current) =>
-          stillListed(target) ? upsertSession(current, target) : current,
+          stillListed(settled) ? upsertSession(current, settled) : current,
         )
       }
     } finally {

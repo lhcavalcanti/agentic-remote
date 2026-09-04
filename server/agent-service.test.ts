@@ -169,8 +169,12 @@ class DeferredSession implements CopilotSessionLike {
     }
   }
 
+  sendError?: Error
   sendAndWait(content: string): Promise<AssistantMessageEvent | undefined> {
     this.sentPrompts.push(content)
+    if (this.sendError) {
+      return Promise.reject(this.sendError)
+    }
     return new Promise((resolve) => {
       this.responseResolvers.push(resolve)
     })
@@ -4420,6 +4424,54 @@ describe('AgentService deletion', () => {
     await vi.waitFor(() => {
       expect(client.session.sentPrompts).toContain('the one behind it')
     })
+  })
+
+  it('does not announce a dequeue it may have to undo', async () => {
+    // The drain takes the prompt in hand before it dispatches and puts it back
+    // if it cannot go. Announcing the shorter queue in between told the
+    // browser the message was gone, and there was no way there to tell that
+    // moment from the message really being gone -- so anything holding a
+    // rewrite of it let go, and the rewrite came adrift from the message that
+    // came back.
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-drain-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.enqueuePrompt(created.id, {
+      id: 'waiting',
+      content: 'the one that was waiting',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    const announced: { ids: string[]; status: string }[] = []
+    service.on('event', (event) => {
+      if (event.type === 'session.upserted' && event.session.id === created.id) {
+        announced.push({
+          ids: (event.session.queuedPrompts || []).map((prompt) => prompt.id),
+          status: event.session.status,
+        })
+      }
+    })
+
+    await service.sendMessage(created.id, 'written afterwards', true)
+    await vi.waitFor(() => {
+      expect(client.session.sentPrompts).toContain('the one that was waiting')
+    })
+
+    // The prompt leaves the queue and the turn begins in the same breath. An
+    // announcement that has let go of it while the session is still idle is
+    // the moment that cannot be told from the message being gone.
+    const heldButIdle = announced.some(
+      (state) => !state.ids.includes('waiting') && state.status === 'idle',
+    )
+    expect(heldButIdle).toBe(false)
   })
 
   it('refuses an order built from a queue that has since changed', async () => {

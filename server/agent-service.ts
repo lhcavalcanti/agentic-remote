@@ -5780,7 +5780,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           sessionId,
           () => this.store.shiftQueuedPrompt(sessionId),
         )
-        this.publish(queued)
+        // Held back until the outcome is known. Announced here, the queue
+        // arrives at the browser without this prompt while it is still only in
+        // hand -- and if the dispatch fails it goes straight back, so what was
+        // announced was never true. Anything watching had no way to tell that
+        // moment from the message being gone.
+        //
+        // Nothing is hidden by waiting: a dispatch that succeeds publishes the
+        // running session itself, and one that fails publishes the restored
+        // queue below.
+        if (!next) {
+          this.publish(queued)
+        }
         if (next) {
           try {
             if (next.command) {

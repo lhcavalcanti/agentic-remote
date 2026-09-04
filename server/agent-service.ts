@@ -3543,7 +3543,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       session.status = 'running'
       session.activity = 'Thinking'
       if (session.messages.filter((message) => message.role === 'user').length === 1) {
-        session.title = content.length > 52 ? `${content.slice(0, 52)}…` : content
+        // From a trimmed copy. The message keeps its own leading whitespace,
+        // which is part of what was written, but a title made of it is blank.
+        const forTitle = content.trim()
+        session.title =
+          forTitle.length > 52 ? `${forTitle.slice(0, 52)}…` : forTitle
       }
     })
     this.activePrompts.set(sessionId, { assistantMessageId })

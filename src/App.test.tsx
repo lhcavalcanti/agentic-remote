@@ -2171,6 +2171,24 @@ describe('App', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  it('lets an older build clear a draft for good', async () => {
+    // The older build writes its map in full every time, so a session it
+    // holds nothing for is one whose draft was sent or cleared over there.
+    // Keeping this build's copy brought that draft back from the dead -- and
+    // an already-sent prompt was offered again.
+    localStorage.setItem('agentic-remote:composer-drafts-generation', '1')
+    localStorage.setItem(
+      'agentic-remote:composer-drafts-v2',
+      JSON.stringify({
+        'computer-1:session-1': { text: 'what this build last saw', pastes: [] },
+      }),
+    )
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({}))
+
+    render(<App />)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(''))
+  })
+
   it('keeps a draft written against an older build after upgrading again', async () => {
     // An older build writes only the legacy key. Coming back to this one, any
     // state at all in the newer key won, and the persistence effect then wrote

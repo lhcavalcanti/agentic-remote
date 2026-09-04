@@ -386,6 +386,12 @@ type ComposerDrafts = Record<string, ComposerDraft>
 
 const collapsedPasteLineThreshold = 20
 const composerDraftsStorageKey = 'agentic-remote:composer-drafts-v2'
+// Set the first time this build persists, and never cleared. Its presence is
+// what tells a first upgrade from a return to one.
+const composerDraftsGenerationKey = 'agentic-remote:composer-drafts-generation'
+// Whether a legacy paste payload could not be matched to its label. Its key is
+// then kept, because it holds the only copy of that text.
+const unmigratedComposerPastes = { current: false }
 let collapsedPasteKeySequence = 0
 
 function newCollapsedPasteKey(): string {
@@ -462,6 +468,21 @@ function readComposerDrafts(): ComposerDrafts {
   // held anything at all wrote the stale copy straight back over them. Where
   // the two disagree about a session, the legacy text is what was written
   // last.
+  // Whether this build has ever written here. Without it, a legacy map and a
+  // v2 map are the same picture whether this is a first upgrade or a return
+  // from one -- and the two want opposite answers. On a first upgrade the
+  // legacy map is everything there is. On a return, the older build has been
+  // writing it in full ever since, so a session it holds nothing for is one
+  // whose draft was sent or cleared over there, and keeping ours brought that
+  // draft back from the dead.
+  const returning = localStorage.getItem(composerDraftsGenerationKey) !== null
+  if (returning) {
+    for (const key of Object.keys(result)) {
+      if (!legacy[key]) {
+        delete result[key]
+      }
+    }
+  }
   for (const [key, draft] of Object.entries(legacy)) {
     const mine = result[key]
     if (!mine || expandComposerPastes(mine.text, mine.pastes) !== draft.text) {
@@ -510,6 +531,10 @@ function readLegacyComposerDrafts(): ComposerDrafts {
                   start < 0 ||
                   text.indexOf(label, start + label.length) >= 0
                 ) {
+                  // The label appears twice, so which one carries the payload
+                  // cannot be told. Its metadata is left behind rather than
+                  // guessed at, and the payload key is kept so nothing is lost.
+                  unmigratedComposerPastes.current = true
                   return []
                 }
                 return [
@@ -7887,6 +7912,7 @@ function App() {
   }, [accentTheme])
 
   useEffect(() => {
+    localStorage.setItem(composerDraftsGenerationKey, '1')
     localStorage.setItem(
       composerDraftsStorageKey,
       JSON.stringify(composerDrafts),
@@ -7906,7 +7932,13 @@ function App() {
         ),
       ),
     )
-    localStorage.removeItem('agentic-remote:composer-pastes')
+    // Only once nothing is still waiting to be migrated. A legacy draft whose
+    // label appears twice cannot be matched to its payload, so its metadata is
+    // held back -- and removing the payload key then destroyed the only copy
+    // of the pasted text.
+    if (!unmigratedComposerPastes.current) {
+      localStorage.removeItem('agentic-remote:composer-pastes')
+    }
   }, [composerDrafts])
 
   useEffect(() => {
@@ -8793,6 +8825,24 @@ function App() {
       }
     }
   }, [composer, viewportHeight])
+
+  // Puts text in the composer as a thing of its own, with no paste metadata
+  // carried over. Reconciling would keep a tracked label that happens to match
+  // one in the new text, so a queued message holding a literal label was sent
+  // with somebody else's pasted payload hidden behind it.
+  function replaceComposer(value: string) {
+    if (!selectedKey) {
+      return
+    }
+    const targetKey = followReplacementsRef.current(selectedKey)
+    updateComposerDrafts([targetKey], (current) => {
+      if (!value) {
+        const { [targetKey]: _removed, ...remaining } = current
+        return remaining
+      }
+      return { ...current, [targetKey]: { text: value, pastes: [] } }
+    })
+  }
 
   function setComposer(value: string) {
     if (!selectedKey) {
@@ -10537,7 +10587,7 @@ function App() {
       )
       setSessions((current) => upsertSession(current, result.session))
       if (edit) {
-        setComposer(result.prompt.content)
+        replaceComposer(result.prompt.content)
         window.requestAnimationFrame(() => composerRef.current?.focus())
       }
     } catch (caught) {

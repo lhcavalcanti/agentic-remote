@@ -832,7 +832,9 @@ button {
   --computer-tint: rgba(120, 128, 117, 0.06);
   display: grid;
   width: 100%;
-  grid-template-columns: 18px 8px minmax(0, 1fr);
+  /* Handle, status dot, the conversation itself, and the control that puts it
+     down. The last column takes no room until there is something in it. */
+  grid-template-columns: 18px 8px minmax(0, 1fr) auto;
   gap: 7px;
   align-items: start;
   padding: 11px 10px;
@@ -4169,6 +4171,7 @@ button {
    near or the session is already resting, so a list of running work reads as
    work rather than as a row of controls. */
 .session-item__suspend {
+  align-self: center;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;

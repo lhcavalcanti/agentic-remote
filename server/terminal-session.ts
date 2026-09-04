@@ -1556,30 +1556,82 @@ function terminalFormTabsIndex(
   // Long questions wrap to the pane width, so compare the complete rendered
   // region instead of requiring the original text to fit on one line.
   const question = form.question.replace(/\s+/gu, ' ').trim()
-  for (let index = header + 1; index < lines.length; index += 1) {
+  const questionAt = terminalQuestionEndIndex(lines, header, question)
+  if (question && questionAt === undefined) {
+    return -1
+  }
+  const rows = lines
+    .slice(header + 1)
     // Tabs sit on one line separated by runs of spaces, so a title containing
     // a single space stays intact.
-    const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
-    if (
-      tabs.length === form.fields.length &&
-      tabs.every((tab, position) => tab === form.fields[position])
-    ) {
-      const renderedQuestionLines = lines.slice(header + 1, index)
-      const renderedQuestion = renderedQuestionLines
-        .join(' ')
-        .replace(/\s+/gu, ' ')
-        .trim()
-      if (
-        question &&
-        renderedQuestion !== question &&
-        !terminalHardWrappedTextMatches(renderedQuestionLines, question)
-      ) {
+    .map((line) => line.split(/\s{2,}/).filter(Boolean))
+  // A form of more than one field prints them as a row of tabs, directly under
+  // the question and above the focused field's own content. So it is the first
+  // line with anything on it -- not any line that happens to hold a run of
+  // spaces, which is what a prefilled value like `ACME  Corp` looks like
+  // further down, and which used to make a perfectly ordinary single-field
+  // form impossible to answer.
+  const firstContent = rows.find(
+    (tabs, position) =>
+      header + 1 + position > (questionAt ?? header) && tabs.length > 0,
+  )
+  const printsTabRow = (firstContent?.length ?? 0) > 1
+  for (let position = 0; position < rows.length; position += 1) {
+    const tabs = rows[position]
+    const index = header + 1 + position
+    if (form.fields.length === 1) {
+      // A form of one field prints no row of tabs: the field's own heading is
+      // all there is, and the CLI writes a heading with a colon after it.
+      // Reading that heading as the tab is what lets a single question be
+      // recognised.
+      //
+      // Only in a pane that prints no tab row at all. Every line was a
+      // candidate before, so a single-field identity could match a lone
+      // heading inside a form of several fields -- and answering it submitted
+      // that whole form, the other fields left at their defaults.
+      if (printsTabRow || tabs.length !== 1) {
         continue
       }
+      // Only the trailing colon the heading is printed with: taking one off
+      // every tab stopped a field whose own title ends in a colon from ever
+      // matching the row it is printed in.
+      if (tabs[0].replace(/:$/, '') === form.fields[0]) {
+        return index
+      }
+      continue
+    }
+    if (
+      tabs.length === form.fields.length &&
+      tabs.every((tab, slot) => tab === form.fields[slot])
+    ) {
       return index
     }
   }
   return -1
+}
+
+function terminalQuestionEndIndex(
+  lines: string[],
+  header: number,
+  question: string,
+): number | undefined {
+  if (!question) {
+    return header
+  }
+  for (let end = header + 1; end < lines.length; end += 1) {
+    const rendered = lines.slice(header + 1, end + 1)
+    const normalized = rendered.join(' ').replace(/\s+/gu, ' ').trim()
+    if (
+      normalized === question ||
+      terminalHardWrappedTextMatches(rendered, question)
+    ) {
+      return end
+    }
+    if (normalized.length > question.length) {
+      return undefined
+    }
+  }
+  return undefined
 }
 
 /**
@@ -1648,7 +1700,10 @@ export function parseTerminalFormActiveField(
       return position
     }
   }
-  return undefined
+  // A form of one field prints its heading once, and that heading is the row
+  // the tabs were read from, so there is nothing below it to find. There is
+  // also nowhere else the focus could be.
+  return form.fields.length === 1 ? 0 : undefined
 }
 
 export function parseTerminalUserInput(

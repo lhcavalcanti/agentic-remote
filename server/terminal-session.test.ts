@@ -17,6 +17,7 @@ import {
   paneEvidenceCount,
   paneShowsText,
   parseTerminalFormActiveField,
+  parseTerminalFormPrompt,
   parseTerminalPermission,
   terminalChecklistState,
   submitTerminalForm,
@@ -683,6 +684,7 @@ Permission request (1 remaining)
         '#{pane_pid}',
       ])
     ).stdout.trim()
+    await waitForProcessCommand(Number.parseInt(panePid, 10), [executable])
     const sessionId = 'abcdef12-abcd-abcd-abcd-abcdef123456'
     const copilotHome = path.join(directory, 'copilot-home')
     const sessionDirectory = path.join(
@@ -764,6 +766,7 @@ Permission request (1 remaining)
         '#{pane_pid}',
       ])
     ).stdout.trim()
+    await waitForProcessCommand(Number.parseInt(panePid, 10), [executable])
     const sessionId = 'fedcba98-abcd-abcd-abcd-123456789abc'
     const copilotHome = path.join(directory, 'copilot-home')
     const sessionDirectory = path.join(
@@ -838,6 +841,7 @@ Permission request (1 remaining)
         '#{pane_pid}',
       ])
     ).stdout.trim()
+    await waitForProcessCommand(Number.parseInt(panePid, 10), [executable])
     const sessionId = 'fedcba98-abcd-abcd-abcd-abcdef654321'
     const copilotHome = path.join(directory, 'copilot-home')
     const sessionDirectory = path.join(
@@ -1300,6 +1304,97 @@ const formPaneLastField = [
   '',
   ' ↑/↓ select · enter accept · shift+tab prev · ctrl+d decline · esc cancel',
 ].join('\n')
+
+// Captured from a real Copilot CLI form with a single field. There is no row
+// of tabs: the field's own heading is all the form prints.
+const singleFieldPane = [
+  ' Copilot needs information.',
+  ' Which meaning of \u201Csucceeded\u201D should the status file use?',
+  '',
+  ' Rows to retain:',
+  ' Successful executions keeps completed healthy benchmark runs.',
+  ' \u276F Successful executions: historical runs plus completed TSF-0.5',
+  '   Successful experiment outcomes: retained T1 plus C1 control only',
+  '   Other (type your answer)',
+  '',
+  ' \u2191/\u2193 select \u00B7 enter accept \u00B7 ctrl+d decline \u00B7 esc cancel',
+].join('\n')
+
+describe('single field forms', () => {
+  const form = {
+    question: 'Which meaning of \u201Csucceeded\u201D should the status file use?',
+    fields: ['Rows to retain'],
+  }
+
+  it('recognises a question that prints no row of tabs', () => {
+    // Without this the form is never identified, so it is never filled, and
+    // the reply falls back to a path that cannot close a form: the reader
+    // answers and the question stays exactly where it was.
+    expect(parseTerminalFormPrompt(singleFieldPane)).toBe(true)
+    expect(terminalFormShowsFields(singleFieldPane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(singleFieldPane, form)).toBe(0)
+  })
+
+  it('answers a single-field form whose value holds a run of spaces', () => {
+    // A prefilled value is just text, and text can contain two spaces. Reading
+    // any such line as a row of tabs made an ordinary one-field form look like
+    // a form of several, so it could be neither filled nor dismissed.
+    const pane = [
+      ' Copilot needs information.',
+      ' Which company is this for?',
+      '',
+      ' Company:',
+      ' \u276F ACME  Corp',
+      '   Other (type your answer)',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 esc cancel',
+    ].join('\n')
+    const form = {
+      question: 'Which company is this for?',
+      fields: ['Company'],
+    }
+    expect(terminalFormShowsFields(pane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, form)).toBe(0)
+  })
+
+  it('refuses a one-field identity against a form of several fields', () => {
+    // The heading of the focused field is printed on its own line inside a
+    // multi-field form too. Treated as the whole of a one-field form, the
+    // controller answers it and submits that form -- every other field left at
+    // whatever it defaulted to.
+    expect(
+      terminalFormShowsFields(formPaneFirstField, {
+        question: 'Configure the deployment request.',
+        fields: ['Deployment name'],
+      }),
+    ).toBe(false)
+  })
+
+  it('keeps a multi-field title that ends in a colon', () => {
+    // The colon a single-field heading is printed with is structural. A title
+    // that ends in one is not, and taking the colon off every tab stopped such
+    // a form from ever matching the row it prints.
+    const pane = formPaneFirstField.replace(
+      '  Deployment name   Catalog scope   Confirm deployment',
+      '  Deployment name:   Catalog scope   Confirm deployment',
+    )
+    expect(
+      terminalFormShowsFields(pane, {
+        question: 'Configure the deployment request.',
+        fields: ['Deployment name:', 'Catalog scope', 'Confirm deployment'],
+      }),
+    ).toBe(true)
+  })
+
+  it('still refuses a single-field form belonging to another question', () => {
+    expect(
+      terminalFormShowsFields(singleFieldPane, {
+        question: 'Something else entirely?',
+        fields: ['Rows to retain'],
+      }),
+    ).toBe(false)
+  })
+})
 
 describe('terminal form identity', () => {
   const form = {

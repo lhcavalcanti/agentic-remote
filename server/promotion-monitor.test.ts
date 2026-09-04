@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -110,6 +110,40 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
     [
       // Only the last argument names the script, so a directory that happens
       // to contain the word cannot be mistaken for one.
+      'for ((i = 1; i <= $#; i++)); do',
+      '  if [[ "${!i}" == "--dir" ]]; then',
+      '    next=$((i + 1))',
+      '    printf "corepack-dir %s %s\\n" "${*: -1}" "${!next}" >>"$CALL_LOG"',
+      '  fi',
+      'done',
+      // A hard kill: no EXIT trap runs, so whatever the monitor left on disk
+      // by then is what the next run has to cope with.
+      'if [[ "${*: -1}" == "test" && -n "${PNPM_TEST_KILL:-}" ]]; then',
+      '  kill -KILL "$PPID"',
+      '  exit 137',
+      'fi',
+      // Leaves the validation worktree unreadable to git, the way a truncated
+      // write or a failing disk would.
+      'if [[ "${*: -1}" == "build" && -n "${PNPM_TEST_CORRUPT_INDEX:-}" ]]; then',
+      '  for ((j = 1; j <= $#; j++)); do',
+      '    if [[ "${!j}" == "--dir" ]]; then',
+      '      k=$((j + 1))',
+      // A linked worktree keeps its index in the shared git directory, which
+      // its own `.git` file names.
+      '      target="$(sed -n "s/^gitdir: *//p" "${!k}/.git")"',
+      '      printf "not an index" >"$target/index"',
+      '    fi',
+      '  done',
+      'fi',
+      // Leaves the worktree clean but standing on a different commit.
+      'if [[ "${*: -1}" == "build" && -n "${PNPM_TEST_MOVE_HEAD:-}" ]]; then',
+      '  for ((j = 1; j <= $#; j++)); do',
+      '    if [[ "${!j}" == "--dir" ]]; then',
+      '      k=$((j + 1))',
+      '      git -C "${!k}" checkout --detach HEAD~1 >/dev/null 2>&1',
+      '    fi',
+      '  done',
+      'fi',
       'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
       'exit "${COREPACK_EXIT:-0}"',
     ].join('\n'),
@@ -236,6 +270,487 @@ async function advanceMain(context: Fixture): Promise<string> {
 }
 
 describe('promotion monitor', () => {
+  it('refuses a validation path that names a checkout it would delete', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Cleanup removes that directory outright, so a state directory whose
+    // `validate` entry leads to the development checkout would delete it.
+    const state = path.join(context.root, 'state-over-dev')
+    await mkdir(state, { recursive: true })
+    await symlink(context.dev, path.join(state, 'validate'))
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('validation worktree would be')
+    expect(existsSync(path.join(context.dev, '.git'))).toBe(true)
+  })
+
+  it('refuses to delete a worktree belonging to another repository', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Another repository's linked worktree, parked where validation wants to
+    // work. `git worktree remove` cannot remove it, because it belongs to a
+    // different repository -- and a linked worktree keeps `.git` as a file, so
+    // a check for a directory let it fall through to `rm -rf` along with
+    // whatever was not committed in it.
+    const state = path.join(context.root, 'state-foreign')
+    await mkdir(state, { recursive: true })
+    const other = path.join(context.root, 'other-repo')
+    await mkdir(other, { recursive: true })
+    await git(other, 'init', '--initial-branch=main')
+    await git(other, 'config', 'user.email', 'other@example.test')
+    await git(other, 'config', 'user.name', 'Other')
+    await writeFile(path.join(other, 'kept.txt'), 'committed\n')
+    await git(other, 'add', '-A')
+    await git(other, 'commit', '-m', 'base')
+    await git(other, 'worktree', 'add', '--detach', path.join(state, 'validate'), 'HEAD')
+    const unsaved = path.join(state, 'validate', 'unsaved.txt')
+    await writeFile(unsaved, 'work nobody has committed\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    // Everything that was there is still there.
+    expect(existsSync(unsaved)).toBe(true)
+    expect(existsSync(path.join(state, 'validate', 'kept.txt'))).toBe(true)
+  })
+
+  it('refuses to force-remove a worktree of its own repository that holds work', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // A worktree of the same repository, made by hand, with work in it that
+    // was never committed. `git worktree remove --force` deletes exactly that,
+    // so asking whether the path was safe to remove only after removing it
+    // asks about something already gone.
+    const state = path.join(context.root, 'state-owned-dirty')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    await git(context.dev, 'worktree', 'add', '--detach', validate, 'HEAD')
+    const unsaved = path.join(validate, 'unsaved.txt')
+    await writeFile(unsaved, 'work nobody has committed\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    expect(existsSync(unsaved)).toBe(true)
+
+    await git(context.dev, 'worktree', 'remove', '--force', validate)
+  })
+
+  it('clears its validation worktree whether the run passed or failed', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+    const state = path.join(context.root, 'state-lifecycle')
+    await mkdir(state, { recursive: true })
+
+    // A passing run leaves nothing behind.
+    expect(
+      (await monitor(context, { AGENTIC_REMOTE_MONITOR_STATE_DIR: state })).code,
+    ).toBe(0)
+    expect(existsSync(path.join(state, 'validate'))).toBe(false)
+    expect(existsSync(path.join(state, 'validate.owned'))).toBe(false)
+    // Nothing registered either, or the next run could not create it again.
+    expect(await git(context.dev, 'worktree', 'list')).not.toContain(
+      path.join(state, 'validate'),
+    )
+
+    // ...and so does a failing one. The trap runs after the function that
+    // named these paths has been unwound, so holding them in that scope made
+    // every failed validation abort before it cleaned anything up.
+    await writeFile(path.join(context.dev, 'change.txt'), 'again')
+    await git(context.dev, 'add', '-A')
+    await git(context.dev, 'commit', '-m', 'again')
+    await git(context.dev, 'push', 'origin', 'main')
+
+    const failed = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_EXIT: '1',
+    })
+    expect(failed.code).not.toBe(0)
+    expect(existsSync(path.join(state, 'validate'))).toBe(false)
+    expect(existsSync(path.join(state, 'validate.owned'))).toBe(false)
+  })
+
+  it('refuses a worktree made at its path after an interrupted run', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // An interrupted run leaves the marker claiming the path. Somebody then
+    // makes a worktree of this same repository there. The marker cannot vouch
+    // for it: it was never the one this monitor created.
+    const state = path.join(context.root, 'state-stale-marker')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    // Exactly what an interrupted run of the previous revision left behind.
+    await writeFile(path.join(state, 'validate.owned'), `${validate}\n`)
+    await git(context.dev, 'worktree', 'add', '--detach', validate, 'HEAD')
+    await writeFile(path.join(validate, 'theirs.txt'), 'not ours\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    expect(existsSync(path.join(validate, 'theirs.txt'))).toBe(true)
+
+    await git(context.dev, 'worktree', 'remove', '--force', validate)
+  })
+
+  it('leaves the records of unrelated worktrees alone', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // A worktree of this repository that is not reachable right now -- an
+    // unmounted drive, a directory moved aside. Git keeps its record for three
+    // months so it can be restored. Clearing the monitor's own leftovers used
+    // to prune the whole repository, which threw this record away in passing;
+    // for a detached worktree that can be the last reachable name a commit
+    // has.
+    const state = path.join(context.root, 'state-unrelated-record')
+    await mkdir(state, { recursive: true })
+    const elsewhere = path.join(context.root, 'someone-elses-worktree')
+    await git(context.dev, 'worktree', 'add', '--detach', elsewhere, 'HEAD')
+    await writeFile(path.join(elsewhere, 'only-here.txt'), 'unique\n')
+    await git(elsewhere, 'add', '-A')
+    await git(elsewhere, 'commit', '-m', 'only reachable from this worktree')
+    const orphan = (await git(elsewhere, 'rev-parse', 'HEAD')).trim()
+    await rm(elsewhere, { recursive: true, force: true })
+
+    expect(
+      (await monitor(context, { AGENTIC_REMOTE_MONITOR_STATE_DIR: state })).code,
+    ).toBe(0)
+
+    // Still registered, so it can be put back...
+    expect(await git(context.dev, 'worktree', 'list')).toContain(elsewhere)
+    // ...and its commit still has a name.
+    expect((await git(context.dev, 'cat-file', '-t', orphan)).trim()).toBe('commit')
+  })
+
+  it('clears away a validation worktree an interrupted run left registered', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Killed after the worktree was made. Whatever says the worktree is the
+    // monitor's has to be in place by then, or every later run refuses to
+    // touch it and promotion stops until somebody clears it by hand.
+    const state = path.join(context.root, 'state-interrupted')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+    expect(existsSync(validate)).toBe(true)
+    // What git itself holds is enough to recognise it. Taking the marker away
+    // stands for the run that was killed before writing one, and for a state
+    // directory cleared out since: with ownership resting on anything written
+    // after the worktree was made, both leave a worktree no run will touch.
+    await rm(path.join(state, 'validate.owned'), { force: true })
+
+    // The next run gets past it rather than being wedged by it.
+    await writeFile(path.join(context.dev, 'change.txt'), 'again')
+    await git(context.dev, 'add', '-A')
+    await git(context.dev, 'commit', '-m', 'again')
+    await git(context.dev, 'push', 'origin', 'main')
+
+    const next = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+    expect(next.output).not.toContain('not a validation worktree')
+    expect(next.code).toBe(0)
+    expect(existsSync(validate)).toBe(false)
+  })
+
+  it('deregisters a relatively recorded worktree whose directory has gone', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // The pair that used to wedge promotion for good: relative records, and a
+    // validation directory already deleted while its record still points at
+    // where it used to be. Resolving that pointer through the filesystem gives
+    // nothing once the directory is missing, so the record was never matched,
+    // never removed, and every later `worktree add` at that path failed.
+    await git(context.dev, 'config', 'worktree.useRelativePaths', 'true')
+    const state = path.join(context.root, 'state-relative-missing')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+    await rm(validate, { recursive: true, force: true })
+    expect(await git(context.dev, 'worktree', 'list')).toContain(validate)
+
+    await writeFile(path.join(context.dev, 'change.txt'), 'again')
+    await git(context.dev, 'add', '-A')
+    await git(context.dev, 'commit', '-m', 'again')
+    await git(context.dev, 'push', 'origin', 'main')
+
+    const next = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+    expect(next.code).toBe(0)
+    expect(await git(context.dev, 'worktree', 'list')).not.toContain(validate)
+  })
+
+  it('owns its worktree when git records worktree paths relatively', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // With `worktree.useRelativePaths` the pointer git writes is relative. Read
+    // as though it were relative to wherever the monitor happens to be
+    // running, it names some other path entirely, and the monitor then refuses
+    // to clean up after itself.
+    await git(context.dev, 'config', 'worktree.useRelativePaths', 'true')
+    const state = path.join(context.root, 'state-relative-paths')
+    await mkdir(state, { recursive: true })
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.output).not.toContain('not a validation worktree')
+    expect(result.code).toBe(0)
+    expect(existsSync(path.join(state, 'validate'))).toBe(false)
+    expect(await git(context.dev, 'worktree', 'list')).not.toContain(
+      path.join(state, 'validate'),
+    )
+  })
+
+  it('will not promote a commit other than the one it validated', async () => {
+    const context = await fixture()
+    const candidate = await advanceMain(context)
+    const state = path.join(context.root, 'state-moved-head')
+    await mkdir(state, { recursive: true })
+
+    // Clean is not the same as unchanged. Something moved the validation
+    // worktree to another commit and left it perfectly tidy, so cleanliness
+    // alone said everything was in order while a different revision had been
+    // tested.
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_MOVE_HEAD: '1',
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('moved to')
+    expect((await git(context.runtime, 'rev-parse', 'HEAD')).trim()).not.toBe(
+      candidate,
+    )
+  })
+
+  it('refuses a repository of its own standing where its worktree was', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // A checkout of its own keeps `.git` as a directory, not the file a linked
+    // worktree leaves. Testing only for the file sent it down the
+    // partial-removal path, where it was deleted outright.
+    const state = path.join(context.root, 'state-foreign-repo')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+    await rm(validate, { recursive: true, force: true })
+    await writeFile(
+      path.join(state, 'validate.owned'),
+      (await readFile(path.join(state, 'validate.owned'), 'utf8')) + 'removing\n',
+    )
+
+    // Somebody puts a repository of their own at that path.
+    await mkdir(validate, { recursive: true })
+    await git(validate, 'init', '--initial-branch=main')
+    const theirs = path.join(validate, 'theirs.txt')
+    await writeFile(theirs, 'work nobody has committed\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    expect(existsSync(theirs)).toBe(true)
+  })
+
+  it('finds its own record when the state directory is reached through a link', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Git writes down the real path. Spelling it the way the profile does left
+    // the two never matching, so the monitor could not find the record it had
+    // just made.
+    const real = path.join(context.root, 'state-real')
+    await mkdir(real, { recursive: true })
+    const linked = path.join(context.root, 'state-linked')
+    await symlink(real, linked)
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: linked,
+    })
+
+    expect(result.output).not.toContain('not a validation worktree')
+    expect(result.code).toBe(0)
+    expect(await git(context.dev, 'worktree', 'list')).not.toContain(
+      path.join(real, 'validate'),
+    )
+  })
+
+  it('finishes a removal of its own worktree that was interrupted partway', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // `git worktree remove` takes the worktree's own pointer away before it
+    // has finished deleting. Ownership is read from that pointer while the
+    // directory still stands, so a run killed inside that window left a
+    // directory that no later run would agree to finish -- promotion wedged
+    // until somebody cleared it by hand.
+    const state = path.join(context.root, 'state-partial-removal')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+
+    // Exactly what a removal killed partway through leaves: files still here,
+    // the pointer already gone.
+    await rm(path.join(validate, '.git'), { force: true })
+    await writeFile(path.join(state, 'validate.owned'), (await readFile(path.join(state, 'validate.owned'), 'utf8')) + 'removing\n')
+
+    await writeFile(path.join(context.dev, 'change.txt'), 'again')
+    await git(context.dev, 'add', '-A')
+    await git(context.dev, 'commit', '-m', 'again')
+    await git(context.dev, 'push', 'origin', 'main')
+
+    const next = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+    expect(next.output).not.toContain('not a validation worktree')
+    expect(next.code).toBe(0)
+    expect(existsSync(validate)).toBe(false)
+  })
+
+  it('refuses a replacement checkout standing where its worktree was', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // A record left behind says the monitor owned this path. Somebody has put
+    // a checkout there since. Matching the record's stored path alone lets it
+    // vouch for whatever occupies the path now, and cleanup deletes outright.
+    const state = path.join(context.root, 'state-replacement')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+
+    // The worktree goes; its record stays, which is what an interrupted run
+    // leaves behind.
+    await rm(validate, { recursive: true, force: true })
+    await mkdir(validate, { recursive: true })
+    const theirs = path.join(validate, 'work.txt')
+    await writeFile(theirs, 'somebody put this here\n')
+    await writeFile(path.join(validate, '.git'), 'gitdir: /somewhere/else\n')
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    expect(existsSync(theirs)).toBe(true)
+  })
+
+  it('will not promote a validation worktree it could not read', async () => {
+    const context = await fixture()
+    const candidate = await advanceMain(context)
+    const state = path.join(context.root, 'state-unreadable')
+    await mkdir(state, { recursive: true })
+
+    // The gate that says the tested worktree is still the commit being
+    // promoted. Reading only git's output treated a worktree it could not read
+    // at all as a clean one, and the candidate went out unproven.
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_CORRUPT_INDEX: '1',
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('could not be read')
+    expect((await git(context.runtime, 'rev-parse', 'HEAD')).trim()).not.toBe(
+      candidate,
+    )
+  })
+
+  it('refuses to remove a clean worktree it did not create', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Clean, registered to this repository, and still not the monitor's: a
+    // detached worktree somebody made by hand can be the only reference to a
+    // commit, and removing it takes that commit's last reachable name with it.
+    const state = path.join(context.root, 'state-unowned-clean')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    await git(context.dev, 'worktree', 'add', '--detach', validate, 'HEAD')
+    await writeFile(path.join(validate, 'only-here.txt'), 'unique\n')
+    await git(validate, 'add', '-A')
+    await git(validate, 'commit', '-m', 'only reachable from this worktree')
+    const orphan = (await git(validate, 'rev-parse', 'HEAD')).trim()
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('not a validation worktree this monitor created')
+    // The commit is still reachable, because its worktree is still there.
+    expect((await git(validate, 'rev-parse', 'HEAD')).trim()).toBe(orphan)
+
+    await git(context.dev, 'worktree', 'remove', '--force', validate)
+  })
+
+  it('validates somewhere of its own rather than in the development checkout', async () => {
+    const context = await fixture()
+    const candidate = await advanceMain(context)
+
+    expect((await monitor(context)).code).toBe(0)
+
+    const ranIn = (await calls(context))
+      .filter((line) => line.startsWith('corepack-dir test '))
+      .map((line) => line.replace('corepack-dir test ', ''))
+    expect(ranIn).not.toHaveLength(0)
+    // The development checkout is somebody's workspace, and can be on a
+    // filesystem chosen for working rather than for running a suite quickly.
+    for (const directory of ranIn) {
+      expect(directory.startsWith(context.dev)).toBe(false)
+    }
+    // What passed has to be what is promoted, so it is pinned rather than
+    // read from a checkout that can move underneath it.
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(candidate)
+  })
+
   it('graduates a validated commit and records both identifiers', async () => {
     const context = await fixture()
     const previous = await git(context.runtime, 'rev-parse', 'HEAD')

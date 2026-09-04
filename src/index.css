@@ -2226,9 +2226,21 @@ button {
   text-decoration: underline;
 }
 
+/* The heading and the running count stay put; only the tasks move. The whole
+   panel used to scroll as one, so reaching the older tasks took the title and
+   the close button off the top of the screen with them. */
 .background-tasks-dialog {
-  max-height: min(88vh, 760px);
-  overflow-y: auto;
+  display: flex;
+  min-height: 0;
+  max-height: min(88vh, 760px, 100%);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.background-tasks-dialog .dialog__header,
+.background-tasks-dialog__toolbar,
+.background-tasks-dialog__empty {
+  flex: 0 0 auto;
 }
 
 /* Task rows carry a command, a description and its output, which wrapped into
@@ -2294,8 +2306,14 @@ button {
 
 .background-task-list {
   display: flex;
+  min-height: 0;
   flex-direction: column;
   gap: 10px;
+  /* Room for the scrollbar, so it does not sit on top of the cards. */
+  padding-right: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .background-task {
@@ -3134,6 +3152,26 @@ button {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
+.new-session-dialog {
+  display: flex;
+  min-height: 0;
+  max-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.new-session-dialog .dialog__header {
+  flex: 0 0 auto;
+}
+
+.new-session-dialog > form {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
 .dialog__header {
   display: flex;
   align-items: flex-start;
@@ -3899,24 +3937,8 @@ button {
     border-radius: 18px 18px 0 0;
   }
 
-  .new-session-dialog {
-    display: flex;
-    min-height: 0;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .new-session-dialog .dialog__header {
-    flex: 0 0 auto;
-  }
-
   .new-session-dialog > form {
-    min-height: 0;
     padding-bottom: max(18px, env(safe-area-inset-bottom));
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    touch-action: pan-y;
-    -webkit-overflow-scrolling: touch;
   }
 
   .new-session-dialog .dialog__submit {

@@ -3524,9 +3524,13 @@ function SortableSessionItem({
   const backgroundTaskActive =
     runningBackgroundTasks > 0 &&
     foregroundStatusAllowsTaskTreatment
+  // Opening the session and putting it down are two different actions, so they
+  // are two buttons side by side rather than one inside the other. Nesting
+  // them stopped a screen reader offering the second at all.
+  const suspendUnavailable =
+    Boolean(suspending) || (!session.suspended && session.status !== 'idle')
   return (
-    <button
-      aria-current={selected ? 'page' : undefined}
+    <div
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
       )} ${backgroundTaskActive ? 'session-item--background-running' : ''} ${
@@ -3536,23 +3540,26 @@ function SortableSessionItem({
       } ${
         isDragging ? 'sortable-dragging' : ''
       }`}
-      onClick={onSelect}
       ref={setNodeRef}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
       }}
-      type="button"
     >
       <span
         aria-label={`Reorder ${session.title}`}
         className="drag-handle"
-        onClick={(event) => event.stopPropagation()}
         {...attributes}
         {...listeners}
       >
         <GripVertical size={13} />
       </span>
+      <button
+        aria-current={selected ? 'page' : undefined}
+        className="session-item__open"
+        onClick={onSelect}
+        type="button"
+      >
       <span className={`status-dot status-dot--${session.status}`} />
       <span className="session-item__text">
         <span className="session-item__badges">
@@ -3570,49 +3577,37 @@ function SortableSessionItem({
         </strong>
         <small className="session-item__where">
           <span className="session-item__cwd">{shortPath(session.cwd)}</span>
-          {runningBackgroundTasks > 0 ? (
-          <span
-            aria-label={
-              onOpenTasks ? `View background tasks for ${session.title}` : undefined
-            }
-            className={`session-item__tasks ${
-              onOpenTasks ? 'session-item__tasks--interactive' : ''
-            }`}
-            onClick={
-              onOpenTasks
-                ? (event) => {
-                    event.stopPropagation()
-                    onOpenTasks()
-                  }
-                : undefined
-            }
-            onKeyDown={
-              onOpenTasks
-                ? (event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') {
-                      return
-                    }
-                    event.preventDefault()
-                    event.stopPropagation()
-                    onOpenTasks()
-                  }
-                : undefined
-            }
-            role={onOpenTasks ? 'button' : undefined}
-            tabIndex={onOpenTasks ? 0 : undefined}
-          >
-            {`${runningBackgroundTasks} task${
-              runningBackgroundTasks === 1 ? '' : 's'
-            }`}
-          </span>
-          ) : null}
         </small>
       </span>
+      </button>
+      {runningBackgroundTasks > 0 ? (
+        // A button of its own, beside the row's rather than inside it: nested
+        // inside, it was invalid interactive nesting and assistive technology
+        // offered neither as an action. It stays reachable by touch, which a
+        // keyboard shortcut is not.
+        <button
+          aria-label={
+            onOpenTasks
+              ? `View background tasks for ${session.title}`
+              : undefined
+          }
+          className={`session-item__tasks ${
+            onOpenTasks ? 'session-item__tasks--interactive' : ''
+          }`}
+          disabled={!onOpenTasks}
+          onClick={onOpenTasks}
+          type="button"
+        >
+          {`${runningBackgroundTasks} task${
+            runningBackgroundTasks === 1 ? '' : 's'
+          }`}
+        </button>
+      ) : null}
       {onToggleSuspended ? (
         // Beside the conversation it belongs to, because putting a session
         // down is something a reader does while looking at the list rather
         // than after opening the one they meant to stop.
-        <span
+        <button
           aria-label={
             session.suspended
               ? `Resume ${session.title}`
@@ -3622,36 +3617,23 @@ function SortableSessionItem({
           className={`session-item__suspend${
             session.suspended ? ' session-item__suspend--active' : ''
           }`}
-          onClick={(event) => {
-            event.stopPropagation()
-            if (suspending || (!session.suspended && session.status !== 'idle')) {
-              return
-            }
-            onToggleSuspended()
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' && event.key !== ' ') {
-              return
-            }
-            event.preventDefault()
-            event.stopPropagation()
-            if (suspending || (!session.suspended && session.status !== 'idle')) {
-              return
-            }
-            onToggleSuspended()
-          }}
-          role="button"
-          tabIndex={0}
+          // Refused rather than silently ignored: a control that looks
+          // available and does nothing is worse than one that says it cannot.
+          disabled={suspendUnavailable}
+          onClick={onToggleSuspended}
           title={
             session.suspended
               ? 'Start this session up again'
-              : 'Keep this session but stop what is running for it'
+              : suspendUnavailable
+                ? 'Wait for the session to finish before suspending it'
+                : 'Keep this session but stop what is running for it'
           }
+          type="button"
         >
           {session.suspended ? <Play size={13} /> : <Pause size={13} />}
-        </span>
+        </button>
       ) : null}
-    </button>
+    </div>
   )
 }
 

@@ -5666,13 +5666,15 @@ describe('App', () => {
 
     // Reading survives a session switch instead of being dismissed.
     fireEvent.click(
-      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+      screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!,
     )
     await waitFor(() =>
       expect(
         screen
           .getAllByRole('button', { name: /Second chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
     expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
@@ -5779,7 +5781,7 @@ describe('App', () => {
     const sessionItem = (title: RegExp) =>
       screen
         .getAllByRole('button', { name: title })
-        .find((item) => item.classList.contains('session-item'))!
+        .find((item) => item.classList.contains('session-item__open'))!
     expect(sessionItem(/Project chat/)).toHaveAttribute('aria-current', 'page')
 
     fireEvent.keyDown(shell, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
@@ -5838,7 +5840,9 @@ describe('App', () => {
     )
 
     fireEvent.click(
-      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+      screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!,
     )
     await waitFor(() =>
       expect(window.location.search).toBe(
@@ -5857,7 +5861,7 @@ describe('App', () => {
       expect(
         screen
           .getAllByRole('button', { name: /Project chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
   })
@@ -5933,13 +5937,15 @@ describe('App', () => {
     // Selecting another session must not stamp the previous session's reader
     // state over its own remembered one.
     fireEvent.click(
-      screen.getAllByRole('button', { name: /Second chat/ })[0]!,
+      screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!,
     )
     await waitFor(() =>
       expect(
         screen
           .getAllByRole('button', { name: /Second chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
     expect(
@@ -5969,7 +5975,7 @@ describe('App', () => {
     expect(
       screen
         .getAllByRole('button', { name: /Project chat/ })
-        .find((item) => item.classList.contains('session-item')),
+        .find((item) => item.classList.contains('session-item__open')),
     ).toHaveAttribute('aria-current', 'page')
     expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
   })
@@ -6031,7 +6037,7 @@ describe('App', () => {
       expect(
         screen
           .getAllByRole('button', { name: /Second chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
     expect(window.location.search).toBe(
@@ -6118,7 +6124,9 @@ describe('App', () => {
 
     // Both sessions share the active root, so nothing has to be reloaded, but
     // the second session was left at the root and must be taken back there.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
 
     await waitFor(() =>
       expect(
@@ -7452,7 +7460,7 @@ describe('App', () => {
     expect(
       screen
         .getAllByRole('button', { name: /Project chat/ })
-        .find((item) => item.classList.contains('session-item')),
+        .find((item) => item.classList.contains('session-item__open')),
     ).toHaveAttribute('aria-current', 'page')
 
     // Going back to a session that has since been closed must land on one
@@ -7464,7 +7472,7 @@ describe('App', () => {
         expect(
           screen
             .getAllByRole('button', { name: /Project chat/ })
-            .find((item) => item.classList.contains('session-item')),
+            .find((item) => item.classList.contains('session-item__open')),
         ).toHaveAttribute('aria-current', 'page'),
       { timeout: 250 },
     )
@@ -7815,7 +7823,9 @@ describe('App', () => {
 
     // The second session has never opened anything, so the panel must not
     // leave the first session's document on screen under its name.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     await waitFor(() =>
       expect(
         screen.queryByRole('heading', { name: 'Setup guide' }),
@@ -7878,12 +7888,14 @@ describe('App', () => {
 
     // Before it lands, the reader moves to a session that has never opened
     // anything at all.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     await waitFor(() =>
       expect(
         screen
           .getAllByRole('button', { name: /Second chat/ })
-          .find((item) => item.classList.contains('session-item')),
+          .find((item) => item.classList.contains('session-item__open')),
       ).toHaveAttribute('aria-current', 'page'),
     )
 
@@ -8185,7 +8197,9 @@ describe('App', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Close knowledge panel' }),
     )
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
 
     await waitFor(() =>
@@ -8293,7 +8307,9 @@ describe('App', () => {
     // Switching session supersedes the startup load, which then writes
     // nothing. The panel must still end up with a listing rather than sit
     // blank until the root is picked again by hand.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     releaseRoot?.()
 
     const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
@@ -8475,7 +8491,9 @@ describe('App', () => {
     // Changing session abandons the load. The new session has nothing to
     // restore, so nothing else asks for the root: the discarded reply would
     // otherwise leave the folder marked loading for ever.
-    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]!)
+    fireEvent.click(screen
+        .getAllByRole('button', { name: /Second chat/ })
+        .find((item) => item.classList.contains('session-item__open'))!)
     switched = true
     await act(async () => {
       for (const resolve of stalled) {

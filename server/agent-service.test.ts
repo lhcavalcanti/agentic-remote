@@ -6065,6 +6065,61 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('marks a rediscovered terminal command prompt as uncertain after a store failure', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-command-fallback-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let service: AgentService
+    const terminal = {
+      ownsStartupPrompt: vi.fn(() => true),
+      has: vi.fn(async () => false),
+      send: vi.fn(async (_sessionId: string, content: string) => {
+        if (content === '/plan') {
+          return false
+        }
+        ;(
+          service as unknown as { deliveredSends: Set<string> }
+        ).deliveredSends.add(client.session.sessionId)
+        throw new Error('state write failed')
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => undefined),
+    }
+    service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Command fallback',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'idle'
+    })
+
+    await expect(
+      service.executeCommand(client.session.sessionId, '/plan'),
+    ).rejects.toMatchObject({ uncertainDelivery: true })
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Create the requested plan',
+      false,
+    )
+    await service.stop()
+  })
+
   it('detects and answers terminal ask-user requests', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

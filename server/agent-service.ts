@@ -3857,6 +3857,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ) {
         // Already taken by the terminal, so this cannot simply be run again.
         claim?.release(true)
+        await this.acknowledgeFailedPrompt(
+          sessionId,
+          command,
+          acknowledgedFailure,
+        ).catch(() => {
+          this.scheduleFailureAcknowledgement(
+            sessionId,
+            command,
+            acknowledgedFailure,
+          )
+        })
       } else {
         claim?.release()
       }
@@ -4160,13 +4171,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // Command dispatch already owns the terminal-admission slot. Re-entering
         // sendMessage here can queue behind that same slot when a stale terminal
         // owner disappeared and the command fell back to the SDK.
-        return this.sendAdmittedWithBackend(
-          sessionId,
-          result.prompt,
-          busy,
-          undefined,
-          false,
-        )
+        try {
+          const sent = await this.sendAdmittedWithBackend(
+            sessionId,
+            result.prompt,
+            busy,
+            undefined,
+            false,
+          )
+          this.deliveredSends.delete(sessionId)
+          return sent
+        } catch (error) {
+          if (this.deliveredSends.has(sessionId)) {
+            this.deliveredSends.delete(sessionId)
+            throw Object.assign(
+              error instanceof Error ? error : new Error(String(error)),
+              { uncertainDelivery: true },
+            )
+          }
+          throw error
+        }
       }
       const content =
         result.kind === 'text'

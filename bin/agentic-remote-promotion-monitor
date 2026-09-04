@@ -230,6 +230,30 @@ resolve_path() {
   readlink -f -- "$1" 2>/dev/null || printf '%s' "$1"
 }
 
+# Tidies a path by text alone, without asking the filesystem about it.
+#
+# `readlink -f` gives up and prints nothing once a directory in the middle of
+# the path has gone -- which is exactly the state cleanup is called on: the
+# validation directory removed, its record left behind pointing at where it
+# used to be. Comparing against nothing matched nothing, so the record was
+# never taken away and every later `worktree add` at that path failed.
+normalize_path() {
+  local path="$1" part
+  local -a parts=() kept=()
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  IFS='/' read -r -a parts <<<"$path"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      '' | '.') ;;
+      '..')
+        [[ ${#kept[@]} -eq 0 ]] || unset 'kept[${#kept[@]}-1]'
+        ;;
+      *) kept+=("$part") ;;
+    esac
+  done
+  printf '/%s' "${kept[@]+${kept[@]}}" | sed 's|^//*$|/|'
+}
+
 # Refuses a path that is, or contains, something the monitor is responsible
 # for. Cleanup removes this directory outright, so naming a checkout here
 # would delete it.
@@ -264,7 +288,7 @@ validate_common_dir() {
 validate_worktree_record() {
   local common record pointer target
   common="$(validate_common_dir)" || return 1
-  target="$(resolve_path "$VALIDATE_ROOT")/.git"
+  target="$(normalize_path "$VALIDATE_ROOT")/.git"
   for record in "$common"/worktrees/*; do
     [[ -d "$record" ]] || continue
     pointer="$(cat -- "$record/gitdir" 2>/dev/null || true)"
@@ -273,7 +297,9 @@ validate_worktree_record() {
       /*) ;;
       *) pointer="$record/$pointer" ;;
     esac
-    [[ "$(resolve_path "$pointer")" == "$target" ]] || continue
+    # Tidied by text, because the worktree this points at may already be gone
+    # -- which is the very case this record has to be found for.
+    [[ "$(normalize_path "$pointer")" == "$target" ]] || continue
     printf '%s' "$record"
     return 0
   done

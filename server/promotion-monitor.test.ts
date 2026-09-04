@@ -473,6 +473,40 @@ describe('promotion monitor', () => {
     expect(existsSync(validate)).toBe(false)
   })
 
+  it('deregisters a relatively recorded worktree whose directory has gone', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // The pair that used to wedge promotion for good: relative records, and a
+    // validation directory already deleted while its record still points at
+    // where it used to be. Resolving that pointer through the filesystem gives
+    // nothing once the directory is missing, so the record was never matched,
+    // never removed, and every later `worktree add` at that path failed.
+    await git(context.dev, 'config', 'worktree.useRelativePaths', 'true')
+    const state = path.join(context.root, 'state-relative-missing')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+    await rm(validate, { recursive: true, force: true })
+    expect(await git(context.dev, 'worktree', 'list')).toContain(validate)
+
+    await writeFile(path.join(context.dev, 'change.txt'), 'again')
+    await git(context.dev, 'add', '-A')
+    await git(context.dev, 'commit', '-m', 'again')
+    await git(context.dev, 'push', 'origin', 'main')
+
+    const next = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+    expect(next.code).toBe(0)
+    expect(await git(context.dev, 'worktree', 'list')).not.toContain(validate)
+  })
+
   it('owns its worktree when git records worktree paths relatively', async () => {
     const context = await fixture()
     await advanceMain(context)

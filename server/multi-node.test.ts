@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -1886,5 +1886,145 @@ describe('readiness endpoints by role', () => {
     } finally {
       await hub.app.close()
     }
+  })
+})
+
+describe('deployed app version', () => {
+  beforeEach(() => {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+  })
+
+  it('keeps non-static startup independent of build metadata', async () => {
+    const directory = await temporaryDirectory('app-version-development')
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', path.join(directory, 'not-built'))
+    const hub = await buildApp({
+      dataDirectory: directory,
+      logger: false,
+      serveStatic: false,
+      service: new FakeSessionService(),
+    })
+    try {
+      const response = await hub.app.inject('/api/version')
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      expect(response.json()).toEqual({ version: hub.identity.info.version })
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it('does not require a UI build on a node', async () => {
+    const directory = await temporaryDirectory('app-version-node')
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', path.join(directory, 'not-built'))
+    const node = await buildApp({
+      dataDirectory: directory,
+      logger: false,
+      role: 'node',
+      serveStatic: true,
+      service: new FakeSessionService(),
+    })
+    try {
+      expect((await node.app.inject('/health')).statusCode).toBe(200)
+      expect((await node.app.inject('/api/version')).statusCode).toBe(404)
+    } finally {
+      await node.app.close()
+    }
+  })
+
+  it('pins the configured static build and restores its original identity on rollback', async () => {
+    const directory = await temporaryDirectory('app-version-releases')
+    const releaseA = path.join(directory, 'release-a')
+    const releaseB = path.join(directory, 'release-b')
+    const current = path.join(directory, 'current')
+    // The static release's version, not this server source's package, is served.
+    const versionA = { version: '91.0.0', buildId: 'build-a' }
+    const versionB = { version: '91.0.0', buildId: 'build-b' }
+    for (const [release, version] of [[releaseA, versionA], [releaseB, versionB]] as const) {
+      await mkdir(release)
+      await writeFile(path.join(release, 'index.html'), version.buildId)
+      await writeFile(path.join(release, 'build-info.json'), JSON.stringify(version))
+    }
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', current)
+    const apps: Awaited<ReturnType<typeof buildApp>>[] = []
+    const start = async () => {
+      const hub = await buildApp({
+        dataDirectory: path.join(directory, `data-${apps.length}`),
+        logger: false,
+        serveStatic: true,
+        service: new FakeSessionService(),
+      })
+      apps.push(hub)
+      return hub.app
+    }
+    const assertRelease = async (
+      app: Awaited<ReturnType<typeof start>>,
+      version: typeof versionA,
+    ) => {
+      const response = await app.inject('/api/version')
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      expect(response.json()).toEqual(version)
+      expect((await app.inject('/')).body).toBe(version.buildId)
+    }
+    try {
+      await symlink(releaseA, current)
+      const appA = await start()
+      await assertRelease(appA, versionA)
+
+      await unlink(current)
+      await symlink(releaseB, current)
+      const appB = await start()
+      await assertRelease(appB, versionB)
+      await assertRelease(appA, versionA)
+
+      await unlink(current)
+      await symlink(releaseA, current)
+      await assertRelease(await start(), versionA)
+      await assertRelease(appB, versionB)
+    } finally {
+      await Promise.all(apps.map(({ app }) => app.close()))
+    }
+  })
+
+  it('loads metadata only at startup, not during version requests', async () => {
+    const directory = await temporaryDirectory('app-version-startup')
+    const version = { version: '91.0.0', buildId: 'immutable-build' }
+    const metadata = path.join(directory, 'build-info.json')
+    await writeFile(metadata, JSON.stringify(version))
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', directory)
+    const hub = await buildApp({
+      dataDirectory: path.join(directory, 'data'),
+      logger: false,
+      serveStatic: true,
+      service: new FakeSessionService(),
+    })
+    try {
+      await unlink(metadata)
+      expect((await hub.app.inject('/api/version')).json()).toEqual(version)
+      expect((await hub.app.inject('/api/version')).json()).toEqual(version)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it.each([
+    undefined,
+    '{',
+    '{}',
+    '{"version":"91.0.0"}',
+    '{"version":"91.0.0","buildId":""}',
+    '{"version":"91.0.0","buildId":"/private/path"}',
+  ])('refuses missing or invalid production metadata: %s', async (metadata) => {
+    const directory = await temporaryDirectory('app-version-invalid')
+    if (metadata !== undefined) {
+      await writeFile(path.join(directory, 'build-info.json'), metadata)
+    }
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', directory)
+    await expect(buildApp({
+      dataDirectory: path.join(directory, 'data'),
+      logger: false,
+      serveStatic: true,
+      service: new FakeSessionService(),
+    })).rejects.toThrow()
   })
 })

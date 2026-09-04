@@ -414,8 +414,13 @@ Priority order:
 
 ## 12. PWA updates
 
-- The deployed package version is the source of truth.
+- The deployed package version is the source of truth for the displayed
+  version. An immutable build identity MUST distinguish separately built
+  releases, even when they share a package version.
 - `/api/version` MUST be uncached.
+- Its build identity MUST describe the same static release as the browser
+  bundle and service worker, including after rollback. Version-only responses
+  from older hubs MUST remain supported.
 - The app MUST detect bundle-only releases even when service-worker bytes are
   unchanged.
 - Update checks SHOULD run at startup, foreground return, and on demand.

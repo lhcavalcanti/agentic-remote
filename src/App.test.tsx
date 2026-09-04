@@ -1876,12 +1876,12 @@ describe('App', () => {
       )
     })
     expect(
-      screen.getByText('A new Agentic Remote version is ready.'),
+      screen.getByText('An Agentic Remote update is ready.'),
     ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss update' }))
     expect(
-      screen.queryByText('A new Agentic Remote version is ready.'),
+      screen.queryByText('An Agentic Remote update is ready.'),
     ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))

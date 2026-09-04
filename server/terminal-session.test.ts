@@ -1034,6 +1034,29 @@ describe('forms whose focused tab is marked', () => {
     expect(parseTerminalFormActiveField(bracketedTabPane, form)).toBe(0)
   })
 
+  it('keeps a title that is written in brackets of its own', () => {
+    const pane = [
+      ' Copilot needs information.',
+      ' Configure the run.',
+      '',
+      ' [Environment]  Region',
+      '',
+      ' [Environment]:',
+      ' \u276F Production',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+    ].join('\n')
+
+    // The brackets belong to the name here, not to the marking, and the two
+    // are written identically.
+    expect(
+      terminalFormShowsFields(pane, {
+        question: 'Configure the run.',
+        fields: ['[Environment]', 'Region'],
+      }),
+    ).toBe(true)
+  })
+
   it('still refuses a marked form belonging to another question', () => {
     expect(
       terminalFormShowsFields(bracketedTabPane, {

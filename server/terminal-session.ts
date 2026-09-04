@@ -1445,14 +1445,16 @@ export function parseTerminalFormPrompt(pane: string): boolean {
  * prompt from the next.
  */
 /**
- * A tab's name without the mark saying it has focus.
+ * Whether a tab on screen is the field of that name.
  *
- * The CLI writes the focused tab inside brackets. Compared with the mark
- * still on it the name never matches, so the form is not recognised as the
- * one being answered, and an answer for it is never sent.
+ * The CLI writes the tab holding focus inside brackets, and a name compared
+ * with that mark still on it never matches, so the form is not recognised as
+ * the one being answered. A title can also contain brackets of its own, so
+ * the name as written is tried first and the mark only taken off when that
+ * leaves nothing.
  */
-function withoutFocusMark(tab: string): string {
-  return tab.replace(/^\[(.*)\]$/, '$1')
+function tabNames(tab: string, field: string): boolean {
+  return tab === field || tab.replace(/^\[(.*)\]$/, '$1') === field
 }
 
 function terminalFormTabsIndex(
@@ -1520,7 +1522,7 @@ function terminalFormTabsIndex(
     }
     if (
       tabs.length === form.fields.length &&
-      tabs.every((tab, slot) => withoutFocusMark(tab) === form.fields[slot])
+      tabs.every((tab, slot) => tabNames(tab, form.fields[slot]))
     ) {
       return index
     }

@@ -345,6 +345,185 @@ type ComposerHistoryState = {
  * conversation so a document can be read at full width without losing the
  * session it belongs to.
  */
+/** A key and the modifiers held with it. */
+type ShortcutBinding = {
+  /** The physical key, so a macOS Option that rewrites the character still
+      resolves to the same place on the keyboard. */
+  code: string
+  alt: boolean
+  shift: boolean
+  ctrl: boolean
+  meta: boolean
+}
+
+type ShortcutId =
+  | 'nextSession'
+  | 'previousSession'
+  | 'toggleKnowledge'
+  | 'expandKnowledge'
+  | 'backgroundTasks'
+
+type ShortcutDefinition = {
+  id: ShortcutId
+  label: string
+  binding: ShortcutBinding
+}
+
+function binding(
+  code: string,
+  modifiers: Partial<Omit<ShortcutBinding, 'code'>> = {},
+): ShortcutBinding {
+  return {
+    code,
+    alt: modifiers.alt ?? false,
+    shift: modifiers.shift ?? false,
+    ctrl: modifiers.ctrl ?? false,
+    meta: modifiers.meta ?? false,
+  }
+}
+
+// What each shortcut is, in one place. The handler reads its keys from here
+// and the settings list is drawn from the same rows, so a shortcut cannot be
+// listed as one thing and answer to another.
+const shortcutDefaults: ShortcutDefinition[] = [
+  { id: 'nextSession', label: 'Next session', binding: binding('ArrowDown', { alt: true }) },
+  {
+    id: 'previousSession',
+    label: 'Previous session',
+    binding: binding('ArrowUp', { alt: true }),
+  },
+  {
+    id: 'toggleKnowledge',
+    label: 'Open or close knowledge',
+    binding: binding('KeyK', { alt: true }),
+  },
+  {
+    id: 'expandKnowledge',
+    label: 'Expand or minimize knowledge',
+    binding: binding('KeyK', { alt: true, shift: true }),
+  },
+  {
+    id: 'backgroundTasks',
+    label: 'View background tasks',
+    binding: binding('KeyT', { alt: true }),
+  },
+]
+
+const shortcutsStorageKey = 'agentic-remote:shortcuts'
+
+function sameBinding(left: ShortcutBinding, right: ShortcutBinding): boolean {
+  return (
+    left.code === right.code &&
+    left.alt === right.alt &&
+    left.shift === right.shift &&
+    left.ctrl === right.ctrl &&
+    left.meta === right.meta
+  )
+}
+
+function bindingMatches(
+  event: Pick<
+    globalThis.KeyboardEvent,
+    'code' | 'altKey' | 'shiftKey' | 'ctrlKey' | 'metaKey'
+  >,
+  wanted: ShortcutBinding,
+): boolean {
+  return (
+    event.code === wanted.code &&
+    event.altKey === wanted.alt &&
+    event.shiftKey === wanted.shift &&
+    event.ctrlKey === wanted.ctrl &&
+    event.metaKey === wanted.meta
+  )
+}
+
+/** What to call the key on its own, as it is printed on the keyboard. */
+function keyLabel(code: string): string {
+  if (code.startsWith('Key')) {
+    return code.slice(3)
+  }
+  if (code.startsWith('Digit')) {
+    return code.slice(5)
+  }
+  const named: Record<string, string> = {
+    ArrowUp: '\u2191',
+    ArrowDown: '\u2193',
+    ArrowLeft: '\u2190',
+    ArrowRight: '\u2192',
+    Enter: 'Enter',
+    Space: 'Space',
+    Backquote: '`',
+    Slash: '/',
+    Period: '.',
+    Comma: ',',
+    Semicolon: ';',
+    BracketLeft: '[',
+    BracketRight: ']',
+    Backslash: '\\',
+    Minus: '-',
+    Equal: '=',
+  }
+  return named[code] || code
+}
+
+function bindingLabel(value: ShortcutBinding): string {
+  const parts: string[] = []
+  if (value.ctrl) {
+    parts.push('Ctrl')
+  }
+  if (value.alt) {
+    parts.push('Alt')
+  }
+  if (value.shift) {
+    parts.push('Shift')
+  }
+  if (value.meta) {
+    parts.push('Cmd')
+  }
+  parts.push(keyLabel(value.code))
+  return parts.join(' + ')
+}
+
+/** The keys that are only ever held down beside another one. */
+function isModifierCode(code: string): boolean {
+  return (
+    code.startsWith('Alt') ||
+    code.startsWith('Shift') ||
+    code.startsWith('Control') ||
+    code.startsWith('Meta')
+  )
+}
+
+function readStoredShortcuts(): Partial<Record<ShortcutId, ShortcutBinding>> {
+  const stored = readStoredOrder<Partial<Record<ShortcutId, ShortcutBinding>>>(
+    shortcutsStorageKey,
+    {},
+  )
+  const known = new Set(shortcutDefaults.map((entry) => entry.id))
+  const clean: Partial<Record<ShortcutId, ShortcutBinding>> = {}
+  for (const [id, value] of Object.entries(stored)) {
+    // Anything that is not a binding this build knows about is dropped rather
+    // than trusted: this comes back from storage, where an older version of
+    // the app, or a hand edit, may have left something else entirely.
+    if (
+      known.has(id as ShortcutId) &&
+      value &&
+      typeof value === 'object' &&
+      typeof (value as ShortcutBinding).code === 'string' &&
+      !isModifierCode((value as ShortcutBinding).code)
+    ) {
+      const candidate = value as ShortcutBinding
+      clean[id as ShortcutId] = binding(candidate.code, {
+        alt: Boolean(candidate.alt),
+        shift: Boolean(candidate.shift),
+        ctrl: Boolean(candidate.ctrl),
+        meta: Boolean(candidate.meta),
+      })
+    }
+  }
+  return clean
+}
+
 type KnowledgePanelMode = 'hidden' | 'docked' | 'expanded'
 
 /** Panel state when no session is selected, so roots stay browsable. */
@@ -1891,6 +2070,128 @@ function DefaultSessionFolderControl({
   )
 }
 
+/** The shortcut list, with each row open to being given different keys. */
+function ShortcutEditor({
+  shortcuts,
+  overrides,
+  onChange,
+}: {
+  shortcuts: ShortcutDefinition[]
+  overrides: Partial<Record<ShortcutId, ShortcutBinding>>
+  onChange: (overrides: Partial<Record<ShortcutId, ShortcutBinding>>) => void
+}) {
+  const [recording, setRecording] = useState<ShortcutId>()
+  const [refused, setRefused] = useState<string>()
+
+  function stopRecording() {
+    setRecording(undefined)
+    setRefused(undefined)
+  }
+
+  function capture(id: ShortcutId, event: KeyboardEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === 'Escape') {
+      stopRecording()
+      return
+    }
+    // Held on their own they are only half a shortcut. Waiting for the key
+    // they are held with is what lets Alt+Shift+K be typed at all.
+    if (isModifierCode(event.code)) {
+      return
+    }
+    if (event.key === 'Tab') {
+      stopRecording()
+      return
+    }
+    const chosen = binding(event.code, {
+      alt: event.altKey,
+      shift: event.shiftKey,
+      ctrl: event.ctrlKey,
+      meta: event.metaKey,
+    })
+    // A bare letter would be swallowed the moment it was typed anywhere
+    // outside a text box, so the shortcut has to be held with something.
+    if (!chosen.alt && !chosen.ctrl && !chosen.meta) {
+      setRefused('Hold Alt, Ctrl or Cmd as well, or this would fire while you type.')
+      return
+    }
+    const taken = shortcuts.find(
+      (entry) => entry.id !== id && sameBinding(entry.binding, chosen),
+    )
+    if (taken) {
+      setRefused(`${bindingLabel(chosen)} already does "${taken.label}".`)
+      return
+    }
+    onChange({ ...overrides, [id]: chosen })
+    stopRecording()
+  }
+
+  function reset(id: ShortcutId) {
+    const { [id]: _removed, ...rest } = overrides
+    onChange(rest)
+    stopRecording()
+  }
+
+  return (
+    <>
+      <ul className="shortcut-list shortcut-list--editable">
+        {shortcuts.map((entry) => {
+          const isRecording = recording === entry.id
+          const changed = Boolean(overrides[entry.id])
+          return (
+            <li key={entry.id}>
+              <span>{entry.label}</span>
+              <span className="shortcut-list__controls">
+                <button
+                  aria-label={
+                    isRecording
+                      ? `Press the new keys for ${entry.label}`
+                      : `Change the keys for ${entry.label}`
+                  }
+                  className={`shortcut-key ${
+                    isRecording ? 'shortcut-key--recording' : ''
+                  }`}
+                  onBlur={stopRecording}
+                  onClick={() => {
+                    setRefused(undefined)
+                    setRecording(isRecording ? undefined : entry.id)
+                  }}
+                  onKeyDown={(event) =>
+                    isRecording ? capture(entry.id, event) : undefined
+                  }
+                  type="button"
+                >
+                  {isRecording ? (
+                    'Press keys\u2026'
+                  ) : (
+                    <kbd>{bindingLabel(entry.binding)}</kbd>
+                  )}
+                </button>
+                {changed ? (
+                  <button
+                    aria-label={`Reset the keys for ${entry.label}`}
+                    className="shortcut-reset"
+                    onClick={() => reset(entry.id)}
+                    type="button"
+                  >
+                    Reset
+                  </button>
+                ) : null}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+      {refused ? (
+        <p className="dialog-message shortcut-refused" role="alert">
+          {refused}
+        </p>
+      ) : null}
+    </>
+  )
+}
+
 function AppSettingsDialog({
   open,
   computers,
@@ -1903,6 +2204,9 @@ function AppSettingsDialog({
   onDefaultSessionFoldersChange,
   statusline,
   onStatuslineChange,
+  shortcuts,
+  shortcutOverrides,
+  onShortcutsChange,
   updateRegistration,
   updatingApp,
 }: {
@@ -1917,6 +2221,11 @@ function AppSettingsDialog({
   onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
+  shortcuts: ShortcutDefinition[]
+  shortcutOverrides: Partial<Record<ShortcutId, ShortcutBinding>>
+  onShortcutsChange: (
+    overrides: Partial<Record<ShortcutId, ShortcutBinding>>,
+  ) => void
   updateRegistration?: ServiceWorkerRegistration
   updatingApp: boolean
 }) {
@@ -2351,23 +2660,24 @@ function AppSettingsDialog({
       <section className="app-settings-section">
         <h3>Keyboard shortcuts</h3>
         <p className="dialog-message">
-          Available on a keyboard, outside dialogs and the message box.
+          Available on a keyboard, outside dialogs and the message box. Choose
+          one to give it different keys.
         </p>
+        <ShortcutEditor
+          onChange={onShortcutsChange}
+          overrides={shortcutOverrides}
+          shortcuts={shortcuts}
+        />
         <ul className="shortcut-list">
-          {[
-            ['Next session', 'Alt + \u2193'],
-            ['Previous session', 'Alt + \u2191'],
-            ['Open or close knowledge', 'Alt + K'],
-            ['Expand or minimize knowledge', 'Alt + Shift + K'],
-            ['View background tasks', 'Alt + T'],
-            ['Recall previous message', '\u2191'],
-          ].map(([label, keys]) => (
-            <li key={label}>
-              <span>{label}</span>
-              <kbd>{keys}</kbd>
-            </li>
-          ))}
+          <li>
+            <span>Recall previous message</span>
+            <kbd>{'\u2191'}</kbd>
+          </li>
         </ul>
+        <p className="dialog-message">
+          Recall works in the message box itself, so it is not one of the keys
+          above.
+        </p>
       </section>
       </div>
     </DialogFrame>
@@ -5738,6 +6048,9 @@ function App() {
   const [updatingApp, setUpdatingApp] = useState(false)
   const [updateToastDismissed, setUpdateToastDismissed] = useState(false)
   const [keyboardOpen, setKeyboardOpen] = useState(false)
+  const [shortcutOverrides, setShortcutOverrides] = useState<
+    Partial<Record<ShortcutId, ShortcutBinding>>
+  >(() => readStoredShortcuts())
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window === 'undefined'
       ? 800
@@ -6144,6 +6457,13 @@ function App() {
   const selectedRunningBackgroundTasks =
     selectedBackgroundTasks?.runningCount || 0
   const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
+  // What each shortcut answers to now: its default unless the reader has
+  // changed it.
+  const shortcuts = shortcutDefaults.map((entry) => ({
+    ...entry,
+    binding: shortcutOverrides[entry.id] || entry.binding,
+  }))
+
   const hasBlockingUi =
     newSessionOpen ||
     computersOpen ||
@@ -6486,10 +6806,24 @@ function App() {
     // Bound to the window rather than the shell: closing a panel moves focus
     // back to the body, and the next shortcut must still work from there.
     appShortcutRef.current = (event: globalThis.KeyboardEvent) => {
+      // Escape puts away whatever is on top. Before the guards below, because
+      // an open dialog is exactly when this is wanted, and it has to work from
+      // a field inside that dialog as much as from anywhere else.
+      //
+      // `defaultPrevented` is still respected: a menu or an unfinished edit
+      // that has already answered Escape has said so that way, and closing the
+      // panel around it as well would put two things away at one press.
       if (
-        !event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        !event.isComposing
+      ) {
+        if (closeTopmostLayer()) {
+          event.preventDefault()
+        }
+        return
+      }
+      if (
         event.defaultPrevented ||
         event.isComposing ||
         hasBlockingUi ||
@@ -6497,28 +6831,34 @@ function App() {
       ) {
         return
       }
-      // Matched on `code`, so a macOS Option key that rewrites the character
-      // still resolves to the same physical key.
-      if (event.code === 'ArrowDown' || event.code === 'ArrowUp') {
-        event.preventDefault()
-        stepSession(event.code === 'ArrowDown' ? 1 : -1)
+      // Which shortcut this is, asked of the list the reader can see and
+      // change, rather than of keys written into this handler.
+      const pressed = shortcuts.find((entry) =>
+        bindingMatches(event, entry.binding),
+      )
+      if (!pressed) {
         return
       }
-      if (event.code === 'KeyK') {
-        event.preventDefault()
-        if (event.shiftKey) {
-          toggleKnowledgeExpanded()
-        } else {
+      event.preventDefault()
+      switch (pressed.id) {
+        case 'nextSession':
+          stepSession(1)
+          return
+        case 'previousSession':
+          stepSession(-1)
+          return
+        case 'toggleKnowledge':
           toggleKnowledgePanel()
-        }
-        return
-      }
-      // The status line is the usual way in, but it is a display preference and
-      // can be turned off while background tasks keep running, so the panel
-      // needs a way in that does not depend on what is on screen.
-      if (event.code === 'KeyT' && !event.shiftKey) {
-        event.preventDefault()
-        openBackgroundTasks()
+          return
+        case 'expandKnowledge':
+          toggleKnowledgeExpanded()
+          return
+        // The status line is the usual way in, but it is a display preference
+        // and can be turned off while background tasks keep running, so the
+        // panel needs a way in that does not depend on what is on screen.
+        case 'backgroundTasks':
+          openBackgroundTasks()
+          return
       }
     }
   })
@@ -6537,6 +6877,13 @@ function App() {
       JSON.stringify(knowledgePositions),
     )
   }, [knowledgePositions])
+
+  useEffect(() => {
+    localStorage.setItem(
+      shortcutsStorageKey,
+      JSON.stringify(shortcutOverrides),
+    )
+  }, [shortcutOverrides])
 
   // The panel belongs to the session, so what it was reading is recorded
   // against that session rather than globally.
@@ -8560,6 +8907,48 @@ function App() {
 
   function setKnowledgeMode(mode: KnowledgePanelMode) {
     setKnowledgeModeState(mode)
+  }
+
+  /**
+   * Puts away whatever is on top, and says whether there was anything.
+   */
+  // In the order they are stacked, so one press puts away one thing: the
+  // dialog over the panel before the panel, the panel before the drawer
+  // behind it.
+  //
+  // A permission request and a question from the agent are deliberately not
+  // here. Both are waiting on an answer, and dismissing one leaves the session
+  // stopped with nothing on screen to say why.
+  function closeTopmostLayer(): boolean {
+    if (addRootOpen) {
+      setAddRootOpen(false)
+      return true
+    }
+    const dialogs: [boolean, () => void][] = [
+      [newSessionOpen, () => setNewSessionOpen(false)],
+      [computersOpen, () => setComputersOpen(false)],
+      [settingsOpen, () => setSettingsOpen(false)],
+      [statuslineOpen, () => setStatuslineOpen(false)],
+      [runtimeOpen, () => setRuntimeOpen(false)],
+      [backgroundTasksOpen, () => setBackgroundTasksOpen(false)],
+      [renameOpen, () => setRenameOpen(false)],
+      [cwdOpen, () => setCwdOpen(false)],
+      [workspaceOpen, () => setWorkspaceOpen(false)],
+    ]
+    const open = dialogs.find(([isOpen]) => isOpen)
+    if (open) {
+      open[1]()
+      return true
+    }
+    if (knowledgeMode !== 'hidden') {
+      setKnowledgeMode('hidden')
+      return true
+    }
+    if (sidebarOpen) {
+      setSidebarOpen(false)
+      return true
+    }
+    return false
   }
 
   function toggleKnowledgePanel() {
@@ -11012,7 +11401,10 @@ function App() {
         defaultSessionFolders={defaultSessionFolders}
         onDefaultRuntimesChange={setDefaultRuntimes}
         onDefaultSessionFoldersChange={setDefaultSessionFolders}
+        onShortcutsChange={setShortcutOverrides}
         onStatuslineChange={setStatusline}
+        shortcutOverrides={shortcutOverrides}
+        shortcuts={shortcuts}
         onUpdateReady={setUpdateRegistration}
         open={settingsOpen}
         statusline={statusline}

@@ -429,7 +429,19 @@ function readComposerDrafts(): ComposerDrafts {
       }
     }
   }
-  return Object.keys(result).length > 0 ? result : readLegacyComposerDrafts()
+  const legacy = readLegacyComposerDrafts()
+  // An older build writes only the legacy key, so after a rollback and back
+  // again its drafts are the newer ones -- and taking this state whenever it
+  // held anything at all wrote the stale copy straight back over them. Where
+  // the two disagree about a session, the legacy text is what was written
+  // last.
+  for (const [key, draft] of Object.entries(legacy)) {
+    const mine = result[key]
+    if (!mine || expandComposerPastes(mine.text, mine.pastes) !== draft.text) {
+      result[key] = draft
+    }
+  }
+  return Object.keys(result).length > 0 ? result : legacy
 }
 
 function readLegacyComposerDrafts(): ComposerDrafts {
@@ -9518,7 +9530,7 @@ function App() {
         )
       : undefined
     if (command?.name === 'statusline') {
-      const input = content.slice(commandName.length + 1).trim().toLowerCase()
+      const input = trimmedContent.slice(commandName.length + 1).trim().toLowerCase()
       if (input === 'off') {
         setStatusline((current) => ({ ...current, enabled: false }))
       } else if (input === 'on') {
@@ -9553,7 +9565,7 @@ function App() {
     }
     if (
       commandName === 'cwd' &&
-      !content.slice(commandName.length + 1).trim()
+      !trimmedContent.slice(commandName.length + 1).trim()
     ) {
       setComposer('')
       setCwdOpen(true)

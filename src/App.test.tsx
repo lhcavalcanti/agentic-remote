@@ -2125,6 +2125,50 @@ describe('App', () => {
     ])
   })
 
+  it('answers a command written with a space in front of it', async () => {
+    // What the message is was read from the trimmed text while its arguments
+    // were sliced from the raw text, so a leading space shifted every
+    // argument by one and `  /statusline off` opened the dialog instead.
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: '  /statusline off' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue(''),
+    )
+    // Answered here, so nothing was sent, and no dialog was opened for it.
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('keeps a draft written against an older build after upgrading again', async () => {
+    // An older build writes only the legacy key. Coming back to this one, any
+    // state at all in the newer key won, and the persistence effect then wrote
+    // that stale copy straight back over what had just been written.
+    localStorage.setItem(
+      'agentic-remote:composer-drafts-v2',
+      JSON.stringify({
+        'computer-1:session-1': { text: 'what this build last saw', pastes: [] },
+      }),
+    )
+    localStorage.setItem(
+      'agentic-remote:composer-drafts',
+      JSON.stringify({
+        'computer-1:session-1': 'written against the older build',
+      }),
+    )
+
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue(
+        'written against the older build',
+      ),
+    )
+  })
+
   it('keeps what was typed around a collapsed paste', async () => {
     // Indentation before a paste and a newline after it are part of the
     // message. Trimming the ends of the reconstructed prompt quietly rewrote

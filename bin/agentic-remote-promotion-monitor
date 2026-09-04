@@ -347,7 +347,7 @@ run() {
   local failure=""
   env \
     HOME="$USER_HOME" \
-    PATH="$RUNTIME_TOOLS:$PATH" \
+    PATH="$RUNTIME_TOOLS:$USER_HOME/.local/bin:$PATH" \
     CI=true \
     "${setup_environment[@]}" \
     "$PROD_ROOT/bin/agentic-remote" setup "${setup_arguments[@]}" ||

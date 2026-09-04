@@ -81,6 +81,7 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
     [
       '#!/usr/bin/env bash',
       'printf \'%s\\n\' "agentic-remote $*" >>"$CALL_LOG"',
+      'if [[ "${REQUIRE_COPILOT:-0}" == 1 ]]; then copilot_path="$(command -v copilot)" || exit 127; printf \'copilot-path %s\\n\' "$copilot_path" >>"$CALL_LOG"; fi',
       '[[ "${SETUP_EXIT:-0}" == 0 ]] || exit "$SETUP_EXIT"',
       '[[ -z "${SETUP_CHECKOUT:-}" ]] || git checkout --detach "$SETUP_CHECKOUT" >/dev/null 2>&1',
       'release="$RELEASE_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-$$"',
@@ -262,6 +263,21 @@ describe('promotion monitor', () => {
       line.startsWith('agentic-remote setup'),
     )
     expect(setup).toBe('agentic-remote setup')
+  })
+
+  it('includes the user-local bin directory when installing a candidate', async () => {
+    const context = await fixture()
+    const userBin = path.join(context.root, '.local', 'bin')
+    await mkdir(userBin, { recursive: true })
+    await stub(userBin, 'copilot', 'exit 0')
+    await advanceMain(context)
+
+    const result = await monitor(context, { REQUIRE_COPILOT: '1' })
+
+    expect(result.code).toBe(0)
+    expect(await calls(context)).toContain(
+      `copilot-path ${path.join(userBin, 'copilot')}`,
+    )
   })
 
   it('passes only the identity flags the profile sets', async () => {

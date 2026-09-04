@@ -103,6 +103,12 @@ supplied per run without touching the file:
 AGENTIC_REMOTE_MONITOR_DEV_ROOT=/other/checkout agentic-remote-promotion-monitor run
 ```
 
+Local installation runs prepend both `AGENTIC_REMOTE_RUNTIME_TOOLS` and
+`$HOME/.local/bin` to the service environment's `PATH`. The runtime-tools
+directory supplies the pinned package-manager shim, while the user-local
+directory supplies Copilot when it was installed with the documented npm
+prefix.
+
 Moving values into the systemd unit looks like it hides them but does the
 opposite. The profile is written `0600`, while `systemctl show -p Environment`
 prints every `Environment=` entry in the unit. Keep values in the profile, or in

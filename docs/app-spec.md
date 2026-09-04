@@ -215,6 +215,13 @@ required to be individually editable.
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
 
+Pastes longer than 20 lines MUST appear in the composer as
+`[Paste #N - L lines]`, numbered within the current session draft. The exact
+pasted text MUST remain embedded in the draft and replace its label when the
+message is sent or queued. Shorter pastes MUST remain ordinary editable text.
+Collapsed pastes MUST survive reloads, session switches, failed sends, and
+clear replacement IDs without losing, duplicating, or reordering content.
+
 ### 6.3 Recording state
 
 - Starting microphone capture MUST replace the bottom action panel with a

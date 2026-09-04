@@ -11,6 +11,7 @@ import {
 import type {
   CSSProperties,
   ChangeEvent,
+  ClipboardEvent as ReactClipboardEvent,
   DragEvent as ReactDragEvent,
   FormEvent,
   KeyboardEvent,
@@ -338,6 +339,72 @@ type ComposerHistoryState = {
   messages: string[]
   index: number
   draft: string
+}
+
+type CollapsedPaste = {
+  id: number
+  content: string
+  lineCount: number
+}
+
+type ComposerPastes = Record<string, CollapsedPaste[]>
+
+const collapsedPasteLineThreshold = 20
+const composerPastesStorageKey = 'agentic-remote:composer-pastes'
+
+function collapsedPasteLabel(paste: CollapsedPaste): string {
+  return `[Paste #${paste.id} - ${paste.lineCount} lines]`
+}
+
+function pastedLineCount(content: string): number {
+  return content.split(/\r\n|\r|\n/).length
+}
+
+function readComposerPastes(): ComposerPastes {
+  const stored = readStoredOrder<unknown>(composerPastesStorageKey, {})
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    return {}
+  }
+  const result: ComposerPastes = {}
+  for (const [key, value] of Object.entries(stored)) {
+    if (!Array.isArray(value)) {
+      continue
+    }
+    const pastes = value.filter(
+      (paste): paste is CollapsedPaste =>
+        paste !== null &&
+        typeof paste === 'object' &&
+        Number.isInteger((paste as CollapsedPaste).id) &&
+        (paste as CollapsedPaste).id > 0 &&
+        typeof (paste as CollapsedPaste).content === 'string' &&
+        Number.isInteger((paste as CollapsedPaste).lineCount) &&
+        (paste as CollapsedPaste).lineCount > collapsedPasteLineThreshold,
+    )
+    if (pastes.length > 0) {
+      result[key] = pastes
+    }
+  }
+  return result
+}
+
+function referencedComposerPastes(
+  value: string,
+  pastes: CollapsedPaste[],
+): CollapsedPaste[] {
+  return pastes.filter((paste) => value.includes(collapsedPasteLabel(paste)))
+}
+
+function expandComposerPastes(
+  value: string,
+  pastes: CollapsedPaste[],
+): string {
+  const byLabel = new Map(
+    pastes.map((paste) => [collapsedPasteLabel(paste), paste.content]),
+  )
+  return value.replace(
+    /\[Paste #\d+ - \d+ lines\]/g,
+    (label) => byLabel.get(label) ?? label,
+  )
 }
 
 /**
@@ -5510,6 +5577,8 @@ function App() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
   )
+  const [composerPastes, setComposerPastes] =
+    useState<ComposerPastes>(readComposerPastes)
   const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
@@ -7056,6 +7125,13 @@ function App() {
   }, [composerDrafts])
 
   useEffect(() => {
+    localStorage.setItem(
+      composerPastesStorageKey,
+      JSON.stringify(composerPastes),
+    )
+  }, [composerPastes])
+
+  useEffect(() => {
     const handleUpdate = (event: Event) => {
       setUpdateRegistration(
         (event as CustomEvent<ServiceWorkerRegistration>).detail,
@@ -8209,6 +8285,7 @@ function App() {
     rawTargetKey: string,
     value: string,
     fromHistory = false,
+    preservePastes = false,
   ) {
     // The key was taken before whatever this is finishing awaited. A clear
     // during that wait leaves it naming a session that is gone, and writing
@@ -8221,6 +8298,22 @@ function App() {
       }
       return { ...current, [targetKey]: value }
     })
+    if (!fromHistory && !preservePastes) {
+      setComposerPastes((current) => {
+        const remaining = referencedComposerPastes(
+          value,
+          current[targetKey] || [],
+        )
+        if (remaining.length > 0) {
+          return { ...current, [targetKey]: remaining }
+        }
+        if (!(targetKey in current)) {
+          return current
+        }
+        const { [targetKey]: _removed, ...rest } = current
+        return rest
+      })
+    }
   }
 
   function resetComposerHistory(targetKey: string) {
@@ -8327,6 +8420,16 @@ function App() {
     // carried the recalled message across and lost the real draft for good.
     const history = composerHistoryRef.current[fromKey]
     const unsent = history ? history.draft : undefined
+    setComposerPastes((current) => {
+      const from = current[fromKey]
+      if (!from) {
+        return current
+      }
+      const { [fromKey]: _removed, ...remaining } = current
+      return current[toKey]
+        ? remaining
+        : { ...remaining, [toKey]: from }
+    })
     updateComposerDrafts([fromKey, toKey], (current) => {
       if (unsent !== undefined) {
         const { [fromKey]: _recalled, ...remaining } = current
@@ -9019,8 +9122,8 @@ function App() {
   }
 
   async function submitMessage(enqueue = false) {
-    const content = composer.trim()
-    if (!selected || !content || sending) {
+    const displayContent = composer.trim()
+    if (!selected || !displayContent || sending) {
       return
     }
     // Sending is asking to see what happens next. A reader who had scrolled
@@ -9029,6 +9132,11 @@ function App() {
     // reply arriving -- all happened somewhere off screen.
     followLatest()
     const targetKey = sessionKey(selected)
+    const submittedPastes = referencedComposerPastes(
+      displayContent,
+      composerPastes[targetKey] || [],
+    )
+    const content = expandComposerPastes(displayContent, submittedPastes)
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
     // sent. The mark is cleared once the request settles.
@@ -9037,9 +9145,9 @@ function App() {
       submissionsInFlight.current.delete(targetKey)
     }
 
-    const isCommand = content.startsWith('/')
+    const isCommand = displayContent.startsWith('/')
     const commandName = isCommand
-      ? content.slice(1).split(/\s+/, 1)[0].toLowerCase()
+      ? displayContent.slice(1).split(/\s+/, 1)[0].toLowerCase()
       : ''
     const command = isCommand
       ? commands.find(
@@ -9102,7 +9210,7 @@ function App() {
         !command?.allowDuringAgentExecution)
     setSending(true)
     setError(undefined)
-    setComposer('')
+    setComposerForKey(targetKey, '', false, true)
     // Which failure this send is answering, so the recovery that runs after it
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
@@ -9135,9 +9243,22 @@ function App() {
       if (!deferred || deferred.stamp === acknowledged) {
         unshownFailures.current.delete(targetKey)
       }
+      if (submittedPastes.length > 0) {
+        const submittedIds = new Set(submittedPastes.map((paste) => paste.id))
+        setComposerPastes((current) => {
+          const remaining = (current[targetKey] || []).filter(
+            (paste) => !submittedIds.has(paste.id),
+          )
+          if (remaining.length > 0) {
+            return { ...current, [targetKey]: remaining }
+          }
+          const { [targetKey]: _removed, ...rest } = current
+          return rest
+        })
+      }
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
-      prependComposerForKey(targetKey, content)
+      prependComposerForKey(targetKey, displayContent)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       settleSubmission()
@@ -9579,6 +9700,51 @@ function App() {
   function selectCommand(command: SlashCommand) {
     setComposer(`/${command.name}${command.inputHint ? ' ' : ''}`)
     setSelectedCommandIndex(0)
+  }
+
+  function composerPasted(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    if (!selectedKey) {
+      return
+    }
+    const content = event.clipboardData.getData('text/plain')
+    const lineCount = pastedLineCount(content)
+    if (lineCount <= collapsedPasteLineThreshold) {
+      return
+    }
+    event.preventDefault()
+    const textarea = event.currentTarget
+    const value = textarea.value
+    const targetKey = followReplacementsRef.current(selectedKey)
+    const start = textarea.selectionStart ?? value.length
+    const end = textarea.selectionEnd ?? start
+    const existingPastes = composerPastes[targetKey] || []
+    const paste: CollapsedPaste = {
+      id: Math.max(0, ...existingPastes.map((entry) => entry.id)) + 1,
+      content,
+      lineCount,
+    }
+    const label = collapsedPasteLabel(paste)
+    const nextValue = `${value.slice(0, start)}${label}${value.slice(end)}`
+    setComposerForKey(
+      targetKey,
+      nextValue,
+      false,
+      true,
+    )
+    setComposerPastes((current) => {
+      const retained = referencedComposerPastes(
+        nextValue,
+        current[targetKey] || [],
+      )
+      return {
+        ...current,
+        [targetKey]: [...retained, paste],
+      }
+    })
+    window.requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(start + label.length, start + label.length)
+    })
   }
 
   function insertComposerNewline() {
@@ -10661,6 +10827,7 @@ function App() {
                     setComposer(event.target.value)
                   }}
                   onKeyDown={composerKeyDown}
+                  onPaste={composerPasted}
                   placeholder={
                     selected.suspended
                       ? 'Suspended · resume to send'

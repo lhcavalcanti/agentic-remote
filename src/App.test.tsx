@@ -2013,6 +2013,144 @@ describe('App', () => {
     )
   })
 
+  it('collapses a long paste while sending its full text in place', async () => {
+    const pasted = Array.from(
+      { length: 21 },
+      (_, index) => `pasted line ${index + 1}`,
+    ).join('\n')
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'Before  after' } })
+    textarea.setSelectionRange(7, 7)
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        getData: (type: string) => (type === 'text/plain' ? pasted : ''),
+      },
+    })
+
+    expect(textarea).toHaveValue('Before [Paste #1 - 21 lines] after')
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        content: `Before ${pasted} after`,
+        enqueue: false,
+      }),
+    )
+  })
+
+  it('numbers and persists collapsed pastes with their session draft', async () => {
+    const first = Array.from({ length: 21 }, (_, index) => `first ${index}`).join(
+      '\n',
+    )
+    const second = Array.from(
+      { length: 22 },
+      (_, index) => `second ${index}`,
+    ).join('\n')
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+
+    fireEvent.paste(textarea, {
+      clipboardData: { getData: () => first },
+    })
+    fireEvent.change(textarea, {
+      target: { value: `${textarea.value}\n` },
+    })
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    fireEvent.paste(textarea, {
+      clipboardData: { getData: () => second },
+    })
+
+    expect(textarea).toHaveValue(
+      '[Paste #1 - 21 lines]\n[Paste #2 - 22 lines]',
+    )
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    const firstSessionTitle = screen
+      .getAllByText('Project chat')
+      .find((element) => element.closest('.session-item'))
+    fireEvent.click(firstSessionTitle!.closest('button')!)
+    expect(textarea).toHaveValue(
+      '[Paste #1 - 21 lines]\n[Paste #2 - 22 lines]',
+    )
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-pastes') || '{}',
+        )['computer-1:session-1'],
+      ).toEqual([
+        { id: 1, content: first, lineCount: 21 },
+        { id: 2, content: second, lineCount: 22 },
+      ]),
+    )
+  })
+
+  it('restores a failed long paste as its compact label', async () => {
+    const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join(
+      '\n',
+    )
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error('Send failed'))
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+    fireEvent.paste(textarea, {
+      clipboardData: { getData: () => pasted },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue('[Paste #1 - 21 lines]'),
+    )
+    expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+      content: pasted,
+      enqueue: false,
+    })
+  })
+
+  it('carries a collapsed paste to a cleared session replacement', async () => {
+    const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join(
+      '\n',
+    )
+    render(<App />)
+    const textarea = (await screen.findByLabelText(
+      'Message',
+    )) as HTMLTextAreaElement
+    fireEvent.paste(textarea, {
+      clipboardData: { getData: () => pasted },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() =>
+      expect(clearConversation).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+      ),
+    )
+    expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'cleared-session',
+        {
+          content: pasted,
+          enqueue: false,
+        },
+      ),
+    )
+  })
+
   it('adds an audio transcript to the live draft without sending it', async () => {
     let finishTranscription:
       | ((value: { transcript: string; durationSeconds: number }) => void)

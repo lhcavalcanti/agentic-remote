@@ -1272,9 +1272,7 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
 }
 
 function hasComposerAfter(lines: string[], index: number): boolean {
-  return lines
-    .slice(index + 1)
-    .some((line) => /^\s*╻[\u2580-\u259f\u2500-\u257f]*\s*$/u.test(line))
+  return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
 }
 
 async function clearAutomaticStartupPrompts(target: string): Promise<void> {
@@ -1562,11 +1560,16 @@ export function parseTerminalFormPrompt(pane: string): boolean {
   const header = lines.findLastIndex((line) =>
     /^Copilot needs information\.?$/i.test(line),
   )
-  if (header < 0 || hasComposerAfter(rawLines, header)) {
+  if (header < 0) {
     return false
   }
-  const activeView = lines.slice(header).join(' ')
-  return /enter accept/i.test(activeView) && /cancel/i.test(activeView)
+  const footer = lines.findIndex(
+    (line, index) => index > header && /cancel/i.test(line),
+  )
+  if (footer < 0 || hasComposerAfter(rawLines, footer)) {
+    return false
+  }
+  return /enter accept/i.test(lines.slice(header, footer + 1).join(' '))
 }
 
 /**

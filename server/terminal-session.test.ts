@@ -97,6 +97,15 @@ describe('TmuxTerminalSessionController', () => {
 ╹▀▀▀▀
       `),
     ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+● The old panel said Session in use.
+● It offered 1. Resume anyway and 2. Go back.
+╭────
+│
+╰────
+      `),
+    ).toBe(false)
   })
 
   it('detects the Copilot desktop-app startup promotion', () => {
@@ -211,6 +220,19 @@ Permission request (1 remaining)
 ╻▄▄▄▄
 ┃
 ╹▀▀▀▀
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+● Earlier output quoted:
+  Confirm folder trust
+  Do you trust the files in this folder?
+  1. Yes
+  2. Yes, and remember this folder for future sessions
+  3. No (Esc)
+╭────
+│
+╰────
       `),
     ).toBeUndefined()
     expect(
@@ -1729,6 +1751,20 @@ describe('submitTerminalForm', () => {
     ).toBe(true)
   })
 
+  it('does not mistake a round-framed field for the composer', () => {
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Choose a target.',
+        ' Target:',
+        ' ╭────────╮',
+        ' │ value  │',
+        ' ╰────────╯',
+        ' enter accept · esc cancel',
+      ].join('\n')),
+    ).toBe(true)
+  })
+
   it('rejects a quoted structured form above a live composer', () => {
     expect(
       parseTerminalFormPrompt([
@@ -1738,6 +1774,16 @@ describe('submitTerminalForm', () => {
         '╻▄▄▄▄',
         '┃',
         '╹▀▀▀▀',
+      ].join('\n')),
+    ).toBe(false)
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Choose a target.',
+        ' enter accept · esc cancel',
+        '╭────',
+        '│',
+        '╰────',
       ].join('\n')),
     ).toBe(false)
   })

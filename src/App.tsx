@@ -9635,6 +9635,13 @@ function App() {
       if (!owner || !owner.queuedPrompts) {
         return false
       }
+      // Not while the session is working. A drain takes the prompt off before
+      // it dispatches and puts it back if it cannot go, so an absence seen
+      // then says nothing -- and letting the marker go in that window left the
+      // rewrite as an ordinary draft beside the message that came back.
+      if (owner.status === 'running' || owner.status === 'waiting') {
+        return false
+      }
       return !owner.queuedPrompts.some(
         (prompt) => prompt.id === editingQueuedPrompts[key],
       )
@@ -9650,6 +9657,16 @@ function App() {
       return next
     })
   }, [editingQueuedPrompts, sessions])
+
+  /** Whether a session is still one the app knows about. */
+  // A response can come back after the session it is about has been deleted.
+  // Upserting then puts the session back: one nothing can be done with, that
+  // no later event will clear, because its removal has already been and gone.
+  function stillListed(session: ManagedSession): boolean {
+    return sessionsRef.current.some(
+      (candidate) => sessionKey(candidate) === sessionKey(session),
+    )
+  }
 
   /** Whether the text names a command this app answers rather than the agent. */
   function isWebOnlyCommand(text: string): boolean {
@@ -9735,7 +9752,9 @@ function App() {
         promptId,
         content,
       )
-      setSessions((current) => upsertSession(current, result.session))
+      if (stillListed(result.session)) {
+        setSessions((current) => upsertSession(current, result.session))
+      }
       // Kept open when the writing moved on while the request was in flight:
       // the server has the text that was submitted, and the newer writing is
       // still here to be saved in its turn. Closing it left that writing as an
@@ -9789,11 +9808,10 @@ function App() {
         } catch {
           // Even the re-read failed. The marker is let go of directly so the
           // banner stops offering a Save that cannot succeed.
-          setEditingQueuedPrompts((current) =>
-            current[savedKey] === promptId
-              ? (({ [savedKey]: _gone, ...rest }) => rest)(current)
-              : current,
-          )
+          // Left as it is. A re-read that failed says nothing about the
+          // message, and letting the marker go on the strength of it detached
+          // the rewrite from a message that may still be waiting.
+          setError(message)
         }
         return false
       }
@@ -9832,7 +9850,9 @@ function App() {
         target.id,
         order,
       )
-      setSessions((current) => upsertSession(current, updated))
+      if (stillListed(updated)) {
+        setSessions((current) => upsertSession(current, updated))
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
       // Asked for rather than assumed. The refusal usually means the queue has
@@ -9840,7 +9860,9 @@ function App() {
       // show work that is already gone, or hide work that has just arrived.
       try {
         const fresh = await getSession(target.computerId, target.id)
-        setSessions((current) => upsertSession(current, fresh))
+        if (stillListed(fresh)) {
+          setSessions((current) => upsertSession(current, fresh))
+        }
       } catch {
         // Even the re-read failed, so the best available answer is the list as
         // it was before the drag -- but only if it is still a session at all.
@@ -9872,7 +9894,9 @@ function App() {
         target.id,
         promptId,
       )
-      setSessions((current) => upsertSession(current, result.session))
+      if (stillListed(result.session)) {
+        setSessions((current) => upsertSession(current, result.session))
+      }
       if (edit) {
         setComposer(result.prompt.content)
         window.requestAnimationFrame(() => composerRef.current?.focus())

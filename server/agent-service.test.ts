@@ -4317,8 +4317,21 @@ describe('AgentService deletion', () => {
 
     // Rewritten into a command, it has to wait as one: kept as it was, the
     // queue ran it as the kind it used to be.
-    const asCommand = await service.updateQueuedPrompt(created.id, 'p1', '/clear')
+    const asCommand = await service.updateQueuedPrompt(created.id, 'p1', '/usage')
     expect(asCommand.prompt.command).toBe(true)
+
+    // A command this session does not have would stop the drain when it was
+    // reached, with everything behind it waiting. Refused before it is stored,
+    // however it arrives -- this is reachable without the browser, and a
+    // client can be holding the list of a session it no longer has open.
+    await expect(
+      service.updateQueuedPrompt(created.id, 'p1', '/nosuchcommand'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+
+    // A shortcut is written out in full: the queue's drain expands nothing, so
+    // one stored as typed reached the runtime as a command it never heard of.
+    const expanded = await service.updateQueuedPrompt(created.id, 'p1', '/aa on')
+    expect(expanded.prompt.content).toBe('/allow-all on')
 
     // And back again.
     const asText = await service.updateQueuedPrompt(created.id, 'p1', 'plain again')

@@ -3404,9 +3404,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     promptId: string,
     rawContent: string,
   ): Promise<RemovedQueuedPrompt> {
-    const content = rawContent.trim()
+    let content = rawContent.trim()
     if (!content) {
       throw new Error('Message cannot be empty')
+    }
+    // Asked here rather than trusted from the browser. This is reachable
+    // directly, and a client can be holding the command list of a session it
+    // no longer has open -- and a command this session does not have stops the
+    // drain when it reaches it, with everything behind it waiting.
+    if (content.startsWith('/')) {
+      const name = content.slice(1).split(/\s+/, 1)[0]
+      // Undefined means it is not there; a catalog that could not be read at
+      // all says nothing, and a message is not refused over that.
+      const known = await this.knownQueueCommand(sessionId, name).catch(
+        () => name,
+      )
+      if (!known) {
+        throw Object.assign(
+          new Error(`This session has no /${name}`),
+          { statusCode: 409 },
+        )
+      }
+      // Written out in full. A shortcut is expanded on the way to the runtime
+      // and the queue's drain expands nothing, so one stored as typed reached
+      // the runtime as a command it has never heard of.
+      if (name.toLowerCase() !== known.toLowerCase()) {
+        content = `/${known}${content.slice(name.length + 1)}`
+      }
     }
     // In the queue's own lane, so a rewrite cannot land while a drain is
     // taking the same prompt off to send it.
@@ -3590,6 +3614,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       },
     )
     return updated
+  }
+
+  /** The full name of a command this session has, by name, shortcut or alias. */
+  private async knownQueueCommand(
+    sessionId: string,
+    name: string,
+  ): Promise<string | undefined> {
+    const wanted = name.toLowerCase()
+    const shortcut = (value: string) => {
+      const parts = value.split(/[-_]/)
+      return parts.length > 1
+        ? parts.map((part) => part[0] || '').join('').toLowerCase()
+        : ''
+    }
+    const commands = await this.listCommands(sessionId)
+    return commands.find(
+      (command) =>
+        command.name.toLowerCase() === wanted ||
+        shortcut(command.name) === wanted ||
+        command.aliases?.some((alias) => alias.toLowerCase() === wanted),
+    )?.name
   }
 
   async listCommands(sessionId: string): Promise<SlashCommand[]> {

@@ -2912,7 +2912,15 @@ describe('App', () => {
       MockWebSocket.instances[0]?.onmessage?.({
         data: JSON.stringify({
           type: 'session.upserted',
-          session: { ...withQueue, queuedCount: 0, queuedPrompts: [] },
+          // Settled, with the message genuinely gone. A drain takes it off
+          // before dispatching and puts it back if it cannot go, so an absence
+          // while the session is still working says nothing.
+          session: {
+            ...withQueue,
+            status: 'idle',
+            queuedCount: 0,
+            queuedPrompts: [],
+          },
         }),
       } as MessageEvent)
     })
@@ -3051,7 +3059,15 @@ describe('App', () => {
       MockWebSocket.instances[0]?.onmessage?.({
         data: JSON.stringify({
           type: 'session.upserted',
-          session: { ...withQueue, queuedCount: 0, queuedPrompts: [] },
+          // Settled, with the message genuinely gone. A drain takes it off
+          // before dispatching and puts it back if it cannot go, so an absence
+          // while the session is still working says nothing.
+          session: {
+            ...withQueue,
+            status: 'idle',
+            queuedCount: 0,
+            queuedPrompts: [],
+          },
         }),
       } as MessageEvent)
     })
@@ -3354,6 +3370,55 @@ describe('App', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Message')).toHaveValue('a message over here'),
     )
+  })
+
+  it('keeps the edit while a drain has the message in hand', async () => {
+    // A drain takes the prompt off before it dispatches and puts it back if it
+    // cannot go, so the queue arrives here without it for a moment. Letting
+    // the marker go then left the rewrite as an ordinary draft standing beside
+    // the message that came back.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+
+    render(<App />)
+    await screen.findByText('the original text')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(localStorage.getItem('agentic-remote:queued-edit')).not.toBeNull(),
+    )
+
+    // Taken off to be dispatched, while the session is still working.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...withQueue, queuedCount: 0, queuedPrompts: [] },
+        }),
+      } as MessageEvent)
+    })
+    expect(localStorage.getItem('agentic-remote:queued-edit')).not.toBeNull()
+
+    // It could not go, and comes back.
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...withQueue, status: 'idle' },
+        }),
+      } as MessageEvent)
+    })
+    expect(document.querySelector('.queued-edit-banner')).not.toBeNull()
   })
 
   it('keeps one session edit from standing in the way of another', async () => {

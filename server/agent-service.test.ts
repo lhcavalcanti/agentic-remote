@@ -4298,6 +4298,33 @@ describe('AgentService deletion', () => {
     expect(reordered.queuedPrompts?.[1].content).toBe('first, edited')
   })
 
+  it('decides what a rewritten prompt is from what it now says', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-kind-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.enqueuePrompt(created.id, {
+      id: 'p1',
+      content: 'plain text',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    // Rewritten into a command, it has to wait as one: kept as it was, the
+    // queue ran it as the kind it used to be.
+    const asCommand = await service.updateQueuedPrompt(created.id, 'p1', '/clear')
+    expect(asCommand.prompt.command).toBe(true)
+
+    // And back again.
+    const asText = await service.updateQueuedPrompt(created.id, 'p1', 'plain again')
+    expect(asText.prompt.command).toBeUndefined()
+  })
+
   it('refuses an order built from a queue that has since changed', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-order-'))
     directories.push(directory)

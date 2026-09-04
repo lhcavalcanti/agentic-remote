@@ -2875,6 +2875,46 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('leaves edit mode behind when the reader moves to another session', async () => {
+    // The composer follows the selection, so a marker that does not is a
+    // marker pointing at a message the reader can no longer see -- and Enter,
+    // Send and Escape would all act on it.
+    const queued = {
+      id: 'q1',
+      content: 'queued here',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue, secondSession])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+
+    render(<App />)
+    await screen.findByText('queued here')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('queued here'),
+    )
+    expect(document.querySelector('.queued-edit-banner')).not.toBeNull()
+
+    vi.mocked(getSession).mockResolvedValue(secondSession)
+    fireEvent.keyDown(window, {
+      key: 'ArrowDown',
+      code: 'ArrowDown',
+      altKey: true,
+    })
+
+    // The other session is not the one being edited, so it is not in edit mode.
+    await waitFor(() =>
+      expect(document.querySelector('.queued-edit-banner')).toBeNull(),
+    )
+  })
+
   it('shows queued prompts and supports edit and remove actions', async () => {
     const first = {
       id: 'queue-1',

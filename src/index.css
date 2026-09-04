@@ -2108,6 +2108,26 @@ button {
   color: var(--text);
 }
 
+/* A way to put the message back that does not depend on Enter, which makes a
+   newline on a phone. */
+.queued-edit-banner__save {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(110, 168, 254, 0.5);
+  background: rgba(110, 168, 254, 0.16);
+  color: #cfe0ff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.queued-edit-banner__save:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .queued-prompt:last-child {
   border-bottom: 0;
 }

@@ -5701,8 +5701,14 @@ function App() {
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [permissionBusy, setPermissionBusy] = useState(false)
   const [userInputBusy, setUserInputBusy] = useState(false)
-  // The waiting message the composer is currently rewriting, if any.
-  const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
+  // The waiting message the composer is currently rewriting, and the session
+  // it belongs to. Held together because the composer follows the selection: a
+  // bare id left the next session in edit mode, and Enter, Send and Escape all
+  // acted on a message that was not in front of the reader.
+  const [editingQueuedPrompt, setEditingQueuedPrompt] = useState<{
+    sessionKey: string
+    promptId: string
+  }>()
   const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -9020,9 +9026,14 @@ function App() {
     // This message is already waiting, and is about to be sent instead. It
     // comes off the queue first, or the same text goes out twice: once now and
     // once when the queue reaches it.
+    //
+    // The composer is closed for the whole of it, and the marker is kept until
+    // the removal has actually landed. Clearing it first, with sending still
+    // false, let a second Enter arrive during the DELETE and send straight
+    // away -- past the removal that was supposed to happen first.
     if (editingQueuedPromptId) {
       const removedId = editingQueuedPromptId
-      setEditingQueuedPromptId(undefined)
+      setSending(true)
       try {
         const result = await removeQueuedPrompt(
           selected.computerId,
@@ -9030,12 +9041,14 @@ function App() {
           removedId,
         )
         setSessions((current) => upsertSession(current, result.session))
+        setEditingQueuedPrompt(undefined)
       } catch (caught) {
         // It is still waiting, so nothing is sent: sending now would deliver
         // it twice over.
-        setEditingQueuedPromptId(removedId)
         setError(caught instanceof Error ? caught.message : String(caught))
         return
+      } finally {
+        setSending(false)
       }
     }
     const targetKey = sessionKey(selected)
@@ -9407,17 +9420,26 @@ function App() {
    * stays where it is; Enter writes the change back to it, and the send button
    * is what takes it out and sends it now.
    */
+  // Only while the message being rewritten belongs to the session on screen.
+  const editingQueuedPromptId =
+    selected && editingQueuedPrompt?.sessionKey === sessionKey(selected)
+      ? editingQueuedPrompt.promptId
+      : undefined
+
   function editQueuedPrompt(prompt: QueuedPrompt) {
     if (queueActionId) {
       return
     }
-    setEditingQueuedPromptId(prompt.id)
+    setEditingQueuedPrompt({
+      sessionKey: sessionKey(selected!),
+      promptId: prompt.id,
+    })
     setComposer(prompt.content)
     window.requestAnimationFrame(() => composerRef.current?.focus())
   }
 
   function cancelQueuedPromptEdit() {
-    setEditingQueuedPromptId(undefined)
+    setEditingQueuedPrompt(undefined)
     setComposer('')
   }
 
@@ -9439,8 +9461,13 @@ function App() {
         content,
       )
       setSessions((current) => upsertSession(current, result.session))
-      setEditingQueuedPromptId(undefined)
-      setComposer('')
+      setEditingQueuedPrompt(undefined)
+      // Only what was actually saved. The composer stays writable while the
+      // request is in flight, and clearing it regardless threw away anything
+      // typed in the meantime.
+      if (composerRef.current?.value.trim() === content) {
+        setComposer('')
+      }
       return true
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -9480,10 +9507,18 @@ function App() {
       )
       setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
-      // Put back what the server still has, so the list is never left showing
-      // an order it did not accept.
-      setSessions((current) => upsertSession(current, target))
       setError(caught instanceof Error ? caught.message : String(caught))
+      // Asked for rather than assumed. The refusal usually means the queue has
+      // moved on, so putting back the list as it was before the drag would
+      // show work that is already gone, or hide work that has just arrived.
+      try {
+        const fresh = await getSession(target.computerId, target.id)
+        setSessions((current) => upsertSession(current, fresh))
+      } catch {
+        // Even the re-read failed, so the best available answer is the list as
+        // it was before the drag.
+        setSessions((current) => upsertSession(current, target))
+      }
     }
   }
 
@@ -10755,11 +10790,29 @@ function App() {
               <div className="queued-edit-banner">
                 <Pencil size={13} />
                 <span>
-                  Editing a queued message. <strong>Enter</strong> puts it back
-                  in the queue; <strong>Send</strong> takes it out and sends it
-                  now.
+                  Editing a queued message.{' '}
+                  {phoneEnterCreatesNewline() ? (
+                    <>
+                      <strong>Save to queue</strong> puts it back;
+                    </>
+                  ) : (
+                    <>
+                      <strong>Enter</strong> puts it back in the queue;
+                    </>
+                  )}{' '}
+                  <strong>Send</strong> takes it out and sends it now.
                 </span>
                 <button
+                  className="queued-edit-banner__save"
+                  disabled={!composer.trim() || Boolean(queueActionId)}
+                  onClick={() => void saveQueuedPromptEdit()}
+                  title="Put this back in the queue"
+                  type="button"
+                >
+                  Save to queue
+                </button>
+                <button
+                  aria-label="Stop editing this queued message"
                   className="icon-button"
                   onClick={cancelQueuedPromptEdit}
                   title="Leave it as it was (Escape)"

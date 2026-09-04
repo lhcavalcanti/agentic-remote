@@ -1506,6 +1506,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
   private readonly queueOperations = new Map<string, Promise<unknown>>()
+  private readonly terminalAdmissionOperations = new Map<
+    string,
+    Promise<unknown>
+  >()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
   private readonly backgroundTaskTracker = new BackgroundTaskTracker()
@@ -3302,6 +3306,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     answers?: string,
   ): Promise<SessionDetail> {
     const terminalBacked = await this.terminalController.has(sessionId)
+    return this.sendAdmittedWithBackend(
+      sessionId,
+      content,
+      enqueue,
+      answers,
+      terminalBacked,
+    )
+  }
+
+  private async sendAdmittedWithBackend(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    answers: string | undefined,
+    terminalBacked: boolean,
+    startupLocked = false,
+  ): Promise<SessionDetail> {
     // Detection is awaited, and suspending can finish while it is: the guard
     // above spoke for a session that was still running.
     if (
@@ -3316,13 +3337,56 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
     }
     let resolvedStartup = false
+    let startupIdle = false
     if (terminalBacked) {
+      if (
+        !startupLocked &&
+        this.terminalAdmissionOperations.has(sessionId)
+      ) {
+        return this.serializeTerminalAdmission(sessionId, () =>
+          this.sendAdmittedWithBackend(
+            sessionId,
+            content,
+            enqueue,
+            answers,
+            terminalBacked,
+            true,
+          ),
+        )
+      }
       // A full-screen view takes the keyboard, so a prompt sent now is typed
       // into its search box: it filters a list, a stray Enter can pick from
       // it, and nothing says the prompt was never delivered. Refusing is
       // recoverable in a way that silently losing it is not.
       const pane = await this.terminalController.capture?.(sessionId)
+      if (
+        !startupLocked &&
+        this.terminalAdmissionOperations.has(sessionId)
+      ) {
+        return this.serializeTerminalAdmission(sessionId, () =>
+          this.sendAdmittedWithBackend(
+            sessionId,
+            content,
+            enqueue,
+            answers,
+            terminalBacked,
+            true,
+          ),
+        )
+      }
       if (pane && isTerminalOverlay(pane)) {
+        if (!startupLocked) {
+          return this.serializeTerminalAdmission(sessionId, () =>
+            this.sendAdmittedWithBackend(
+              sessionId,
+              content,
+              enqueue,
+              answers,
+              terminalBacked,
+              true,
+            ),
+          )
+        }
         const canHandleStartup =
           (await this.terminalController.canHandleStartupPrompt?.(
             sessionId,
@@ -3343,11 +3407,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             { statusCode: 409 },
           )
         }
+        const currentPane = await this.terminalController.capture?.(sessionId)
+        if (!currentPane || isTerminalOverlay(currentPane)) {
+          throw Object.assign(
+            new Error(
+              'The terminal changed while its startup prompt was being resolved. Check it, then send this again.',
+            ),
+            { statusCode: 409 },
+          )
+        }
+        startupIdle = !isTerminalAgentWorking(currentPane)
       }
     }
     if (
       enqueue &&
-      !resolvedStartup &&
+      resolvedStartup &&
+      startupIdle &&
+      this.store.get(sessionId)?.queuedPrompts?.length
+    ) {
+      const idle = await this.store.update(sessionId, (session) => {
+        session.status = 'idle'
+        session.activity = undefined
+      })
+      this.publish(idle)
+      return this.enqueueTerminalPrompt(sessionId, content, false, answers)
+    }
+    if (
+      enqueue &&
+      !(resolvedStartup && startupIdle) &&
       terminalBacked &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
@@ -3355,7 +3442,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const nativeEnqueue = this.shouldUseNativeTerminalQueue(
       sessionId,
-      enqueue && !resolvedStartup,
+      enqueue && !(resolvedStartup && startupIdle),
     )
     const dispatchedAt = new Date().toISOString()
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
@@ -5888,6 +5975,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       if (this.queueOperations.get(sessionId) === current) {
         this.queueOperations.delete(sessionId)
+      }
+    }
+  }
+
+  private async serializeTerminalAdmission<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous =
+      this.terminalAdmissionOperations.get(sessionId) || Promise.resolve()
+    const current = previous.catch(() => undefined).then(operation)
+    this.terminalAdmissionOperations.set(sessionId, current)
+    try {
+      return await current
+    } finally {
+      if (this.terminalAdmissionOperations.get(sessionId) === current) {
+        this.terminalAdmissionOperations.delete(sessionId)
       }
     }
   }

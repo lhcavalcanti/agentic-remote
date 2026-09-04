@@ -965,13 +965,22 @@ export class TmuxTerminalSessionController
     return this.serialize(sessionId, async () => {
       const readyOwner = this.inputReadySessions.get(sessionId)
       const automaticOwner = this.automaticStartupSessions.get(sessionId)
+      const expectedTarget = readyOwner?.target ?? automaticOwner?.target
       const owner = await this.owner(
         sessionId,
-        readyOwner?.target ?? automaticOwner?.target,
+        expectedTarget,
       )
       if (!owner) {
         this.inputReadySessions.delete(sessionId)
         this.automaticStartupSessions.delete(sessionId)
+        if (expectedTarget && (await this.owner(sessionId))) {
+          throw Object.assign(
+            new Error(
+              'The terminal session reopened in a different pane. Check it there before sending another message.',
+            ),
+            { statusCode: 409 },
+          )
+        }
         return false
       }
       if (
@@ -1458,7 +1467,9 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
     // recalled into it -- carries no selection, and answering that would send
     // Enter or `n` into somebody's draft. Without the marker this is not a
     // panel being shown, whatever else the frame says.
-    activeLines.some((line) => /^[>❯]\s*(?:Yes,\s*install|No,\s*thanks)/i.test(line)) &&
+    activeLines.some((line) =>
+      /(?:^|\s)[>❯]\s*(?:Yes,\s*install|No,\s*thanks)/i.test(line),
+    ) &&
     /Yes,\s*install/i.test(activeView) &&
     /No,\s*thanks/i.test(activeView) &&
     /←\/→\s+(?:to\s+)?choose/i.test(activeView) &&

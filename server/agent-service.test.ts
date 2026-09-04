@@ -5282,13 +5282,17 @@ describe('AgentService deletion', () => {
       ' ←/→ to choose · Enter to select · Y / N',
       ' ╰───────────────────────────────────────────────╯',
     ].join('\n')
+    let currentPane = pane
     const terminal = {
       has: vi.fn(async () => true),
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
-      capture: vi.fn(async () => pane),
+      capture: vi.fn(async () => currentPane),
       canHandleStartupPrompt: vi.fn(async () => true),
-      resolveStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
     }
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
@@ -5332,6 +5336,172 @@ describe('AgentService deletion', () => {
     expect(
       service.store.get(client.session.sessionId)?.queuedPrompts ?? [],
     ).toEqual([])
+    await service.stop()
+  })
+
+  it('keeps persisted terminal prompts ahead of a startup send', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-fifo-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const startupPane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    let currentPane = startupPane
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      canHandleStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Owned startup FIFO',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+    await service.store.enqueuePrompt(client.session.sessionId, {
+      id: randomUUID(),
+      content: 'Older queued prompt',
+      createdAt: new Date().toISOString(),
+    })
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
+
+    await service.sendMessage(
+      client.session.sessionId,
+      'New startup prompt',
+      true,
+    )
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Older queued prompt',
+      false,
+    )
+    expect(
+      service.store
+        .get(client.session.sessionId)
+        ?.queuedPrompts?.map((prompt) => prompt.content),
+    ).toEqual(['New startup prompt'])
+    await service.stop()
+  })
+
+  it('serializes sends that overlap startup resolution', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-overlap-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let currentPane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    const gates: Array<() => void> = []
+    let activeSends = 0
+    let maximumActiveSends = 0
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async () =>
+          new Promise<boolean>((resolve) => {
+            activeSends += 1
+            maximumActiveSends = Math.max(maximumActiveSends, activeSends)
+            gates.push(() => {
+              activeSends -= 1
+              resolve(true)
+            })
+          }),
+      ),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      canHandleStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Owned startup overlap',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const first = service.sendMessage(
+      client.session.sessionId,
+      'First startup prompt',
+      true,
+    )
+    await vi.waitFor(() => expect(gates).toHaveLength(1))
+    const second = service.sendMessage(
+      client.session.sessionId,
+      'Second startup prompt',
+      true,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(gates).toHaveLength(1)
+    gates[0]()
+    await first
+    await vi.waitFor(() => expect(gates).toHaveLength(2))
+    gates[1]()
+    await second
+
+    expect(maximumActiveSends).toBe(1)
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      1,
+      client.session.sessionId,
+      'First startup prompt',
+      false,
+    )
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      2,
+      client.session.sessionId,
+      'Second startup prompt',
+      false,
+    )
     await service.stop()
   })
 

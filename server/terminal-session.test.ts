@@ -171,6 +171,17 @@ describe('TmuxTerminalSessionController', () => {
       `),
     ).toBe(true)
     expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
+│ Now generally available!                       │
+│ Install it now?                               │
+│ Yes, install      ❯ No, thanks                │
+│ ←/→ to choose · Enter to select · Y / N       │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(true)
+    expect(
       isTerminalDesktopInstallPrompt('❯ Ready for a prompt'),
     ).toBe(false)
     // The composer draws itself as a frame too, and what is typed in it can be
@@ -1138,6 +1149,74 @@ Permission request (1 remaining)
       (value) => value.includes('MESSAGE-BBBB'),
     )
     expect(received).toBe('MESSAGE-AAAA\nMESSAGE-BBBB')
+  })
+
+  it('rejects a cached session owner that reopened in another pane', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-reopened-fake')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╻▄▄▄▄\\n┃\\n'",
+        'IFS= read -r line',
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-reopened-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    const sessionId = randomUUID()
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    const originalWindow = (
+      await execFileAsync('tmux', [
+        'new-session',
+        '-d',
+        '-P',
+        '-F',
+        '#{window_id}',
+        '-s',
+        tmuxSession,
+        '-e',
+        `COPILOT_HOME=${copilotHome}`,
+        executable,
+        '--session-id',
+        sessionId,
+      ])
+    ).stdout.trim()
+    const controller = new TmuxTerminalSessionController()
+    await expect(
+      controller.send(sessionId, 'establish cached owner', false),
+    ).resolves.toBe(true)
+    await execFileAsync('tmux', [
+      'new-window',
+      '-d',
+      '-t',
+      `=${tmuxSession}:`,
+      'sleep',
+      '60',
+    ])
+    await execFileAsync('tmux', ['kill-window', '-t', originalWindow])
+    await execFileAsync('tmux', [
+      'new-window',
+      '-d',
+      '-t',
+      `=${tmuxSession}:`,
+      '-e',
+      `COPILOT_HOME=${copilotHome}`,
+      executable,
+      '--session-id',
+      sessionId,
+    ])
+    await new Promise((resolve) => setTimeout(resolve, 600))
+
+    await expect(controller.has(sessionId)).resolves.toBe(true)
+    await expect(
+      controller.send(sessionId, 'must not trust the replacement', false),
+    ).rejects.toMatchObject({ statusCode: 409 })
   })
 
   it('does not dismiss a delayed startup promotion for a discovered session', async () => {

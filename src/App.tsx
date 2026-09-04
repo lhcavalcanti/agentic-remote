@@ -114,6 +114,7 @@ import type {
   KnowledgeRoot,
   PendingPermission,
   PendingUserInput,
+  QueuedPrompt,
   UserInputField,
   UserInputFieldValue,
   UserInputReplyInput,
@@ -155,6 +156,8 @@ import {
   moveSessionToTmux,
   removeComputer,
   removeQueuedPrompt,
+  reorderQueuedPrompts,
+  updateQueuedPrompt,
   renameSession,
   readWorkspaceFile,
   restartSession,
@@ -3609,6 +3612,69 @@ function SortableSessionItem({
   )
 }
 
+/** One waiting message, draggable so the queue can be put in order. */
+function SortableQueuedPrompt({
+  prompt,
+  index,
+  editing,
+  busy,
+  onEdit,
+  onRemove,
+}: {
+  prompt: QueuedPrompt
+  index: number
+  editing: boolean
+  busy: boolean
+  onEdit: () => void
+  onRemove: () => void
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `queued:${prompt.id}` })
+  return (
+    <div
+      className={`queued-prompt${editing ? ' queued-prompt--editing' : ''}${
+        isDragging ? ' sortable-dragging' : ''
+      }`}
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <span
+        aria-label={`Reorder queued prompt ${index + 1}`}
+        className="drag-handle"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={13} />
+      </span>
+      <span>{prompt.content}</span>
+      <button
+        aria-label={`Edit queued prompt ${index + 1}`}
+        className={`icon-button${editing ? ' icon-button--active' : ''}`}
+        disabled={busy}
+        onClick={onEdit}
+        type="button"
+      >
+        <Pencil size={14} />
+      </button>
+      <button
+        aria-label={`Remove queued prompt ${index + 1}`}
+        className="icon-button icon-button--danger"
+        disabled={busy}
+        onClick={onRemove}
+        type="button"
+      >
+        <X size={15} />
+      </button>
+    </div>
+  )
+}
+
 function SortableComputerGroup({
   computer,
   sessions,
@@ -5635,6 +5701,8 @@ function App() {
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [permissionBusy, setPermissionBusy] = useState(false)
   const [userInputBusy, setUserInputBusy] = useState(false)
+  // The waiting message the composer is currently rewriting, if any.
+  const [editingQueuedPromptId, setEditingQueuedPromptId] = useState<string>()
   const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -8949,6 +9017,27 @@ function App() {
     if (!selected || !content || sending) {
       return
     }
+    // This message is already waiting, and is about to be sent instead. It
+    // comes off the queue first, or the same text goes out twice: once now and
+    // once when the queue reaches it.
+    if (editingQueuedPromptId) {
+      const removedId = editingQueuedPromptId
+      setEditingQueuedPromptId(undefined)
+      try {
+        const result = await removeQueuedPrompt(
+          selected.computerId,
+          selected.id,
+          removedId,
+        )
+        setSessions((current) => upsertSession(current, result.session))
+      } catch (caught) {
+        // It is still waiting, so nothing is sent: sending now would deliver
+        // it twice over.
+        setEditingQueuedPromptId(removedId)
+        setError(caught instanceof Error ? caught.message : String(caught))
+        return
+      }
+    }
     const targetKey = sessionKey(selected)
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
@@ -9310,6 +9399,94 @@ function App() {
 
 
 
+  /**
+   * Opens a waiting message for rewriting without taking it out of the queue.
+   *
+   * Editing used to remove it, so a reader who changed their mind, or simply
+   * closed the app, had silently taken their own message off the queue. It
+   * stays where it is; Enter writes the change back to it, and the send button
+   * is what takes it out and sends it now.
+   */
+  function editQueuedPrompt(prompt: QueuedPrompt) {
+    if (queueActionId) {
+      return
+    }
+    setEditingQueuedPromptId(prompt.id)
+    setComposer(prompt.content)
+    window.requestAnimationFrame(() => composerRef.current?.focus())
+  }
+
+  function cancelQueuedPromptEdit() {
+    setEditingQueuedPromptId(undefined)
+    setComposer('')
+  }
+
+  /** Writes the composer back to the message it was opened from. */
+  async function saveQueuedPromptEdit(): Promise<boolean> {
+    const promptId = editingQueuedPromptId
+    const content = composer.trim()
+    if (!selected || !promptId || !content || queueActionId) {
+      return false
+    }
+    const target = selected
+    setQueueActionId(promptId)
+    setError(undefined)
+    try {
+      const result = await updateQueuedPrompt(
+        target.computerId,
+        target.id,
+        promptId,
+        content,
+      )
+      setSessions((current) => upsertSession(current, result.session))
+      setEditingQueuedPromptId(undefined)
+      setComposer('')
+      return true
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+      return false
+    } finally {
+      setQueueActionId(undefined)
+    }
+  }
+
+  async function queueDragEnded(event: DragEndEvent) {
+    const { active, over } = event
+    const queue = selected?.queuedPrompts
+    if (!selected || !queue || !over || active.id === over.id) {
+      return
+    }
+    const ids = queue.map((prompt) => `queued:${prompt.id}`)
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from < 0 || to < 0) {
+      return
+    }
+    const next = [...queue]
+    next.splice(to, 0, ...next.splice(from, 1))
+    const order = next.map((prompt) => prompt.id)
+    const target = selected
+    // Shown in the new order straight away: the drag is the answer, and
+    // waiting for the round trip makes the list snap back under the pointer.
+    setSessions((current) =>
+      upsertSession(current, { ...target, queuedPrompts: next }),
+    )
+    setError(undefined)
+    try {
+      const updated = await reorderQueuedPrompts(
+        target.computerId,
+        target.id,
+        order,
+      )
+      setSessions((current) => upsertSession(current, updated))
+    } catch (caught) {
+      // Put back what the server still has, so the list is never left showing
+      // an order it did not accept.
+      setSessions((current) => upsertSession(current, target))
+      setError(caught instanceof Error ? caught.message : String(caught))
+    }
+  }
+
   async function manageQueuedPrompt(promptId: string, edit: boolean) {
     if (!selected || queueActionId) {
       return
@@ -9501,6 +9678,21 @@ function App() {
   function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing) {
       return
+    }
+    if (editingQueuedPromptId) {
+      // Rewriting a message that is already waiting. Enter puts the change
+      // back where it came from rather than sending it, because the reader
+      // queued it on purpose; sending it now is what the send button is for.
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        cancelQueuedPromptEdit()
+        return
+      }
+      if (event.key === 'Enter' && !event.shiftKey && !phoneEnterCreatesNewline()) {
+        event.preventDefault()
+        void saveQueuedPromptEdit()
+        return
+      }
     }
     if (event.key === 'ArrowDown' && showCommandMenu) {
       event.preventDefault()
@@ -10504,35 +10696,34 @@ function App() {
                   <strong>Queued</strong>
                   <span>{selected.queuedPrompts.length}</span>
                 </header>
-                <div className="queued-prompts__list">
-                  {selected.queuedPrompts.map((prompt, index) => (
-                    <div className="queued-prompt" key={prompt.id}>
-                      <span>{prompt.content}</span>
-                      <button
-                        aria-label={`Edit queued prompt ${index + 1}`}
-                        className="icon-button"
-                        disabled={Boolean(queueActionId)}
-                        onClick={() =>
-                          void manageQueuedPrompt(prompt.id, true)
-                        }
-                        type="button"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        aria-label={`Remove queued prompt ${index + 1}`}
-                        className="icon-button icon-button--danger"
-                        disabled={Boolean(queueActionId)}
-                        onClick={() =>
-                          void manageQueuedPrompt(prompt.id, false)
-                        }
-                        type="button"
-                      >
-                        <X size={15} />
-                      </button>
+                <DndContext
+                  collisionDetection={closestCenter}
+                  onDragEnd={(event) => void queueDragEnded(event)}
+                  sensors={sensors}
+                >
+                  <SortableContext
+                    items={selected.queuedPrompts.map(
+                      (prompt) => `queued:${prompt.id}`,
+                    )}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="queued-prompts__list">
+                      {selected.queuedPrompts.map((prompt, index) => (
+                        <SortableQueuedPrompt
+                          busy={Boolean(queueActionId)}
+                          editing={editingQueuedPromptId === prompt.id}
+                          index={index}
+                          key={prompt.id}
+                          onEdit={() => editQueuedPrompt(prompt)}
+                          onRemove={() =>
+                            void manageQueuedPrompt(prompt.id, false)
+                          }
+                          prompt={prompt}
+                        />
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </SortableContext>
+                </DndContext>
               </section>
             ) : null}
             {showCommandMenu ? (
@@ -10560,6 +10751,24 @@ function App() {
                 ))}
               </div>
             ) : null}
+            {editingQueuedPromptId ? (
+              <div className="queued-edit-banner">
+                <Pencil size={13} />
+                <span>
+                  Editing a queued message. <strong>Enter</strong> puts it back
+                  in the queue; <strong>Send</strong> takes it out and sends it
+                  now.
+                </span>
+                <button
+                  className="icon-button"
+                  onClick={cancelQueuedPromptEdit}
+                  title="Leave it as it was (Escape)"
+                  type="button"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : null}
             <div
               className={`composer ${
                 selected.status === 'running' ? 'composer--running' : ''
@@ -10585,7 +10794,9 @@ function App() {
                   placeholder={
                     selected.suspended
                       ? 'Suspended · resume to send'
-                      : `Message agent on ${selected.computerName}…`
+                      : editingQueuedPromptId
+                        ? 'Editing a queued message · Enter puts it back'
+                        : `Message agent on ${selected.computerName}…`
                   }
                   ref={composerRef}
                   rows={1}
@@ -10675,7 +10886,11 @@ function App() {
                     className="send-button"
                     disabled={!composer.trim() || sending}
                     onClick={() => void submitMessage()}
-                    title="Send immediately"
+                    title={
+                      editingQueuedPromptId
+                        ? 'Take this out of the queue and send it now'
+                        : 'Send immediately'
+                    }
                     type="button"
                   >
                     <ArrowUp size={19} strokeWidth={2.4} />

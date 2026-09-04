@@ -45,6 +45,14 @@ const renameSessionSchema = z.object({
     ),
 })
 
+const updateQueuedPromptSchema = z.object({
+  content: z.string().min(1),
+})
+
+const reorderQueueSchema = z.object({
+  order: z.array(z.string().min(1)),
+})
+
 const sendMessageSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
   content: z.string().trim().min(1).max(200_000),
@@ -400,6 +408,29 @@ export async function registerNodeRoutes(
             request.params.sessionId,
             request.params.promptId,
           ),
+      )
+
+      node.patch<{ Params: { sessionId: string; promptId: string } }>(
+        '/sessions/:sessionId/queue/:promptId',
+        async (request) => {
+          const input = updateQueuedPromptSchema.parse(request.body)
+          return service.updateQueuedPrompt(
+            request.params.sessionId,
+            request.params.promptId,
+            input.content,
+          )
+        },
+      )
+
+      node.put<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/queue',
+        async (request) => {
+          const input = reorderQueueSchema.parse(request.body)
+          return service.reorderQueuedPrompts(
+            request.params.sessionId,
+            input.order,
+          )
+        },
       )
 
       node.post<{ Params: { sessionId: string } }>(

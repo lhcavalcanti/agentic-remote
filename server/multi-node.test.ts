@@ -338,6 +338,34 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
+  async updateQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ) {
+    const session = this.sessions.get(sessionId)
+    const prompt = session?.queuedPrompts?.find((entry) => entry.id === promptId)
+    if (!session || !prompt) {
+      throw new Error('Queued prompt not found')
+    }
+    prompt.content = content
+    this.emitEvent({ type: 'session.upserted', session })
+    return { session: structuredClone(session), prompt }
+  }
+
+  async reorderQueuedPrompts(sessionId: string, order: string[]) {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    const queue = session.queuedPrompts || []
+    session.queuedPrompts = order.map(
+      (id) => queue.find((entry) => entry.id === id)!,
+    )
+    this.emitEvent({ type: 'session.upserted', session })
+    return structuredClone(session)
+  }
+
   async removeQueuedPrompt(sessionId: string, promptId: string) {
     const session = this.sessions.get(sessionId)
     const prompt = session?.queuedPrompts?.find((entry) => entry.id === promptId)

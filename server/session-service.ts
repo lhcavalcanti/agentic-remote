@@ -63,6 +63,15 @@ export interface SessionService {
     sessionId: string,
     promptId: string,
   ): Promise<RemovedQueuedPrompt>
+  updateQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<RemovedQueuedPrompt>
+  reorderQueuedPrompts(
+    sessionId: string,
+    order: string[],
+  ): Promise<SessionDetail>
   sendMessage(
     sessionId: string,
     content: string,

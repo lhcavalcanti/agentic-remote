@@ -447,6 +447,43 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     }
   }
 
+  async updateQueuedPrompt(
+    computerId: string,
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<ManagedRemovedQueuedPrompt> {
+    const computer = this.requireComputer(computerId)
+    const result =
+      computerId === this.identity.info.id
+        ? await this.localService.updateQueuedPrompt(sessionId, promptId, content)
+        : await this.requireClient(computerId).updateQueuedPrompt(
+            sessionId,
+            promptId,
+            content,
+          )
+    return {
+      session: managedSession(result.session, computer),
+      prompt: result.prompt,
+    }
+  }
+
+  async reorderQueuedPrompts(
+    computerId: string,
+    sessionId: string,
+    order: string[],
+  ): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const session =
+      computerId === this.identity.info.id
+        ? await this.localService.reorderQueuedPrompts(sessionId, order)
+        : await this.requireClient(computerId).reorderQueuedPrompts(
+            sessionId,
+            order,
+          )
+    return managedSession(session, computer)
+  }
+
   async runtimeOptions(
     computerId: string,
     sessionId: string,

@@ -4256,6 +4256,76 @@ describe('AgentService deletion', () => {
     expect(service.store.get(created.id)?.failedPrompt?.content).toBe('ship it')
   })
 
+  it('rewrites a queued prompt where it stands and reorders the queue', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-queue-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    for (const content of ['first', 'second', 'third']) {
+      await service.store.enqueuePrompt(created.id, {
+        id: content,
+        content,
+        createdAt: '2026-09-02T00:00:00.000Z',
+      })
+    }
+
+    // Rewriting keeps its place in line rather than sending it to the back.
+    const edited = await service.updateQueuedPrompt(created.id, 'first', 'first, edited')
+    expect(edited.prompt.content).toBe('first, edited')
+    expect(edited.session.queuedPrompts?.map((p) => p.id)).toEqual([
+      'first',
+      'second',
+      'third',
+    ])
+
+    const reordered = await service.reorderQueuedPrompts(created.id, [
+      'third',
+      'first',
+      'second',
+    ])
+    expect(reordered.queuedPrompts?.map((p) => p.id)).toEqual([
+      'third',
+      'first',
+      'second',
+    ])
+    // The text moved with it.
+    expect(reordered.queuedPrompts?.[1].content).toBe('first, edited')
+  })
+
+  it('refuses an order built from a queue that has since changed', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-order-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.enqueuePrompt(created.id, {
+      id: 'only',
+      content: 'only',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    // A prompt sent or removed while the reader was dragging. Applying an
+    // order built from the list they were looking at would drop work, or
+    // bring back something already gone.
+    await expect(
+      service.reorderQueuedPrompts(created.id, ['only', 'vanished']),
+    ).rejects.toThrow(/changed while it was being reordered/)
+    expect(
+      service.getSession(created.id)?.queuedPrompts?.map((p) => p.id),
+    ).toEqual(['only'])
+  })
+
   it('gives back a queued prompt whose send failed', async () => {
     // The browser cleared its draft the moment the queue accepted this, so the
     // text only exists on the queue. Taking it off without handing it back

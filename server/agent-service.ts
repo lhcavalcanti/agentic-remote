@@ -3399,6 +3399,42 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
   }
 
+  async updateQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    rawContent: string,
+  ): Promise<RemovedQueuedPrompt> {
+    const content = rawContent.trim()
+    if (!content) {
+      throw new Error('Message cannot be empty')
+    }
+    // In the queue's own lane, so a rewrite cannot land while a drain is
+    // taking the same prompt off to send it.
+    return this.serializeQueue(sessionId, async () => {
+      const { session, prompt } = await this.store.updateQueuedPrompt(
+        sessionId,
+        promptId,
+        content,
+      )
+      if (!prompt) {
+        throw new Error('Queued prompt not found')
+      }
+      this.publish(session)
+      return { session, prompt }
+    })
+  }
+
+  async reorderQueuedPrompts(
+    sessionId: string,
+    order: string[],
+  ): Promise<SessionDetail> {
+    return this.serializeQueue(sessionId, async () => {
+      const session = await this.store.reorderQueuedPrompts(sessionId, order)
+      this.publish(session)
+      return session
+    })
+  }
+
   private async enqueuePrompt(
     sessionId: string,
     content: string,

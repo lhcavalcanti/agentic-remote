@@ -61,6 +61,14 @@ const userInputReplySchema = z.object({
   action: z.enum(['accept', 'decline', 'cancel']).optional(),
 })
 
+const updateQueuedPromptSchema = z.object({
+  content: z.string().min(1),
+})
+
+const reorderQueueSchema = z.object({
+  order: z.array(z.string().min(1)),
+})
+
 const executeCommandSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
   command: z.string().trim().startsWith('/').max(10_000),
@@ -566,6 +574,33 @@ export async function registerHubRoutes(
         request.params.sessionId,
         request.params.promptId,
       ),
+  )
+
+  app.patch<{ Params: SessionParams & { promptId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue/:promptId',
+    async (request) => {
+      const input = updateQueuedPromptSchema.parse(request.body)
+      return manager.updateQueuedPrompt(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.promptId,
+        input.content,
+      )
+    },
+  )
+
+  app.put<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue',
+    async (request) => {
+      const input = reorderQueueSchema.parse(request.body)
+      return {
+        session: await manager.reorderQueuedPrompts(
+          request.params.computerId,
+          request.params.sessionId,
+          input.order,
+        ),
+      }
+    },
   )
 
   app.post<{ Params: SessionParams }>(

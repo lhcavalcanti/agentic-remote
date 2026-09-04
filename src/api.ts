@@ -321,6 +321,30 @@ export async function removeQueuedPrompt(
   )
 }
 
+export async function updateQueuedPrompt(
+  computerId: string,
+  sessionId: string,
+  promptId: string,
+  content: string,
+): Promise<ManagedRemovedQueuedPrompt> {
+  return request<ManagedRemovedQueuedPrompt>(
+    `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}`,
+    { method: 'PATCH', body: JSON.stringify({ content }) },
+  )
+}
+
+export async function reorderQueuedPrompts(
+  computerId: string,
+  sessionId: string,
+  order: string[],
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/queue`,
+    { method: 'PUT', body: JSON.stringify({ order }) },
+  )
+  return response.session
+}
+
 export async function getRuntimeOptions(
   computerId: string,
   sessionId: string,

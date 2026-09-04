@@ -183,6 +183,25 @@ export class ProviderSessionService
     return this.serviceFor(sessionId).removeQueuedPrompt(sessionId, promptId)
   }
 
+  updateQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<RemovedQueuedPrompt> {
+    return this.serviceFor(sessionId).updateQueuedPrompt(
+      sessionId,
+      promptId,
+      content,
+    )
+  }
+
+  reorderQueuedPrompts(
+    sessionId: string,
+    order: string[],
+  ): Promise<SessionDetail> {
+    return this.serviceFor(sessionId).reorderQueuedPrompts(sessionId, order)
+  }
+
   sendMessage(
     sessionId: string,
     content: string,

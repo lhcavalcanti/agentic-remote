@@ -678,6 +678,36 @@ export class ClaudeAgentService
     return { session: result.session, prompt: result.prompt }
   }
 
+  async updateQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    rawContent: string,
+  ): Promise<RemovedQueuedPrompt> {
+    const content = rawContent.trim()
+    if (!content) {
+      throw new Error('Message cannot be empty')
+    }
+    const result = await this.store.updateQueuedPrompt(
+      sessionId,
+      promptId,
+      content,
+    )
+    if (!result.prompt) {
+      throw new Error('Queued prompt not found')
+    }
+    this.publish(result.session)
+    return { session: result.session, prompt: result.prompt }
+  }
+
+  async reorderQueuedPrompts(
+    sessionId: string,
+    order: string[],
+  ): Promise<SessionDetail> {
+    const session = await this.store.reorderQueuedPrompts(sessionId, order)
+    this.publish(session)
+    return session
+  }
+
   async sendMessage(
     sessionId: string,
     content: string,

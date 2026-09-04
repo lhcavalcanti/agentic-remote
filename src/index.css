@@ -2069,11 +2069,43 @@ button {
 
 .queued-prompt {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px 30px;
+  /* Handle, the message, and the two controls. The handle is what the queue
+     is put in order by, so it comes first and stays the same width. */
+  grid-template-columns: 16px minmax(0, 1fr) 30px 30px;
   align-items: center;
   gap: 4px;
-  padding: 6px 7px 6px 10px;
+  padding: 6px 7px 6px 6px;
   border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+
+/* The one the composer is currently rewriting, so it is clear which message
+   Enter is about to go back into. */
+.queued-prompt--editing {
+  background: rgba(110, 168, 254, 0.1);
+  box-shadow: inset 2px 0 0 #6ea8fe;
+}
+
+.queued-edit-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  margin: 0 0 6px;
+  border: 1px solid rgba(110, 168, 254, 0.35);
+  border-radius: 9px;
+  background: rgba(110, 168, 254, 0.1);
+  color: var(--muted-strong);
+  font-size: 11.5px;
+}
+
+.queued-edit-banner span {
+  flex: 1;
+  min-width: 0;
+}
+
+.queued-edit-banner strong {
+  color: var(--text);
 }
 
 .queued-prompt:last-child {

@@ -47,6 +47,8 @@ import {
   validateSessionDirectory,
   moveSessionToTmux,
   removeQueuedPrompt,
+  reorderQueuedPrompts,
+  updateQueuedPrompt,
   renameSession,
   readWorkspaceFile,
   restartSession,
@@ -69,6 +71,8 @@ vi.mock('./api', () => ({
   listBackgroundTasks: vi.fn(),
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
+  reorderQueuedPrompts: vi.fn(),
+  updateQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
   listKnowledgeRoots: vi.fn(),
@@ -2842,6 +2846,35 @@ describe('App', () => {
     expect(await screen.findAllByText('Renamed project')).not.toHaveLength(0)
   })
 
+  it('puts the queue in the order it is dragged into', async () => {
+    const first = { id: 'q1', content: 'one', createdAt: '2026-07-25T01:00:00.000Z' }
+    const second = { id: 'q2', content: 'two', createdAt: '2026-07-25T01:00:01.000Z' }
+    const queuedSession = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 2,
+      queuedPrompts: [first, second],
+    }
+    vi.mocked(listSessions).mockResolvedValue([queuedSession])
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+    vi.mocked(reorderQueuedPrompts).mockResolvedValue({
+      ...queuedSession,
+      queuedPrompts: [second, first],
+    })
+
+    render(<App />)
+    await screen.findByText('one')
+
+    // Each waiting message carries a handle, which is what the order is
+    // changed by.
+    expect(
+      screen.getByRole('button', { name: 'Reorder queued prompt 1' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Reorder queued prompt 2' }),
+    ).toBeInTheDocument()
+  })
+
   it('shows queued prompts and supports edit and remove actions', async () => {
     const first = {
       id: 'queue-1',
@@ -2881,6 +2914,9 @@ describe('App', () => {
     render(<App />)
     await screen.findByText('First queued prompt')
 
+    // Editing opens the message for rewriting and leaves it where it is. It
+    // used to take it off the queue, so changing your mind, or simply closing
+    // the app, silently threw the message away.
     fireEvent.click(
       screen.getByRole('button', { name: 'Edit queued prompt 1' }),
     )
@@ -2889,29 +2925,46 @@ describe('App', () => {
         'First queued prompt',
       ),
     )
-    expect(removeQueuedPrompt).toHaveBeenCalledWith(
-      'computer-1',
-      'session-1',
-      'queue-1',
-    )
+    expect(removeQueuedPrompt).not.toHaveBeenCalled()
+    expect(
+      within(screen.getByLabelText('Queued prompts')).getByText(
+        'First queued prompt',
+      ),
+    ).toBeInTheDocument()
+
+    // Enter writes the change back to the queue rather than sending it.
+    vi.mocked(updateQueuedPrompt).mockResolvedValue({
+      session: {
+        ...queuedSession,
+        queuedPrompts: [{ ...first, content: 'First queued prompt, edited' }, second],
+      },
+      prompt: { ...first, content: 'First queued prompt, edited' },
+    })
+    const composer = screen.getByLabelText('Message')
+    fireEvent.change(composer, {
+      target: { value: 'First queued prompt, edited' },
+    })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
     await waitFor(() =>
-      expect(
-        within(screen.getByLabelText('Queued prompts')).queryByText(
-          'First queued prompt',
-        ),
-      ).not.toBeInTheDocument(),
+      expect(updateQueuedPrompt).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'queue-1',
+        'First queued prompt, edited',
+      ),
     )
+    expect(sendMessage).not.toHaveBeenCalled()
 
     fireEvent.click(
       screen.getByRole('button', { name: 'Remove queued prompt 1' }),
     )
     await waitFor(() =>
-      expect(screen.queryByText('Second queued prompt')).not.toBeInTheDocument(),
-    )
-    expect(removeQueuedPrompt).toHaveBeenLastCalledWith(
-      'computer-1',
-      'session-1',
-      'queue-2',
+      expect(removeQueuedPrompt).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'queue-1',
+      ),
     )
   })
 

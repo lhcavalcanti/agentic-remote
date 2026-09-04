@@ -109,6 +109,12 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
     [
       // Only the last argument names the script, so a directory that happens
       // to contain the word cannot be mistaken for one.
+      'for ((i = 1; i <= $#; i++)); do',
+      '  if [[ "${!i}" == "--dir" ]]; then',
+      '    next=$((i + 1))',
+      '    printf "corepack-dir %s %s\\n" "${*: -1}" "${!next}" >>"$CALL_LOG"',
+      '  fi',
+      'done',
       'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
       'exit "${COREPACK_EXIT:-0}"',
     ].join('\n'),
@@ -235,6 +241,26 @@ async function advanceMain(context: Fixture): Promise<string> {
 }
 
 describe('promotion monitor', () => {
+  it('validates somewhere of its own rather than in the development checkout', async () => {
+    const context = await fixture()
+    const candidate = await advanceMain(context)
+
+    expect((await monitor(context)).code).toBe(0)
+
+    const ranIn = (await calls(context))
+      .filter((line) => line.startsWith('corepack-dir test '))
+      .map((line) => line.replace('corepack-dir test ', ''))
+    expect(ranIn).not.toHaveLength(0)
+    // The development checkout is somebody's workspace, and can be on a
+    // filesystem chosen for working rather than for running a suite quickly.
+    for (const directory of ranIn) {
+      expect(directory.startsWith(context.dev)).toBe(false)
+    }
+    // What passed has to be what is promoted, so it is pinned rather than
+    // read from a checkout that can move underneath it.
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(candidate)
+  })
+
   it('graduates a validated commit and records both identifiers', async () => {
     const context = await fixture()
     const previous = await git(context.runtime, 'rev-parse', 'HEAD')

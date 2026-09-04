@@ -302,17 +302,42 @@ run() {
     log "main advanced to $candidate_commit"
   fi
 
-  log "installing development dependencies"
-  CI=true run_pnpm "$DEV_ROOT" install --frozen-lockfile
-  log "running development lint"
-  CI=true run_pnpm "$DEV_ROOT" lint
+  # Validation runs in a worktree of its own, pinned to the commit being
+  # promoted, under the state directory.
+  #
+  # The development checkout is where someone works, and it can be on a
+  # filesystem chosen for that rather than for speed: on a Windows drive seen
+  # through WSL the same suite takes 531 seconds instead of 77, and the test
+  # runner gives up waiting for its own workers to start. That ends the run
+  # with `Timeout waiting for worker to respond` while every test passes,
+  # which stops a release over where the checkout happens to live.
+  #
+  # Pinning also means what passed is what is promoted, rather than whatever
+  # the development checkout became while the suite was running.
+  local validate_root="$STATE_DIR/validate"
+  cleanup_validation_worktree() {
+    git -C "$DEV_ROOT" worktree remove --force "$validate_root" 2>/dev/null || true
+    rm -rf -- "$validate_root"
+  }
+  trap cleanup_validation_worktree EXIT
+  cleanup_validation_worktree
+  log "preparing validation worktree at $validate_root"
+  git -C "$DEV_ROOT" worktree add --detach "$validate_root" "$candidate_commit"
+
+  log "installing validation dependencies"
+  CI=true run_pnpm "$validate_root" install --frozen-lockfile
+  log "running validation lint"
+  CI=true run_pnpm "$validate_root" lint
   # The repository has no hosted CI, so the suite that used to gate promotion
   # remotely has to run here. Without it nothing would exercise the tests
   # before a commit reaches production.
-  log "running development tests"
-  CI=true run_pnpm "$DEV_ROOT" test
-  log "building development release"
-  CI=true run_pnpm "$DEV_ROOT" build
+  log "running validation tests"
+  CI=true run_pnpm "$validate_root" test
+  log "building validation release"
+  CI=true run_pnpm "$validate_root" build
+  assert_clean "$validate_root"
+  cleanup_validation_worktree
+  trap - EXIT
   assert_clean "$DEV_ROOT"
 
   assert_clean "$PROD_ROOT"

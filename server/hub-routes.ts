@@ -592,6 +592,17 @@ export async function registerHubRoutes(
     },
   )
 
+  app.post<{ Params: SessionParams & { promptId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue/:promptId/send',
+    async (request) => ({
+      session: await manager.sendQueuedPrompt(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.promptId,
+      ),
+    }),
+  )
+
   app.put<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/queue',
     async (request) => {

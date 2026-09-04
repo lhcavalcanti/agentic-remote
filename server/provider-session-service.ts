@@ -195,6 +195,10 @@ export class ProviderSessionService
     )
   }
 
+  sendQueuedPrompt(sessionId: string, promptId: string): Promise<SessionDetail> {
+    return this.serviceFor(sessionId).sendQueuedPrompt(sessionId, promptId)
+  }
+
   reorderQueuedPrompts(
     sessionId: string,
     order: string[],

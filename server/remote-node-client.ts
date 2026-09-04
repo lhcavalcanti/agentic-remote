@@ -308,6 +308,16 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
+  async sendQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<SessionDetail> {
+    return this.request<SessionDetail>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(promptId)}/send`,
+      { method: 'POST' },
+    )
+  }
+
   async reorderQueuedPrompts(
     sessionId: string,
     order: string[],

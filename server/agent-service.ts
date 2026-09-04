@@ -3435,6 +3435,76 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
   }
 
+  /**
+   * Sends a message that is waiting in the queue, now, instead of in its turn.
+   */
+  // Taking it off and sending it are one operation here rather than three
+  // requests from the browser. Between a read, a delete and a send, another
+  // client can queue work or start a turn: the delete lands, the send is
+  // appended behind whatever arrived, and what was asked for -- send this one
+  // now -- quietly did not happen. Worse, a send that fails after the delete
+  // has already taken the message off the queue.
+  //
+  // This is the drain's own bargain: take the prompt in the queue's lane,
+  // dispatch it as the queue would, and put it back where it was if it cannot
+  // go. `fromQueue` is what tells the busy gates that this prompt is the
+  // queue's own, so it is not refused for the very drain it belongs to.
+  async sendQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<SessionDetail> {
+    const taken = await this.serializeQueue(sessionId, async () => {
+      const session = this.store.get(sessionId)
+      if (!session) {
+        throw new Error('Session not found')
+      }
+      if (session.suspended || this.suspendingSessions.has(sessionId)) {
+        throw Object.assign(
+          new Error('Session is suspended, so nothing can be sent to it'),
+          { statusCode: 409 },
+        )
+      }
+      const queue = session.queuedPrompts || []
+      const prompt = queue.find((waiting) => waiting.id === promptId)
+      if (!prompt) {
+        throw Object.assign(
+          new Error('That message is no longer waiting to be sent'),
+          { statusCode: 409 },
+        )
+      }
+      // Nothing can be sent ahead of work already waiting: the provider
+      // appends, so "send now" would quietly mean "send last". Said plainly
+      // while the message is still safely in the queue.
+      if (queue.length > 1) {
+        throw Object.assign(
+          new Error(
+            'Other messages are waiting, so this cannot be sent ahead of them. Save it to keep its place, or remove the others first.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      const { session: without } = await this.store.removeQueuedPrompt(
+        sessionId,
+        promptId,
+      )
+      this.publish(without)
+      return prompt
+    })
+    try {
+      return taken.command
+        ? await this.runCommand(sessionId, taken.content, false, undefined, true)
+        : await this.startMessage(sessionId, taken.content, true)
+    } catch (error) {
+      // Back at the head, which is where it was: it was the only one waiting.
+      // Anything queued since was queued after it.
+      const restored = await this.serializeQueue(sessionId, () =>
+        this.store.enqueuePrompt(sessionId, taken, true),
+      )
+      this.publish(restored)
+      throw error
+    }
+  }
+
   private async enqueuePrompt(
     sessionId: string,
     content: string,

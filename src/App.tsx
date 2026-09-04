@@ -157,6 +157,7 @@ import {
   removeComputer,
   removeQueuedPrompt,
   reorderQueuedPrompts,
+  sendQueuedPrompt,
   updateQueuedPrompt,
   renameSession,
   readWorkspaceFile,
@@ -5576,6 +5577,13 @@ function App() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
   )
+  // Kept with the drafts, because it is what says a draft is a rewrite of a
+  // waiting message rather than a message of its own. Held only in memory, a
+  // reload left the rewrite looking like an ordinary draft beside the queued
+  // message it came from -- and sending it then delivered both.
+  const [editingQueuedPrompt, setEditingQueuedPrompt] = useState<
+    { sessionKey: string; promptId: string } | undefined
+  >(() => readStoredOrder('agentic-remote:queued-edit', undefined))
   const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
@@ -5779,10 +5787,6 @@ function App() {
   // it belongs to. Held together because the composer follows the selection: a
   // bare id left the next session in edit mode, and Enter, Send and Escape all
   // acted on a message that was not in front of the reader.
-  const [editingQueuedPrompt, setEditingQueuedPrompt] = useState<{
-    sessionKey: string
-    promptId: string
-  }>()
   const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -5864,6 +5868,11 @@ function App() {
   // The sessions as last committed, so reconciliation can be worked out
   // without depending on a state updater having already run.
   const sessionsRef = useRef(sessions)
+  // What each session's composer holds, readable from a request that has
+  // already been sent. The state a callback closed over is the state as it was
+  // when the callback was made, which is exactly the wrong answer for "has
+  // this changed since?".
+  const draftsRef = useRef(composerDrafts)
   const backgroundTasksOpenRef = useRef(backgroundTasksOpen)
   const selectedKeyStateRef = useRef(selectedKey)
   const backgroundTaskRequestsRef = useRef(new Set<string>())
@@ -6231,6 +6240,7 @@ function App() {
     Boolean(selected?.pendingPermission || selected?.pendingUserInput)
   selectedRef.current = selected
   sessionsRef.current = sessions
+  draftsRef.current = composerDrafts
   const currentTool = selected?.messages.findLast(
     (message) =>
       message.role === 'activity' && message.activityStatus === 'running',
@@ -7128,6 +7138,17 @@ function App() {
       JSON.stringify(composerDrafts),
     )
   }, [composerDrafts])
+
+  useEffect(() => {
+    if (editingQueuedPrompt) {
+      localStorage.setItem(
+        'agentic-remote:queued-edit',
+        JSON.stringify(editingQueuedPrompt),
+      )
+    } else {
+      localStorage.removeItem('agentic-remote:queued-edit')
+    }
+  }, [editingQueuedPrompt])
 
   useEffect(() => {
     const handleUpdate = (event: Event) => {
@@ -9111,31 +9132,6 @@ function App() {
       submissionsInFlight.current.delete(targetKey)
     }
 
-    // A message rewritten into one of the commands this app answers is being
-    // replaced by that action, so the copy waiting in the queue goes with it.
-    // Left there it would be sent later as ordinary text.
-    const consumeEditedPrompt = async (): Promise<boolean> => {
-      if (!editingQueuedPromptId) {
-        return true
-      }
-      const removedId = editingQueuedPromptId
-      try {
-        const result = await removeQueuedPrompt(
-          selected.computerId,
-          selected.id,
-          removedId,
-        )
-        setSessions((current) => upsertSession(current, result.session))
-        setEditingQueuedPrompt((current) =>
-          current?.promptId === removedId ? undefined : current,
-        )
-        return true
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-        return false
-      }
-    }
-
     const isCommand = content.startsWith('/')
     const commandName = isCommand
       ? content.slice(1).split(/\s+/, 1)[0].toLowerCase()
@@ -9150,6 +9146,19 @@ function App() {
             ),
         )
       : undefined
+    // A rewrite of a waiting message into one of the commands this app answers
+    // rather than the agent. Carrying it out would leave the copy still on the
+    // queue to be handed over later as ordinary words, and the actions differ
+    // in whether they can even be confirmed -- a cancelled /cwd or a failed
+    // /restart never happened at all. Refused while the message is still
+    // safely queued, rather than acted on and reconciled afterwards.
+    if (editingQueuedPromptId && isWebOnlyCommand(content)) {
+      setError(
+        `/${commandName} is answered by this app rather than the agent. Cancel the edit first, then run it.`,
+      )
+      settleSubmission()
+      return
+    }
     if (command?.name === 'statusline') {
       const input = content.slice(commandName.length + 1).trim().toLowerCase()
       if (input === 'off') {
@@ -9159,19 +9168,12 @@ function App() {
       } else {
         setStatuslineOpen(true)
       }
-      if (!(await consumeEditedPrompt())) {
-        settleSubmission()
-        return
-      }
       setComposer('')
       settleSubmission()
       reofferFailedPrompt(targetKey)
       return
     }
     if (command?.name === 'clear') {
-      // Clearing replaces the session, and its queue goes with it, so the
-      // waiting copy needs nothing done to it here.
-      setEditingQueuedPrompt(undefined)
       setComposer('')
       // The session this became. Everything the recovery was carrying has just
       // moved here, and offering it against the key that is gone left the
@@ -9184,12 +9186,8 @@ function App() {
       return
     }
     if (command?.name === 'restart') {
-      await restartSelectedSession()
-      if (!(await consumeEditedPrompt())) {
-        settleSubmission()
-        return
-      }
       setComposer('')
+      await restartSelectedSession()
       focusComposer(targetKey)
       settleSubmission()
       reofferFailedPrompt(targetKey)
@@ -9200,74 +9198,51 @@ function App() {
       !content.slice(commandName.length + 1).trim()
     ) {
       setCwdOpen(true)
-      if (!(await consumeEditedPrompt())) {
-        settleSubmission()
-        return
-      }
       setComposer('')
       settleSubmission()
       reofferFailedPrompt(targetKey)
       return
     }
-    // This message is already waiting, and is about to be sent instead. It
-    // comes off the queue first, or the same text goes out twice: once now and
-    // once when the queue reaches it.
+    // This message is already waiting, and is about to be sent instead.
+    //
+    // The server does the whole of it: taking it off the queue and sending it
+    // are one operation there, so there is no moment where the message has
+    // been removed and not yet sent. Doing it from here meant a read, a
+    // delete and a send, and between any two of them another client could
+    // queue work or start a turn -- leaving the message appended behind what
+    // arrived, or gone with nothing sent.
     if (editingQueuedPromptId) {
-      const removedId = editingQueuedPromptId
-      const waiting = selected.queuedPrompts || []
-      // Nothing can be sent ahead of work that is already waiting: the
-      // provider appends it, so "send now" would quietly mean "send last".
-      // Rather than move it back afterwards -- which races the queue draining
-      // and still was not a send -- this says what is true and leaves the
-      // message where it is.
-      //
-      // Asked of the server rather than of what is on screen. Another client
-      // can queue something between the two, and by then this one has already
-      // been taken off the queue and cleared from the composer.
-      let live = waiting
-      try {
-        const fresh = await getSession(selected.computerId, selected.id)
-        setSessions((current) => upsertSession(current, fresh))
-        live = fresh.queuedPrompts || []
-      } catch {
-        // The read failed, so what is on screen is the only account there is.
-      }
-      if (live.some((prompt) => prompt.id !== removedId)) {
-        setError(
-          'Other messages are waiting, so this cannot be sent ahead of them. Save it to keep its place, or remove the others first.',
-        )
-        settleSubmission()
-        return
-      }
-      // The composer is closed for the whole of it, and the marker is kept
-      // until the removal has actually landed. Clearing it first, with sending
-      // still false, let a second Enter arrive during the DELETE and send
-      // straight away -- past the removal that was supposed to happen first.
+      const sentId = editingQueuedPromptId
+      // Closed for the whole of it, so a second Enter cannot arrive during the
+      // request and send the same text again.
       setSending(true)
       try {
-        const result = await removeQueuedPrompt(
+        const updated = await sendQueuedPrompt(
           selected.computerId,
           selected.id,
-          removedId,
+          sentId,
         )
-        setSessions((current) => upsertSession(current, result.session))
+        setSessions((current) => upsertSession(current, updated))
         // Only if it is still the one this send took out. Editing stays
         // available while a send is in flight, so a reader can open another
         // session and start rewriting there -- and clearing whatever marker
         // happens to be set would leave that one queued with its text sitting
         // in the composer, ready to go twice.
         setEditingQueuedPrompt((current) =>
-          current?.promptId === removedId ? undefined : current,
+          current?.promptId === sentId ? undefined : current,
         )
+        setComposer('')
+        followLatest()
       } catch (caught) {
-        // It is still waiting, so nothing is sent: sending now would deliver
-        // it twice over.
+        // It is still waiting, and the rewriting is still in the composer, so
+        // nothing has been lost and it can be sent again or saved.
         setError(caught instanceof Error ? caught.message : String(caught))
-        settleSubmission()
-        return
       } finally {
         setSending(false)
       }
+      settleSubmission()
+      reofferFailedPrompt(targetKey)
+      return
     }
     const shouldEnqueue =
       enqueue ||
@@ -9666,17 +9641,42 @@ function App() {
   // race they could not see.
   useEffect(() => {
     const editing = editingQueuedPrompt
-    if (!editing || !selected || sessionKey(selected) !== editing.sessionKey) {
+    if (!editing) {
       return
     }
-    const stillQueued = (selected.queuedPrompts || []).some(
+    // Found among all the sessions rather than only the one on screen. Looking
+    // at the selection alone meant a message that drained while another
+    // session was open left its marker set for ever -- and a single marker
+    // blocks editing anywhere.
+    if (!sessions.length) {
+      // Nothing has been loaded yet. An empty list is not evidence that the
+      // session is gone, and reading it as such threw the marker away on every
+      // reload -- leaving the rewrite behind as an ordinary draft beside the
+      // message it belonged to.
+      return
+    }
+    const owner = sessions.find(
+      (session) => sessionKey(session) === editing.sessionKey,
+    )
+    if (!owner) {
+      // The session it belonged to is gone, and with it the message.
+      setEditingQueuedPrompt(undefined)
+      return
+    }
+    // Only from an account of the queue that has actually been loaded. A
+    // session summary that has never carried its prompts is not evidence the
+    // message has gone.
+    if (!owner.queuedPrompts) {
+      return
+    }
+    const stillQueued = owner.queuedPrompts.some(
       (prompt) => prompt.id === editing.promptId,
     )
     if (stillQueued) {
       return
     }
     setEditingQueuedPrompt(undefined)
-  }, [editingQueuedPrompt, selected])
+  }, [editingQueuedPrompt, sessions])
 
   /** Whether the text names a command this app answers rather than the agent. */
   function isWebOnlyCommand(text: string): boolean {
@@ -9691,6 +9691,17 @@ function App() {
     )
   }
 
+  /** Whether the selected session offers a command by this name. */
+  function knowsCommand(name: string): boolean {
+    const wanted = name.toLowerCase()
+    return commands.some(
+      (candidate) =>
+        candidate.name.toLowerCase() === wanted ||
+        slashShortcut(candidate.name) === wanted ||
+        candidate.aliases?.some((alias) => alias.toLowerCase() === wanted),
+    )
+  }
+
   async function saveQueuedPromptEdit(): Promise<boolean> {
     const promptId = editingQueuedPromptId
     // What the composer held when the save was asked for, and what is sent.
@@ -9701,16 +9712,28 @@ function App() {
     if (!selected || !promptId || !content || queueActionId) {
       return false
     }
-    // The queue is drained by the agent, and these are answered here instead.
-    // Saved as a waiting message one would never be carried out: the runtime
-    // has no such command, so the queue would stop on it.
-    if (isWebOnlyCommand(content)) {
-      setError(
-        `/${content.slice(1).split(/\s+/, 1)[0]} is answered by this app rather than the agent, so it cannot wait in the queue. Send it instead.`,
-      )
-      return false
+    if (content.startsWith('/')) {
+      const name = content.slice(1).split(/\s+/, 1)[0]
+      // The queue is drained by the agent, so a command it does not have stops
+      // the drain when it reaches it -- and everything behind it waits. The
+      // ones this app answers are never the agent's; the rest are checked
+      // against what this session actually offers, because a session that
+      // advertises no commands at all, as Claude does, can run none of them.
+      if (isWebOnlyCommand(content)) {
+        setError(
+          `/${name} is answered by this app rather than the agent, so it cannot wait in the queue. Cancel the edit and run it instead.`,
+        )
+        return false
+      }
+      if (!knowsCommand(name)) {
+        setError(
+          `This session has no /${name}, so a message saved as one would stop the queue when it was reached.`,
+        )
+        return false
+      }
     }
     const target = selected
+    const savedKey = sessionKey(target)
     setQueueActionId(promptId)
     setError(undefined)
     try {
@@ -9721,11 +9744,17 @@ function App() {
         content,
       )
       setSessions((current) => upsertSession(current, result.session))
-      // Kept open when the composer moved on while the request was in flight:
+      // Kept open when the writing moved on while the request was in flight:
       // the server has the text that was submitted, and the newer writing is
       // still here to be saved in its turn. Closing it left that writing as an
       // ordinary draft beside a message still queued.
-      const movedOn = composerRef.current?.value !== submitted
+      //
+      // Read from the draft belonging to the session this was saved for. The
+      // mounted textarea shows whatever session is open now, so switching away
+      // during the request compared this rewrite against another session's
+      // text -- which normally differs, leaving the marker set over an empty
+      // composer and blocking every other edit.
+      const movedOn = draftsRef.current[savedKey] !== submitted
       if (!movedOn) {
         setEditingQueuedPrompt((current) =>
           current?.promptId === promptId ? undefined : current,
@@ -9736,7 +9765,6 @@ function App() {
       // clearing it regardless threw away anything typed meanwhile -- and
       // reading the live composer cleared the wrong session's draft when the
       // reader moved on before the answer came back.
-      const savedKey = sessionKey(target)
       updateComposerDrafts([], (drafts) => {
         // Exactly what was submitted. Comparing trimmed values threw away a
         // newline typed while the request was in flight, which on a phone is

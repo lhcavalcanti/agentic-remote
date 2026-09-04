@@ -345,6 +345,19 @@ export async function reorderQueuedPrompts(
   return response.session
 }
 
+/** Sends a waiting message now, instead of in its turn. */
+export async function sendQueuedPrompt(
+  computerId: string,
+  sessionId: string,
+  promptId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}/send`,
+    { method: 'POST' },
+  )
+  return response.session
+}
+
 export async function getRuntimeOptions(
   computerId: string,
   sessionId: string,

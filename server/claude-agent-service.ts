@@ -708,6 +708,66 @@ export class ClaudeAgentService
     return session
   }
 
+  /**
+   * Sends a message that is waiting in the queue, now, instead of in its turn.
+   */
+  // Taking it off and sending it are one operation here rather than three
+  // requests from the browser, which between them leave room for the message
+  // to be lost or to go out behind work queued since. On failure it goes back
+  // where it was.
+  async sendQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<SessionDetail> {
+    const session = this.store.get(sessionId)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    if (session.suspended) {
+      throw Object.assign(
+        new Error('Session is suspended, so nothing can be sent to it'),
+        { statusCode: 409 },
+      )
+    }
+    const queue = session.queuedPrompts || []
+    const prompt = queue.find((waiting) => waiting.id === promptId)
+    if (!prompt) {
+      throw Object.assign(
+        new Error('That message is no longer waiting to be sent'),
+        { statusCode: 409 },
+      )
+    }
+    if (queue.length > 1) {
+      throw Object.assign(
+        new Error(
+          'Other messages are waiting, so this cannot be sent ahead of them. Save it to keep its place, or remove the others first.',
+        ),
+        { statusCode: 409 },
+      )
+    }
+    // Claude advertises no commands of its own, so anything a queued entry was
+    // marked as could only be answered elsewhere. Refused rather than sent as
+    // the words it would otherwise arrive as.
+    if (prompt.command) {
+      throw Object.assign(
+        new Error('This session has no commands, so this cannot be sent'),
+        { statusCode: 409 },
+      )
+    }
+    const { session: without } = await this.store.removeQueuedPrompt(
+      sessionId,
+      promptId,
+    )
+    this.publish(without)
+    try {
+      return await this.sendMessage(sessionId, prompt.content)
+    } catch (error) {
+      const restored = await this.store.enqueuePrompt(sessionId, prompt, true)
+      this.publish(restored)
+      throw error
+    }
+  }
+
   async sendMessage(
     sessionId: string,
     content: string,

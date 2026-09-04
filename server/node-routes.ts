@@ -425,6 +425,15 @@ export async function registerNodeRoutes(
         },
       )
 
+      node.post<{ Params: { sessionId: string; promptId: string } }>(
+        '/sessions/:sessionId/queue/:promptId/send',
+        async (request) =>
+          service.sendQueuedPrompt(
+            request.params.sessionId,
+            request.params.promptId,
+          ),
+      )
+
       node.put<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/queue',
         async (request) => {

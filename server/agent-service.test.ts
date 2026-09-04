@@ -4256,6 +4256,86 @@ describe('AgentService deletion', () => {
     expect(service.store.get(created.id)?.failedPrompt?.content).toBe('ship it')
   })
 
+  it('sends a waiting message and takes it off the queue as one act', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-queue-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.enqueuePrompt(created.id, {
+      id: 'only',
+      content: 'send me now',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+
+    const sent = await service.sendQueuedPrompt(created.id, 'only')
+    expect(sent.queuedPrompts ?? []).toEqual([])
+    expect(service.store.get(created.id)?.queuedPrompts ?? []).toEqual([])
+  })
+
+  it('refuses to send a waiting message ahead of the ones before it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-queue-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    for (const content of ['first', 'second']) {
+      await service.store.enqueuePrompt(created.id, {
+        id: content,
+        content,
+        createdAt: '2026-09-02T00:00:00.000Z',
+      })
+    }
+
+    // The provider appends, so "send now" would quietly mean "send last".
+    // Said plainly, and while both are still safely queued.
+    await expect(
+      service.sendQueuedPrompt(created.id, 'second'),
+    ).rejects.toThrow(/Other messages are waiting/i)
+    expect(service.store.get(created.id)?.queuedPrompts?.map((p) => p.id)).toEqual([
+      'first',
+      'second',
+    ])
+  })
+
+  it('refuses to send into a suspended session and leaves the message queued', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-queue-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.enqueuePrompt(created.id, {
+      id: 'only',
+      content: 'send me now',
+      createdAt: '2026-09-02T00:00:00.000Z',
+    })
+    await service.suspendSession(created.id)
+
+    // A suspended session has no runtime to send to. Refused rather than
+    // reported as an unexplained server error.
+    await expect(
+      service.sendQueuedPrompt(created.id, 'only'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    expect(service.store.get(created.id)?.queuedPrompts?.map((p) => p.id)).toEqual([
+      'only',
+    ])
+  })
+
   it('rewrites a queued prompt where it stands and reorders the queue', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-queue-'))
     directories.push(directory)

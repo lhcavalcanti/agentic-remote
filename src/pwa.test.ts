@@ -26,10 +26,10 @@ describe('PWA updates', () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     } as unknown as ServiceWorkerRegistration
-    const serviceWorker = {
+    const serviceWorker = Object.assign(new EventTarget(), {
       getRegistration: vi.fn().mockResolvedValue(registration),
       register: vi.fn().mockResolvedValue(registration),
-    }
+    })
     Object.defineProperty(navigator, 'serviceWorker', {
       configurable: true,
       value: serviceWorker,
@@ -54,22 +54,27 @@ describe('PWA updates', () => {
       waiting: { postMessage },
       update: vi.fn(),
     } as unknown as ServiceWorkerRegistration
+    Object.assign(serviceWorkerEvents, {
+      register: vi.fn().mockResolvedValue(registration),
+    })
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      Response.json({ version: __APP_VERSION__, buildId: 'new-bundle' }),
+    ))
     const reload = vi.fn()
 
-    await activatePwaUpdate(registration, reload)
+    await activatePwaUpdate(reload)
 
     expect(postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' })
     expect(reload).toHaveBeenCalledOnce()
   })
 
   it('reloads a bundle-only update when no worker is waiting', async () => {
-    const registration = {
-      waiting: null,
-      update: vi.fn(),
-    } as unknown as ServiceWorkerRegistration
+    const { registration } = mockUpdateCheck({
+      version: __APP_VERSION__, buildId: 'new-bundle',
+    })
     const reload = vi.fn()
 
-    await activatePwaUpdate(registration, reload)
+    await activatePwaUpdate(reload)
 
     expect(registration.update).toHaveBeenCalledOnce()
     expect(reload).toHaveBeenCalledOnce()
@@ -229,6 +234,39 @@ describe('PWA updates', () => {
     )
     expect(staleRegistration.update).not.toHaveBeenCalled()
     expect(registration.update).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks the deployment before activating a prompt left over from a rollback', async () => {
+    const { serviceWorker } = mockUpdateCheck({
+      version: __APP_VERSION__, buildId: __APP_BUILD_ID__,
+    })
+    const postMessage = vi.fn(() => queueMicrotask(() =>
+      serviceWorker.dispatchEvent(new Event('controllerchange')),
+    ))
+    const obsolete = {
+      waiting: { postMessage }, update: vi.fn(),
+    } as unknown as ServiceWorkerRegistration
+    serviceWorker.getRegistration.mockResolvedValue(obsolete)
+    const reload = vi.fn()
+
+    await activatePwaUpdate(reload)
+
+    expect(serviceWorker.register).toHaveBeenCalledWith(
+      `/sw.js?v=${__APP_BUILD_ID__}`, { scope: '/', updateViaCache: 'none' },
+    )
+    expect(postMessage).not.toHaveBeenCalled()
+    expect(reload).toHaveBeenCalledOnce()
+  })
+
+  it('leaves the current app in place when the activation recheck fails', async () => {
+    const { fetch, serviceWorker } = mockUpdateCheck({
+      version: __APP_VERSION__, buildId: 'new-bundle',
+    })
+    fetch.mockResolvedValue(new Response('Unavailable', { status: 503 }))
+    const reload = vi.fn()
+    await expect(activatePwaUpdate(reload)).rejects.toThrow('(503)')
+    expect(serviceWorker.register).not.toHaveBeenCalled()
+    expect(reload).not.toHaveBeenCalled()
   })
 
   it.each([

@@ -283,16 +283,11 @@ function waitForWorkerInstalled(
 }
 
 export async function activatePwaUpdate(
-  registration: ServiceWorkerRegistration,
   reload: () => void = () => window.location.reload(),
 ): Promise<void> {
-  if (!registration.waiting) {
-    await registration.update()
-    if (registration.installing) {
-      await waitForWorkerInstalled(registration.installing)
-    }
-  }
-  const worker = registration.waiting
+  // A toast can outlive the release it advertised, especially after rollback.
+  const latest = await checkForPwaUpdate()
+  const worker = latest?.registration.waiting
   if (!worker) {
     reload()
     return

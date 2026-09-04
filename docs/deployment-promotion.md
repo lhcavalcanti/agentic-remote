@@ -224,6 +224,9 @@ within that worker's namespace, and online navigation does not replace the
 installed offline shell with another release's HTML. Update checks retarget
 even a waiting worker after a rollback, and successive same-version builds can
 each announce an update without changing the version shown in App settings.
+Update now rechecks the deployed identity before activating a waiting worker,
+so a toast left open across a rollback cannot activate the obsolete build.
+If that recheck fails, the current app stays active and the error is surfaced.
 
 ## Post-merge and post-graduation cleanup
 

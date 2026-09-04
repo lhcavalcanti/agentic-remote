@@ -10496,7 +10496,7 @@ function App() {
     setUpdatingApp(true)
     setError(undefined)
     try {
-      await activatePwaUpdate(updateRegistration)
+      await activatePwaUpdate()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
       setUpdatingApp(false)
@@ -11735,7 +11735,7 @@ function App() {
       />
       {updateRegistration && !updateToastDismissed ? (
         <div className="update-toast" role="status">
-          <span>A new Agentic Remote version is ready.</span>
+          <span>An Agentic Remote update is ready.</span>
           <button
             className="primary-button"
             disabled={updatingApp}

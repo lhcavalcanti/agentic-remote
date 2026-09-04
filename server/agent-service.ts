@@ -10,7 +10,6 @@ import {
   type ElicitationResult,
   type PermissionRequest,
   type PermissionRequestResult,
-  type ModelInfo,
   type ResumeSessionConfig,
   type SessionConfig,
   type SessionEvent,
@@ -147,8 +146,9 @@ export interface CopilotClientLike {
   ): Promise<CopilotSessionLike>
   listSessions(): Promise<SessionMetadata[]>
   deleteSession(sessionId: string): Promise<void>
-  listModels?(): Promise<ModelInfo[]>
-  rpc: Pick<CopilotClient['rpc'], 'commands'>
+  rpc: Pick<CopilotClient['rpc'], 'commands'> & {
+    models: Pick<CopilotClient['rpc']['models'], 'list'>
+  }
 }
 
 interface ModelPromptLimits {
@@ -1880,13 +1880,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async loadRuntimeModels(): Promise<void> {
-    if (!this.client.listModels) {
-      throw new RuntimeConfigurationError(
-        'Runtime model discovery is not supported',
-        503,
-      )
-    }
-    const models = await this.client.listModels()
+    // listModels() caches for the client's lifetime. Ask the CLI directly so
+    // opening a settings panel discovers changes without restarting sessions.
+    const { models } = await this.client.rpc.models.list({})
     if (models.length === 0) {
       throw new RuntimeConfigurationError(
         'No runtime models are currently available',

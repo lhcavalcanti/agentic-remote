@@ -426,15 +426,15 @@ describe('App', () => {
     vi.mocked(createSession).mockResolvedValue(session)
     vi.mocked(getRuntimeOptions).mockResolvedValue({
       current: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
       },
       models: [
         {
-          id: 'gpt-5.6-sol',
-          name: 'GPT-5.6 Sol',
+          id: 'fixture-model',
+          name: 'Fixture Model',
           reasoningEfforts: ['medium', 'high', 'xhigh'],
           contextTiers: ['default', 'long_context'],
           contextTokenLimits: {
@@ -450,8 +450,8 @@ describe('App', () => {
           provider === 'copilot'
             ? [
                 {
-                  id: 'gpt-5.6-sol',
-                  name: 'GPT-5.6 Sol',
+                  id: 'fixture-model',
+                  name: 'Fixture Model',
                   reasoningEfforts: ['medium', 'high', 'xhigh'],
                   contextTiers: ['default', 'long_context'],
                   contextTokenLimits: {
@@ -460,16 +460,16 @@ describe('App', () => {
                   },
                 },
                 {
-                  id: 'gpt-fast',
-                  name: 'GPT Fast',
+                  id: 'fixture-fast',
+                  name: 'Fast Model',
                   reasoningEfforts: ['low', 'medium'],
                   contextTiers: ['default'],
                 },
               ]
             : [
                 {
-                  id: 'sonnet',
-                  name: 'Sonnet',
+                  id: 'provider-model',
+                  name: 'Provider Model',
                   description: '**Efficient** for routine tasks',
                   reasoningEfforts: ['low', 'medium', 'high'],
                   contextTiers: ['default'],
@@ -1265,12 +1265,33 @@ describe('App', () => {
 
     const shell = document.querySelector('.app-shell')
     expect(shell).toHaveAttribute('data-accent-theme', 'agentic')
+    const icon = () =>
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || ''
+    expect(decodeURIComponent(icon())).toContain('color="#b8f36b"')
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
     fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
 
     expect(shell).toHaveAttribute('data-accent-theme', 'violet')
     expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBe('violet')
     expect(localStorage.getItem('agentic-remote:accent-theme')).toBeNull()
+    expect(decodeURIComponent(icon())).toContain('color="#ad92ff"')
+    fireEvent.click(screen.getByRole('radio', { name: 'Teal accent' }))
+    expect(decodeURIComponent(icon())).toContain('color="#63d6c0"')
+    expect(document.querySelectorAll('link[rel="icon"]')).toHaveLength(1)
+  })
+
+  it('restores the tab icon from the saved accent on load', async () => {
+    sessionStorage.setItem('agentic-remote:accent-theme', 'rose')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelector('.app-shell')).toHaveAttribute(
+      'data-accent-theme',
+      'rose',
+    )
+    expect(decodeURIComponent(
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
+    )).toContain('color="#ff83b6"')
   })
 
   it('ignores an unknown stored accent', async () => {
@@ -1283,6 +1304,9 @@ describe('App', () => {
       'data-accent-theme',
       'agentic',
     )
+    expect(decodeURIComponent(
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
+    )).toContain('color="#b8f36b"')
   })
 
   it('falls back to blank runtime defaults when stored settings are null', async () => {
@@ -1309,10 +1333,10 @@ describe('App', () => {
       'copilot',
     )
     fireEvent.change(screen.getByLabelText('GitHub Copilot default model'), {
-      target: { value: 'gpt-5.6-sol' },
+      target: { value: 'fixture-model' },
     })
     fireEvent.change(screen.getByLabelText('Claude Agent default model'), {
-      target: { value: 'sonnet' },
+      target: { value: 'provider-model' },
     })
     expect(screen.getByText('Efficient').tagName).toBe('STRONG')
     fireEvent.change(
@@ -1332,12 +1356,12 @@ describe('App', () => {
       JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
     ).toEqual({
       copilot: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'xhigh',
         contextTier: 'long_context',
       },
       claude: {
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'low',
         contextTier: 'default',
       },
@@ -1354,7 +1378,7 @@ describe('App', () => {
         provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: true,
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'xhigh',
         contextTier: 'long_context',
       }),
@@ -1376,11 +1400,51 @@ describe('App', () => {
         provider: 'claude',
         terminalBacked: false,
         allowAllPermissions: true,
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'low',
         contextTier: 'default',
       }),
     )
+  })
+
+  it('refreshes both provider catalogs every time app settings is reopened', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const copilot = await screen.findByLabelText('GitHub Copilot default model')
+    await waitFor(() => expect(copilot).toBeEnabled())
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (_computerId, provider) => ({
+        models: [{
+          id: `${provider}-new-model`,
+          name: `New ${provider} model`,
+          reasoningEfforts: [],
+          contextTiers: ['default'],
+        }],
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(
+      await screen.findByRole('option', { name: 'New copilot model' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'New claude model' })).toBeInTheDocument()
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(4)
+    expect(screen.getByLabelText('GitHub Copilot default model')).toHaveValue('')
+    expect(screen.getByLabelText('Claude Agent default model')).toHaveValue('')
+    expect(configureRuntime).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    vi.mocked(getProviderRuntimeOptions).mockRejectedValue(
+      new Error('Catalog refresh failed'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(await screen.findAllByText('Catalog refresh failed')).toHaveLength(2)
+    expect(screen.queryByRole('option', { name: 'New copilot model' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'New claude model' })).toBeNull()
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(6)
   })
 
   it('preserves provider-managed defaults when app settings are opened', async () => {
@@ -1455,8 +1519,8 @@ describe('App', () => {
           provider === 'claude'
             ? [
                 {
-                  id: 'sonnet',
-                  name: 'Sonnet',
+                  id: 'provider-model',
+                  name: 'Provider Model',
                   reasoningEfforts: ['low', 'medium', 'high'],
                   contextTiers: ['default'],
                 },
@@ -1615,7 +1679,7 @@ describe('App', () => {
           contextTier: 'long_context',
         },
         claude: {
-          model: 'sonnet',
+          model: 'provider-model',
           reasoningEffort: 'max',
           contextTier: 'long_context',
         },
@@ -1635,7 +1699,7 @@ describe('App', () => {
         provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: true,
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'medium',
         contextTier: 'long_context',
       }),
@@ -1649,7 +1713,7 @@ describe('App', () => {
         contextTier: 'long_context',
       },
       claude: {
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'max',
         contextTier: 'long_context',
       },
@@ -3992,12 +4056,12 @@ describe('App', () => {
     fireEvent.keyDown(textarea, { key: 'Enter' })
     expect(textarea).toHaveValue('/model ')
 
-    fireEvent.change(textarea, { target: { value: '/model gpt-5.6-sol' } })
+    fireEvent.change(textarea, { target: { value: '/model fixture-model' } })
     expect(fireEvent.keyDown(textarea, { key: 'ArrowDown' })).toBe(true)
     fireEvent.keyDown(textarea, { key: 'Enter' })
     await waitFor(() => {
       expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
-        command: '/model gpt-5.6-sol',
+        command: '/model fixture-model',
         enqueue: false,
       })
     })
@@ -4039,11 +4103,11 @@ describe('App', () => {
       } as MessageEvent)
     })
     vi.mocked(executeCommand).mockClear()
-    fireEvent.change(textarea, { target: { value: '/model gpt-5.6-sol' } })
+    fireEvent.change(textarea, { target: { value: '/model fixture-model' } })
     fireEvent.keyDown(textarea, { key: 'Enter' })
     await waitFor(() => {
       expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
-        command: '/model gpt-5.6-sol',
+        command: '/model fixture-model',
         enqueue: true,
       })
     })
@@ -4101,11 +4165,62 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('refreshes the model panel on reopening and retries a failed refresh', async () => {
+    render(<App />)
+    const open = await screen.findByRole('button', {
+      name: 'Configure model, effort, and context',
+    })
+    fireEvent.click(open)
+    await screen.findByLabelText('Model')
+    expect(getRuntimeOptions).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getRuntimeOptions).mockRejectedValueOnce(
+      new Error('Catalog refresh failed'),
+    )
+    fireEvent.click(open)
+    expect(await screen.findByText('Catalog refresh failed')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Model')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getRuntimeOptions).mockResolvedValueOnce({
+      current: {},
+      status: 'idle',
+      models: [{
+        id: 'new-provider-model',
+        name: 'New Provider Model',
+        reasoningEfforts: ['high'],
+        contextTiers: ['default'],
+      }],
+    })
+    fireEvent.click(open)
+    const model = await screen.findByLabelText('Model')
+    expect(model).toHaveValue('new-provider-model')
+    expect(within(model).getAllByRole('option')).toHaveLength(1)
+    expect(getRuntimeOptions).toHaveBeenCalledTimes(3)
+    expect(getRuntimeOptions).toHaveBeenLastCalledWith('computer-1', 'session-1')
+    expect(configureRuntime).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply runtime settings' }))
+    await waitFor(() =>
+      expect(configureRuntime).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          model: 'new-provider-model',
+          reasoningEffort: 'high',
+          contextTier: 'default',
+          mode: 'interactive',
+        },
+      ),
+    )
+  })
+
   it('supports command abbreviations and configures the web status line', async () => {
       const runtimeSession = {
         ...session,
         runtime: {
-          model: 'gpt-5.6-sol',
+          model: 'fixture-model',
           reasoningEffort: 'high',
           contextTier: 'long_context',
           contextTokens: 200_000,
@@ -4121,7 +4236,7 @@ describe('App', () => {
       const textarea = await screen.findByLabelText('Message')
       expect(screen.getByTestId('web-statusline')).toBeInTheDocument()
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
-        'gpt-5.6-sol',
+        'fixture-model',
       )
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'effort high',
@@ -4133,7 +4248,7 @@ describe('App', () => {
         'ctx ~200k/922k (22%)',
       )
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
-        'gpt-5.6-sol',
+        'fixture-model',
       )
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
         'ctx ~200k/922k (22%)',
@@ -4171,7 +4286,7 @@ describe('App', () => {
           'computer-1',
           'session-1',
           {
-            model: 'gpt-5.6-sol',
+            model: 'fixture-model',
             reasoningEffort: 'xhigh',
             contextTier: 'default',
             mode: 'autopilot',
@@ -4244,7 +4359,7 @@ describe('App', () => {
       ...session,
       status: 'running' as const,
       runtime: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
@@ -4651,7 +4766,7 @@ describe('App', () => {
       ...session,
       status: 'running' as const,
       runtime: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
@@ -4664,8 +4779,8 @@ describe('App', () => {
       current: staleSession.runtime,
       models: [
         {
-          id: 'gpt-5.6-sol',
-          name: 'GPT-5.6 Sol',
+          id: 'fixture-model',
+          name: 'Fixture Model',
           reasoningEfforts: ['high'],
           contextTiers: ['default', 'long_context'],
         },

@@ -1124,11 +1124,11 @@ describe('multi-node hub', () => {
       const command = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session/commands`,
-        payload: { command: '/model gpt-5.6-sol' },
+        payload: { command: '/model fixture-model' },
       })
       expect(command.json().session.messages.at(-1)).toMatchObject({
         role: 'notice',
-        content: '/model gpt-5.6-sol',
+        content: '/model fixture-model',
       })
 
       const upserted = waitForEvent(

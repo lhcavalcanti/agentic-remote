@@ -26,6 +26,64 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it('writes the order back down after a refused one is undone', async () => {
+    // Undoing it in memory alone left the refused order on disk if a write
+    // queued behind this one had already taken its snapshot, so a restart came
+    // back to exactly the arrangement the caller was told had failed.
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'durable-session',
+      cwd: '/tmp/durable-project',
+      title: 'Durable project',
+      updatedAt: '2026-07-22T00:00:01.000Z',
+      status: 'idle',
+      isOpen: true,
+      messages: [],
+    })
+    for (const id of ['a', 'b']) {
+      await store.enqueuePrompt('durable-session', {
+        id,
+        content: id,
+        createdAt: '2026-09-02T00:00:00.000Z',
+      })
+    }
+
+    const real = (
+      store as unknown as { persist: () => Promise<void> }
+    ).persist.bind(store)
+    let failures = 0
+    const failing = vi
+      .spyOn(store as unknown as { persist: () => Promise<void> }, 'persist')
+      .mockImplementation(async () => {
+        // A write queued behind this one takes its snapshot and puts the
+        // rejected order on disk; the reorder's own write then fails. The
+        // compensating write is allowed through, which is the point of it.
+        if (failures === 0) {
+          failures += 1
+          await real()
+          throw new Error('disk full')
+        }
+        return real()
+      })
+    await expect(
+      store.reorderQueuedPrompts('durable-session', ['b', 'a']),
+    ).rejects.toThrow('disk full')
+    failing.mockRestore()
+    await store.flush()
+
+    // What a restart would read.
+    const written = JSON.parse(
+      await readFile(path.join(directory, 'state.json'), 'utf8'),
+    ) as {
+      sessions: Record<string, { queuedPrompts?: { id: string }[] }>
+    }
+    expect(
+      written.sessions['durable-session'].queuedPrompts?.map(
+        (prompt) => prompt.id,
+      ),
+    ).toEqual(['a', 'b'])
+  })
+
   it('leaves work that arrived while a refused order was being written', async () => {
     // Putting the old queue back regardless would drop whatever was added in
     // the meantime, and take the revision backwards with it.

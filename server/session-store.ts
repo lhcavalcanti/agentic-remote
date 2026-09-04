@@ -594,6 +594,12 @@ export class SessionStore {
       const settled = this.writeQueue.then(undo, undo)
       this.writeQueue = settled.catch(() => undefined)
       await settled
+      // And written down. Undoing it in memory alone left the refused order on
+      // disk if a write queued behind this one had already taken its snapshot,
+      // so a restart came back to exactly the arrangement the caller was told
+      // had failed. A failure here is not reported over the original one:
+      // memory and the caller already agree, and the next write settles disk.
+      await this.persist().catch(() => undefined)
       throw error
     }
   }

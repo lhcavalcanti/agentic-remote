@@ -32,6 +32,11 @@ beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
   vi.stubEnv('HOME', tmuxRoot)
   vi.stubEnv('TMUX_TMPDIR', tmuxRoot)
+  // A client started inside a tmux session reads its socket out of `TMUX` and
+  // talks to that server whatever the temporary directory says. Left set, a
+  // suite run from inside tmux drives the developer's own server -- and the
+  // teardown would kill every session they had open.
+  vi.stubEnv('TMUX', '')
 })
 
 afterEach(async () => {

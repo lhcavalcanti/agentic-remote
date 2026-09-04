@@ -14,8 +14,26 @@ export async function createIsolatedTmuxRoot(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'agentic-remote-tmux-test-'))
 }
 
+/**
+ * The environment a tmux command has to run in to stay inside the test's own
+ * socket namespace.
+ *
+ * `TMUX_TMPDIR` is not enough on its own. A client started inside a tmux
+ * session reads the socket out of `TMUX` and talks to that server whatever the
+ * temporary directory says, so a suite run from a terminal that is itself
+ * inside tmux would address the developer's own server -- and `kill-server`
+ * would take every session they had running with it.
+ */
+export function isolatedTmuxEnv(root: string): NodeJS.ProcessEnv {
+  return { ...process.env, TMUX_TMPDIR: root, TMUX: '' }
+}
+
 export async function stopIsolatedTmuxServer(root: string): Promise<void> {
-  await execFileAsync('tmux', ['kill-server']).catch(() => undefined)
+  // Addressed explicitly rather than left to the ambient environment: this is
+  // the one command here that destroys whatever it reaches.
+  await execFileAsync('tmux', ['kill-server'], {
+    env: isolatedTmuxEnv(root),
+  }).catch(() => undefined)
   await rm(root, { recursive: true, force: true })
 }
 

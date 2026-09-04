@@ -27,6 +27,7 @@ import {
 } from './terminal-session.js'
 import {
   createIsolatedTmuxRoot,
+  isolatedTmuxEnv,
   eventually,
   stopIsolatedTmuxServer,
   waitForProcessCommand,
@@ -41,6 +42,11 @@ beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
   vi.stubEnv('HOME', tmuxRoot)
   vi.stubEnv('TMUX_TMPDIR', tmuxRoot)
+  // A client started inside a tmux session reads its socket out of `TMUX` and
+  // talks to that server whatever the temporary directory says. Left set, a
+  // suite run from inside tmux drives the developer's own server -- and the
+  // teardown would kill every session they had open.
+  vi.stubEnv('TMUX', '')
 })
 
 afterEach(async () => {
@@ -52,6 +58,18 @@ afterEach(async () => {
       rm(directory, { recursive: true, force: true }),
     ),
   )
+})
+
+describe('tmux test isolation', () => {
+  it('never lets a tmux command fall back to the caller\'s own server', () => {
+    // Running the suite from inside tmux used to point every command at the
+    // developer's own server, because a client reads its socket out of `TMUX`
+    // before it looks at the temporary directory. The teardown kills whatever
+    // it reaches, so that was every session they had open.
+    const env = isolatedTmuxEnv('/tmp/example-root')
+    expect(env.TMUX_TMPDIR).toBe('/tmp/example-root')
+    expect(env.TMUX).toBe('')
+  })
 })
 
 describe('TmuxTerminalSessionController', () => {

@@ -21,6 +21,7 @@
   --accent: #b8f36b;
   --accent-deep: #93cb4f;
   --accent-contrast: #11130e;
+  --success: #89b66c;
   --danger: #ef816f;
   --radius: 16px;
 }
@@ -123,10 +124,10 @@ button {
   --accent-contrast: #250d17;
 }
 
-.app-shell[data-accent-theme='gold'] {
-  --accent: #f2c96d;
-  --accent-deep: #caa54e;
-  --accent-contrast: #211a08;
+.app-shell[data-accent-theme='teal'] {
+  --accent: #63d6c0;
+  --accent-deep: #43b7a2;
+  --accent-contrast: #071d19;
 }
 
 .sidebar {
@@ -1492,7 +1493,7 @@ button {
 }
 
 .activity-message--completed .activity-message__glyph {
-  color: var(--accent-deep);
+  color: var(--success);
 }
 
 .activity-message--failed .activity-message__glyph,
@@ -2358,7 +2359,7 @@ button {
 }
 
 .background-task--completed {
-  border-left-color: var(--accent-deep);
+  border-left-color: var(--success);
 }
 
 .background-task--failed {
@@ -2410,7 +2411,7 @@ button {
 }
 
 .background-task--completed .background-task__status-icon {
-  color: var(--accent);
+  color: var(--success);
 }
 
 .background-task--failed .background-task__status-icon {
@@ -2431,7 +2432,7 @@ button {
 }
 
 .background-task--completed .background-task__status {
-  color: var(--accent);
+  color: var(--success);
 }
 
 .background-task--failed .background-task__status {

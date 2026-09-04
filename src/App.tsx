@@ -334,7 +334,7 @@ type StoredDefaultSessionFolders = {
 const defaultSessionFoldersStorageKey =
   'agentic-remote:default-session-folders'
 
-type AccentTheme = 'agentic' | 'ocean' | 'violet' | 'ember' | 'rose' | 'gold'
+type AccentTheme = 'agentic' | 'ocean' | 'violet' | 'ember' | 'rose' | 'teal'
 
 const accentThemeStorageKey = 'agentic-remote:accent-theme'
 const accentThemes: Array<{
@@ -347,7 +347,7 @@ const accentThemes: Array<{
   { id: 'violet', name: 'Violet', color: '#ad92ff' },
   { id: 'ember', name: 'Ember', color: '#ff9c64' },
   { id: 'rose', name: 'Rose', color: '#ff83b6' },
-  { id: 'gold', name: 'Gold', color: '#f2c96d' },
+  { id: 'teal', name: 'Teal', color: '#63d6c0' },
 ]
 
 function readAccentTheme(): AccentTheme {

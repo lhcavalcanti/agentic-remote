@@ -631,6 +631,11 @@ run() {
   if [[ -L "$RELEASE_ROOT/current" ]]; then
     previous_release="$(readlink -f -- "$RELEASE_ROOT/current" || true)"
   fi
+  # Publishing prunes by directory mtime. Keep the known-good rollback target
+  # newer than older failed candidates so setup cannot delete it before health
+  # validation decides whether the new release is safe.
+  [[ -z "$previous_release" || ! -d "$previous_release" ]] ||
+    touch -- "$previous_release"
   git -C "$PROD_ROOT" switch --detach "$candidate_commit"
 
   local setup_environment=()

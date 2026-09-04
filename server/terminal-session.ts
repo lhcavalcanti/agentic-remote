@@ -181,7 +181,7 @@ export class TmuxTerminalSessionController
 
   async rename(sessionId: string, title: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const target = await this.target(sessionId)
+      const target = await this.boundTarget(sessionId)
       if (!target) {
         return false
       }
@@ -496,7 +496,7 @@ export class TmuxTerminalSessionController
   async pendingUserInput(
     sessionId: string,
   ): Promise<PendingUserInput | undefined> {
-    const target = await this.target(sessionId)
+    const target = await this.boundTarget(sessionId)
     if (!target) {
       return undefined
     }
@@ -517,7 +517,7 @@ export class TmuxTerminalSessionController
   async pendingPermission(
     sessionId: string,
   ): Promise<PendingPermission | undefined> {
-    const target = await this.target(sessionId)
+    const target = await this.boundTarget(sessionId)
     if (!target) {
       return undefined
     }
@@ -536,7 +536,7 @@ export class TmuxTerminalSessionController
   }
 
   async updateNotice(sessionId: string): Promise<string | undefined> {
-    const target = await this.target(sessionId)
+    const target = await this.boundTarget(sessionId)
     if (!target) {
       return undefined
     }
@@ -1004,7 +1004,7 @@ export class TmuxTerminalSessionController
 
   async cancel(sessionId: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const target = await this.target(sessionId)
+      const target = await this.boundTarget(sessionId)
       if (!target) {
         return false
       }
@@ -1335,6 +1335,13 @@ export class TmuxTerminalSessionController
     )
   }
 
+  private async boundTarget(
+    sessionId: string,
+    fresh = false,
+  ): Promise<string | undefined> {
+    return (await this.boundOwner(sessionId, fresh))?.target
+  }
+
   private activeProcesses(
     fresh = false,
   ): ReturnType<typeof findActiveCopilotProcesses> {
@@ -1663,13 +1670,13 @@ function containsCopiedInteractiveFrame(lines: string[]): boolean {
       continue
     }
     const copied = lines.slice(start + 1, index).join('\n')
-    if (
-      /(Session in use|Install it now\?|Do you trust the files in this folder\?)/i.test(
-        copied,
-      ) &&
-      /enter\s+(?:to\s+)?select/i.test(copied) &&
+    const hasSelect = /enter\s+(?:to\s+)?select/i.test(copied)
+    const copiedDesktop =
+      /Install it now\?/i.test(copied) && /Y\s*\/\s*N/i.test(copied)
+    const copiedCancelable =
+      /(Session in use|Do you trust the files in this folder\?)/i.test(copied) &&
       /esc\s+(?:to\s+)?cancel/i.test(copied)
-    ) {
+    if (hasSelect && (copiedDesktop || copiedCancelable)) {
       return true
     }
   }
@@ -2335,8 +2342,20 @@ export function parseTerminalPermission(
     return undefined
   }
   const commandFrame = activeBottomFrame(rawLines, commandQuestion.start)
-  if (!commandFrame && hasComposerAfter(rawLines, commandQuestion.end)) {
-    return undefined
+  if (!commandFrame) {
+    const footer = lines.findIndex(
+      (line, index) =>
+        index > commandQuestion.end &&
+        /to navigate/i.test(line) &&
+        /enter to select/i.test(line) &&
+        /esc to cancel/i.test(line),
+    )
+    if (
+      footer < 0 ||
+      lines.slice(footer + 1).some((line) => Boolean(line))
+    ) {
+      return undefined
+    }
   }
   const commandLines = commandFrame
     ? lines.slice(commandFrame.start, commandFrame.end + 1)

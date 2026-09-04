@@ -1506,9 +1506,16 @@ Permission request (1 remaining)
       `${panePid}\n`,
     )
     vi.stubEnv('COPILOT_HOME', copilotHome)
+    const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
 
     await expect(
-      new TmuxTerminalSessionController().send(
+      controller.send(
         sessionId,
         'must not enter startup',
         false,

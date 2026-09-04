@@ -88,6 +88,17 @@ describe('TmuxTerminalSessionController', () => {
 ╰────────────────────────────────────────────────────────────╯
       `),
     ).toBe(true)
+    expect(
+      isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────╮
+│ Session in use                     │
+│ ❯ 1. Resume anyway                 │
+│   2. Go back (Esc)                 │
+│ ↑/↓ to navigate · enter to         │
+│ select · esc to cancel             │
+╰────────────────────────────────────╯
+      `),
+    ).toBe(true)
     expect(isTerminalSessionInUsePrompt('❯ Ready for a prompt')).toBe(false)
     expect(
       isTerminalSessionInUsePrompt(`
@@ -168,6 +179,18 @@ describe('TmuxTerminalSessionController', () => {
 │ ❯ Yes, install      No, thanks                │
 │ ←/→ to choose · Enter to select · Y / N       │
 ╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(true)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭────────────────────────────────────╮
+│ THE GITHUB COPILOT APP             │
+│ Now generally available!           │
+│ Install it now?                    │
+│ ❯ Yes, install      No, thanks     │
+│ ←/→ to choose · Enter to           │
+│ select · Y / N                     │
+╰────────────────────────────────────╯
       `),
     ).toBe(true)
     // Both choices share a row, so the marker sits mid-line when the second
@@ -506,6 +529,21 @@ Permission request (1 remaining)
         { optionId: 'terminal:stop' },
       ],
     })
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────╮
+│ Confirm folder trust               │
+│ Do you trust the files in this     │
+│ folder?                            │
+│ ❯ 1. Yes                           │
+│   2. Yes, and remember this folder │
+│      for future sessions           │
+│   3. No (Esc)                      │
+│ ↑/↓ to navigate · enter to         │
+│ select · esc to cancel             │
+╰────────────────────────────────────╯
+      `),
+    ).toMatchObject({ kind: 'folder-trust' })
     expect(
       parseTerminalPermission(`
 ────────────────────────────────────────────────────────────

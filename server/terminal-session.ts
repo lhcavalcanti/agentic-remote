@@ -1568,8 +1568,8 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
   if (!frame) {
     return false
   }
-  const activeView = lines.slice(frame.start, frame.end + 1).join('\n')
   const activeLines = cleaned.slice(frame.start, frame.end + 1)
+  const activeView = activeLines.join(' ').replace(/\s+/gu, ' ')
   return (
     activeLines.some((line) =>
       /^[>❯]\s*(?:1\.\s+Resume anyway|2\.\s+Go back)/i.test(line),
@@ -1592,8 +1592,8 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   if (!frame) {
     return false
   }
-  const activeView = lines.slice(frame.start, frame.end + 1).join('\n')
   const activeLines = cleaned.slice(frame.start, frame.end + 1)
+  const activeView = activeLines.join(' ').replace(/\s+/gu, ' ')
   return (
     activeLines.some((line) => /^THE GITHUB COPILOT APP$/i.test(line)) &&
     /Now generally available!/i.test(activeView) &&
@@ -1681,8 +1681,12 @@ function containsCopiedInteractiveFrame(lines: string[]): boolean {
     if (start === undefined) {
       continue
     }
-    const copied = lines.slice(start + 1, index).join('\n')
-    const normalized = copied.replace(/\s+/gu, ' ')
+    const copiedLines = lines.slice(start + 1, index)
+    const copied = copiedLines.join('\n')
+    const normalized = copiedLines
+      .map(cleanDialogLine)
+      .join(' ')
+      .replace(/\s+/gu, ' ')
     const hasSelect = /enter\s+(?:to\s+)?select/i.test(normalized)
     const copiedDesktop =
       /Install it now\?/i.test(normalized) && /Y\s*\/\s*N/i.test(normalized)
@@ -2295,12 +2299,11 @@ export function parseTerminalPermission(
         line,
       ),
     )
-    const hasFooter = dialog.some(
-      (line) =>
-        /↑\/↓\s+(?:to\s+)?navigate/i.test(line) &&
-        /enter\s+(?:to\s+)?select/i.test(line) &&
-        /esc\s+(?:to\s+)?cancel/i.test(line),
-    )
+    const normalizedDialog = dialog.join(' ').replace(/\s+/gu, ' ')
+    const hasFooter =
+      /↑\/↓\s+(?:to\s+)?navigate/i.test(normalizedDialog) &&
+      /enter\s+(?:to\s+)?select/i.test(normalizedDialog) &&
+      /esc\s+(?:to\s+)?cancel/i.test(normalizedDialog)
     if (
       hasSelection &&
       hasFooter &&

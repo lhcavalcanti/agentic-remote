@@ -113,6 +113,7 @@ export interface TerminalSessionController {
     sessionId: string,
     pane: string,
   ): Promise<boolean>
+  resolveStartupPrompt?(sessionId: string): Promise<boolean>
   /**
    * Whether a prompt is already inside the controller for this session.
    *
@@ -671,6 +672,30 @@ export class TmuxTerminalSessionController
       (isTerminalSessionInUsePrompt(pane) ||
         isTerminalDesktopInstallPrompt(pane))
     )
+  }
+
+  async resolveStartupPrompt(sessionId: string): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.owner(sessionId)
+      const automaticOwner = this.automaticStartupSessions.get(sessionId)
+      if (
+        !owner ||
+        automaticOwner?.pid !== owner.pid ||
+        automaticOwner.target !== owner.target
+      ) {
+        return false
+      }
+      const startup = await waitForTerminalStartup(owner.target, true)
+      if (startup !== 'ready') {
+        return false
+      }
+      this.inputReadySessions.set(sessionId, {
+        pid: owner.pid,
+        target: owner.target,
+      })
+      this.automaticStartupSessions.delete(sessionId)
+      return true
+    })
   }
 
   async fillUserInputForm(
@@ -1346,7 +1371,10 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
   const activeView = lines.slice(frame.start, frame.end + 1).join('\n')
   return (
     /1\.\s+Resume anyway/i.test(activeView) &&
-    /2\.\s+Go back/i.test(activeView)
+    /2\.\s+Go back/i.test(activeView) &&
+    /↑\/↓\s+(?:to\s+)?navigate/i.test(activeView) &&
+    /enter\s+(?:to\s+)?select/i.test(activeView) &&
+    /esc\s+(?:to\s+)?cancel/i.test(activeView)
   )
 }
 
@@ -1364,8 +1392,11 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   const activeLines = cleaned.slice(frame.start, frame.end + 1)
   return (
     activeLines.some((line) => /^THE GITHUB COPILOT APP$/i.test(line)) &&
+    /Now generally available!/i.test(activeView) &&
     /Yes,\s*install/i.test(activeView) &&
     /No,\s*thanks/i.test(activeView) &&
+    /←\/→\s+(?:to\s+)?choose/i.test(activeView) &&
+    /Enter\s+(?:to\s+)?select/i.test(activeView) &&
     /Y\s*\/\s*N/i.test(activeView)
   )
 }

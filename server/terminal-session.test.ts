@@ -84,6 +84,7 @@ describe('TmuxTerminalSessionController', () => {
 │ This session appears to be in use by another CLI or application.
 │ ❯ 1. Resume anyway
 │   2. Go back (Esc)
+│ ↑/↓ to navigate · enter to select · esc to cancel
 ╰────────────────────────────────────────────────────────────╯
       `),
     ).toBe(true)
@@ -133,6 +134,7 @@ describe('TmuxTerminalSessionController', () => {
       isTerminalDesktopInstallPrompt(`
 ╭───────────────────────────────────────────────╮
 │ THE GITHUB COPILOT APP                         │
+│ Now generally available!                       │
 │ Install it now?                               │
 │ ❯ Yes, install      No, thanks                │
 │ ←/→ to choose · Enter to select · Y / N       │
@@ -146,6 +148,15 @@ describe('TmuxTerminalSessionController', () => {
       isTerminalDesktopInstallPrompt(`
 ╭───────────────────────────────────────────────╮
 │ > THE GITHUB COPILOT APP                      │
+│ Install it now?                               │
+│ Yes, install · No, thanks · Y / N             │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
 │ Install it now?                               │
 │ Yes, install · No, thanks · Y / N             │
 ╰───────────────────────────────────────────────╯
@@ -571,7 +582,7 @@ Permission request (1 remaining)
       executable,
       [
         '#!/usr/bin/env bash',
-        "printf '╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
+        "printf '╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
         'IFS= read -r -n 1 answer',
         `printf '%s' "$answer" >"${response}"`,
         'sleep 0.5',
@@ -676,7 +687,7 @@ Permission request (1 remaining)
         'IFS= read -r trust',
         "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
         'sleep 0.5',
-        "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
+        "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
         'IFS= read -r -n 1 answer',
         '[[ "$answer" == n ]] || exit 2',
         "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
@@ -1014,7 +1025,7 @@ Permission request (1 remaining)
         '#!/usr/bin/env bash',
         "printf '╻▄▄▄▄\\n┃\\n'",
         'sleep 0.5',
-        "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
+        "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
         'sleep 60',
       ].join('\n'),
     )

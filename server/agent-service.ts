@@ -3327,7 +3327,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             sessionId,
             pane,
           )) ?? false
-        if (!canHandleStartup) {
+        const resolvedStartup =
+          canHandleStartup &&
+          ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??
+            false)
+        if (!resolvedStartup) {
           // Carries a status so the reason reaches the reader: an unclassified
           // failure is reported as a generic server error, which would leave
           // them no better off than the silent loss this replaces.

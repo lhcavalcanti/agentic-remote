@@ -5229,6 +5229,7 @@ describe('AgentService deletion', () => {
     const pane = [
       ' ╭───────────────────────────────────────────────╮',
       ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
       ' Install it now?',
       ' ❯ Yes, install      No, thanks',
       ' ←/→ to choose · Enter to select · Y / N',
@@ -5275,6 +5276,7 @@ describe('AgentService deletion', () => {
     const pane = [
       ' ╭───────────────────────────────────────────────╮',
       ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
       ' Install it now?',
       ' ❯ Yes, install      No, thanks',
       ' ←/→ to choose · Enter to select · Y / N',
@@ -5286,6 +5288,7 @@ describe('AgentService deletion', () => {
       cancel: vi.fn(async () => true),
       capture: vi.fn(async () => pane),
       canHandleStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => true),
     }
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
@@ -5305,13 +5308,19 @@ describe('AgentService deletion', () => {
     )
     await service.start()
 
-    await service.sendMessage(client.session.sessionId, 'Continue the work')
+    await service.sendMessage(
+      client.session.sessionId,
+      'Continue the work',
+      true,
+    )
 
     expect(terminal.canHandleStartupPrompt).toHaveBeenCalledWith(
       client.session.sessionId,
       pane,
     )
-    expect(terminal.send).toHaveBeenCalled()
+    expect(terminal.resolveStartupPrompt).toHaveBeenCalledWith(
+      client.session.sessionId,
+    )
     await service.stop()
   })
 

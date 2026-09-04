@@ -3372,6 +3372,46 @@ describe('App', () => {
     )
   })
 
+  it('lets the edit go when its message is deliberately removed', async () => {
+    // Every other absence is a drain's doing and is waited out. This one is
+    // the reader taking the message off themselves, and it is acknowledged --
+    // so the marker goes with it, rather than leaving the banner offering to
+    // save into a message that is not there.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+    vi.mocked(removeQueuedPrompt).mockResolvedValue({
+      session: { ...withQueue, queuedCount: 0, queuedPrompts: [] },
+      prompt: queued,
+    })
+
+    render(<App />)
+    await screen.findByText('the original text')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(localStorage.getItem('agentic-remote:queued-edit')).not.toBeNull(),
+    )
+
+    // Taken off deliberately, while the session is still working.
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Remove queued prompt 1' }),
+    )
+
+    await waitFor(() =>
+      expect(document.querySelector('.queued-edit-banner')).toBeNull(),
+    )
+  })
+
   it('keeps the edit while a drain has the message in hand', async () => {
     // A drain takes the prompt off before it dispatches and puts it back if it
     // cannot go, so the queue arrives here without it for a moment. Letting

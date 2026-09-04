@@ -9663,8 +9663,15 @@ function App() {
   // Upserting then puts the session back: one nothing can be done with, that
   // no later event will clear, because its removal has already been and gone.
   function stillListed(session: ManagedSession): boolean {
+    const key = sessionKey(session)
+    // The tombstone first. A removal event and this reply can arrive between
+    // renders, and the list read here is the one from the last render -- so a
+    // session already known to be gone was still found in it.
+    if (removedSessions.current.has(key)) {
+      return false
+    }
     return sessionsRef.current.some(
-      (candidate) => sessionKey(candidate) === sessionKey(session),
+      (candidate) => sessionKey(candidate) === key,
     )
   }
 
@@ -9897,6 +9904,16 @@ function App() {
       if (stillListed(result.session)) {
         setSessions((current) => upsertSession(current, result.session))
       }
+      // Taken off deliberately, and acknowledged, so this is the one absence
+      // that is not a drain's doing. The marker goes with it: left set while
+      // the session was working, the banner offered to save into a message
+      // that was not there and no other could be edited until it settled.
+      const removedKey = sessionKey(target)
+      setEditingQueuedPrompts((current) =>
+        current[removedKey] === promptId
+          ? (({ [removedKey]: _taken, ...rest }) => rest)(current)
+          : current,
+      )
       if (edit) {
         setComposer(result.prompt.content)
         window.requestAnimationFrame(() => composerRef.current?.focus())

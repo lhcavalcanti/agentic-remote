@@ -3805,9 +3805,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
-    if (this.admissionClosed.has(sessionId)) {
+    if (!fromQueue && this.admissionClosed.has(sessionId)) {
       // Resuming, and the prompt already queued has not been claimed yet.
       // A command allowed during execution would otherwise slip past it.
+      //
+      // The queue's own command is the very work this gate is held for, so it
+      // goes past rather than into it: refused here it was put back, and the
+      // reader was told the session was still resuming when it was the resume
+      // that had asked for it.
       throw Object.assign(new Error('The session is still resuming'), {
         // Carries a status so the reason reaches the reader. Left
         // unclassified it was reported as a generic server error,

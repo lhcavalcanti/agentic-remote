@@ -9111,6 +9111,31 @@ function App() {
       submissionsInFlight.current.delete(targetKey)
     }
 
+    // A message rewritten into one of the commands this app answers is being
+    // replaced by that action, so the copy waiting in the queue goes with it.
+    // Left there it would be sent later as ordinary text.
+    const consumeEditedPrompt = async (): Promise<boolean> => {
+      if (!editingQueuedPromptId) {
+        return true
+      }
+      const removedId = editingQueuedPromptId
+      try {
+        const result = await removeQueuedPrompt(
+          selected.computerId,
+          selected.id,
+          removedId,
+        )
+        setSessions((current) => upsertSession(current, result.session))
+        setEditingQueuedPrompt((current) =>
+          current?.promptId === removedId ? undefined : current,
+        )
+        return true
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+        return false
+      }
+    }
+
     const isCommand = content.startsWith('/')
     const commandName = isCommand
       ? content.slice(1).split(/\s+/, 1)[0].toLowerCase()
@@ -9134,12 +9159,19 @@ function App() {
       } else {
         setStatuslineOpen(true)
       }
+      if (!(await consumeEditedPrompt())) {
+        settleSubmission()
+        return
+      }
       setComposer('')
       settleSubmission()
       reofferFailedPrompt(targetKey)
       return
     }
     if (command?.name === 'clear') {
+      // Clearing replaces the session, and its queue goes with it, so the
+      // waiting copy needs nothing done to it here.
+      setEditingQueuedPrompt(undefined)
       setComposer('')
       // The session this became. Everything the recovery was carrying has just
       // moved here, and offering it against the key that is gone left the
@@ -9152,8 +9184,12 @@ function App() {
       return
     }
     if (command?.name === 'restart') {
-      setComposer('')
       await restartSelectedSession()
+      if (!(await consumeEditedPrompt())) {
+        settleSubmission()
+        return
+      }
+      setComposer('')
       focusComposer(targetKey)
       settleSubmission()
       reofferFailedPrompt(targetKey)
@@ -9163,8 +9199,12 @@ function App() {
       commandName === 'cwd' &&
       !content.slice(commandName.length + 1).trim()
     ) {
-      setComposer('')
       setCwdOpen(true)
+      if (!(await consumeEditedPrompt())) {
+        settleSubmission()
+        return
+      }
+      setComposer('')
       settleSubmission()
       reofferFailedPrompt(targetKey)
       return
@@ -9638,6 +9678,19 @@ function App() {
     setEditingQueuedPrompt(undefined)
   }, [editingQueuedPrompt, selected])
 
+  /** Whether the text names a command this app answers rather than the agent. */
+  function isWebOnlyCommand(text: string): boolean {
+    if (!text.startsWith('/')) {
+      return false
+    }
+    const name = text.slice(1).split(/\s+/, 1)[0].toLowerCase()
+    return webCommands.some(
+      (candidate) =>
+        candidate.name.toLowerCase() === name ||
+        candidate.aliases?.some((alias) => alias.toLowerCase() === name),
+    )
+  }
+
   async function saveQueuedPromptEdit(): Promise<boolean> {
     const promptId = editingQueuedPromptId
     // What the composer held when the save was asked for, and what is sent.
@@ -9646,6 +9699,15 @@ function App() {
     const submitted = composer
     const content = submitted.trim()
     if (!selected || !promptId || !content || queueActionId) {
+      return false
+    }
+    // The queue is drained by the agent, and these are answered here instead.
+    // Saved as a waiting message one would never be carried out: the runtime
+    // has no such command, so the queue would stop on it.
+    if (isWebOnlyCommand(content)) {
+      setError(
+        `/${content.slice(1).split(/\s+/, 1)[0]} is answered by this app rather than the agent, so it cannot wait in the queue. Send it instead.`,
+      )
       return false
     }
     const target = selected
@@ -9659,7 +9721,16 @@ function App() {
         content,
       )
       setSessions((current) => upsertSession(current, result.session))
-      setEditingQueuedPrompt(undefined)
+      // Kept open when the composer moved on while the request was in flight:
+      // the server has the text that was submitted, and the newer writing is
+      // still here to be saved in its turn. Closing it left that writing as an
+      // ordinary draft beside a message still queued.
+      const movedOn = composerRef.current?.value !== submitted
+      if (!movedOn) {
+        setEditingQueuedPrompt((current) =>
+          current?.promptId === promptId ? undefined : current,
+        )
+      }
       // Only what was actually saved, and only from the session it was saved
       // for. The composer stays writable while the request is in flight, so
       // clearing it regardless threw away anything typed meanwhile -- and

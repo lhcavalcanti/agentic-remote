@@ -2925,6 +2925,143 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('my rewritten text')
   })
 
+  it('refuses to save an edit rewritten into a command this app answers', async () => {
+    // The queue is drained by the agent, which has no /cwd. Saved as a waiting
+    // message it would either stop the queue or, worse, be handed over as
+    // ordinary text later. Refused at the point of saving, with the way to
+    // carry it out named.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+
+    render(<App />)
+    await screen.findByText('the original text')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
+    )
+    const composer = screen.getByLabelText('Message')
+    fireEvent.change(composer, { target: { value: '/cwd /tmp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+
+    await screen.findAllByText(/answered by this app rather than the agent/i)
+    expect(updateQueuedPrompt).not.toHaveBeenCalled()
+    // Still being edited, so it can be rewritten into something sendable.
+    expect(document.querySelector('.queued-edit-banner')).not.toBeNull()
+  })
+
+  it('takes the message off the queue when its edit is sent as a command', async () => {
+    // Sending a rewritten message carries it out in place of the copy waiting
+    // in the queue. Left there, that copy would later be handed to the agent
+    // as ordinary text -- the same message twice, once as an action and once
+    // as words.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'idle' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+    vi.mocked(removeQueuedPrompt).mockResolvedValue({
+      session: { ...withQueue, queuedCount: 0, queuedPrompts: [] },
+      prompt: queued,
+    })
+
+    render(<App />)
+    await screen.findByText('the original text')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
+    )
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: '/cwd' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(removeQueuedPrompt).toHaveBeenCalledWith(
+        withQueue.computerId,
+        withQueue.id,
+        'q1',
+      ),
+    )
+  })
+
+  it('stays in edit mode when the writing moved on while the save was in flight', async () => {
+    // Two rewrites in a row: the first is still being written back when the
+    // second is typed. Leaving edit mode on the first would leave that second
+    // rewrite sitting in the composer as an ordinary draft, with no way back
+    // to the message it was meant for, beside a queue still holding the older
+    // text.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+    let settleSave: (value: { session: ManagedSession }) => void = () => {}
+    vi.mocked(updateQueuedPrompt).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settleSave = resolve as typeof settleSave
+        }),
+    )
+
+    render(<App />)
+    await screen.findByText('the original text')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
+    )
+    const composer = screen.getByLabelText('Message')
+    fireEvent.change(composer, { target: { value: 'first rewrite' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+    await waitFor(() => expect(updateQueuedPrompt).toHaveBeenCalled())
+
+    // The next rewrite is typed before the first one has been written back.
+    fireEvent.change(composer, { target: { value: 'second rewrite' } })
+    await act(async () => {
+      settleSave({
+        session: {
+          ...withQueue,
+          queuedPrompts: [{ ...queued, content: 'first rewrite' }],
+        },
+      })
+    })
+
+    // Still editing the same message, so the second rewrite can be saved too.
+    await waitFor(() =>
+      expect(document.querySelector('.queued-edit-banner')).not.toBeNull(),
+    )
+    expect(screen.getByLabelText('Message')).toHaveValue('second rewrite')
+  })
+
   it('leaves edit mode behind when the reader moves to another session', async () => {
     // The composer follows the selection, so a marker that does not is a
     // marker pointing at a message the reader can no longer see -- and Enter,

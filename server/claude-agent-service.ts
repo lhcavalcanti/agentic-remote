@@ -1654,6 +1654,16 @@ export class ClaudeAgentService
       // goes past that gate rather than into it. Sending through the public
       // path refused it on the very flag that exists to keep newer work out
       // until this has gone in, so resume finished having sent nothing.
+      if (next.command) {
+        // Claude has no slash commands of its own, so a queued one cannot be
+        // carried out. Sent as a message it reaches the model as text and
+        // looks like it worked, which is worse than saying it did not.
+        throw new Error(
+          `Claude Agent sessions do not run /${
+            next.content.slice(1).split(/\s+/, 1)[0]
+          }`,
+        )
+      }
       await this.dispatchQueued(sessionId, next.content, false, true)
     } catch (error) {
       // The prompt is off the queue and was never sent, so it goes back where

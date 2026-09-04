@@ -3780,6 +3780,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // The failure this command answers, so a queued one and the marker it
     // answers are written together rather than one after the other.
     answers?: string,
+    // The queue dispatching its own command. It holds the draining marker for
+    // the whole of it, and that marker reads as busy, so a command taken off
+    // the queue would be refused and put back for ever.
+    fromQueue = false,
   ): Promise<SessionDetail> {
 
     if (!command.startsWith('/')) {
@@ -3826,6 +3830,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         argument,
         enqueue,
         answers,
+        fromQueue,
       )
     } finally {
       releaseDispatch()
@@ -3840,6 +3845,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // The failure this command answers, so a queued one and the marker it
     // answers are written together rather than one after the other.
     answers?: string,
+    fromQueue = false,
   ): Promise<SessionDetail> {
     const catalog = await this.sessionCommandCatalog(sessionId)
     const commandInfo = catalog.commands.find(
@@ -3857,7 +3863,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const stored = this.store.get(sessionId)
     const busy =
       this.activePrompts.has(sessionId) ||
-      this.drainingSessions.has(sessionId) ||
+      // The queue's own command is the work the drain marker stands for, so it
+      // goes past that gate rather than into it.
+      (!fromQueue && this.drainingSessions.has(sessionId)) ||
       // A terminal the CLI owns is worked in directly, so a turn can be
       // running that this process never dispatched. Its recorded status is
       // the only account of that, and a command sent rather than queued would
@@ -5710,7 +5718,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               // ordinary message path it reaches the model as text, so a
               // queued `/clear` became a sentence about clearing rather than
               // the command it was queued as.
-              await this.runCommand(sessionId, next.content, false)
+              await this.runCommand(
+                sessionId,
+                next.content,
+                false,
+                undefined,
+                true,
+              )
             } else {
               await this.startMessage(sessionId, next.content, true)
             }

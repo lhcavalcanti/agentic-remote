@@ -9102,60 +9102,6 @@ function App() {
     // and the status that follows it -- queued, sent to the terminal, the
     // reply arriving -- all happened somewhere off screen.
     followLatest()
-    // Set only when this send is an edited prompt leaving the queue.
-    let queuedPlaceBefore = -1
-    let queuedIdsBefore = new Set<string>()
-    // This message is already waiting, and is about to be sent instead. It
-    // comes off the queue first, or the same text goes out twice: once now and
-    // once when the queue reaches it.
-    //
-    // The composer is closed for the whole of it, and the marker is kept until
-    // the removal has actually landed. Clearing it first, with sending still
-    // false, let a second Enter arrive during the DELETE and send straight
-    // away -- past the removal that was supposed to happen first.
-    if (editingQueuedPromptId) {
-      const removedId = editingQueuedPromptId
-      // Where it was waiting. A session that still has other prompts queued
-      // cannot send anything ahead of them, so this one is appended -- and a
-      // message edited from the front of the queue would quietly come out at
-      // the back. Its place is given back to it below.
-      queuedPlaceBefore = (selected.queuedPrompts || []).findIndex(
-        (prompt) => prompt.id === removedId,
-      )
-      // The prompts already waiting. Whatever is here afterwards that was not
-      // here before is the one this send added: matching on the text instead
-      // mistook an identical message already at the end of the queue for it,
-      // and moved somebody else's prompt to this one's old place.
-      queuedIdsBefore = new Set(
-        (selected.queuedPrompts || [])
-          .filter((prompt) => prompt.id !== removedId)
-          .map((prompt) => prompt.id),
-      )
-      setSending(true)
-      try {
-        const result = await removeQueuedPrompt(
-          selected.computerId,
-          selected.id,
-          removedId,
-        )
-        setSessions((current) => upsertSession(current, result.session))
-        // Only if it is still the one this send took out. Editing stays
-        // available while a send is in flight, so a reader can open another
-        // session and start rewriting there -- and clearing whatever marker
-        // happens to be set would leave that one queued with its text sitting
-        // in the composer, ready to go twice.
-        setEditingQueuedPrompt((current) =>
-          current?.promptId === removedId ? undefined : current,
-        )
-      } catch (caught) {
-        // It is still waiting, so nothing is sent: sending now would deliver
-        // it twice over.
-        setError(caught instanceof Error ? caught.message : String(caught))
-        return
-      } finally {
-        setSending(false)
-      }
-    }
     const targetKey = sessionKey(selected)
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
@@ -9223,6 +9169,54 @@ function App() {
       reofferFailedPrompt(targetKey)
       return
     }
+    // This message is already waiting, and is about to be sent instead. It
+    // comes off the queue first, or the same text goes out twice: once now and
+    // once when the queue reaches it.
+    if (editingQueuedPromptId) {
+      const removedId = editingQueuedPromptId
+      const waiting = selected.queuedPrompts || []
+      // Nothing can be sent ahead of work that is already waiting: the
+      // provider appends it, so "send now" would quietly mean "send last".
+      // Rather than move it back afterwards -- which races the queue draining
+      // and still was not a send -- this says what is true and leaves the
+      // message where it is.
+      if (waiting.some((prompt) => prompt.id !== removedId)) {
+        setError(
+          'Other messages are waiting, so this cannot be sent ahead of them. Save it to keep its place, or remove the others first.',
+        )
+        settleSubmission()
+        return
+      }
+      // The composer is closed for the whole of it, and the marker is kept
+      // until the removal has actually landed. Clearing it first, with sending
+      // still false, let a second Enter arrive during the DELETE and send
+      // straight away -- past the removal that was supposed to happen first.
+      setSending(true)
+      try {
+        const result = await removeQueuedPrompt(
+          selected.computerId,
+          selected.id,
+          removedId,
+        )
+        setSessions((current) => upsertSession(current, result.session))
+        // Only if it is still the one this send took out. Editing stays
+        // available while a send is in flight, so a reader can open another
+        // session and start rewriting there -- and clearing whatever marker
+        // happens to be set would leave that one queued with its text sitting
+        // in the composer, ready to go twice.
+        setEditingQueuedPrompt((current) =>
+          current?.promptId === removedId ? undefined : current,
+        )
+      } catch (caught) {
+        // It is still waiting, so nothing is sent: sending now would deliver
+        // it twice over.
+        setError(caught instanceof Error ? caught.message : String(caught))
+        settleSubmission()
+        return
+      } finally {
+        setSending(false)
+      }
+    }
     const shouldEnqueue =
       enqueue ||
       (selected.status === 'running' &&
@@ -9264,39 +9258,6 @@ function App() {
         unshownFailures.current.delete(targetKey)
       }
       setSessions((current) => upsertSession(current, updated))
-      // Other prompts were waiting, so this could not go ahead of them and was
-      // appended instead. It is put back where it was rather than left at the
-      // back: a message edited from the front of the queue coming out last is
-      // not what pressing Send asked for.
-      const queue = updated.queuedPrompts || []
-      const addedIndex = queue.findIndex(
-        (prompt) => !queuedIdsBefore.has(prompt.id),
-      )
-      if (
-        queuedPlaceBefore >= 0 &&
-        queue.length > 1 &&
-        addedIndex >= 0 &&
-        addedIndex !== queuedPlaceBefore
-      ) {
-        const restored = [...queue]
-        const [moved] = restored.splice(addedIndex, 1)
-        restored.splice(queuedPlaceBefore, 0, moved)
-        const order = restored.map((prompt) => prompt.id)
-        setSessions((current) =>
-          upsertSession(current, { ...updated, queuedPrompts: restored }),
-        )
-        try {
-          const reordered = await reorderQueuedPrompts(
-            selected.computerId,
-            selected.id,
-            order,
-          )
-          setSessions((current) => upsertSession(current, reordered))
-        } catch {
-          // The queue moved on. Its own order stands.
-          setSessions((current) => upsertSession(current, updated))
-        }
-      }
     } catch (caught) {
       prependComposerForKey(targetKey, content)
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -9565,7 +9526,22 @@ function App() {
       : undefined
 
   function editQueuedPrompt(prompt: QueuedPrompt) {
-    if (queueActionId) {
+    if (queueActionId || sending) {
+      return
+    }
+    // Already rewriting this one. Starting again would put the queued text
+    // back over whatever has been typed since.
+    if (editingQueuedPromptId === prompt.id) {
+      return
+    }
+    // Rewriting a different one, with changes that have not been saved.
+    // Replacing the marker silently detaches that rewrite and leaves it in the
+    // composer beside a message still waiting, which is how the same thing
+    // gets sent twice.
+    if (editingQueuedPromptId && composer.trim()) {
+      setError(
+        'Finish with the message you are editing first: save it, or press Escape to leave it as it was.',
+      )
       return
     }
     setEditingQueuedPrompt({
@@ -9648,11 +9624,27 @@ function App() {
       // It went out, or somebody took it off, while it was being rewritten.
       // Saying only "not found" leaves the reader wondering what became of
       // their text; it is still in the composer, and this says so.
-      setError(
-        /not found/i.test(message)
-          ? 'That message left the queue while you were editing it. Your text is still here.'
-          : message,
-      )
+      if (/not found/i.test(message)) {
+        setError(
+          'That message left the queue while you were editing it. Your text is still here.',
+        )
+        // The row on screen is stale, and edit mode is still pointing at an id
+        // that is gone, so every later Save and Send would fail the same way.
+        // The queue is read again, which retires the row and, through it, the
+        // marker -- leaving the rewriting in the composer.
+        try {
+          const fresh = await getSession(target.computerId, target.id)
+          setSessions((current) => upsertSession(current, fresh))
+        } catch {
+          // Even the re-read failed. The marker is let go of directly so the
+          // banner stops offering a Save that cannot succeed.
+          setEditingQueuedPrompt((current) =>
+            current?.promptId === promptId ? undefined : current,
+          )
+        }
+        return false
+      }
+      setError(message)
       return false
     } finally {
       setQueueActionId(undefined)
@@ -10927,7 +10919,7 @@ function App() {
                     <div className="queued-prompts__list">
                       {selected.queuedPrompts.map((prompt, index) => (
                         <SortableQueuedPrompt
-                          busy={Boolean(queueActionId)}
+                          busy={Boolean(queueActionId) || sending}
                           editing={editingQueuedPromptId === prompt.id}
                           index={index}
                           key={prompt.id}

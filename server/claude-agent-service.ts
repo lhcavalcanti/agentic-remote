@@ -713,12 +713,21 @@ export class ClaudeAgentService
    */
   // Taking it off and sending it are one operation here rather than three
   // requests from the browser, which between them leave room for the message
-  // to be lost or to go out behind work queued since. On failure it goes back
-  // where it was.
+  // to be lost or to go out behind work queued since.
+  //
+  // The sending is the session's own drain. It is what closes admission for
+  // the turn it starts, so another sender cannot look in, see an idle session
+  // and an empty queue, and begin a second query alongside this one -- and it
+  // is what puts the prompt back if it cannot go.
   async sendQueuedPrompt(
     sessionId: string,
     promptId: string,
+    rawContent?: string,
   ): Promise<SessionDetail> {
+    const content = rawContent?.trim()
+    if (rawContent !== undefined && !content) {
+      throw new Error('Message cannot be empty')
+    }
     const session = this.store.get(sessionId)
     if (!session) {
       throw new Error('Session not found')
@@ -745,27 +754,29 @@ export class ClaudeAgentService
         { statusCode: 409 },
       )
     }
-    // Claude advertises no commands of its own, so anything a queued entry was
-    // marked as could only be answered elsewhere. Refused rather than sent as
-    // the words it would otherwise arrive as.
-    if (prompt.command) {
-      throw Object.assign(
-        new Error('This session has no commands, so this cannot be sent'),
-        { statusCode: 409 },
+    // The rewriting goes in before it is sent. Sending by id alone sent
+    // whatever was stored, so a message rewritten and then sent went out as
+    // the text it used to be.
+    if (content !== undefined) {
+      const updated = await this.store.updateQueuedPrompt(
+        sessionId,
+        promptId,
+        content,
       )
+      if (!updated.prompt) {
+        throw Object.assign(
+          new Error('That message is no longer waiting to be sent'),
+          { statusCode: 409 },
+        )
+      }
+      this.publish(updated.session)
     }
-    const { session: without } = await this.store.removeQueuedPrompt(
-      sessionId,
-      promptId,
-    )
-    this.publish(without)
-    try {
-      return await this.sendMessage(sessionId, prompt.content)
-    } catch (error) {
-      const restored = await this.store.enqueuePrompt(sessionId, prompt, true)
-      this.publish(restored)
-      throw error
+    await this.drainQueue(sessionId)
+    const after = this.store.get(sessionId)
+    if (!after) {
+      throw new Error('Session not found')
     }
+    return after
   }
 
   async sendMessage(

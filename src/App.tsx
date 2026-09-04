@@ -5773,6 +5773,11 @@ function App() {
     [expandedKnowledge, knowledgeFolders],
   )
   const [commands, setCommands] = useState<SlashCommand[]>([])
+  // Which session the list above belongs to. It is fetched per session, so
+  // until the new one has arrived the old one is still on hand -- and reading
+  // it as though it described the session now open let a command only the
+  // previous provider has be saved into this one's queue.
+  const [commandsKey, setCommandsKey] = useState<string>()
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
@@ -5788,6 +5793,10 @@ function App() {
   // bare id left the next session in edit mode, and Enter, Send and Escape all
   // acted on a message that was not in front of the reader.
   const [queueActionId, setQueueActionId] = useState<string>()
+  // The prompt a send is carrying right now. The drain takes it off the queue
+  // before it dispatches and puts it back if it cannot go, so for a moment the
+  // queue arrives here without it -- which is not the message being gone.
+  const [sendingQueuedPromptId, setSendingQueuedPromptId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [restarting, setRestarting] = useState(false)
@@ -7330,6 +7339,7 @@ function App() {
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
       setCommands([])
+      setCommandsKey(selectedKey)
       return
     }
     let active = true
@@ -7397,6 +7407,7 @@ function App() {
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
       setCommands([])
+      setCommandsKey(selectedKey)
       return
     }
     if (selected?.suspended) {
@@ -7410,12 +7421,14 @@ function App() {
       // list is only knowable from a live runtime, and a resumed session that
       // offered no commands until its first message would be the bug.
       setCommands([])
+      setCommandsKey(selectedKey)
       return
     }
     let active = true
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
         if (active) {
+          setCommandsKey(selectedKey)
           setCommands([
             ...availableCommands,
             ...webCommands.filter(
@@ -7432,6 +7445,7 @@ function App() {
       .catch(() => {
         if (active) {
           setCommands([])
+          setCommandsKey(selectedKey)
         }
       })
     return () => {
@@ -9211,16 +9225,39 @@ function App() {
     // delete and a send, and between any two of them another client could
     // queue work or start a turn -- leaving the message appended behind what
     // arrived, or gone with nothing sent.
+    // Queue means queue, even while rewriting: it is the button that says
+    // "keep its place", so it writes the rewriting back rather than sending
+    // it. Falling through to the ordinary path instead would have left the
+    // message queued and added a second copy of it.
+    if (editingQueuedPromptId && enqueue) {
+      settleSubmission()
+      void saveQueuedPromptEdit()
+      return
+    }
+    // A save already on its way carries the same text, and sending now would
+    // race it: the send takes the message, the save then writes to something
+    // that is no longer there, and whichever lands second decides what the
+    // reader ends up with.
+    if (editingQueuedPromptId && queueActionId) {
+      setError('This message is still being saved. Try again in a moment.')
+      settleSubmission()
+      return
+    }
     if (editingQueuedPromptId) {
       const sentId = editingQueuedPromptId
       // Closed for the whole of it, so a second Enter cannot arrive during the
       // request and send the same text again.
       setSending(true)
+      setSendingQueuedPromptId(sentId)
       try {
+        // The rewriting goes with it. Sending by id alone sent whatever the
+        // server still had, so a message rewritten and then sent went out as
+        // the text it used to be.
         const updated = await sendQueuedPrompt(
           selected.computerId,
           selected.id,
           sentId,
+          content,
         )
         setSessions((current) => upsertSession(current, updated))
         // Only if it is still the one this send took out. Editing stays
@@ -9239,6 +9276,7 @@ function App() {
         setError(caught instanceof Error ? caught.message : String(caught))
       } finally {
         setSending(false)
+        setSendingQueuedPromptId(undefined)
       }
       settleSubmission()
       reofferFailedPrompt(targetKey)
@@ -9648,6 +9686,11 @@ function App() {
     // at the selection alone meant a message that drained while another
     // session was open left its marker set for ever -- and a single marker
     // blocks editing anywhere.
+    if (sendingQueuedPromptId === editing.promptId) {
+      // Being sent right now. The drain takes it off before dispatching, so
+      // the queue arrives without it for a moment even when it is coming back.
+      return
+    }
     if (!sessions.length) {
       // Nothing has been loaded yet. An empty list is not evidence that the
       // session is gone, and reading it as such threw the marker away on every
@@ -9659,7 +9702,18 @@ function App() {
       (session) => sessionKey(session) === editing.sessionKey,
     )
     if (!owner) {
-      // The session it belonged to is gone, and with it the message.
+      // Absent is not the same as gone. After a reload the listing holds only
+      // the computers that answered, so a node that is offline or still
+      // connecting has no sessions here at all -- and reading that as deletion
+      // threw away the rewrite for a message that is still queued on it.
+      const ownerComputerId = editing.sessionKey.split(':')[0]
+      const ownerComputer = computers.find(
+        (computer) => computer.id === ownerComputerId,
+      )
+      if (!ownerComputer || !ownerComputer.online) {
+        return
+      }
+      // Its computer answered and did not list it, which is deletion.
       setEditingQueuedPrompt(undefined)
       return
     }
@@ -9676,7 +9730,7 @@ function App() {
       return
     }
     setEditingQueuedPrompt(undefined)
-  }, [editingQueuedPrompt, sessions])
+  }, [editingQueuedPrompt, sessions, computers, sendingQueuedPromptId])
 
   /** Whether the text names a command this app answers rather than the agent. */
   function isWebOnlyCommand(text: string): boolean {
@@ -9722,6 +9776,16 @@ function App() {
       if (isWebOnlyCommand(content)) {
         setError(
           `/${name} is answered by this app rather than the agent, so it cannot wait in the queue. Cancel the edit and run it instead.`,
+        )
+        return false
+      }
+      // Only against this session's own list. While the new one is still
+      // arriving the previous session's is what is on hand, and reading it as
+      // though it described this session let a command only the other provider
+      // has be saved into this queue -- where its drain stops on it.
+      if (commandsKey !== sessionKey(selected)) {
+        setError(
+          'Still reading what this session can do. Try again in a moment.',
         )
         return false
       }

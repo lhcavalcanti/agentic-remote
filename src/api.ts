@@ -350,10 +350,14 @@ export async function sendQueuedPrompt(
   computerId: string,
   sessionId: string,
   promptId: string,
+  content?: string,
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}/send`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+      body: JSON.stringify(content === undefined ? {} : { content }),
+    },
   )
   return response.session
 }

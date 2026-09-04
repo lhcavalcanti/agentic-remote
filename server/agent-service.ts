@@ -3440,20 +3440,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    */
   // Taking it off and sending it are one operation here rather than three
   // requests from the browser. Between a read, a delete and a send, another
-  // client can queue work or start a turn: the delete lands, the send is
-  // appended behind whatever arrived, and what was asked for -- send this one
-  // now -- quietly did not happen. Worse, a send that fails after the delete
-  // has already taken the message off the queue.
+  // client can queue work or start a turn: the delete lands, and the send is
+  // either appended behind what arrived or never happens at all, with the
+  // message already gone.
   //
-  // This is the drain's own bargain: take the prompt in the queue's lane,
-  // dispatch it as the queue would, and put it back where it was if it cannot
-  // go. `fromQueue` is what tells the busy gates that this prompt is the
-  // queue's own, so it is not refused for the very drain it belongs to.
+  // The sending itself is the session's own drain, not a dispatch written
+  // again here. The drain is what knows a terminal-backed session from an SDK
+  // one, closes admission for the turn it starts, runs a queued command as a
+  // command, and puts the prompt back if it cannot go. Reaching past it meant
+  // answering all of that a second time, in a copy that had already drifted.
   async sendQueuedPrompt(
     sessionId: string,
     promptId: string,
+    rawContent?: string,
   ): Promise<SessionDetail> {
-    const taken = await this.serializeQueue(sessionId, async () => {
+    const content = rawContent?.trim()
+    if (rawContent !== undefined && !content) {
+      throw new Error('Message cannot be empty')
+    }
+    await this.serializeQueue(sessionId, async () => {
       const session = this.store.get(sessionId)
       if (!session) {
         throw new Error('Session not found')
@@ -3465,8 +3470,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
       }
       const queue = session.queuedPrompts || []
-      const prompt = queue.find((waiting) => waiting.id === promptId)
-      if (!prompt) {
+      const index = queue.findIndex((waiting) => waiting.id === promptId)
+      if (index < 0) {
         throw Object.assign(
           new Error('That message is no longer waiting to be sent'),
           { statusCode: 409 },
@@ -3483,26 +3488,32 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           { statusCode: 409 },
         )
       }
-      const { session: without } = await this.store.removeQueuedPrompt(
-        sessionId,
-        promptId,
-      )
-      this.publish(without)
-      return prompt
+      // The rewriting goes in before it is sent. Sending by id alone sent
+      // whatever was stored, so a message rewritten and then sent went out as
+      // the text it used to be.
+      if (content !== undefined) {
+        const { prompt } = await this.store.updateQueuedPrompt(
+          sessionId,
+          promptId,
+          content,
+        )
+        if (!prompt) {
+          throw Object.assign(
+            new Error('That message is no longer waiting to be sent'),
+            { statusCode: 409 },
+          )
+        }
+      }
     })
-    try {
-      return taken.command
-        ? await this.runCommand(sessionId, taken.content, false, undefined, true)
-        : await this.startMessage(sessionId, taken.content, true)
-    } catch (error) {
-      // Back at the head, which is where it was: it was the only one waiting.
-      // Anything queued since was queued after it.
-      const restored = await this.serializeQueue(sessionId, () =>
-        this.store.enqueuePrompt(sessionId, taken, true),
-      )
-      this.publish(restored)
-      throw error
+    // Outside the lane, because the drain takes it for itself.
+    await (this.store.backend(sessionId) === 'terminal'
+      ? this.drainTerminalQueue(sessionId)
+      : this.drainSdkQueue(sessionId))
+    const after = this.store.get(sessionId)
+    if (!after) {
+      throw new Error('Session not found')
     }
+    return after
   }
 
   private async enqueuePrompt(

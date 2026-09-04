@@ -472,14 +472,16 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     sessionId: string,
     promptId: string,
+    content?: string,
   ): Promise<ManagedSession> {
     const computer = this.requireComputer(computerId)
     const session =
       computerId === this.identity.info.id
-        ? await this.localService.sendQueuedPrompt(sessionId, promptId)
+        ? await this.localService.sendQueuedPrompt(sessionId, promptId, content)
         : await this.requireClient(computerId).sendQueuedPrompt(
             sessionId,
             promptId,
+            content,
           )
     return managedSession(session, computer)
   }

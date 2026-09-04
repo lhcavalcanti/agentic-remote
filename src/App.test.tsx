@@ -5414,6 +5414,141 @@ describe('App', () => {
       }),
     )
   })
+
+  it('falls back to home when the active session folder is unavailable', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => {
+        if (path === session.cwd) {
+          throw new Error('Folder does not exist')
+        }
+        return {
+          path: '~',
+          directories: [{ name: 'src', path: '~/src' }],
+        }
+      },
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenNthCalledWith(
+        2,
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+    expect(
+      within(rootDialog).getByText(
+        `Could not open ${session.cwd}: Folder does not exist. Showing the home folder instead.`,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(rootDialog).getByRole('button', { name: 'Add this folder' }),
+    ).toBeEnabled()
+  })
+
+  it('uses the session folder only before the root picker computer changes', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => ({ path, directories: [] }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    const computerSelect = within(rootDialog).getByLabelText('Computer')
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        session.cwd,
+        'all',
+      ),
+    )
+
+    fireEvent.change(computerSelect, {
+      target: { value: secondComputer.id },
+    })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        secondComputer.id,
+        '~',
+        'all',
+      ),
+    )
+    fireEvent.change(computerSelect, { target: { value: computer.id } })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenLastCalledWith(
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+  })
+
+  it('ignores a stale root browse after switching computers', async () => {
+    let finishStaleBrowse:
+      | ((listing: {
+          path: string
+          parent: string
+          directories: []
+        }) => void)
+      | undefined
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (computerId, path = '~') => {
+        if (computerId === computer.id && path === session.cwd) {
+          return {
+            path,
+            directories: [{ name: 'slow', path: `${path}/slow` }],
+          }
+        }
+        if (computerId === computer.id && path.endsWith('/slow')) {
+          return await new Promise((resolve) => {
+            finishStaleBrowse = resolve
+          })
+        }
+        return { path: '/home/worker', directories: [] }
+      },
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(
+      await within(rootDialog).findByRole('button', { name: 'slow' }),
+    )
+    fireEvent.change(within(rootDialog).getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    await within(rootDialog).findByText('/home/worker')
+
+    await act(async () => {
+      finishStaleBrowse?.({
+        path: `${session.cwd}/slow`,
+        parent: session.cwd,
+        directories: [],
+      })
+    })
+    expect(within(rootDialog).getByText('/home/worker')).toBeInTheDocument()
+    expect(
+      within(rootDialog).queryByText(`${session.cwd}/slow`),
+    ).not.toBeInTheDocument()
+  })
   it('renders an image referenced from a workspace document', async () => {
     vi.mocked(readWorkspaceFile).mockImplementation(async (_c, _s, target) =>
       target === 'docs/diagram.svg'

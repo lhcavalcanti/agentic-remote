@@ -4933,6 +4933,7 @@ function AddKnowledgeRootDialog({
     online[0]?.id ||
     ''
   const [computerId, setComputerId] = useState(startingComputerId)
+  const [computerSelectionRevision, setComputerSelectionRevision] = useState(0)
   const [startingLocation] = useState({
     computerId: startingComputerId,
     path:
@@ -4944,49 +4945,80 @@ function AddKnowledgeRootDialog({
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const directoryRequest = useRef(0)
 
   async function browse(path: string) {
     if (!computerId) {
       return
     }
+    const request = ++directoryRequest.current
     setLoading(true)
     setError(undefined)
     try {
-      setListing(await listDirectories(computerId, path, 'all'))
+      const next = await listDirectories(computerId, path, 'all')
+      if (request === directoryRequest.current) {
+        setListing(next)
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      if (request === directoryRequest.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
     } finally {
-      setLoading(false)
+      if (request === directoryRequest.current) {
+        setLoading(false)
+      }
     }
   }
 
   useEffect(() => {
     let active = true
+    const request = ++directoryRequest.current
     const path =
+      computerSelectionRevision === 0 &&
       startingLocation.computerId === computerId
         ? startingLocation.path
         : '~'
     setLoading(true)
+    setListing(undefined)
+    setError(undefined)
     void listDirectories(computerId, path, 'all')
+      .catch(async (caught: unknown) => {
+        if (
+          path === '~' ||
+          !active ||
+          request !== directoryRequest.current
+        ) {
+          throw caught
+        }
+        const fallback = await listDirectories(computerId, '~', 'all')
+        if (active && request === directoryRequest.current) {
+          const reason =
+            caught instanceof Error ? caught.message : String(caught)
+          setError(
+            `Could not open ${path}: ${reason}. Showing the home folder instead.`,
+          )
+        }
+        return fallback
+      })
       .then((next) => {
-        if (active) {
+        if (active && request === directoryRequest.current) {
           setListing(next)
         }
       })
       .catch((caught: unknown) => {
-        if (active) {
+        if (active && request === directoryRequest.current) {
           setError(caught instanceof Error ? caught.message : String(caught))
         }
       })
       .finally(() => {
-        if (active) {
+        if (active && request === directoryRequest.current) {
           setLoading(false)
         }
       })
     return () => {
       active = false
     }
-  }, [computerId, startingLocation])
+  }, [computerId, computerSelectionRevision, startingLocation])
 
   return (
     <DialogFrame
@@ -4999,7 +5031,14 @@ function AddKnowledgeRootDialog({
         <span>Computer</span>
         <select
           className="dialog-select"
-          onChange={(event) => setComputerId(event.target.value)}
+          onChange={(event) => {
+            directoryRequest.current += 1
+            setComputerSelectionRevision((current) => current + 1)
+            setComputerId(event.target.value)
+            setListing(undefined)
+            setLoading(true)
+            setError(undefined)
+          }}
           value={computerId}
         >
           {online.map((computer) => (

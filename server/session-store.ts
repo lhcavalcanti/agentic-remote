@@ -528,9 +528,19 @@ export class SessionStore {
       })
     } catch (error) {
       const current = this.state.sessions[sessionId]
-      // Only if it is still the session this began against, and only the part
-      // this changed.
-      if (current && before) {
+      // Only if the queue is still exactly what this reorder installed, and
+      // the revision still the one it wrote. Anything else means another
+      // change landed while this was being written down, and putting the old
+      // queue back would drop what it added and take the revision backwards.
+      const installed =
+        current?.queuedPrompts?.length === order.length &&
+        current.queuedPrompts.every((prompt, index) => prompt.id === order[index])
+      if (
+        current &&
+        before &&
+        installed &&
+        current.revision === (beforeRevision ?? 0) + 1
+      ) {
         current.queuedPrompts = before
         current.queuedCount = before.length
         if (beforeRevision !== undefined) {

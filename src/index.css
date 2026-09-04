@@ -3124,6 +3124,26 @@ button {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
+.new-session-dialog {
+  display: flex;
+  min-height: 0;
+  max-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.new-session-dialog .dialog__header {
+  flex: 0 0 auto;
+}
+
+.new-session-dialog > form {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
 .dialog__header {
   display: flex;
   align-items: flex-start;
@@ -3889,24 +3909,8 @@ button {
     border-radius: 18px 18px 0 0;
   }
 
-  .new-session-dialog {
-    display: flex;
-    min-height: 0;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .new-session-dialog .dialog__header {
-    flex: 0 0 auto;
-  }
-
   .new-session-dialog > form {
-    min-height: 0;
     padding-bottom: max(18px, env(safe-area-inset-bottom));
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    touch-action: pan-y;
-    -webkit-overflow-scrolling: touch;
   }
 
   .new-session-dialog .dialog__submit {

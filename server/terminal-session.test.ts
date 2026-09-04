@@ -185,6 +185,7 @@ describe('TmuxTerminalSessionController', () => {
   it('parses Copilot ask-user choice and freeform dialogs', () => {
     expect(
       parseTerminalUserInput(`
+╭────────────────────────────────────────────────╮
 │ Question                                      │
 │ ────────────────────────────────────────────  │
 │ Which environment do you prefer?              │
@@ -194,6 +195,7 @@ describe('TmuxTerminalSessionController', () => {
 │   3. Other (type your answer)                 │
 │                                               │
 │ ↑/↓ to select · enter to confirm · esc cancel │
+╰────────────────────────────────────────────────╯
       `),
     ).toMatchObject({
       question: 'Which environment do you prefer?',
@@ -203,11 +205,13 @@ describe('TmuxTerminalSessionController', () => {
 
     expect(
       parseTerminalUserInput(`
+╭────────────────────────────────────╮
 │ Question                         │
 │ Which package group?             │
 │ ❯ 1. Standard                    │
 │   2. Other package managers      │
 │ ↑/↓ to select · enter to confirm │
+╰────────────────────────────────────╯
       `),
     ).toMatchObject({
       choices: ['Standard', 'Other package managers'],
@@ -215,18 +219,33 @@ describe('TmuxTerminalSessionController', () => {
     })
     expect(
       parseTerminalUserInput(`
+╭──────────────────────────────────────╮
 │ Question                           │
 │ Describe your deployment plan.     │
 │                                    │
 │ ❯ Type your answer...              │
 │                                    │
 │ enter to submit · esc to cancel    │
+╰──────────────────────────────────────╯
       `),
     ).toMatchObject({
       question: 'Describe your deployment plan.',
       choices: [],
       allowFreeform: true,
     })
+    expect(
+      parseTerminalUserInput(`
+╭──────────────────────────────────────╮
+│ Question                             │
+│ Old question?                        │
+│ 1. Yes                               │
+│ enter to confirm · esc to cancel     │
+╰──────────────────────────────────────╯
+╻▄▄▄▄
+┃
+╹▀▀▀▀
+      `),
+    ).toBeUndefined()
   })
 
   it('parses Copilot terminal permission dialogs', () => {
@@ -1755,6 +1774,18 @@ describe('terminal form identity', () => {
       ' Configure the rollback request.',
     )
     expect(terminalFormShowsFields(reasked, form)).toBe(false)
+  })
+
+  it('rejects a stale question that prefixes the live question', () => {
+    const replacement = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [
+        ' Configure the deployment request.',
+        ' Include the regional override.',
+      ].join('\n'),
+    )
+
+    expect(terminalFormShowsFields(replacement, form)).toBe(false)
   })
 
   it('rejects a different wrapped question with the same fields', () => {

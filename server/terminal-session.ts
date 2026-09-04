@@ -236,7 +236,11 @@ export class TmuxTerminalSessionController
           resolvedCwd,
           ...command,
         ])
-        const nextOwner = await this.waitForNewOwner(sessionId, owner.pid)
+        const nextOwner = await this.waitForNewOwner(
+          sessionId,
+          owner.pid,
+          owner.target,
+        )
         this.automaticStartupSessions.set(sessionId, {
           pid: nextOwner.pid,
           target: nextOwner.target,
@@ -255,6 +259,7 @@ export class TmuxTerminalSessionController
           const restoredOwner = await this.waitForNewOwner(
             sessionId,
             owner.pid,
+            owner.target,
           )
           this.automaticStartupSessions.set(sessionId, {
             pid: restoredOwner.pid,
@@ -312,6 +317,7 @@ export class TmuxTerminalSessionController
         const nextOwner = await this.waitForNewOwner(
           replacementId,
           owner.pid,
+          owner.target,
         )
         this.automaticStartupSessions.set(replacementId, {
           pid: nextOwner.pid,
@@ -454,7 +460,11 @@ export class TmuxTerminalSessionController
         cwd,
         ...command,
       ])
-      const nextOwner = await this.waitForNewOwner(sessionId, owner.pid)
+      const nextOwner = await this.waitForNewOwner(
+        sessionId,
+        owner.pid,
+        owner.target,
+      )
       this.automaticStartupSessions.set(sessionId, {
         pid: nextOwner.pid,
         target: nextOwner.target,
@@ -663,8 +673,8 @@ export class TmuxTerminalSessionController
     sessionId: string,
     pane: string,
   ): Promise<boolean> {
-    const owner = await this.owner(sessionId)
     const automaticOwner = this.automaticStartupSessions.get(sessionId)
+    const owner = await this.owner(sessionId, automaticOwner?.target)
     return (
       owner !== undefined &&
       automaticOwner?.pid === owner.pid &&
@@ -937,12 +947,17 @@ export class TmuxTerminalSessionController
     enqueue: boolean,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const readyOwner = this.inputReadySessions.get(sessionId)
+      const automaticOwner = this.automaticStartupSessions.get(sessionId)
+      const owner = await this.owner(
+        sessionId,
+        readyOwner?.target ?? automaticOwner?.target,
+      )
       if (!owner) {
         this.inputReadySessions.delete(sessionId)
+        this.automaticStartupSessions.delete(sessionId)
         return false
       }
-      const readyOwner = this.inputReadySessions.get(sessionId)
       if (
         readyOwner?.pid === owner.pid &&
         readyOwner.target === owner.target
@@ -962,7 +977,6 @@ export class TmuxTerminalSessionController
           )
         }
       } else {
-        const automaticOwner = this.automaticStartupSessions.get(sessionId)
         const startup = await waitForTerminalStartup(
           owner.target,
           automaticOwner?.pid === owner.pid &&
@@ -1181,17 +1195,24 @@ export class TmuxTerminalSessionController
     return false
   }
 
-  private async owner(sessionId: string): Promise<TerminalOwner | undefined> {
-    const processInfo = (await this.activeProcesses()).find(
+  private async owner(
+    sessionId: string,
+    expectedTarget?: string,
+  ): Promise<TerminalOwner | undefined> {
+    const candidates = (await this.activeProcesses()).filter(
       (candidate) => candidate.sessionId === sessionId,
     )
-    if (!processInfo) {
-      return undefined
+    for (const processInfo of candidates) {
+      const pane = await tmuxTargetForPid(processInfo.pid)
+      if (pane && (!expectedTarget || pane.target === expectedTarget)) {
+        return {
+          pid: processInfo.pid,
+          target: pane.target,
+          rootPid: pane.rootPid,
+        }
+      }
     }
-    const pane = await tmuxTargetForPid(processInfo.pid)
-    return pane
-      ? { pid: processInfo.pid, target: pane.target, rootPid: pane.rootPid }
-      : undefined
+    return undefined
   }
 
   private activeProcesses(): ReturnType<typeof findActiveCopilotProcesses> {
@@ -1210,9 +1231,10 @@ export class TmuxTerminalSessionController
   private async waitForNewOwner(
     sessionId: string,
     previousPid: number,
+    expectedTarget: string,
   ): Promise<TerminalOwner> {
     for (let attempt = 0; attempt < 150; attempt += 1) {
-      const owner = await this.owner(sessionId)
+      const owner = await this.owner(sessionId, expectedTarget)
       if (owner && owner.pid !== previousPid) {
         return owner
       }
@@ -1296,8 +1318,23 @@ export class TmuxTerminalSessionController
       'automatic-rename',
       'off',
     ])
+    const expectedTarget = (
+      await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        windowId,
+        '#{pane_id}',
+      ])
+    ).stdout.trim()
+    if (!expectedTarget) {
+      await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
+        () => undefined,
+      )
+      throw new Error('tmux did not return the created pane')
+    }
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      const owner = await this.owner(sessionId)
+      const owner = await this.owner(sessionId, expectedTarget)
       if (owner) {
         try {
           const startup = await waitForTerminalStartup(owner.target)
@@ -1463,6 +1500,13 @@ async function clearAutomaticStartupPrompts(target: string): Promise<void> {
   // re-read the screen to decide whether another distinct prompt followed it.
   for (let prompt = 0; prompt < 10; prompt += 1) {
     const pane = await capture()
+    if (
+      parseTerminalPermission(pane) ||
+      parseTerminalUserInput(pane) ||
+      parseTerminalFormPrompt(pane)
+    ) {
+      return
+    }
     if (isTerminalSessionInUsePrompt(pane)) {
       // The terminal user can leave the cursor on "Go back". Normalize to the
       // first row before accepting, rather than confirming whichever row they
@@ -1492,6 +1536,13 @@ async function waitForTerminalStartup(
   for (let attempt = 0; attempt < 900; attempt += 1) {
     const pane = await capturePane(target)
     if (
+      parseTerminalPermission(pane) ||
+      parseTerminalUserInput(pane) ||
+      parseTerminalFormPrompt(pane)
+    ) {
+      return 'action-required'
+    }
+    if (
       isTerminalSessionInUsePrompt(pane) ||
       isTerminalDesktopInstallPrompt(pane)
     ) {
@@ -1501,13 +1552,6 @@ async function waitForTerminalStartup(
       await clearAutomaticStartupPrompts(target)
       readyFrames = 0
       continue
-    }
-    if (
-      parseTerminalPermission(pane) ||
-      parseTerminalUserInput(pane) ||
-      parseTerminalFormPrompt(pane)
-    ) {
-      return 'action-required'
     }
     if (composerText(pane) !== undefined && !isTerminalOverlay(pane)) {
       // Copilot briefly paints an empty composer before opening delayed
@@ -1776,29 +1820,18 @@ function terminalFormTabsIndex(
   // Long questions wrap to the pane width, so compare the complete rendered
   // region instead of requiring the original text to fit on one line.
   const question = form.question.replace(/\s+/gu, ' ').trim()
-  const questionAt = terminalQuestionEndIndex(lines, header, question)
-  if (question && questionAt === undefined) {
-    return -1
-  }
-  const rows = lines
-    .slice(header + 1)
+  for (let index = header + 1; index < lines.length; index += 1) {
     // Tabs sit on one line separated by runs of spaces, so a title containing
     // a single space stays intact.
-    .map((line) => line.split(/\s{2,}/).filter(Boolean))
-  // A form of more than one field prints them as a row of tabs, directly under
-  // the question and above the focused field's own content. So it is the first
-  // line with anything on it -- not any line that happens to hold a run of
-  // spaces, which is what a prefilled value like `ACME  Corp` looks like
-  // further down, and which used to make a perfectly ordinary single-field
-  // form impossible to answer.
-  const firstContent = rows.find(
-    (tabs, position) =>
-      header + 1 + position > (questionAt ?? header) && tabs.length > 0,
-  )
-  const printsTabRow = (firstContent?.length ?? 0) > 1
-  for (let position = 0; position < rows.length; position += 1) {
-    const tabs = rows[position]
-    const index = header + 1 + position
+    const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
+    const renderedQuestion = lines
+      .slice(header + 1, index)
+      .join(' ')
+      .replace(/\s+/gu, ' ')
+      .trim()
+    if (renderedQuestion !== question) {
+      continue
+    }
     if (form.fields.length === 1) {
       // A form of one field prints no row of tabs: the field's own heading is
       // all there is, and the CLI writes a heading with a colon after it.
@@ -1809,7 +1842,7 @@ function terminalFormTabsIndex(
       // candidate before, so a single-field identity could match a lone
       // heading inside a form of several fields -- and answering it submitted
       // that whole form, the other fields left at their defaults.
-      if (printsTabRow || tabs.length !== 1) {
+      if (tabs.length !== 1) {
         continue
       }
       // Only the trailing colon the heading is printed with: taking one off
@@ -1828,24 +1861,6 @@ function terminalFormTabsIndex(
     }
   }
   return -1
-}
-
-function terminalQuestionEndIndex(
-  lines: string[],
-  header: number,
-  question: string,
-): number | undefined {
-  if (!question) {
-    return header
-  }
-  for (let end = header + 1; end < lines.length; end += 1) {
-    const rendered = lines.slice(header + 1, end + 1)
-    const normalized = rendered.join(' ').replace(/\s+/gu, ' ').trim()
-    if (normalized === question) {
-      return end
-    }
-  }
-  return undefined
 }
 
 /**
@@ -1923,16 +1938,27 @@ export function parseTerminalFormActiveField(
 export function parseTerminalUserInput(
   pane: string,
 ): PendingUserInput | undefined {
-  const lines = pane.split('\n').map(cleanDialogLine)
+  const rawLines = pane.split('\n')
+  const lines = rawLines.map(cleanDialogLine)
   const questionHeader = lines.findLastIndex((line) => line === 'Question')
   if (questionHeader < 0) {
+    return undefined
+  }
+  const frame = activeBottomFrame(rawLines, questionHeader)
+  if (!frame) {
+    return undefined
+  }
+  const activeLines = lines.slice(frame.start, frame.end + 1)
+  const activeHeader = activeLines.findIndex((line) => line === 'Question')
+  if (activeHeader < 0) {
     return undefined
   }
 
   const questionLines: string[] = []
   const choices: string[] = []
   let allowFreeform = false
-  for (const line of lines.slice(questionHeader + 1)) {
+  let hasFooter = false
+  for (const line of activeLines.slice(activeHeader + 1)) {
     if (!line || /^[─━]+$/u.test(line)) {
       continue
     }
@@ -1951,7 +1977,11 @@ export function parseTerminalUserInput(
       continue
     }
     if (choices.length > 0 || allowFreeform) {
-      if (/select|confirm|cancel/i.test(line)) {
+      if (
+        /select|confirm|cancel|submit/i.test(line) &&
+        /enter|esc|↑|↓/i.test(line)
+      ) {
+        hasFooter = true
         break
       }
       continue
@@ -1959,7 +1989,11 @@ export function parseTerminalUserInput(
     questionLines.push(line)
   }
   const question = questionLines.join(' ').trim()
-  if (!question || (choices.length === 0 && !allowFreeform)) {
+  if (
+    !question ||
+    !hasFooter ||
+    (choices.length === 0 && !allowFreeform)
+  ) {
     return undefined
   }
   const fingerprint = createHash('sha256')

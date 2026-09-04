@@ -739,7 +739,10 @@ Permission request (1 remaining)
     ).resolves.toBe(true)
 
     expect(await readFile(response, 'utf8')).toBe('n')
-  })
+    // Two Copilot starts against a real tmux session, and a startup panel
+    // answered after the second: more than the five seconds a test is given by
+    // default, and it fails on time alone.
+  }, 30_000)
 
   it('declines the desktop-app promotion before returning a new session', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))

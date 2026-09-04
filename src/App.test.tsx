@@ -2925,6 +2925,57 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('my rewritten text')
   })
 
+  it('writes a shortcut out in full when saving it to the queue', async () => {
+    // A shortcut is something this app expands on its way to the runtime. The
+    // queue's own drain expands nothing, so `/aa on` stored as typed reached
+    // the runtime as a command it has never heard of -- and the message was
+    // consumed without being carried out.
+    const queued = {
+      id: 'q1',
+      content: 'the original text',
+      createdAt: '2026-07-25T01:00:00.000Z',
+    }
+    const withQueue = {
+      ...session,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [queued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    vi.mocked(getSession).mockResolvedValue(withQueue)
+    vi.mocked(listCommands).mockResolvedValue([
+      {
+        name: 'allow-all',
+        description: 'Allow every tool',
+        allowDuringAgentExecution: false,
+      },
+    ])
+    vi.mocked(updateQueuedPrompt).mockResolvedValue({
+      session: withQueue,
+      prompt: queued,
+    })
+
+    render(<App />)
+    await screen.findByText('the original text')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() =>
+      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
+    )
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: '/aa on' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+
+    await waitFor(() =>
+      expect(updateQueuedPrompt).toHaveBeenCalledWith(
+        withQueue.computerId,
+        withQueue.id,
+        'q1',
+        '/allow-all on',
+      ),
+    )
+  })
+
   it('refuses to save an edit into a command this session does not have', async () => {
     // Claude advertises no commands of its own. Saved as one, the drain throws
     // when it reaches it, puts it back at the head, and everything behind it
@@ -3122,7 +3173,9 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: '/cwd' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Put this back in the queue' }),
+    )
 
     await screen.findAllByText(/answered by this app rather than the agent/i)
     // Nothing carried out, nothing removed, and the rewrite still in hand.
@@ -3199,7 +3252,9 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'my rewritten text' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Put this back in the queue' }),
+    )
 
     await waitFor(() =>
       expect(updateQueuedPrompt).toHaveBeenCalledWith(
@@ -3240,8 +3295,9 @@ describe('App', () => {
     const banner = document.querySelector('.queued-edit-banner')!
     expect(banner.textContent).toContain('puts it back in the queue')
     expect(banner.textContent).not.toMatch(/sends it now/i)
+    // Named for what it does, to a screen reader as much as on hover.
     expect(
-      screen.getByRole('button', { name: 'Send message' }),
+      screen.getByRole('button', { name: 'Put this back in the queue' }),
     ).toHaveAttribute('title', 'Put this back in the queue')
   })
 
@@ -3300,9 +3356,12 @@ describe('App', () => {
     )
   })
 
-  it('lets go of an edit whose computer is no longer paired', async () => {
-    // One marker serves every session. Left set for a computer that has gone,
-    // it refuses every later edit with no editor on screen to cancel from.
+  it('keeps one session edit from standing in the way of another', async () => {
+    // Each session keeps its own. A single marker had to be taken from one
+    // session to be used in another -- which left the first one's rewrite as
+    // an ordinary draft beside the message it came from, ready to go twice --
+    // and a session on a computer that had stopped answering held it against
+    // every other.
     const queued = {
       id: 'q1',
       content: 'the original text',
@@ -3314,27 +3373,45 @@ describe('App', () => {
       queuedCount: 1,
       queuedPrompts: [queued],
     }
-    vi.mocked(listSessions).mockResolvedValue([withQueue])
+    const otherQueued = {
+      id: 'q2',
+      content: 'a message over here',
+      createdAt: '2026-07-25T02:00:00.000Z',
+    }
+    const otherWithQueue = {
+      ...secondSession,
+      status: 'running' as const,
+      queuedCount: 1,
+      queuedPrompts: [otherQueued],
+    }
+    vi.mocked(listSessions).mockResolvedValue([withQueue, otherWithQueue])
     vi.mocked(getSession).mockResolvedValue(withQueue)
 
-    const first = render(<App />)
+    render(<App />)
     await screen.findByText('the original text')
     fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
     await waitFor(() =>
-      expect(localStorage.getItem('agentic-remote:queued-edit')).not.toBeNull(),
+      expect(screen.getByLabelText('Message')).toHaveValue('the original text'),
     )
-    first.unmount()
 
-    // Back, with that computer no longer paired at all.
-    vi.mocked(listComputers).mockResolvedValue([secondComputer])
-    vi.mocked(listSessions).mockResolvedValue([secondSession])
-    vi.mocked(getSession).mockResolvedValue(secondSession)
+    // Over to the other session, which has a waiting message of its own.
+    vi.mocked(getSession).mockResolvedValue(otherWithQueue)
+    fireEvent.keyDown(window, {
+      key: 'ArrowDown',
+      code: 'ArrowDown',
+      altKey: true,
+    })
+    await screen.findByText('a message over here')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
 
-    render(<App />)
-    await screen.findAllByText('Second chat')
+    // Editable here, and the first session's edit is untouched.
     await waitFor(() =>
-      expect(localStorage.getItem('agentic-remote:queued-edit')).toBeNull(),
+      expect(screen.getByLabelText('Message')).toHaveValue('a message over here'),
     )
+    const stored = JSON.parse(
+      localStorage.getItem('agentic-remote:queued-edit') || '{}',
+    )
+    expect(Object.keys(stored)).toHaveLength(2)
   })
 
   it('will not leave the editor while the rewriting is being written back', async () => {

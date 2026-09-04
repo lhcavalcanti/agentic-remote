@@ -687,6 +687,16 @@ export class ClaudeAgentService
     if (!content) {
       throw new Error('Message cannot be empty')
     }
+    // Claude has no commands of its own, and the store marks any slash-prefixed
+    // text as one. Stored that way it reaches a drain that refuses every
+    // command and puts it straight back, so the queue behind it never moves
+    // again -- and a restart reads the same queue and stops there too.
+    if (content.startsWith('/')) {
+      throw Object.assign(
+        new Error('This session has no commands, so this cannot be queued'),
+        { statusCode: 409 },
+      )
+    }
     const result = await this.store.updateQueuedPrompt(
       sessionId,
       promptId,

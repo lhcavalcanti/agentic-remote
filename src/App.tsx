@@ -5576,13 +5576,17 @@ function App() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
     () => readStoredOrder('agentic-remote:composer-drafts', {}),
   )
-  // Kept with the drafts, because it is what says a draft is a rewrite of a
-  // waiting message rather than a message of its own. Held only in memory, a
-  // reload left the rewrite looking like an ordinary draft beside the queued
-  // message it came from -- and sending it then delivered both.
-  const [editingQueuedPrompt, setEditingQueuedPrompt] = useState<
-    { sessionKey: string; promptId: string } | undefined
-  >(() => readStoredOrder('agentic-remote:queued-edit', undefined))
+  // One entry per session, kept with the drafts because it is what says a
+  // draft is a rewrite of a waiting message rather than a message of its own.
+  //
+  // Per session rather than one for the whole app: a single marker had to be
+  // taken from one session to be used in another, which left the first one's
+  // rewrite sitting in its composer as an ordinary draft beside the message it
+  // came from -- ready to be sent a second time. It also meant a session on a
+  // computer that had stopped answering could hold it against every other.
+  const [editingQueuedPrompts, setEditingQueuedPrompts] = useState<
+    Record<string, string>
+  >(() => readStoredOrder<Record<string, string>>('agentic-remote:queued-edit', {}))
   const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
@@ -7144,15 +7148,15 @@ function App() {
   }, [composerDrafts])
 
   useEffect(() => {
-    if (editingQueuedPrompt) {
+    if (Object.keys(editingQueuedPrompts).length) {
       localStorage.setItem(
         'agentic-remote:queued-edit',
-        JSON.stringify(editingQueuedPrompt),
+        JSON.stringify(editingQueuedPrompts),
       )
     } else {
       localStorage.removeItem('agentic-remote:queued-edit')
     }
-  }, [editingQueuedPrompt])
+  }, [editingQueuedPrompts])
 
   useEffect(() => {
     const handleUpdate = (event: Event) => {
@@ -9537,10 +9541,9 @@ function App() {
    * is what the reader wanted from a queued message anyway.
    */
   // Only while the message being rewritten belongs to the session on screen.
-  const editingQueuedPromptId =
-    selected && editingQueuedPrompt?.sessionKey === sessionKey(selected)
-      ? editingQueuedPrompt.promptId
-      : undefined
+  const editingQueuedPromptId = selectedKey
+    ? editingQueuedPrompts[selectedKey]
+    : undefined
   function editQueuedPrompt(prompt: QueuedPrompt) {
     if (queueActionId || sending) {
       return
@@ -9558,21 +9561,6 @@ function App() {
     // Asked of the marker itself rather than of this session's view of it: it
     // becomes undefined when the reader is looking elsewhere, so checking that
     // let an edit started in another session quietly replace one in progress.
-    // Only while the reader can actually get back to it. Its session can be on
-    // a computer that is not answering, and then there is no banner to see and
-    // no Escape to press -- so refusing here left the one marker there is
-    // stuck, and every queue in the app refusing to be edited.
-    const editedOwnerReachable =
-      editingQueuedPrompt &&
-      sessions.some(
-        (candidate) => sessionKey(candidate) === editingQueuedPrompt.sessionKey,
-      )
-    if (editingQueuedPrompt && editedOwnerReachable) {
-      setError(
-        'Finish with the message you are editing first: save it, or press Escape to leave it as it was.',
-      )
-      return
-    }
     // Whatever was already written here is not this queued message, and the
     // composer holds one draft per session. Overwriting it loses that writing,
     // and Escape would then clear what was left in its place.
@@ -9590,10 +9578,10 @@ function App() {
       )
       return
     }
-    setEditingQueuedPrompt({
-      sessionKey: sessionKey(selected!),
-      promptId: prompt.id,
-    })
+    setEditingQueuedPrompts((current) => ({
+      ...current,
+      [sessionKey(selected!)]: prompt.id,
+    }))
     setComposer(prompt.content)
     window.requestAnimationFrame(() => composerRef.current?.focus())
   }
@@ -9607,7 +9595,13 @@ function App() {
       setError('This message is still being saved. Try again in a moment.')
       return
     }
-    setEditingQueuedPrompt(undefined)
+    setEditingQueuedPrompts((current) => {
+      if (!selectedKey) {
+        return current
+      }
+      const { [selectedKey]: _left, ...rest } = current
+      return rest
+    })
     setComposer('')
   }
 
@@ -9621,68 +9615,41 @@ function App() {
   // composer as an ordinary draft, so nothing the reader wrote is lost to a
   // race they could not see.
   useEffect(() => {
-    const editing = editingQueuedPrompt
-    if (!editing) {
+    const keys = Object.keys(editingQueuedPrompts)
+    if (!keys.length || !sessions.length) {
       return
     }
-    // Found among all the sessions rather than only the one on screen. Looking
-    // at the selection alone meant a message that drained while another
-    // session was open left its marker set for ever -- and a single marker
-    // blocks editing anywhere.
-    if (!sessions.length) {
-      // Nothing has been loaded yet. An empty list is not evidence that the
-      // session is gone, and reading it as such threw the marker away on every
-      // reload -- leaving the rewrite behind as an ordinary draft beside the
-      // message it belonged to.
-      return
-    }
-    const owner = sessions.find(
-      (session) => sessionKey(session) === editing.sessionKey,
-    )
-    if (!owner) {
-      // Absent is not the same as gone. After a reload the listing holds only
-      // the computers that answered, so a node that is offline or still
-      // connecting has no sessions here at all -- and reading that as deletion
-      // threw away the rewrite for a message that is still queued on it.
-      const ownerComputerId = editing.sessionKey.split(':')[0]
-      const ownerComputer = computers.find(
-        (computer) => computer.id === ownerComputerId,
+    // A marker is only let go of when the session it belongs to is here and
+    // has actually said the message is gone. Absent is not gone: a listing
+    // that never reached that computer carries none of its sessions, and a
+    // terminal session that is merely not open is still stored with its queue
+    // and comes back on recovery. Reading either as deletion turned the
+    // rewrite into an ordinary draft standing beside a message still queued,
+    // which is how the same thing gets delivered twice.
+    //
+    // A marker left behind costs nothing now that each session has its own: it
+    // blocks no other session, and it is answered the moment its own comes
+    // back.
+    const stale = keys.filter((key) => {
+      const owner = sessions.find((session) => sessionKey(session) === key)
+      if (!owner || !owner.queuedPrompts) {
+        return false
+      }
+      return !owner.queuedPrompts.some(
+        (prompt) => prompt.id === editingQueuedPrompts[key],
       )
-      // Its computer is not paired any more, so neither is the message. One
-      // marker serves every session, so leaving it set would refuse every
-      // later edit with no editor on screen to cancel it from.
-      if (computers.length && !ownerComputer) {
-        setEditingQueuedPrompt(undefined)
-        return
-      }
-      if (!ownerComputer || !ownerComputer.online) {
-        return
-      }
-      // Online is not the same as answered. A listing that failed to reach the
-      // node carries none of its sessions, and reading that as deletion turned
-      // the rewrite into an ordinary draft beside a message still queued --
-      // which is how the same thing gets delivered twice.
-      if (!authoritativeNow.current.has(ownerComputerId)) {
-        return
-      }
-      // Its computer answered and did not list it, which is deletion.
-      setEditingQueuedPrompt(undefined)
+    })
+    if (!stale.length) {
       return
     }
-    // Only from an account of the queue that has actually been loaded. A
-    // session summary that has never carried its prompts is not evidence the
-    // message has gone.
-    if (!owner.queuedPrompts) {
-      return
-    }
-    const stillQueued = owner.queuedPrompts.some(
-      (prompt) => prompt.id === editing.promptId,
-    )
-    if (stillQueued) {
-      return
-    }
-    setEditingQueuedPrompt(undefined)
-  }, [editingQueuedPrompt, sessions, computers])
+    setEditingQueuedPrompts((current) => {
+      const next = { ...current }
+      for (const key of stale) {
+        delete next[key]
+      }
+      return next
+    })
+  }, [editingQueuedPrompts, sessions])
 
   /** Whether the text names a command this app answers rather than the agent. */
   function isWebOnlyCommand(text: string): boolean {
@@ -9697,10 +9664,10 @@ function App() {
     )
   }
 
-  /** Whether the selected session offers a command by this name. */
-  function knowsCommand(name: string): boolean {
+  /** The command this session knows by that name, shortcut or alias. */
+  function knownCommand(name: string): SlashCommand | undefined {
     const wanted = name.toLowerCase()
-    return commands.some(
+    return commands.find(
       (candidate) =>
         candidate.name.toLowerCase() === wanted ||
         slashShortcut(candidate.name) === wanted ||
@@ -9714,7 +9681,7 @@ function App() {
     // The draft is only cleared if it is still exactly this, so a newline
     // typed while the request was in flight is not thrown away.
     const submitted = composer
-    const content = submitted.trim()
+    let content = submitted.trim()
     if (!selected || !promptId || !content || queueActionId) {
       return false
     }
@@ -9741,11 +9708,20 @@ function App() {
         )
         return false
       }
-      if (!knowsCommand(name)) {
+      const known = knownCommand(name)
+      if (!known) {
         setError(
           `This session has no /${name}, so a message saved as one would stop the queue when it was reached.`,
         )
         return false
+      }
+      // Written out in full. A shortcut is something this app expands on its
+      // way to the runtime, and the queue's own drain does not expand
+      // anything -- so `/aa on` stored as typed reached the runtime as `/aa`,
+      // which it has never heard of, and the message was consumed without
+      // being carried out.
+      if (name.toLowerCase() !== known.name.toLowerCase()) {
+        content = `/${known.name}${content.slice(name.length + 1)}`
       }
     }
     const target = selected
@@ -9772,8 +9748,10 @@ function App() {
       // composer and blocking every other edit.
       const movedOn = draftsRef.current[savedKey] !== submitted
       if (!movedOn) {
-        setEditingQueuedPrompt((current) =>
-          current?.promptId === promptId ? undefined : current,
+        setEditingQueuedPrompts((current) =>
+          current[savedKey] === promptId
+            ? (({ [savedKey]: _done, ...rest }) => rest)(current)
+            : current,
         )
       }
       // Only what was actually saved, and only from the session it was saved
@@ -9811,8 +9789,10 @@ function App() {
         } catch {
           // Even the re-read failed. The marker is let go of directly so the
           // banner stops offering a Save that cannot succeed.
-          setEditingQueuedPrompt((current) =>
-            current?.promptId === promptId ? undefined : current,
+          setEditingQueuedPrompts((current) =>
+            current[savedKey] === promptId
+              ? (({ [savedKey]: _gone, ...rest }) => rest)(current)
+              : current,
           )
         }
         return false
@@ -11279,7 +11259,11 @@ function App() {
                     </button>
                   ) : null}
                   <button
-                    aria-label="Send message"
+                    aria-label={
+                      editingQueuedPromptId
+                        ? 'Put this back in the queue'
+                        : 'Send message'
+                    }
                     className="send-button"
                     disabled={!composer.trim() || sending}
                     onClick={() => void submitMessage()}

@@ -3498,12 +3498,16 @@ function SortableSessionItem({
   backgroundTasks,
   onSelect,
   onOpenTasks,
+  onToggleSuspended,
+  suspending,
 }: {
   session: ManagedSession
   selected: boolean
   backgroundTasks?: BackgroundTaskSnapshot
   onSelect: () => void
   onOpenTasks?: () => void
+  onToggleSuspended?: () => void
+  suspending?: boolean
 }) {
   const sortableId = `session:${sessionKey(session)}`
   const {
@@ -3515,7 +3519,6 @@ function SortableSessionItem({
     isDragging,
   } = useSortable({ id: sortableId })
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
-  const taskCount = backgroundTasks?.tasks.length || 0
   const foregroundStatusAllowsTaskTreatment =
     session.status === 'idle' || session.status === 'running'
   const backgroundTaskActive =
@@ -3565,8 +3568,9 @@ function SortableSessionItem({
         <strong>
           {session.title}
         </strong>
-        <small>{shortPath(session.cwd)}</small>
-        {taskCount > 0 ? (
+        <small className="session-item__where">
+          <span className="session-item__cwd">{shortPath(session.cwd)}</span>
+          {runningBackgroundTasks > 0 ? (
           <span
             aria-label={
               onOpenTasks ? `View background tasks for ${session.title}` : undefined
@@ -3597,14 +3601,56 @@ function SortableSessionItem({
             role={onOpenTasks ? 'button' : undefined}
             tabIndex={onOpenTasks ? 0 : undefined}
           >
-            {runningBackgroundTasks > 0
-              ? `${runningBackgroundTasks} running task${
-                  runningBackgroundTasks === 1 ? '' : 's'
-                }`
-              : `${taskCount} task${taskCount === 1 ? '' : 's'}`}
+            {`${runningBackgroundTasks} task${
+              runningBackgroundTasks === 1 ? '' : 's'
+            }`}
           </span>
-        ) : null}
+          ) : null}
+        </small>
       </span>
+      {onToggleSuspended ? (
+        // Beside the conversation it belongs to, because putting a session
+        // down is something a reader does while looking at the list rather
+        // than after opening the one they meant to stop.
+        <span
+          aria-label={
+            session.suspended
+              ? `Resume ${session.title}`
+              : `Suspend ${session.title}`
+          }
+          aria-pressed={session.suspended ? true : undefined}
+          className={`session-item__suspend${
+            session.suspended ? ' session-item__suspend--active' : ''
+          }`}
+          onClick={(event) => {
+            event.stopPropagation()
+            if (suspending || (!session.suspended && session.status !== 'idle')) {
+              return
+            }
+            onToggleSuspended()
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') {
+              return
+            }
+            event.preventDefault()
+            event.stopPropagation()
+            if (suspending || (!session.suspended && session.status !== 'idle')) {
+              return
+            }
+            onToggleSuspended()
+          }}
+          role="button"
+          tabIndex={0}
+          title={
+            session.suspended
+              ? 'Start this session up again'
+              : 'Keep this session but stop what is running for it'
+          }
+        >
+          {session.suspended ? <Play size={13} /> : <Pause size={13} />}
+        </span>
+      ) : null}
     </button>
   )
 }
@@ -3617,12 +3663,16 @@ function SortableComputerGroup({
   showComputerHandle,
   onSelectSession,
   onOpenSessionTasks,
+  onToggleSessionSuspended,
+  suspending,
 }: {
   computer: ComputerSummary
   sessions: ManagedSession[]
   backgroundTasks: Record<string, BackgroundTaskSnapshot>
   selectedKey?: string
   showComputerHandle: boolean
+  onToggleSessionSuspended?: (session: ManagedSession) => void
+  suspending?: boolean
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
 }) {
@@ -3675,8 +3725,14 @@ function SortableComputerGroup({
               backgroundTasks={taskSnapshot(backgroundTasks, session)}
               onOpenTasks={() => onOpenSessionTasks(session)}
               onSelect={() => onSelectSession(session)}
+              onToggleSuspended={
+                onToggleSessionSuspended
+                  ? () => onToggleSessionSuspended(session)
+                  : undefined
+              }
               selected={sessionKey(session) === selectedKey}
               session={session}
+              suspending={suspending}
             />
           ))}
         </div>
@@ -3708,6 +3764,42 @@ function StatuslineDialog({
       <StatuslineControls onChange={onChange} settings={settings} />
     </DialogFrame>
   )
+}
+
+/**
+ * Puts the tasks that are still going first, then the most recently finished.
+ *
+ * What is running is the only part anyone needs at a glance, so it goes at the
+ * top whatever it started. Everything else is history, and history reads
+ * newest first: the one that just finished is what a reader is looking for,
+ * and the first one of the day belongs at the bottom.
+ *
+ * Queued work is on its way, so it keeps the running group's company rather
+ * than being filed with what is already over.
+ */
+export function orderTasksForReading(tasks: BackgroundTask[]): BackgroundTask[] {
+  const live = (task: BackgroundTask) =>
+    task.status === 'running' || task.status === 'queued'
+  const at = (value: string | undefined) => {
+    const parsed = value ? Date.parse(value) : Number.NaN
+    return Number.isNaN(parsed) ? undefined : parsed
+  }
+  return [...tasks].sort((left, right) => {
+    if (live(left) !== live(right)) {
+      return live(left) ? -1 : 1
+    }
+    if (live(left)) {
+      // Both still going. Oldest first, so the one that has been waiting
+      // longest is not buried under whatever started a moment ago.
+      const started = (at(left.startedAt) ?? 0) - (at(right.startedAt) ?? 0)
+      return started !== 0 ? started : left.id.localeCompare(right.id)
+    }
+    // Both over. Newest first, and one that never recorded an end is placed by
+    // when it began rather than being dropped to the bottom.
+    const leftAt = at(left.completedAt) ?? at(left.startedAt) ?? 0
+    const rightAt = at(right.completedAt) ?? at(right.startedAt) ?? 0
+    return rightAt !== leftAt ? rightAt - leftAt : left.id.localeCompare(right.id)
+  })
 }
 
 function BackgroundTaskCard({
@@ -3895,7 +3987,7 @@ function BackgroundTasksDialog({
         </p>
       ) : (
         <div aria-label="Background task list" className="background-task-list">
-          {snapshot.tasks.map((task) => (
+          {orderTasksForReading(snapshot.tasks).map((task) => (
             <BackgroundTaskCard
               cancelling={cancellingTaskId === task.id}
               key={task.id}
@@ -8949,6 +9041,11 @@ function App() {
     if (!selected || !content || sending) {
       return
     }
+    // Sending is asking to see what happens next. A reader who had scrolled
+    // back to read something older stayed there, so the message they just sent
+    // and the status that follows it -- queued, sent to the terminal, the
+    // reply arriving -- all happened somewhere off screen.
+    followLatest()
     const targetKey = sessionKey(selected)
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
@@ -9413,11 +9510,15 @@ function App() {
     }
   }
 
-  async function toggleSelectedSessionSuspended() {
-    if (!selected || suspending) {
+  async function toggleSelectedSessionSuspended(
+    // Any session, not only the open one: the list offers this beside each
+    // conversation so it can be put down or picked up without opening it.
+    session?: ManagedSession,
+  ) {
+    const target = session || selected
+    if (!target || suspending) {
       return
     }
-    const target = selected
     const wasSuspended = target.suspended === true
     setSuspending(true)
     setError(undefined)
@@ -9891,9 +9992,13 @@ function App() {
                       key={computer.id}
                       onOpenSessionTasks={openTasksForSession}
                       onSelectSession={selectSession}
+                      onToggleSessionSuspended={(session) =>
+                        void toggleSelectedSessionSuspended(session)
+                      }
                       selectedKey={selectedKey}
                       sessions={sessionsByComputer.get(computer.id) || []}
                       showComputerHandle
+                      suspending={suspending}
                     />
                   ))}
                 </div>
@@ -10243,27 +10348,6 @@ function App() {
               type="button"
             >
               <SquareTerminal size={18} />
-            </button>
-          ) : null}
-          {selected ? (
-            <button
-              aria-label={
-                selected.suspended ? 'Resume session' : 'Suspend session'
-              }
-              aria-pressed={selected.suspended ? true : undefined}
-              className={`icon-button${selected.suspended ? ' icon-button--active' : ''}`}
-              disabled={
-                suspending || (!selected.suspended && selected.status !== 'idle')
-              }
-              onClick={() => void toggleSelectedSessionSuspended()}
-              title={
-                selected.suspended
-                  ? 'Start this session up again'
-                  : 'Keep this session but stop what is running for it'
-              }
-              type="button"
-            >
-              {selected.suspended ? <Play size={17} /> : <Pause size={17} />}
             </button>
           ) : null}
           {selected ? (

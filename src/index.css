@@ -1005,10 +1005,29 @@ button {
   font-size: 10.5px;
 }
 
+/* The folder and what is running in it read as one line. The count sits to
+   the right of the path because it is the thing worth catching at a glance,
+   and the path gives way first when there is not enough room for both. */
+.session-item__where {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-item__cwd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .session-item__tasks {
   color: #6ea8fe;
   font-size: 9px;
   font-weight: 650;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .conversation {
@@ -4143,6 +4162,44 @@ button {
 
 .transcript-earlier:hover {
   color: var(--text);
+}
+
+/* Sits at the end of the row, out of the way of the title but reachable
+   without opening the conversation. It only asks for room when the pointer is
+   near or the session is already resting, so a list of running work reads as
+   work rather than as a row of controls. */
+.session-item__suspend {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: #74786d;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.session-item:hover .session-item__suspend,
+.session-item:focus-within .session-item__suspend,
+.session-item__suspend:focus-visible,
+.session-item__suspend--active {
+  opacity: 1;
+}
+
+.session-item__suspend:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.session-item__suspend--active {
+  color: #6ea8fe;
+}
+
+.session-item__suspend:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .session-item__tasks--interactive {

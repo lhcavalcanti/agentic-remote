@@ -9531,11 +9531,36 @@ function App() {
    * stays where it is; Enter writes the change back to it, and the send button
    * is what takes it out and sends it now.
    */
+  /**
+   * Why an edited message cannot be sent now, if it cannot.
+   *
+   * Send means send. Nothing can go ahead of work already waiting, and a
+   * command the agent will not take mid-turn is queued rather than run, so
+   * offering Send in those cases promised something that could not happen and
+   * quietly put the message at the back instead. Saving keeps its place, which
+   * is what the reader wanted from a queued message anyway.
+   */
   // Only while the message being rewritten belongs to the session on screen.
   const editingQueuedPromptId =
     selected && editingQueuedPrompt?.sessionKey === sessionKey(selected)
       ? editingQueuedPrompt.promptId
       : undefined
+  const editedSendRefusal = (() => {
+    if (!editingQueuedPromptId || !selected) {
+      return undefined
+    }
+    if (
+      (selected.queuedPrompts || []).some(
+        (prompt) => prompt.id !== editingQueuedPromptId,
+      )
+    ) {
+      return 'Other messages are waiting. Save this to keep its place, or remove the others first.'
+    }
+    if (selected.status === 'running' || selected.status === 'waiting') {
+      return 'The agent is working. Save this to keep its place in the queue.'
+    }
+    return undefined
+  })()
 
   function editQueuedPrompt(prompt: QueuedPrompt) {
     if (queueActionId || sending) {
@@ -9550,9 +9575,30 @@ function App() {
     // Replacing the marker silently detaches that rewrite and leaves it in the
     // composer beside a message still waiting, which is how the same thing
     // gets sent twice.
-    if (editingQueuedPromptId && composer.trim()) {
+    //
+    // Asked of the marker itself rather than of this session's view of it: it
+    // becomes undefined when the reader is looking elsewhere, so checking that
+    // let an edit started in another session quietly replace one in progress.
+    if (editingQueuedPrompt) {
       setError(
         'Finish with the message you are editing first: save it, or press Escape to leave it as it was.',
+      )
+      return
+    }
+    // Whatever was already written here is not this queued message, and the
+    // composer holds one draft per session. Overwriting it loses that writing,
+    // and Escape would then clear what was left in its place.
+    //
+    // What the reader actually wrote, not what is on screen: while they are
+    // walking back through what they sent, the composer shows an old message
+    // and their own text is held in the history record.
+    const history = selectedKey
+      ? composerHistoryRef.current[selectedKey]
+      : undefined
+    const unsent = history ? history.draft : composer
+    if (unsent.trim()) {
+      setError(
+        'There is already something written here. Send it or clear it before editing a queued message.',
       )
       return
     }
@@ -11123,12 +11169,15 @@ function App() {
                   <button
                     aria-label="Send message"
                     className="send-button"
-                    disabled={!composer.trim() || sending}
+                    disabled={
+                      !composer.trim() || sending || editedSendRefusal !== undefined
+                    }
                     onClick={() => void submitMessage()}
                     title={
-                      editingQueuedPromptId
+                      editedSendRefusal ??
+                      (editingQueuedPromptId
                         ? 'Take this out of the queue and send it now'
-                        : 'Send immediately'
+                        : 'Send immediately')
                     }
                     type="button"
                   >

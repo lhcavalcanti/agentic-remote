@@ -5713,6 +5713,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     this.drainingSessions.add(sessionId)
+    // Whether this pass took a prompt off the queue and it stayed off. A
+    // prompt that failed goes back, and treating that as progress is what
+    // turns "carry on" into a loop.
+    let consumed = false
     try {
       if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
         const { session: queued, prompt: next } = await this.serializeQueue(
@@ -5737,6 +5741,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             } else {
               await this.startMessage(sessionId, next.content, true)
             }
+            consumed = true
           } catch (error) {
             const restored = await this.serializeQueue(
               sessionId,
@@ -5755,8 +5760,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // A command that answered without starting a turn leaves nothing to call
     // this again when the turn ends, because there was no turn. Everything
     // behind it would wait for an unrelated send, resume or restart.
+    //
+    // Only when this pass actually consumed something. Carrying on regardless
+    // retried a prompt that had just failed and been put back -- for ever,
+    // repeating whatever it had already done on the way.
     const remaining = this.store.get(sessionId)
     if (
+      consumed &&
       remaining?.queuedPrompts?.length &&
       remaining.status === 'idle' &&
       !this.activePrompts.has(sessionId) &&

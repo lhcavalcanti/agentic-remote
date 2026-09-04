@@ -131,6 +131,15 @@ describe('TmuxTerminalSessionController', () => {
 ╰───────────────────────────────────────────────╯
       `),
     ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+● Earlier output: THE GITHUB COPILOT APP
+╭───────────────────────────────────────────────╮
+│ Settings: Install it now?                     │
+│ Yes, install · No, thanks · Y / N             │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
   })
 
   it('parses Copilot ask-user choice and freeform dialogs', () => {

@@ -1254,10 +1254,11 @@ interface TmuxSessionInfo {
 export function isTerminalSessionInUsePrompt(pane: string): boolean {
   const lines = pane.split('\n')
   const prompt = lines.findLastIndex((line) => /Session in use/i.test(line))
-  if (prompt < 0 || !isInsideActiveBottomFrame(lines, prompt)) {
+  const frame = activeBottomFrame(lines, prompt)
+  if (!frame) {
     return false
   }
-  const activeView = lines.slice(prompt).join('\n')
+  const activeView = lines.slice(frame.start, frame.end + 1).join('\n')
   return (
     /1\.\s+Resume anyway/i.test(activeView) &&
     /2\.\s+Go back/i.test(activeView)
@@ -1267,12 +1268,13 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
 export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   const lines = pane.split('\n')
   const prompt = lines.findLastIndex((line) => /Install it now\?/i.test(line))
-  if (prompt < 0 || !isInsideActiveBottomFrame(lines, prompt)) {
+  const frame = activeBottomFrame(lines, prompt)
+  if (!frame) {
     return false
   }
-  const activeView = lines.slice(prompt).join('\n')
+  const activeView = lines.slice(frame.start, frame.end + 1).join('\n')
   return (
-    /THE GITHUB COPILOT APP/i.test(lines.slice(0, prompt + 1).join('\n')) &&
+    /THE GITHUB COPILOT APP/i.test(activeView) &&
     /Yes,\s*install/i.test(activeView) &&
     /No,\s*thanks/i.test(activeView) &&
     /Y\s*\/\s*N/i.test(activeView)
@@ -1283,7 +1285,13 @@ function hasComposerAfter(lines: string[], index: number): boolean {
   return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
 }
 
-function isInsideActiveBottomFrame(lines: string[], marker: number): boolean {
+function activeBottomFrame(
+  lines: string[],
+  marker: number,
+): { start: number; end: number } | undefined {
+  if (marker < 0) {
+    return undefined
+  }
   const frames: number[] = []
   for (let index = 0; index < lines.length; index += 1) {
     if (/^\s*╭[\u2500-\u257f]*╮?\s*$/u.test(lines[index])) {
@@ -1300,10 +1308,10 @@ function isInsideActiveBottomFrame(lines: string[], marker: number): boolean {
       marker < index &&
       lines.slice(index + 1).every((line) => !line.trim())
     ) {
-      return true
+      return { start, end: index }
     }
   }
-  return false
+  return undefined
 }
 
 async function clearAutomaticStartupPrompts(target: string): Promise<void> {
@@ -1838,7 +1846,7 @@ export function parseTerminalPermission(
   )
   if (
     trustQuestion &&
-    isInsideActiveBottomFrame(pane.split('\n'), trustQuestion.start)
+    activeBottomFrame(pane.split('\n'), trustQuestion.start)
   ) {
     const dialog = lines.slice(
       Math.max(

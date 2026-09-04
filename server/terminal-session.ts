@@ -123,7 +123,10 @@ export class TmuxTerminalSessionController
   implements TerminalSessionController
 {
   private readonly operations = new Map<string, Promise<unknown>>()
-  private readonly inputReadySessions = new Set<string>()
+  private readonly inputReadySessions = new Map<
+    string,
+    { pid: number; target: string }
+  >()
   private creationQueue: Promise<void> = Promise.resolve()
   private activeProcessCache?: {
     expiresAt: number
@@ -301,6 +304,7 @@ export class TmuxTerminalSessionController
     return this.serialize(sessionId, async () => {
       const owner = await this.owner(sessionId)
       if (!owner) {
+        this.inputReadySessions.delete(sessionId)
         // Already gone: the caller wanted nothing running for this session,
         // and nothing is.
         //
@@ -844,24 +848,37 @@ export class TmuxTerminalSessionController
     enqueue: boolean,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const target = await this.target(sessionId)
-      if (!target) {
+      const owner = await this.owner(sessionId)
+      if (!owner) {
+        this.inputReadySessions.delete(sessionId)
         return false
       }
-      if (this.inputReadySessions.has(sessionId)) {
-        await clearAutomaticStartupPrompts(target)
+      const readyOwner = this.inputReadySessions.get(sessionId)
+      if (
+        readyOwner?.pid === owner.pid &&
+        readyOwner.target === owner.target
+      ) {
+        await clearAutomaticStartupPrompts(owner.target)
       } else {
-        const startup = await waitForTerminalStartup(target)
+        const startup = await waitForTerminalStartup(owner.target)
         if (startup !== 'ready') {
-          return false
+          throw Object.assign(
+            new Error(
+              'The terminal is waiting for user input. Answer it before sending a message.',
+            ),
+            { statusCode: 409 },
+          )
         }
-        this.inputReadySessions.add(sessionId)
+        this.inputReadySessions.set(sessionId, {
+          pid: owner.pid,
+          target: owner.target,
+        })
       }
       // What the pane already holds is not evidence that this message
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
-      const paneBeforePaste = await capturePane(target)
+      const paneBeforePaste = await capturePane(owner.target)
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -877,7 +894,7 @@ export class TmuxTerminalSessionController
         '-b',
         buffer,
         '-t',
-        target,
+        owner.target,
       ])
       // From here on tmux has the text. Anything that goes wrong afterwards --
       // reading the pane, the tty, the terminal settings, or the Enter itself
@@ -886,7 +903,7 @@ export class TmuxTerminalSessionController
       // retry.
       try {
         return await this.finishSend(
-          target,
+          owner.target,
           content,
           confirmation,
           paneBeforePaste,
@@ -1174,12 +1191,15 @@ export class TmuxTerminalSessionController
       'off',
     ])
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      const target = await this.target(sessionId)
-      if (target) {
+      const owner = await this.owner(sessionId)
+      if (owner) {
         try {
-          const startup = await waitForTerminalStartup(target)
+          const startup = await waitForTerminalStartup(owner.target)
           if (startup === 'ready') {
-            this.inputReadySessions.add(sessionId)
+            this.inputReadySessions.set(sessionId, {
+              pid: owner.pid,
+              target: owner.target,
+            })
           }
           return { sessionName, windowId }
         } catch (error) {
@@ -1280,6 +1300,11 @@ async function clearAutomaticStartupPrompts(target: string): Promise<void> {
   for (let prompt = 0; prompt < 10; prompt += 1) {
     const pane = await capture()
     if (isTerminalSessionInUsePrompt(pane)) {
+      // The terminal user can leave the cursor on "Go back". Normalize to the
+      // first row before accepting, rather than confirming whichever row they
+      // happened to leave selected.
+      await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
+      await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
       await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
       await waitUntilClosed(isTerminalSessionInUsePrompt)
     } else if (isTerminalDesktopInstallPrompt(pane)) {
@@ -1639,9 +1664,6 @@ function terminalQuestionEndIndex(
     ) {
       return end
     }
-    if (normalized.length > question.length) {
-      return undefined
-    }
   }
   return undefined
 }
@@ -1999,7 +2021,6 @@ function terminalHardWrappedTextMatches(
     const hardBoundary =
       /[/:\\]/u.test(previousToken) ||
       /[/:\\]/u.test(nextToken) ||
-      /\d/u.test(combinedToken) ||
       /[a-z][A-Z]/u.test(combinedToken) ||
       combinedToken.length >= 20
     const nextCandidates = new Map<string, boolean>()

@@ -540,7 +540,10 @@ Permission request (1 remaining)
     ).resolves.toMatchObject({ sessionName: tmuxSession })
     await expect(
       controller.send(sessionId, 'must not enter the form', false),
-    ).resolves.toBe(false)
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('waiting for user input'),
+      statusCode: 409,
+    })
   })
 
   it('rechecks readiness after an actionable startup prompt is answered', async () => {
@@ -1572,6 +1575,43 @@ describe('terminal form identity', () => {
         ...form,
         question: 'Choose foo-bar baz',
       }),
+    ).toBe(true)
+  })
+
+  it('does not hard-join a soft wrap before a digit', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [' Choose version', ' 2'].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose version2',
+      }),
+    ).toBe(false)
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose version 2',
+      }),
+    ).toBe(true)
+  })
+
+  it('keeps viable hard-wrap prefixes across several URL lines', () => {
+    const question =
+      'Inspect https://example.test/a-very-long-resource-identifier-that-spans-several-terminal-lines before continuing.'
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [
+        ' Inspect https://example.test/a-very-long-resource-ident',
+        ' ifier-that-spans-several-terminal-lines before',
+        ' continuing.',
+      ].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, { ...form, question }),
     ).toBe(true)
   })
 

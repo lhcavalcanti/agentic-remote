@@ -1458,7 +1458,9 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
     // recalled into it -- carries no selection, and answering that would send
     // Enter or `n` into somebody's draft. Without the marker this is not a
     // panel being shown, whatever else the frame says.
-    activeLines.some((line) => /^[>❯]\s*(?:Yes,\s*install|No,\s*thanks)/i.test(line)) &&
+    activeLines.some((line) =>
+      /[>❯]\s*(?:Yes,\s*install|No,\s*thanks)/i.test(line),
+    ) &&
     /Yes,\s*install/i.test(activeView) &&
     /No,\s*thanks/i.test(activeView) &&
     /←\/→\s+(?:to\s+)?choose/i.test(activeView) &&

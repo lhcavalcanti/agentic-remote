@@ -851,7 +851,10 @@ export class TmuxTerminalSessionController
       if (this.inputReadySessions.has(sessionId)) {
         await clearAutomaticStartupPrompts(target)
       } else {
-        await waitForTerminalStartup(target)
+        const startup = await waitForTerminalStartup(target)
+        if (startup !== 'ready') {
+          return false
+        }
         this.inputReadySessions.add(sessionId)
       }
       // What the pane already holds is not evidence that this message
@@ -1174,8 +1177,10 @@ export class TmuxTerminalSessionController
       const target = await this.target(sessionId)
       if (target) {
         try {
-          await waitForTerminalStartup(target)
-          this.inputReadySessions.add(sessionId)
+          const startup = await waitForTerminalStartup(target)
+          if (startup === 'ready') {
+            this.inputReadySessions.add(sessionId)
+          }
           return { sessionName, windowId }
         } catch (error) {
           await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
@@ -1220,31 +1225,34 @@ interface TmuxSessionInfo {
 }
 
 export function isTerminalSessionInUsePrompt(pane: string): boolean {
-  if (composerText(pane) !== undefined) {
+  const lines = pane.split('\n')
+  const prompt = lines.findLastIndex((line) => /Session in use/i.test(line))
+  if (prompt < 0 || hasComposerAfter(lines, prompt)) {
     return false
   }
-  const activeView = pane.split('\n').slice(-24).join('\n')
+  const activeView = lines.slice(prompt).join('\n')
   return (
-    /Session in use/i.test(activeView) &&
     /1\.\s+Resume anyway/i.test(activeView) &&
     /2\.\s+Go back/i.test(activeView)
   )
 }
 
 export function isTerminalDesktopInstallPrompt(pane: string): boolean {
-  // Transcript text can quote every string below. An active promotion replaces
-  // the composer, while an ordinary conversation keeps drawing one beneath
-  // whatever it quoted.
-  if (composerText(pane) !== undefined) {
+  const lines = pane.split('\n')
+  const prompt = lines.findLastIndex((line) => /Install it now\?/i.test(line))
+  if (prompt < 0 || hasComposerAfter(lines, prompt)) {
     return false
   }
-  const activeView = pane.split('\n').slice(-32).join('\n')
+  const activeView = lines.slice(prompt).join('\n')
   return (
-    /Install it now\?/i.test(activeView) &&
     /Yes,\s*install/i.test(activeView) &&
     /No,\s*thanks/i.test(activeView) &&
     /Y\s*\/\s*N/i.test(activeView)
   )
+}
+
+function hasComposerAfter(lines: string[], index: number): boolean {
+  return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
 }
 
 async function clearAutomaticStartupPrompts(target: string): Promise<void> {
@@ -1285,7 +1293,9 @@ async function clearAutomaticStartupPrompts(target: string): Promise<void> {
   throw new Error('Too many Copilot startup prompts appeared in sequence')
 }
 
-async function waitForTerminalStartup(target: string): Promise<void> {
+async function waitForTerminalStartup(
+  target: string,
+): Promise<'ready' | 'action-required'> {
   let readyFrames = 0
   for (let attempt = 0; attempt < 900; attempt += 1) {
     await clearAutomaticStartupPrompts(target)
@@ -1295,7 +1305,7 @@ async function waitForTerminalStartup(target: string): Promise<void> {
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
-      return
+      return 'action-required'
     }
     if (composerText(pane) !== undefined && !isTerminalOverlay(pane)) {
       // Copilot briefly paints an empty composer before opening delayed
@@ -1305,7 +1315,7 @@ async function waitForTerminalStartup(target: string): Promise<void> {
       // those startup prompts to appear and be handled.
       readyFrames += 1
       if (readyFrames >= 30) {
-        return
+        return 'ready'
       }
     } else {
       readyFrames = 0
@@ -1768,7 +1778,10 @@ export function parseTerminalPermission(
     lines,
     'Do you trust the files in this folder?',
   )
-  if (trustQuestion) {
+  if (
+    trustQuestion &&
+    !hasComposerAfter(pane.split('\n'), trustQuestion.end)
+  ) {
     const dialog = lines.slice(
       Math.max(
         0,
@@ -1982,8 +1995,8 @@ function terminalHardWrappedTextMatches(
     const nextToken = nextPart.split(' ')[0] || ''
     const combinedToken = `${previousToken}${nextToken}`
     const hardBoundary =
-      /[/:._\\-]/u.test(previousToken) ||
-      /[/:._\\-]/u.test(nextToken) ||
+      /[/:\\]/u.test(previousToken) ||
+      /[/:\\]/u.test(nextToken) ||
       /\d/u.test(combinedToken) ||
       /[a-z][A-Z]/u.test(combinedToken) ||
       combinedToken.length >= 20
@@ -2172,7 +2185,7 @@ export function paneEvidenceCount(
   // end in a short one: judged by that line alone, the placeholder it really
   // did produce went unrecognised and the paste was left behind to be sent
   // twice.
-  if (pasted.length <= PASTE_ECHO_LIMIT) {
+  if (!couldRenderPastePlaceholder(pasted)) {
     return found
   }
   return found + pastedPlaceholderCount(haystack)
@@ -2267,7 +2280,7 @@ export function composerHoldsOtherText(
   // received, and compaction removes every space and newline: hundreds of
   // one-character lines are a large paste that measures small once joined, and
   // the placeholder it produced was then refused as evidence.
-  const couldHavePlaceholder = pasted.length > PASTE_ECHO_LIMIT
+  const couldHavePlaceholder = couldRenderPastePlaceholder(pasted)
   if (
     couldHavePlaceholder &&
     pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1
@@ -2298,6 +2311,7 @@ export function composerHoldsOtherText(
 // Roughly where the CLI stops echoing a paste and shows a placeholder for it
 // instead. Only a send past this size can account for one.
 const PASTE_ECHO_LIMIT = 800
+const PASTE_LINE_LIMIT = 10
 
 const PASTED_PLACEHOLDER =
   /\[(?:Pastedtext|Paste)#\d+(?:[+-][^\]]+)?\]/u
@@ -2313,6 +2327,13 @@ function pastedPlaceholderCount(text: string): number {
   return (
     text.match(/\[(?:Pastedtext|Paste)#\d+(?:[+-][^\]]+)?\]/gu) || []
   ).length
+}
+
+function couldRenderPastePlaceholder(pasted: string): boolean {
+  return (
+    pasted.length > PASTE_ECHO_LIMIT ||
+    pasted.split('\n').length > PASTE_LINE_LIMIT
+  )
 }
 
 /** The composer's contents, or nothing when the pane cannot be read. */
@@ -2407,7 +2428,7 @@ export function composerTookPaste(
   const before = composerHoldsText(paneBefore) ? compact(drawnBefore || '') : ''
   // A paste too large to echo is shown as a placeholder instead of its text,
   // and only a send big enough to have produced one may claim it.
-  if (pasted.length > PASTE_ECHO_LIMIT) {
+  if (couldRenderPastePlaceholder(pasted)) {
     const drawn = pastedPlaceholderCount(after)
     const had = pastedPlaceholderCount(before)
     if (drawn > had) {

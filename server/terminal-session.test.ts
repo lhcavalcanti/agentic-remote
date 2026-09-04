@@ -79,10 +79,12 @@ describe('TmuxTerminalSessionController', () => {
   it('detects the Copilot session-in-use startup dialog', () => {
     expect(
       isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
 │ Session in use
 │ This session appears to be in use by another CLI or application.
 │ ❯ 1. Resume anyway
 │   2. Go back (Esc)
+╰────────────────────────────────────────────────────────────╯
       `),
     ).toBe(true)
     expect(isTerminalSessionInUsePrompt('❯ Ready for a prompt')).toBe(false)
@@ -198,6 +200,19 @@ Permission request (1 remaining)
         { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
       ],
     })
+    expect(
+      parseTerminalPermission(`
+● Earlier output quoted:
+  Confirm folder trust
+  Do you trust the files in this folder?
+  1. Yes
+  2. Yes, and remember this folder for future sessions
+  3. No (Esc)
+╻▄▄▄▄
+┃
+╹▀▀▀▀
+      `),
+    ).toBeUndefined()
     expect(
       parseTerminalPermission(`
 ╭────────────────────────────────────────────────────────────╮
@@ -526,6 +541,75 @@ Permission request (1 remaining)
         true,
       ),
     ).resolves.toMatchObject({ sessionName: tmuxSession })
+  })
+
+  it('rechecks readiness after an actionable startup prompt is answered', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const output = path.join(directory, 'received.txt')
+    const executable = path.join(directory, 'copilot-trust-then-promotion')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf 'Confirm folder trust\\nDo you trust the files in this folder?\\n❯ 1. Yes\\n  2. Yes, and remember this folder for future sessions\\n  3. No (Esc)\\n↑/↓ to navigate · enter to select · esc to cancel\\n'",
+        'IFS= read -r trust',
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
+        'sleep 0.5',
+        "printf '\\033[2J\\033[HInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n'",
+        'IFS= read -r -n 1 answer',
+        '[[ "$answer" == n ]] || exit 2',
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
+        'IFS= read -r line',
+        `printf '%s' "$line" >"${output}"`,
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-trust-promotion-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
+    const location = await controller.create(
+      sessionId,
+      directory,
+      'Trust then promotion',
+      true,
+    )
+    await execFileAsync('tmux', [
+      'send-keys',
+      '-t',
+      location.windowId,
+      'Enter',
+    ])
+
+    const delivered = await controller.send(
+      sessionId,
+      'arrives after both prompts',
+      false,
+    )
+
+    expect(delivered).toBe(true)
+    expect(await readFile(output, 'utf8')).toBe('arrives after both prompts')
   })
 
   it('removes a new window when startup readiness fails', async () => {
@@ -912,6 +996,16 @@ describe('paneShowsText', () => {
     ).toBe(true)
     expect(
       paneShowsText('> [Paste #1 - 24 lines]', 'ok', 0, content),
+    ).toBe(true)
+  })
+
+  it('recognises a short eleven-line paste placeholder', () => {
+    const content = Array.from({ length: 11 }, (_, index) =>
+      `line ${index + 1}`,
+    ).join('\n')
+    expect(content.length).toBeLessThan(801)
+    expect(
+      paneShowsText('> [Paste #1 - 11 lines]', 'line 11', 0, content),
     ).toBe(true)
   })
 
@@ -1457,6 +1551,26 @@ describe('terminal form identity', () => {
       terminalFormShowsFields(wrapped, {
         ...form,
         question: 'Choose user name',
+      }),
+    ).toBe(true)
+  })
+
+  it('does not hard-join a soft wrap after punctuation', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [' Choose foo-bar', ' baz'].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose foo-barbaz',
+      }),
+    ).toBe(false)
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose foo-bar baz',
       }),
     ).toBe(true)
   })

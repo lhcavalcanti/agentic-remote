@@ -83,9 +83,7 @@ import {
 } from './workspace-browser.js'
 import {
   isTerminalAgentWorking,
-  isTerminalDesktopInstallPrompt,
   isTerminalOverlay,
-  isTerminalSessionInUsePrompt,
   terminalCommandOutput,
   TmuxTerminalSessionController,
   type TerminalFormStep,
@@ -3323,12 +3321,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // it, and nothing says the prompt was never delivered. Refusing is
       // recoverable in a way that silently losing it is not.
       const pane = await this.terminalController.capture?.(sessionId)
-      if (
-        pane &&
-        isTerminalOverlay(pane) &&
-        !isTerminalSessionInUsePrompt(pane) &&
-        !isTerminalDesktopInstallPrompt(pane)
-      ) {
+      if (pane && isTerminalOverlay(pane)) {
         // Carries a status so the reason reaches the reader: an unclassified
         // failure is reported as a generic server error, which would leave
         // them no better off than the silent loss this replaces.

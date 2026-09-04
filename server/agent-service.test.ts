@@ -5172,7 +5172,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('lets the terminal resume its session-use startup dialog before sending', async () => {
+  it('does not send into a session-use startup dialog', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-resume-prompt-'),
     )
@@ -5212,17 +5212,14 @@ describe('AgentService deletion', () => {
     )
     await service.start()
 
-    await service.sendMessage(client.session.sessionId, 'Continue the work')
-
-    expect(terminal.send).toHaveBeenCalledWith(
-      client.session.sessionId,
-      'Continue the work',
-      false,
-    )
+    await expect(
+      service.sendMessage(client.session.sessionId, 'Continue the work'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    expect(terminal.send).not.toHaveBeenCalled()
     await service.stop()
   })
 
-  it('lets the terminal dismiss its desktop-app promotion before sending', async () => {
+  it('does not send into a desktop-app promotion', async () => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-promotion-prompt-'),
     )
@@ -5261,13 +5258,10 @@ describe('AgentService deletion', () => {
     )
     await service.start()
 
-    await service.sendMessage(client.session.sessionId, 'Continue the work')
-
-    expect(terminal.send).toHaveBeenCalledWith(
-      client.session.sessionId,
-      'Continue the work',
-      false,
-    )
+    await expect(
+      service.sendMessage(client.session.sessionId, 'Continue the work'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    expect(terminal.send).not.toHaveBeenCalled()
     await service.stop()
   })
 

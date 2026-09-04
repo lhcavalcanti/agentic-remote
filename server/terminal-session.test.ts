@@ -234,6 +234,21 @@ Permission request (1 remaining)
     ).toBeUndefined()
     expect(
       parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ 1. Yes                                                     │
+│ 2. Yes, and remember this folder for future sessions       │
+│ 3. No (Esc)                                                │
+╰────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────╮
+│ Do you trust the files in this folder?                     │
+│ Unrelated recovery view                                    │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
 ● Earlier output quoted:
   Confirm folder trust
   Do you trust the files in this folder?
@@ -912,7 +927,7 @@ Permission request (1 remaining)
     expect(received).toBe('MESSAGE-AAAA\nMESSAGE-BBBB')
   })
 
-  it('waits through a delayed startup promotion before sending', async () => {
+  it('does not dismiss a delayed startup promotion for a discovered session', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)
     const output = path.join(directory, 'received.txt')
@@ -924,11 +939,6 @@ Permission request (1 remaining)
         "printf '╻▄▄▄▄\\n┃\\n'",
         'sleep 0.5',
         "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
-        'IFS= read -r -n 1 answer',
-        '[[ "$answer" == n ]] || exit 2',
-        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
-        'IFS= read -r line',
-        `printf '%s' "$line" >"${output}"`,
         'sleep 60',
       ].join('\n'),
     )
@@ -966,14 +976,17 @@ Permission request (1 remaining)
     )
     vi.stubEnv('COPILOT_HOME', copilotHome)
 
-    const delivered = await new TmuxTerminalSessionController().send(
-      sessionId,
-      'arrives after startup',
-      false,
-    )
-
-    expect(delivered).toBe(true)
-    expect(await readFile(output, 'utf8')).toBe('arrives after startup')
+    await expect(
+      new TmuxTerminalSessionController().send(
+        sessionId,
+        'must not enter startup',
+        false,
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('waiting for user input'),
+      statusCode: 409,
+    })
+    expect(existsSync(output)).toBe(false)
   })
 })
 

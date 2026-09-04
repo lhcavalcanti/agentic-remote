@@ -127,6 +127,7 @@ export class TmuxTerminalSessionController
     string,
     { pid: number; target: string }
   >()
+  private readonly automaticStartupSessions = new Set<string>()
   private creationQueue: Promise<void> = Promise.resolve()
   private activeProcessCache?: {
     expiresAt: number
@@ -210,6 +211,7 @@ export class TmuxTerminalSessionController
       const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, sessionId, input)
       this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.add(sessionId)
       try {
         await execFileAsync('tmux', [
           'respawn-pane',
@@ -261,6 +263,8 @@ export class TmuxTerminalSessionController
       const command = await copilotCommand(owner.pid, replacementId, input)
       this.inputReadySessions.delete(sessionId)
       this.inputReadySessions.delete(replacementId)
+      this.automaticStartupSessions.delete(sessionId)
+      this.automaticStartupSessions.add(replacementId)
       await execFileAsync('tmux', [
         'respawn-pane',
         '-k',
@@ -305,6 +309,7 @@ export class TmuxTerminalSessionController
       const owner = await this.owner(sessionId)
       if (!owner) {
         this.inputReadySessions.delete(sessionId)
+        this.automaticStartupSessions.delete(sessionId)
         // Already gone: the caller wanted nothing running for this session,
         // and nothing is.
         //
@@ -363,6 +368,7 @@ export class TmuxTerminalSessionController
       for (let attempt = 0; attempt < 50; attempt += 1) {
         if (await this.paneStopped(owner)) {
           this.inputReadySessions.delete(sessionId)
+          this.automaticStartupSessions.delete(sessionId)
           return true
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
@@ -406,6 +412,7 @@ export class TmuxTerminalSessionController
       }
       const command = await processCommand(owner.pid)
       this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.add(sessionId)
       await execFileAsync('tmux', [
         'respawn-pane',
         '-k',
@@ -865,9 +872,25 @@ export class TmuxTerminalSessionController
         readyOwner?.pid === owner.pid &&
         readyOwner.target === owner.target
       ) {
-        await clearAutomaticStartupPrompts(owner.target)
+        const pane = await capturePane(owner.target)
+        if (
+          isTerminalOverlay(pane) ||
+          parseTerminalPermission(pane) ||
+          parseTerminalUserInput(pane) ||
+          parseTerminalFormPrompt(pane)
+        ) {
+          throw Object.assign(
+            new Error(
+              'The terminal is waiting for user input. Answer it before sending a message.',
+            ),
+            { statusCode: 409 },
+          )
+        }
       } else {
-        const startup = await waitForTerminalStartup(owner.target)
+        const startup = await waitForTerminalStartup(
+          owner.target,
+          this.automaticStartupSessions.has(sessionId),
+        )
         if (startup !== 'ready') {
           throw Object.assign(
             new Error(
@@ -880,6 +903,7 @@ export class TmuxTerminalSessionController
           pid: owner.pid,
           target: owner.target,
         })
+        this.automaticStartupSessions.delete(sessionId)
       }
       // What the pane already holds is not evidence that this message
       // arrived: the same text may have been sent before, and an earlier
@@ -1207,9 +1231,14 @@ export class TmuxTerminalSessionController
               pid: owner.pid,
               target: owner.target,
             })
+            this.automaticStartupSessions.delete(sessionId)
+          } else {
+            this.automaticStartupSessions.add(sessionId)
           }
           return { sessionName, windowId }
         } catch (error) {
+          this.inputReadySessions.delete(sessionId)
+          this.automaticStartupSessions.delete(sessionId)
           await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
             () => undefined,
           )
@@ -1359,11 +1388,22 @@ async function clearAutomaticStartupPrompts(target: string): Promise<void> {
 
 async function waitForTerminalStartup(
   target: string,
+  handleAutomaticPrompts = true,
 ): Promise<'ready' | 'action-required'> {
   let readyFrames = 0
   for (let attempt = 0; attempt < 900; attempt += 1) {
-    await clearAutomaticStartupPrompts(target)
     const pane = await capturePane(target)
+    if (
+      isTerminalSessionInUsePrompt(pane) ||
+      isTerminalDesktopInstallPrompt(pane)
+    ) {
+      if (!handleAutomaticPrompts) {
+        return 'action-required'
+      }
+      await clearAutomaticStartupPrompts(target)
+      readyFrames = 0
+      continue
+    }
     if (
       parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
@@ -1839,24 +1879,33 @@ export function parseTerminalUserInput(
 export function parseTerminalPermission(
   pane: string,
 ): PendingPermission | undefined {
-  const lines = pane.split('\n').map(cleanDialogLine)
+  const rawLines = pane.split('\n')
+  const lines = rawLines.map(cleanDialogLine)
   const trustQuestion = findTerminalWrappedText(
     lines,
     'Do you trust the files in this folder?',
   )
-  if (
-    trustQuestion &&
-    activeBottomFrame(pane.split('\n'), trustQuestion.start)
-  ) {
-    const dialog = lines.slice(
-      Math.max(
-        0,
-        lines.findLastIndex(
-          (line, index) =>
-            index < trustQuestion.start && /^Confirm folder trust$/i.test(line),
-        ),
-      ),
+  if (trustQuestion) {
+    const frame = activeBottomFrame(rawLines, trustQuestion.start)
+    if (!frame) {
+      return undefined
+    }
+    const frameLines = lines.slice(frame.start, frame.end + 1)
+    const frameQuestion = findTerminalWrappedText(
+      frameLines,
+      'Do you trust the files in this folder?',
     )
+    if (!frameQuestion) {
+      return undefined
+    }
+    const heading = frameLines.findLastIndex(
+      (line, index) =>
+        index < frameQuestion.start && /^Confirm folder trust$/i.test(line),
+    )
+    if (heading < 0) {
+      return undefined
+    }
+    const dialog = frameLines.slice(heading)
     const choices = terminalDialogChoices(dialog)
     if (
       choices.some(

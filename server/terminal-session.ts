@@ -114,6 +114,7 @@ export interface TerminalSessionController {
     pane: string,
   ): Promise<boolean>
   ownsStartupPrompt?(sessionId: string): boolean
+  inputReady?(sessionId: string): Promise<boolean>
   resolveStartupPrompt?(sessionId: string): Promise<boolean>
   /**
    * Whether a prompt is already inside the controller for this session.
@@ -220,7 +221,7 @@ export class TmuxTerminalSessionController
       if (!(await stat(resolvedCwd)).isDirectory()) {
         throw new Error('Terminal working directory is not a folder')
       }
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
@@ -288,7 +289,7 @@ export class TmuxTerminalSessionController
     clearState: () => Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
@@ -363,7 +364,7 @@ export class TmuxTerminalSessionController
     confirm?: () => void | Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         this.inputReadySessions.delete(sessionId)
         this.automaticStartupSessions.delete(sessionId)
@@ -463,7 +464,7 @@ export class TmuxTerminalSessionController
 
   async restart(sessionId: string, cwd: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
@@ -553,7 +554,7 @@ export class TmuxTerminalSessionController
     optionId: string,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
@@ -605,7 +606,7 @@ export class TmuxTerminalSessionController
     wasFreeform: boolean,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
@@ -714,6 +715,22 @@ export class TmuxTerminalSessionController
     return this.automaticStartupSessions.has(sessionId)
   }
 
+  async inputReady(sessionId: string): Promise<boolean> {
+    const owner = await this.boundOwner(sessionId, true)
+    if (!owner) {
+      return false
+    }
+    const pane = await capturePane(owner.target)
+    return (
+      composerText(pane) !== undefined &&
+      !isTerminalAgentWorking(pane) &&
+      !isTerminalOverlay(pane) &&
+      !parseTerminalPermission(pane) &&
+      !parseTerminalUserInput(pane) &&
+      !parseTerminalFormPrompt(pane)
+    )
+  }
+
   async resolveStartupPrompt(sessionId: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const readyOwner = this.inputReadySessions.get(sessionId)
@@ -769,7 +786,7 @@ export class TmuxTerminalSessionController
     form: TerminalFormIdentity,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (
         !owner ||
         steps.length === 0 ||
@@ -957,7 +974,7 @@ export class TmuxTerminalSessionController
     form?: TerminalFormIdentity,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
@@ -1303,6 +1320,19 @@ export class TmuxTerminalSessionController
       }
     }
     return undefined
+  }
+
+  private async boundOwner(
+    sessionId: string,
+    fresh = false,
+  ): Promise<TerminalOwner | undefined> {
+    const ready = this.inputReadySessions.get(sessionId)
+    const automatic = this.automaticStartupSessions.get(sessionId)
+    return this.owner(
+      sessionId,
+      ready?.target ?? automatic?.target,
+      fresh,
+    )
   }
 
   private activeProcesses(

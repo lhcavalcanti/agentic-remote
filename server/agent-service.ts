@@ -3434,11 +3434,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             { statusCode: 409 },
           )
         }
-        startupIdle = !isTerminalAgentWorking(currentPane)
+        startupIdle =
+          (await this.terminalController.inputReady?.(sessionId)) ??
+          !isTerminalAgentWorking(currentPane)
       } else if (startupLocked && pane) {
         terminalWorking = isTerminalAgentWorking(pane)
         startupIdle =
-          !terminalWorking &&
+          ((await this.terminalController.inputReady?.(sessionId)) ??
+            !terminalWorking) &&
           !this.terminalAdmissionDispatched.has(sessionId)
       }
     }
@@ -3994,9 +3997,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       currentPane = refreshed
     }
+    const ready =
+      (await this.terminalController.inputReady?.(sessionId)) ??
+      !isTerminalAgentWorking(currentPane)
     const working =
-      isTerminalAgentWorking(currentPane) ||
-      this.terminalAdmissionDispatched.has(sessionId)
+      !ready || this.terminalAdmissionDispatched.has(sessionId)
     const current = this.store.get(sessionId)
     if (working && current?.status === 'idle') {
       const running = await this.store.update(sessionId, (session) => {

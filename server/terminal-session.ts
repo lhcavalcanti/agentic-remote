@@ -1162,8 +1162,15 @@ export class TmuxTerminalSessionController
     for (let attempt = 0; attempt < 60; attempt += 1) {
       const target = await this.target(sessionId)
       if (target) {
-        await waitForTerminalStartup(target)
-        return { sessionName, windowId }
+        try {
+          await waitForTerminalStartup(target)
+          return { sessionName, windowId }
+        } catch (error) {
+          await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
+            () => undefined,
+          )
+          throw error
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
@@ -1209,11 +1216,18 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
 }
 
 export function isTerminalDesktopInstallPrompt(pane: string): boolean {
+  // Transcript text can quote every string below. An active promotion replaces
+  // the composer, while an ordinary conversation keeps drawing one beneath
+  // whatever it quoted.
+  if (composerText(pane) !== undefined) {
+    return false
+  }
+  const activeView = pane.split('\n').slice(-32).join('\n')
   return (
-    /Install it now\?/i.test(pane) &&
-    /Yes,\s*install/i.test(pane) &&
-    /No,\s*thanks/i.test(pane) &&
-    /Y\s*\/\s*N/i.test(pane)
+    /Install it now\?/i.test(activeView) &&
+    /Yes,\s*install/i.test(activeView) &&
+    /No,\s*thanks/i.test(activeView) &&
+    /Y\s*\/\s*N/i.test(activeView)
   )
 }
 
@@ -1530,12 +1544,18 @@ function terminalFormTabsIndex(
       tabs.length === form.fields.length &&
       tabs.every((tab, position) => tab === form.fields[position])
     ) {
-      const renderedQuestion = lines
-        .slice(header + 1, index)
+      const renderedQuestionLines = lines.slice(header + 1, index)
+      const renderedQuestion = renderedQuestionLines
         .join(' ')
         .replace(/\s+/gu, ' ')
         .trim()
-      if (question && renderedQuestion !== question) {
+      const compactQuestion = (value: string) => value.replace(/\s+/gu, '')
+      if (
+        question &&
+        renderedQuestion !== question &&
+        compactQuestion(renderedQuestionLines.join('')) !==
+          compactQuestion(question)
+      ) {
         continue
       }
       return index
@@ -1684,12 +1704,7 @@ export function parseTerminalPermission(
         ),
       ),
     )
-    const choices = dialog.flatMap((line) => {
-      const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
-      return choice
-        ? [{ index: Number.parseInt(choice[1], 10), label: choice[2].trim() }]
-        : []
-    })
+    const choices = terminalDialogChoices(dialog)
     if (
       choices.some(
         (choice) => choice.index === 1 && /^Yes$/i.test(choice.label),
@@ -1778,12 +1793,7 @@ export function parseTerminalPermission(
     return undefined
   }
   const dialog = lines.slice(dialogStart)
-  const choices = dialog.flatMap((line) => {
-    const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
-    return choice
-      ? [{ index: Number.parseInt(choice[1], 10), label: choice[2].trim() }]
-      : []
-  })
+  const choices = terminalDialogChoices(dialog)
   const hasYes = choices.some(
     (choice) => choice.index === 1 && /^Yes\b/i.test(choice.label),
   )
@@ -1816,6 +1826,35 @@ export function parseTerminalPermission(
       { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
     ],
   }
+}
+
+function terminalDialogChoices(
+  lines: string[],
+): Array<{ index: number; label: string }> {
+  const choices: Array<{ index: number; label: string }> = []
+  let current: { index: number; label: string } | undefined
+  for (const line of lines) {
+    const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
+    if (choice) {
+      current = {
+        index: Number.parseInt(choice[1], 10),
+        label: choice[2].trim(),
+      }
+      choices.push(current)
+      continue
+    }
+    if (!current || !line) {
+      continue
+    }
+    if (
+      /(?:navigate|select|confirm|cancel|decline|toggle)/i.test(line) &&
+      /(?:enter|esc|↑|↓|←|→|tab|ctrl)/i.test(line)
+    ) {
+      break
+    }
+    current.label = `${current.label} ${line}`.replace(/\s+/gu, ' ').trim()
+  }
+  return choices
 }
 
 async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {

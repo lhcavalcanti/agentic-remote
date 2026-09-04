@@ -99,6 +99,18 @@ describe('TmuxTerminalSessionController', () => {
     expect(
       isTerminalDesktopInstallPrompt('❯ Ready for a prompt'),
     ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+● I saw a panel that said:
+  Install it now?
+  Yes, install
+  No, thanks
+  Y / N
+╻▄▄▄▄
+┃
+╹▀▀▀▀
+      `),
+    ).toBe(false)
   })
 
   it('parses Copilot ask-user choice and freeform dialogs', () => {
@@ -174,6 +186,26 @@ Permission request (1 remaining)
       options: [
         { optionId: 'terminal:allow', name: 'Yes', kind: 'allow_once' },
         { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+      ],
+    })
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ ❯ 1. Yes                                                   │
+│   2. Yes, and remember this folder for                     │
+│      future sessions                                       │
+│   3. No (Esc)                                              │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toMatchObject({
+      kind: 'folder-trust',
+      options: [
+        { optionId: 'terminal:trust-once' },
+        { optionId: 'terminal:trust-always' },
+        { optionId: 'terminal:stop' },
       ],
     })
     expect(
@@ -438,6 +470,54 @@ Permission request (1 remaining)
 
     expect(await readFile(response, 'utf8')).toBe('n')
     expect(existsSync(`${response}.extra`)).toBe(false)
+  })
+
+  it('removes a new window when startup readiness fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-startup-failure')
+    await writeFile(
+      executable,
+      '#!/usr/bin/env bash\nsleep 1\nexit 1\n',
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-startup-failure-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const controller = new TmuxTerminalSessionController()
+
+    await expect(
+      controller.create(randomUUID(), directory, 'Failed startup', true),
+    ).rejects.toThrow()
+
+    const windows = (
+      await execFileAsync('tmux', [
+        'list-windows',
+        '-t',
+        tmuxSession,
+        '-F',
+        '#{window_name}',
+      ])
+    ).stdout.trim().split('\n')
+    expect(windows).not.toContain('Failed startup')
   })
 
   it('kills only the owning pane when panes are renumbered while confirming', async () => {
@@ -1127,6 +1207,22 @@ describe('terminal form identity', () => {
       question:
         'Configure the deployment request with a long explanation that wraps across terminal lines before the fields are shown.',
     }
+
+    expect(terminalFormShowsFields(wrapped, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(wrapped, wrappedForm)).toBe(0)
+  })
+
+  it('recognizes a question hard-wrapped inside an unbroken URL', () => {
+    const question =
+      'Inspect https://example.test/a-very-long-unbroken-resource-identifier before continuing.'
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [
+        ' Inspect https://example.test/a-very-long-unbroken-resour',
+        ' ce-identifier before continuing.',
+      ].join('\n'),
+    )
+    const wrappedForm = { ...form, question }
 
     expect(terminalFormShowsFields(wrapped, wrappedForm)).toBe(true)
     expect(parseTerminalFormActiveField(wrapped, wrappedForm)).toBe(0)

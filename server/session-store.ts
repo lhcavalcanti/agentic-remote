@@ -521,7 +521,14 @@ export class SessionStore {
     sessionId: string,
     order: string[],
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (stored) => {
+    // What the queue was, in case writing the new order down fails. Left
+    // rearranged in memory after a failed write, the drain would send in an
+    // order the caller was told had been refused -- and a restart, reading
+    // what is actually on disk, would use another one again.
+    const before = this.state.sessions[sessionId]?.queuedPrompts
+    const beforeRevision = this.state.sessions[sessionId]?.revision
+    try {
+      return await this.mutate(sessionId, (stored) => {
       const queue = stored.queuedPrompts || []
       if (order.length !== queue.length) {
         throw Object.assign(
@@ -548,8 +555,21 @@ export class SessionStore {
         byId.delete(id)
         next.push(prompt)
       }
-      stored.queuedPrompts = next
-    })
+        stored.queuedPrompts = next
+      })
+    } catch (error) {
+      const current = this.state.sessions[sessionId]
+      // Only if it is still the session this began against, and only the part
+      // this changed.
+      if (current && before) {
+        current.queuedPrompts = before
+        current.queuedCount = before.length
+        if (beforeRevision !== undefined) {
+          current.revision = beforeRevision
+        }
+      }
+      throw error
+    }
   }
 
   /**

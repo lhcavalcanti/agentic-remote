@@ -10535,8 +10535,8 @@ function App() {
         target.id,
         order,
       )
-      if (stillListed(updated)) {
-        setSessions((current) => upsertSession(current, updated))
+        if (stillListed(updated)) {
+          applySession(updated)
         }
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught))

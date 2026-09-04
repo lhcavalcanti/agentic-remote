@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionStore } from './session-store.js'
 
 const temporaryDirectories: string[] = []
@@ -26,6 +26,45 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it('rolls a queue order back when it cannot be written down', async () => {
+    // Told the order was refused while the rearrangement still stood in
+    // memory, the drain would send in an order the caller had been told was
+    // not accepted -- and a restart, reading what is actually on disk, would
+    // use another one again.
+    const { store } = await createStore()
+    await store.create({
+      id: 'ordered-session',
+      cwd: '/tmp/ordered-project',
+      title: 'Ordered project',
+      updatedAt: '2026-07-22T00:00:01.000Z',
+      status: 'idle',
+      isOpen: true,
+      messages: [],
+    })
+    for (const id of ['a', 'b']) {
+      await store.enqueuePrompt('ordered-session', {
+        id,
+        content: id,
+        createdAt: '2026-09-02T00:00:00.000Z',
+      })
+    }
+    const before = store.get('ordered-session')?.revision
+
+    const failing = vi
+      .spyOn(store as unknown as { persist: () => Promise<void> }, 'persist')
+      .mockRejectedValue(new Error('disk full'))
+    await expect(
+      store.reorderQueuedPrompts('ordered-session', ['b', 'a']),
+    ).rejects.toThrow('disk full')
+    failing.mockRestore()
+
+    // As it was, so what is held and what is on disk still agree.
+    expect(
+      store.get('ordered-session')?.queuedPrompts?.map((prompt) => prompt.id),
+    ).toEqual(['a', 'b'])
+    expect(store.get('ordered-session')?.revision).toBe(before)
+  })
+
   it('keeps a suspended session in the list when nothing is running for it', async () => {
     const { store } = await createStore()
     await store.create(

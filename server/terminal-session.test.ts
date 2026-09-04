@@ -986,6 +986,52 @@ Permission request (1 remaining)
     })
   })
 
+  it('returns a new session that is already showing a generic overlay', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-settings-overlay')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "for _ in $(seq 1 40); do printf '\\n'; done",
+        "printf 'Settings\\n❯ allowedUrls (default)\\n/ search · ↑/↓ navigate · tab switch scope · enter edit\\nesc close\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-settings-overlay-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
+
+    await expect(
+      controller.create(sessionId, directory, 'Settings overlay', true),
+    ).resolves.toMatchObject({ sessionName: tmuxSession })
+    await expect(
+      controller.send(sessionId, 'must not enter settings', false),
+    ).rejects.toMatchObject({ statusCode: 409 })
+  })
+
   it('rechecks readiness after an actionable startup prompt is answered', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)

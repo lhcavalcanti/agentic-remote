@@ -1799,6 +1799,9 @@ async function waitForTerminalStartup(
       readyFrames = 0
       continue
     }
+    if (isTerminalOverlay(pane)) {
+      return 'action-required'
+    }
     if (composerText(pane) !== undefined && !isTerminalOverlay(pane)) {
       // Copilot briefly paints an empty composer before opening delayed
       // startup prompts such as the desktop-app promotion. Returning on that

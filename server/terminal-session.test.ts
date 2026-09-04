@@ -144,6 +144,22 @@ describe('TmuxTerminalSessionController', () => {
     expect(
       isTerminalDesktopInstallPrompt('❯ Ready for a prompt'),
     ).toBe(false)
+    // The composer draws itself as a frame too, and what is typed in it can be
+    // anything -- this panel's own words among them, pasted or recalled. It is
+    // drawn without a prompt marker while it holds no caret, which is exactly
+    // when it looked most like the panel. Answering it would send Enter or `n`
+    // into somebody's draft.
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
+│ Now generally available!                       │
+│ Install it now?                               │
+│ Yes, install      No, thanks                  │
+│ ←/→ to choose · Enter to select · Y / N       │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
     expect(
       isTerminalDesktopInstallPrompt(`
 ╭───────────────────────────────────────────────╮

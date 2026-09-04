@@ -1446,6 +1446,12 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   return (
     activeLines.some((line) => /^THE GITHUB COPILOT APP$/i.test(line)) &&
     /Now generally available!/i.test(activeView) &&
+    // The panel always draws a marker against whichever choice is selected.
+    // Text that merely says the same words -- pasted into the composer, or
+    // recalled into it -- carries no selection, and answering that would send
+    // Enter or `n` into somebody's draft. Without the marker this is not a
+    // panel being shown, whatever else the frame says.
+    activeLines.some((line) => /^[>❯]\s*(?:Yes,\s*install|No,\s*thanks)/i.test(line)) &&
     /Yes,\s*install/i.test(activeView) &&
     /No,\s*thanks/i.test(activeView) &&
     /←\/→\s+(?:to\s+)?choose/i.test(activeView) &&

@@ -14,8 +14,9 @@ away the operator's access.
 
 The deployment channel is separate:
 
-- **Development** is a writable checkout where changes are pulled, built, and
-  tested.
+- **Development** is a writable checkout where changes are pulled. Validation
+  builds and tests a pinned worktree of the candidate commit instead, so that
+  what passed is what is promoted; see [Pull, validate, and graduate](#pull-validate-and-graduate).
 - **Production** is a separate runtime source or release location used by the
   managed service and any external tunnel.
 

@@ -115,6 +115,12 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       '    printf "corepack-dir %s %s\\n" "${*: -1}" "${!next}" >>"$CALL_LOG"',
       '  fi',
       'done',
+      // A hard kill: no EXIT trap runs, so whatever the monitor left on disk
+      // by then is what the next run has to cope with.
+      'if [[ "${*: -1}" == "test" && -n "${PNPM_TEST_KILL:-}" ]]; then',
+      '  kill -KILL "$PPID"',
+      '  exit 137',
+      'fi',
       'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
       'exit "${COREPACK_EXIT:-0}"',
     ].join('\n'),
@@ -377,6 +383,96 @@ describe('promotion monitor', () => {
     expect(existsSync(path.join(validate, 'theirs.txt'))).toBe(true)
 
     await git(context.dev, 'worktree', 'remove', '--force', validate)
+  })
+
+  it('leaves the records of unrelated worktrees alone', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // A worktree of this repository that is not reachable right now -- an
+    // unmounted drive, a directory moved aside. Git keeps its record for three
+    // months so it can be restored. Clearing the monitor's own leftovers used
+    // to prune the whole repository, which threw this record away in passing;
+    // for a detached worktree that can be the last reachable name a commit
+    // has.
+    const state = path.join(context.root, 'state-unrelated-record')
+    await mkdir(state, { recursive: true })
+    const elsewhere = path.join(context.root, 'someone-elses-worktree')
+    await git(context.dev, 'worktree', 'add', '--detach', elsewhere, 'HEAD')
+    await writeFile(path.join(elsewhere, 'only-here.txt'), 'unique\n')
+    await git(elsewhere, 'add', '-A')
+    await git(elsewhere, 'commit', '-m', 'only reachable from this worktree')
+    const orphan = (await git(elsewhere, 'rev-parse', 'HEAD')).trim()
+    await rm(elsewhere, { recursive: true, force: true })
+
+    expect(
+      (await monitor(context, { AGENTIC_REMOTE_MONITOR_STATE_DIR: state })).code,
+    ).toBe(0)
+
+    // Still registered, so it can be put back...
+    expect(await git(context.dev, 'worktree', 'list')).toContain(elsewhere)
+    // ...and its commit still has a name.
+    expect((await git(context.dev, 'cat-file', '-t', orphan)).trim()).toBe('commit')
+  })
+
+  it('clears away a validation worktree an interrupted run left registered', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // Killed after the worktree was made. Whatever says the worktree is the
+    // monitor's has to be in place by then, or every later run refuses to
+    // touch it and promotion stops until somebody clears it by hand.
+    const state = path.join(context.root, 'state-interrupted')
+    await mkdir(state, { recursive: true })
+    const validate = path.join(state, 'validate')
+    const interrupted = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+      PNPM_TEST_KILL: '1',
+    })
+    expect(interrupted.code).not.toBe(0)
+    expect(existsSync(validate)).toBe(true)
+    // What git itself holds is enough to recognise it. Taking the marker away
+    // stands for the run that was killed before writing one, and for a state
+    // directory cleared out since: with ownership resting on anything written
+    // after the worktree was made, both leave a worktree no run will touch.
+    await rm(path.join(state, 'validate.owned'), { force: true })
+
+    // The next run gets past it rather than being wedged by it.
+    await writeFile(path.join(context.dev, 'change.txt'), 'again')
+    await git(context.dev, 'add', '-A')
+    await git(context.dev, 'commit', '-m', 'again')
+    await git(context.dev, 'push', 'origin', 'main')
+
+    const next = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+    expect(next.output).not.toContain('not a validation worktree')
+    expect(next.code).toBe(0)
+    expect(existsSync(validate)).toBe(false)
+  })
+
+  it('owns its worktree when git records worktree paths relatively', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+
+    // With `worktree.useRelativePaths` the pointer git writes is relative. Read
+    // as though it were relative to wherever the monitor happens to be
+    // running, it names some other path entirely, and the monitor then refuses
+    // to clean up after itself.
+    await git(context.dev, 'config', 'worktree.useRelativePaths', 'true')
+    const state = path.join(context.root, 'state-relative-paths')
+    await mkdir(state, { recursive: true })
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_STATE_DIR: state,
+    })
+
+    expect(result.output).not.toContain('not a validation worktree')
+    expect(result.code).toBe(0)
+    expect(existsSync(path.join(state, 'validate'))).toBe(false)
+    expect(await git(context.dev, 'worktree', 'list')).not.toContain(
+      path.join(state, 'validate'),
+    )
   })
 
   it('refuses to remove a clean worktree it did not create', async () => {

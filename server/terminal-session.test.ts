@@ -109,6 +109,16 @@ describe('TmuxTerminalSessionController', () => {
     ).toBe(false)
     expect(
       isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
+│ >                                                          │
+│ Session in use                                             │
+│ 1. Resume anyway                                           │
+│ 2. Go back                                                  │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
 ● The old panel said Session in use.
 ● It offered 1. Resume anyway and 2. Go back.
 ╭────

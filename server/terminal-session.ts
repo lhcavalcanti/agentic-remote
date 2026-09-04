@@ -123,6 +123,12 @@ export interface TerminalSessionController {
   sending?(sessionId: string): boolean
 }
 
+interface TerminalOwner {
+  pid: number
+  target: string
+  rootPid: number
+}
+
 export class TmuxTerminalSessionController
   implements TerminalSessionController
 {
@@ -131,7 +137,10 @@ export class TmuxTerminalSessionController
     string,
     { pid: number; target: string }
   >()
-  private readonly automaticStartupSessions = new Set<string>()
+  private readonly automaticStartupSessions = new Map<
+    string,
+    { pid: number; target: string }
+  >()
   private creationQueue: Promise<void> = Promise.resolve()
   private activeProcessCache?: {
     expiresAt: number
@@ -215,7 +224,7 @@ export class TmuxTerminalSessionController
       const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, sessionId, input)
       this.inputReadySessions.delete(sessionId)
-      this.automaticStartupSessions.add(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
       try {
         await execFileAsync('tmux', [
           'respawn-pane',
@@ -226,7 +235,11 @@ export class TmuxTerminalSessionController
           resolvedCwd,
           ...command,
         ])
-        await this.waitForNewOwner(sessionId, owner.pid)
+        const nextOwner = await this.waitForNewOwner(sessionId, owner.pid)
+        this.automaticStartupSessions.set(sessionId, {
+          pid: nextOwner.pid,
+          target: nextOwner.target,
+        })
       } catch (error) {
         try {
           await execFileAsync('tmux', [
@@ -238,7 +251,14 @@ export class TmuxTerminalSessionController
             originalCwd,
             ...originalCommand,
           ])
-          await this.waitForNewOwner(sessionId, owner.pid)
+          const restoredOwner = await this.waitForNewOwner(
+            sessionId,
+            owner.pid,
+          )
+          this.automaticStartupSessions.set(sessionId, {
+            pid: restoredOwner.pid,
+            target: restoredOwner.target,
+          })
         } catch (rollbackError) {
           throw new AggregateError(
             [error, rollbackError],
@@ -268,7 +288,7 @@ export class TmuxTerminalSessionController
       this.inputReadySessions.delete(sessionId)
       this.inputReadySessions.delete(replacementId)
       this.automaticStartupSessions.delete(sessionId)
-      this.automaticStartupSessions.add(replacementId)
+      this.automaticStartupSessions.delete(replacementId)
       await execFileAsync('tmux', [
         'respawn-pane',
         '-k',
@@ -288,7 +308,14 @@ export class TmuxTerminalSessionController
           cwd,
           ...command,
         ])
-        await this.waitForNewOwner(replacementId, owner.pid)
+        const nextOwner = await this.waitForNewOwner(
+          replacementId,
+          owner.pid,
+        )
+        this.automaticStartupSessions.set(replacementId, {
+          pid: nextOwner.pid,
+          target: nextOwner.target,
+        })
       } catch (error) {
         await execFileAsync('tmux', [
           'respawn-pane',
@@ -416,7 +443,7 @@ export class TmuxTerminalSessionController
       }
       const command = await processCommand(owner.pid)
       this.inputReadySessions.delete(sessionId)
-      this.automaticStartupSessions.add(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
       await execFileAsync('tmux', [
         'respawn-pane',
         '-k',
@@ -426,7 +453,11 @@ export class TmuxTerminalSessionController
         cwd,
         ...command,
       ])
-      await this.waitForNewOwner(sessionId, owner.pid)
+      const nextOwner = await this.waitForNewOwner(sessionId, owner.pid)
+      this.automaticStartupSessions.set(sessionId, {
+        pid: nextOwner.pid,
+        target: nextOwner.target,
+      })
       return true
     })
   }
@@ -631,8 +662,12 @@ export class TmuxTerminalSessionController
     sessionId: string,
     pane: string,
   ): Promise<boolean> {
+    const owner = await this.owner(sessionId)
+    const automaticOwner = this.automaticStartupSessions.get(sessionId)
     return (
-      this.automaticStartupSessions.has(sessionId) &&
+      owner !== undefined &&
+      automaticOwner?.pid === owner.pid &&
+      automaticOwner.target === owner.target &&
       (isTerminalSessionInUsePrompt(pane) ||
         isTerminalDesktopInstallPrompt(pane))
     )
@@ -902,9 +937,11 @@ export class TmuxTerminalSessionController
           )
         }
       } else {
+        const automaticOwner = this.automaticStartupSessions.get(sessionId)
         const startup = await waitForTerminalStartup(
           owner.target,
-          this.automaticStartupSessions.has(sessionId),
+          automaticOwner?.pid === owner.pid &&
+            automaticOwner.target === owner.target,
         )
         if (startup !== 'ready') {
           throw Object.assign(
@@ -1119,9 +1156,7 @@ export class TmuxTerminalSessionController
     return false
   }
 
-  private async owner(
-    sessionId: string,
-  ): Promise<{ pid: number; target: string; rootPid: number } | undefined> {
+  private async owner(sessionId: string): Promise<TerminalOwner | undefined> {
     const processInfo = (await this.activeProcesses()).find(
       (candidate) => candidate.sessionId === sessionId,
     )
@@ -1150,11 +1185,11 @@ export class TmuxTerminalSessionController
   private async waitForNewOwner(
     sessionId: string,
     previousPid: number,
-  ): Promise<void> {
+  ): Promise<TerminalOwner> {
     for (let attempt = 0; attempt < 150; attempt += 1) {
       const owner = await this.owner(sessionId)
       if (owner && owner.pid !== previousPid) {
-        return
+        return owner
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
@@ -1248,7 +1283,10 @@ export class TmuxTerminalSessionController
             })
             this.automaticStartupSessions.delete(sessionId)
           } else {
-            this.automaticStartupSessions.add(sessionId)
+            this.automaticStartupSessions.set(sessionId, {
+              pid: owner.pid,
+              target: owner.target,
+            })
           }
           return { sessionName, windowId }
         } catch (error) {
@@ -1359,6 +1397,13 @@ function activeBottomFrame(
       marker < index &&
       lines.slice(index + 1).every((line) => !line.trim())
     ) {
+      const firstContent = lines
+        .slice(start + 1, index)
+        .map(cleanDialogLine)
+        .find(Boolean)
+      if (firstContent && /^[>❯](?:\s|$)/u.test(firstContent)) {
+        continue
+      }
       return { start, end: index }
     }
   }

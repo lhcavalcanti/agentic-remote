@@ -94,6 +94,7 @@ export interface TerminalSessionController {
   dismissUserInput?(
     sessionId: string,
     form?: TerminalFormIdentity,
+    action?: 'cancel' | 'decline',
   ): Promise<boolean>
   /**
    * Fills the structured form the agent is showing and submits it, so the
@@ -781,6 +782,7 @@ export class TmuxTerminalSessionController
   async dismissUserInput(
     sessionId: string,
     form?: TerminalFormIdentity,
+    action: 'cancel' | 'decline' = 'cancel',
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const owner = await this.owner(sessionId)
@@ -805,7 +807,12 @@ export class TmuxTerminalSessionController
           return false
         }
       }
-      await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Escape'])
+      await execFileAsync('tmux', [
+        'send-keys',
+        '-t',
+        owner.target,
+        action === 'decline' ? 'C-d' : 'Escape',
+      ])
       return true
     })
   }
@@ -1661,6 +1668,10 @@ export function parseTerminalUserInput(
 export function parseTerminalPermission(
   pane: string,
 ): PendingPermission | undefined {
+  const folderTrust = parseTerminalFolderTrust(pane)
+  if (folderTrust) {
+    return folderTrust
+  }
   const lines = pane.split('\n').map(cleanDialogLine)
   const questionIndex = lines.findLastIndex((line) =>
     /^Do you want to run this command\?/i.test(line),
@@ -1730,6 +1741,57 @@ export function parseTerminalPermission(
     choiceCount: Math.max(...choices.map((choice) => choice.index)),
     options: [
       { optionId: 'terminal:allow', name: 'Yes', kind: 'allow_once' },
+      { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+    ],
+  }
+}
+
+function parseTerminalFolderTrust(pane: string): PendingPermission | undefined {
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  const header = lines.findLastIndex((line) => line === 'Confirm folder trust')
+  const question = lines.findIndex(
+    (line, index) => index > header && line === 'Do you trust the files in this folder?',
+  )
+  if (header < 0 || question < 0) {
+    return undefined
+  }
+  const folderStart = lines.findIndex(
+    (line, index) =>
+      index > header && index < question && /^(?:\/|[a-z]:[\\/]|\\\\)/i.test(line),
+  )
+  if (folderStart < 0) {
+    return undefined
+  }
+  const folderEnd = lines.findIndex(
+    (line, index) => index > folderStart && /^[─━]+$/u.test(line),
+  )
+  if (folderEnd < 0 || folderEnd >= question) {
+    return undefined
+  }
+  const folder = lines.slice(folderStart, folderEnd).join('\n')
+  const choices = lines.slice(question + 1).flatMap((line) => {
+    const choice = /^(?:❯\s*)?(\d+)\.\s+(.+)$/u.exec(line)
+    return choice ? [{ index: Number(choice[1]), label: choice[2] }] : []
+  })
+  if (
+    choices.length !== 3 ||
+    choices[0].index !== 1 || choices[0].label !== 'Yes' ||
+    choices[1].index !== 2 || choices[1].label !== 'Yes, and remember this folder for future sessions' ||
+    choices[2].index !== 3 || choices[2].label !== 'No (Esc)'
+  ) {
+    return undefined
+  }
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ folder, choices }))
+    .digest('hex')
+    .slice(0, 24)
+  return {
+    requestId: `terminal-permission:${fingerprint}`,
+    title: `Trust folder for this session: ${folder}`,
+    kind: 'terminal',
+    choiceCount: 3,
+    options: [
+      { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
       { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
     ],
   }

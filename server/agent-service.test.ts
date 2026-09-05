@@ -6112,6 +6112,105 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it.each([
+    ['cancel', 'closed'],
+    ['decline', 'closed'],
+    ['cancel', 'mismatch'],
+    ['cancel', 'unconfirmed'],
+    ['cancel', 'already-complete'],
+  ] as const)('handles %s of a persisted terminal question when %s', async (action, outcome) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-question-cancel-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const events: SessionEvent[] = [{
+      type: 'tool.execution_start',
+      id: 'question-start',
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      data: {
+        toolCallId: 'question-call',
+        toolName: 'ask_user',
+        arguments: {
+          message: 'Confirm the repository setup.',
+          requestedSchema: {
+            properties: {
+              confirmed: { type: 'boolean', title: 'Confirmed', default: true },
+            },
+          },
+        },
+      },
+    }]
+    const complete = () => events.push({
+      type: 'tool.execution_complete',
+      id: 'question-end',
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      data: { toolCallId: 'question-call', success: true },
+    })
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => {
+        if (outcome === 'closed') {
+          complete()
+        }
+        return outcome !== 'mismatch'
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'Question reproduction',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => events,
+      async () => `cancel-events-${events.length}`,
+      terminal,
+    )
+    await service.start()
+    try {
+      const sessionId = client.session.sessionId
+      const pending = service.getSession(sessionId)?.pendingUserInput
+      expect(pending).toBeDefined()
+      if (outcome === 'already-complete') {
+        complete()
+      }
+      const reply = service.replyUserInput(sessionId, 'persisted-user-input:question-call', {
+        action,
+        answer: '',
+        wasFreeform: false,
+      })
+      if (outcome === 'mismatch' || outcome === 'unconfirmed') {
+        await expect(reply).rejects.toMatchObject({
+          statusCode: 409,
+          message: expect.stringContaining('not dismissed'),
+        })
+        await service.refreshTranscripts()
+        expect(service.getSession(sessionId)?.pendingUserInput).toEqual(pending)
+        expect(service.getSession(sessionId)?.status).toBe('waiting')
+      } else {
+        expect((await reply).pendingUserInput).toBeUndefined()
+      }
+      if (outcome === 'already-complete') {
+        expect(terminal.dismissUserInput).not.toHaveBeenCalled()
+      } else {
+        expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
+          question: 'Confirm the repository setup.',
+          fields: ['Confirmed'],
+        }, action)
+      }
+      expect(terminal.send).not.toHaveBeenCalled()
+    } finally {
+      await service.stop()
+    }
+  })
+
   it('drops a reply to a request the agent already finished', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

@@ -39,6 +39,22 @@ const directories: string[] = []
 const tmuxSessions: string[] = []
 let tmuxRoot = ''
 
+const folderTrustPane = [
+  '╭────────────────────────────────────────────────────────────────────────╮',
+  '│ Confirm folder trust                                                   │',
+  '│ ────────────────────────────────────────────────────────────────────── │',
+  '│ ╭────────────────────────────────────────────────────────────────────╮ │',
+  '│ │ /work/checkout                                                     │ │',
+  '│ ╰────────────────────────────────────────────────────────────────────╯ │',
+  '│ Copilot can read files in this folder with your permission.             │',
+  '│ Do you trust the files in this folder?                                 │',
+  '│ ❯ 1. Yes                                                              │',
+  '│   2. Yes, and remember this folder for future sessions                  │',
+  '│   3. No (Esc)                                                         │',
+  '│ ↑/↓ to navigate · enter to select · esc to cancel                      │',
+  '╰────────────────────────────────────────────────────────────────────────╯',
+].join('\n')
+
 beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
   vi.stubEnv('HOME', tmuxRoot)
@@ -74,7 +90,42 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
-  it('answers a wrapped boolean question in its own pane without accepting the default', async () => {
+  it('exposes the folder-trust prompt as an explicit one-session permission', () => {
+    const permission = parseTerminalPermission(folderTrustPane)
+    expect(permission).toMatchObject({
+      title: 'Trust folder for this session: /work/checkout',
+      kind: 'terminal',
+      choiceCount: 3,
+      options: [
+        { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+      ],
+    })
+    expect(isTerminalOverlay(folderTrustPane)).toBe(true)
+    expect(parseTerminalPermission(
+      folderTrustPane.replace('❯ 1.', '  1.').replace('  2.', '❯ 2.'),
+    )?.requestId).toBe(permission?.requestId)
+    expect(parseTerminalPermission(
+      folderTrustPane.replace('/work/checkout', '/work/other'),
+    )?.requestId).not.toBe(permission?.requestId)
+  })
+
+  it('does not trust a changed option layout or a folder prompt in scrollback', () => {
+    expect(parseTerminalPermission(
+      folderTrustPane.replace('1. Yes', '1. Yes, permanently'),
+    )).toBeUndefined()
+    expect(parseTerminalPermission([
+      folderTrustPane,
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n'))).toBeUndefined()
+  })
+
+  it.each(['accept', 'cancel', 'decline'] as const)(
+    '%s a wrapped boolean question in its own pane without accepting the default',
+    async (action) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-form-test-'))
     directories.push(directory)
     const output = path.join(directory, 'answer.json')
@@ -97,6 +148,11 @@ describe('TmuxTerminalSessionController', () => {
 import { writeFileSync } from 'node:fs'
 let selected = 0
 let pending = ''
+function finish(action) {
+  writeFileSync(${JSON.stringify(output)}, JSON.stringify(
+    action === 'accept' ? { accepted: selected === 0 } : { action }))
+  process.stdout.write('\\x1b[2J\\x1b[HFinished\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
+}
 function draw() {
   process.stdout.write('\\x1b[2J\\x1b[H' + [
     ...${JSON.stringify(pane)},
@@ -111,14 +167,24 @@ process.stdin.on('data', (data) => {
   pending += data.toString()
   while (pending) {
     if (pending[0] === '\\x1b') {
-      if (pending.length < 3) return
+      if (pending.length < 3) {
+        setTimeout(() => {
+          if (pending === '\\x1b') {
+            pending = ''
+            finish('cancel')
+          }
+        }, 25)
+        return
+      }
       selected = pending[2] === 'A' ? Math.max(0, selected - 1) : Math.min(2, selected + 1)
       pending = pending.slice(3)
       draw()
     } else if (pending[0] === '\\r' || pending[0] === '\\n') {
       pending = pending.slice(1)
-      writeFileSync(${JSON.stringify(output)}, JSON.stringify({ accepted: selected === 0 }))
-      process.stdout.write('\\x1b[2J\\x1b[HAccepted\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
+      finish('accept')
+    } else if (pending[0] === '\\x04') {
+      pending = pending.slice(1)
+      finish('decline')
     } else {
       throw new Error('Unexpected input into form')
     }
@@ -158,10 +224,16 @@ draw()
       ...identity, question: 'An unrelated request',
     })).toBe(false)
     expect(await readFile(output, 'utf8')).toBe('')
-    expect(await controller.fillUserInputForm(sessionId, steps, identity)).toBe(true)
-    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ accepted: false })
+    if (action === 'accept') {
+      expect(await controller.fillUserInputForm(sessionId, steps, identity)).toBe(true)
+    } else {
+      expect(await controller.dismissUserInput(sessionId, identity, action)).toBe(true)
+    }
+    const answer = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
+    expect(JSON.parse(answer)).toEqual(action === 'accept' ? { accepted: false } : { action })
     expect(parseTerminalFormPrompt(await controller.capture(sessionId) || '')).toBe(false)
-  })
+    },
+  )
 
   it('detects the Copilot session-in-use startup dialog', () => {
     expect(

@@ -179,6 +179,10 @@ Questions and permissions are the highest-priority UI state.
 - CLI folder-trust prompts MUST be shown as permission cards with the folder
   path, an explicit one-session trust action, and Stop. The app MUST NOT
   silently trust folders or select persistent trust.
+- A CLI Session in use confirmation MUST expose Resume anyway and Go back in
+  a permission card, including its warning about concurrent clients. Sending
+  a message MUST NOT implicitly approve a takeover; an old confirmation in
+  scrollback MUST NOT block an active composer.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
 - Question identity matching MUST tolerate terminal line wrapping, including
   breaks within words, while still requiring the complete question and field

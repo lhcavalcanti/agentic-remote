@@ -28,6 +28,7 @@ import type {
   CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
+import { parseTerminalPermission } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId = 'active-session'
@@ -6536,6 +6537,71 @@ describe('AgentService deletion', () => {
     await service.refreshTranscripts()
     expect(service.store.get(sessionId)?.pendingUserInput).toBeUndefined()
     await service.stop()
+  })
+
+  it('surfaces session-use confirmation and sends only after an explicit resume', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-session-use-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let pane = [
+      'Session in use',
+      'This session appears to be in use by another CLI or application.',
+      '❯ 1. Resume anyway',
+      '  2. Go back (Esc)',
+      '↑/↓ to navigate · enter to select · esc to cancel',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+      pendingPermission: vi.fn(async () => parseTerminalPermission(pane)),
+      replyPermission: vi.fn(async () => {
+        pane = '╻▄▄▄▄▄▄▄▄\n┃\n╹▀▀▀▀▀▀▀▀\n / commands'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'Resumed session',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    try {
+      const sessionId = client.session.sessionId
+      const request = service.getSession(sessionId)?.pendingPermission
+      if (!request) throw new Error('Resume permission was not exposed')
+      expect(service.getSession(sessionId)?.status).toBe('waiting')
+      expect(request.options.map((option) => option.name)).toEqual([
+        'Resume anyway', 'Go back',
+      ])
+      await expect(service.sendMessage(sessionId, 'Continue')).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('Choose Resume anyway or Go back'),
+      })
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(terminal.replyPermission).not.toHaveBeenCalled()
+
+      const updated = await service.replyPermission(sessionId, request.requestId, 'terminal:allow')
+      expect(updated.pendingPermission).toBeUndefined()
+      expect(terminal.replyPermission).toHaveBeenCalledWith(
+        sessionId, request, 'terminal:allow',
+      )
+      await service.sendMessage(sessionId, 'Continue')
+      expect(terminal.send).toHaveBeenCalledWith(sessionId, 'Continue', false)
+    } finally {
+      await service.stop()
+    }
   })
 
   it('detects and answers terminal permission requests', async () => {

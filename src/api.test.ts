@@ -228,6 +228,16 @@ describe('Queued dispatch confirmations', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('preserves a remote transport uncertainty without inventing an attempt ID', async () => {
+    const result = {
+      outcome: 'uncertain', promptId: 'queued', delivery: 'unknown',
+      message: 'The owning computer did not confirm dispatch. No automatic retry was made.',
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(result)))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .resolves.toEqual(result)
+  })
+
   it.each([
     null,
     { ...accepted, promptId: 'another-queued-item' },
@@ -238,6 +248,7 @@ describe('Queued dispatch confirmations', () => {
     { ...accepted, session: { ...session, messages: undefined } },
     { ...accepted, outcome: 'refused', restored: undefined },
     { ...accepted, outcome: 'uncertain', delivery: undefined },
+    { outcome: 'uncertain', promptId: 'queued', delivery: 'accepted' },
   ])('does not release ownership for an incomplete or mismatched response %#', async (result) => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(result)))
     await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))

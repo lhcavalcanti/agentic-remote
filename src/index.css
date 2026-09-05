@@ -200,7 +200,6 @@ button {
   padding: 0 18px;
 }
 
-.brand__mark,
 .empty-state__icon,
 .empty-chat__icon {
   display: grid;
@@ -212,6 +211,8 @@ button {
 }
 
 .brand__mark {
+  display: block;
+  flex: 0 0 auto;
   width: 36px;
   height: 36px;
 }

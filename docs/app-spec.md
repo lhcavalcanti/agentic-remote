@@ -413,6 +413,8 @@ switches, failed sends, and clear replacement IDs.
   their semantic meaning.
 - The accent choice MUST be scoped to the current browser tab, persist across
   reloads in that tab, and fall back to Agentic green for an unknown value.
+- The top-left brand mark MUST use the same SVG artwork and selected accent as
+  the tab icon, including after reload, rather than a separate generic glyph.
 
 ## 10. Notifications
 

@@ -1277,6 +1277,9 @@ describe('App', () => {
     const icon = () =>
       document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || ''
     expect(decodeURIComponent(icon())).toContain('color="#b8f36b"')
+    expect(document.querySelector('.brand__mark')?.tagName).toBe('IMG')
+    expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
+    expect(document.querySelector('.brand__mark')).toHaveAttribute('alt', '')
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
     fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
 
@@ -1284,8 +1287,10 @@ describe('App', () => {
     expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBe('violet')
     expect(localStorage.getItem('agentic-remote:accent-theme')).toBeNull()
     expect(decodeURIComponent(icon())).toContain('color="#ad92ff"')
+    expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     fireEvent.click(screen.getByRole('radio', { name: 'Teal accent' }))
     expect(decodeURIComponent(icon())).toContain('color="#63d6c0"')
+    expect(document.querySelector('.brand__mark')).toHaveAttribute('src', icon())
     expect(document.querySelectorAll('link[rel="icon"]')).toHaveLength(1)
   })
 
@@ -1301,6 +1306,10 @@ describe('App', () => {
     expect(decodeURIComponent(
       document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
     )).toContain('color="#ff83b6"')
+    expect(document.querySelector('.brand__mark')).toHaveAttribute(
+      'src',
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href,
+    )
   })
 
   it('ignores an unknown stored accent', async () => {

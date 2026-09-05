@@ -559,7 +559,7 @@ describe('AgentService deletion', () => {
         "data":{
           "toolCallId":"skill-call",
           "toolName":"skill",
-          "arguments":{"skill":"tool-model-catalog"}
+          "arguments":{"skill":"service-inventory"}
         }
       },
       {
@@ -570,9 +570,9 @@ describe('AgentService deletion', () => {
         "data":{
           "toolCallId":"mcp-call",
           "parentToolCallId":"skill-call",
-          "toolName":"mcp:ecs-mcp-server-search_config",
-          "mcpServerName":"ecs-mcp-server",
-          "mcpToolName":"search_config",
+          "toolName":"mcp:configuration-service-search_config_keys",
+          "mcpServerName":"configuration-service",
+          "mcpToolName":"search_config_keys",
           "arguments":{"query":"cache"}
         }
       },
@@ -597,6 +597,7 @@ describe('AgentService deletion', () => {
       expect.objectContaining({
         id: 'tool:mcp-call',
         activityKind: 'tool',
+        content: expect.stringContaining('MCP · Configuration Service · Search Config Keys'),
         activityGroupId: 'tool:skill-call',
         activityResult: 'Error: 404 operation not found',
         activityDurationMs: 2_500,
@@ -671,7 +672,7 @@ describe('AgentService deletion', () => {
         "data":{
           "toolCallId":"skill-call",
           "toolName":"skill",
-          "arguments":{"skill":"tool-model-catalog"}
+          "arguments":{"skill":"service-inventory"}
         }
       },
       {

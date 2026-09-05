@@ -672,7 +672,7 @@ describe('App', () => {
         {
           id: 'tool:skill-call',
           role: 'activity',
-          content: 'Skill (tool-model-catalog)',
+          content: 'Skill (service-inventory)',
           createdAt: '2026-07-22T00:00:00.000Z',
           activityStatus: 'completed',
           activityKind: 'skill',
@@ -680,7 +680,7 @@ describe('App', () => {
         {
           id: 'mcp-call',
           role: 'activity',
-          content: 'MCP · ecs-mcp-server · search_config',
+          content: 'MCP · configuration-service · search_config_keys',
           createdAt: '2026-07-22T00:00:00.500Z',
           activityStatus: 'completed',
           activityResult: '48 lines read',
@@ -710,16 +710,16 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    expect(screen.getByText('skill(tool-model-catalog)')).toBeInTheDocument()
-    expect(screen.getByText('search_config')).toBeInTheDocument()
-    expect(screen.getByText('(MCP: ecs-mcp-server)')).toBeInTheDocument()
+    expect(screen.getByText('skill(service-inventory)')).toBeInTheDocument()
+    expect(screen.getByText('search_config_keys')).toBeInTheDocument()
+    expect(screen.getByText('(MCP: configuration-service)')).toBeInTheDocument()
     expect(screen.getByText('48 lines read')).toBeInTheDocument()
     expect(screen.getByText('1.3s')).toBeInTheDocument()
     expect(screen.getByText('Error: file not found')).toBeInTheDocument()
     expect(screen.getByText('cache')).toBeInTheDocument()
     expect(document.querySelectorAll('.activity-message')).toHaveLength(4)
     expect(document.querySelector('.activity-group__children')).toHaveTextContent(
-      'search_config',
+      'search_config_keys',
     )
     expect(
       document.querySelector('.activity-message--pending'),
@@ -837,7 +837,7 @@ describe('App', () => {
         {
           id: 'skill-call',
           role: 'activity',
-          content: 'Skill (tool-model-catalog)',
+          content: 'Skill (service-inventory)',
           createdAt: '2026-07-22T00:00:00.000Z',
           activityStatus: 'running',
           activityKind: 'skill',
@@ -869,7 +869,7 @@ describe('App', () => {
       [...document.querySelectorAll('.activity-message__name')].map(
         (name) => name.textContent,
       ),
-    ).toEqual(['skill(tool-model-catalog)', 'Read', 'Search Repositories'])
+    ).toEqual(['skill(service-inventory)', 'Read', 'Search Repositories'])
     expect(document.querySelectorAll('.activity-group')).toHaveLength(0)
   })
 

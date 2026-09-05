@@ -1009,8 +1009,7 @@ export class TmuxTerminalSessionController
         ])
       ).stdout
     } catch (error) {
-      // No server at all means no pane, which is the ordinary way a
-      // suspension finishes. Anything else is a look that failed.
+      // A stopped server means no pane; a missing socket alone does not.
       return noTmuxServer(error)
     }
     if (!listed.trim()) {
@@ -1746,7 +1745,7 @@ async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
           : []
       })
   } catch (error) {
-    if (tmuxNotInstalled(error) || noTmuxServer(error)) {
+    if (tmuxNotInstalled(error) || (await noTmuxServer(error))) {
       return []
     }
     throw error
@@ -2183,7 +2182,7 @@ async function tmuxTargetForPid(
     // ordinary way a suspension finishes, so it reads as absence: raising here
     // reported failure for work that had already succeeded, leaving the
     // session never recorded as suspended.
-    if (noTmuxServer(error)) {
+    if (await noTmuxServer(error)) {
       return undefined
     }
     throw error

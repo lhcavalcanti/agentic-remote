@@ -235,7 +235,7 @@ async function listTmuxPanePids(): Promise<number[]> {
       // read, and answering "no panes" for it says every terminal-backed
       // session has exited: discovery would drop them all, and stopping one
       // would report success without having killed anything.
-      if (tmuxNotInstalled(error) || noTmuxServer(error)) {
+      if (tmuxNotInstalled(error) || (await noTmuxServer(error))) {
         return []
       }
       lastError = error

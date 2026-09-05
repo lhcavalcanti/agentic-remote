@@ -503,7 +503,7 @@ describe('active Copilot processes', () => {
     directories.push(directory)
     await stubTmux(
       directory,
-      'echo "no server running on /tmp/tmux-1000/default" >&2\nexit 1\n',
+      `echo "no server running on ${path.join(directory, 'absent-socket')}" >&2\nexit 1\n`,
     )
 
     await expect(findActiveCopilotProcesses()).resolves.toEqual([])

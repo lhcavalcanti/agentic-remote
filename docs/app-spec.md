@@ -176,8 +176,23 @@ Questions and permissions are the highest-priority UI state.
   structured `message`/`requestedSchema` form supported by current Copilot
   runtimes.
 - Terminal ask-user and permission dialogs MUST be parsed from the live pane.
+- CLI folder-trust prompts MUST be shown as permission cards with the folder
+  path, an explicit one-session trust action, and Stop. The app MUST NOT
+  silently trust folders or select persistent trust.
+- A CLI Session in use confirmation MUST expose Resume anyway and Go back in
+  a permission card, including its warning about concurrent clients. Sending
+  a message MUST NOT implicitly approve a takeover; an old confirmation in
+  scrollback MUST NOT block an active composer.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
+- Question identity matching MUST tolerate terminal line wrapping, including
+  breaks within words, while still requiring the complete question and field
+  headings. A failed match MUST preserve the pending request and surface an
+  actionable error instead of typing into an unverified dialog.
 - Safe Yes/choice and Stop actions MUST be available.
+- Cancelling or declining a persisted terminal question MUST dismiss the
+  matching live form and confirm completion before hiding its card. A failed
+  dismissal MUST retain the question; it MUST NOT report a false success that
+  leaves the terminal capturing subsequent messages.
 - Pending SDK questions MUST be reconstructed from persisted tool events after
   a service restart, including structured ask-user forms.
 - If an SDK callback was lost, answering the recovered question MUST resume as a
@@ -186,6 +201,10 @@ Questions and permissions are the highest-priority UI state.
 - Entering a session that is already waiting MUST scroll to the action card.
 
 ## 6. Composer and prompt delivery
+
+- Full-screen send protection MUST recognize active terminal dialogs, including
+  single-field questions, without treating keyboard hints quoted in transcript
+  or composer text as an open dialog.
 
 ### 6.1 Layout
 
@@ -273,6 +292,11 @@ switches, failed sends, and clear replacement IDs.
   root MUST be rejected.
 - Hidden files/directories MUST be omitted by default.
 - Markdown MUST support rendered and raw views.
+- Relative Markdown document links MUST open through the owning workspace or
+  Knowledge root without navigating away from the app. Section links MUST stay
+  inside the displayed document, with unique anchors for repeated headings.
+- Refused links, missing documents, and missing section anchors MUST report an
+  explicit error without discarding the current document or conversation draft.
 - Text previews MUST be limited to 2 MiB.
 - PDF previews MUST be limited to 25 MiB and rendered in the browser with
   PDF.js.
@@ -294,6 +318,11 @@ switches, failed sends, and clear replacement IDs.
 
 - Knowledge MUST be the single place for reading files; there is no separate
   saved-paths panel.
+- Root creation MUST be entered from Knowledge itself, not from the Sessions
+  sidebar.
+- Opening Knowledge with an active session and no configured roots MUST open
+  the root picker on that session's computer and current working folder. The
+  user MAY add that folder directly or browse to another readable folder.
 - A knowledge root is a computer plus an absolute folder and MUST be browsable
   with no session in existence.
 - Choosing a root MUST allow any folder on the owning computer that the user can
@@ -349,6 +378,13 @@ switches, failed sends, and clear replacement IDs.
   success.
 - Provider-specific capabilities MUST be derived from advertised runtime
   options rather than assuming Copilot and Claude have identical controls.
+- Model IDs, names, and capabilities MUST come from Copilot CLI or Claude
+  discovery, not an embedded model list. Documentation examples and test
+  fixtures MUST use neutral synthetic models rather than named offerings.
+- Opening Model and context or App settings MUST request a fresh catalog from
+  the owning providers, bypassing browser and SDK lifetime caches without
+  restarting sessions. Concurrent discovery requests MAY share one in-flight
+  request; a subsequent opening MUST trigger another discovery request.
 - A transient provider-authentication failure during startup MUST NOT leave the
   runtime model catalog permanently empty; model discovery MUST retry when
   runtime options are requested.
@@ -366,6 +402,8 @@ switches, failed sends, and clear replacement IDs.
   original Agentic green.
 - The selected accent MUST apply to primary actions, focus states, activity
   indicators, and other non-semantic accent treatments.
+- The browser-tab icon MUST track the selected accent immediately and after
+  reload, without changing other tabs or the shared installed-app icons.
 - Warning, error, computer-identity, and background-task colors MUST retain
   their semantic meaning.
 - The accent choice MUST be scoped to the current browser tab, persist across
@@ -409,8 +447,13 @@ Priority order:
 
 ## 12. PWA updates
 
-- The deployed package version is the source of truth.
+- The deployed package version is the source of truth for the displayed
+  version. An immutable build identity MUST distinguish separately built
+  releases, even when they share a package version.
 - `/api/version` MUST be uncached.
+- Its build identity MUST describe the same static release as the browser
+  bundle and service worker, including after rollback. Version-only responses
+  from older hubs MUST remain supported.
 - The app MUST detect bundle-only releases even when service-worker bytes are
   unchanged.
 - Update checks SHOULD run at startup, foreground return, and on demand.

@@ -194,6 +194,40 @@ runtime.
 - Verify recovery after every promotion and retain the previous release for
   rollback.
 
+### Browser build identity
+
+Every production Vite build generates an opaque `buildId` once, independently
+of the package version, Git checkout, and release directory name. The same ID
+is embedded in the browser bundle and `sw.js`, and recorded with the package
+version in `dist/build-info.json`. Rebuilding an unchanged commit deliberately
+creates a new identity; copying or restarting that build does not.
+
+Publication copies the complete `dist` directory, including this metadata,
+without regenerating the ID. Rollback restores the original artifact and ID,
+not a new build of the old sources. No Git metadata is needed in an installed
+release.
+
+A static-serving hub resolves `AGENTIC_REMOTE_RELEASE_DIR` (or its default
+`dist`) once at startup and reads the identity there. `/api/version` returns
+that build's `{ version, buildId }` with `Cache-Control: no-store`, even when
+the static directory is separate from the server sources. Missing or invalid
+build metadata prevents static-serving startup: rebuild older standalone
+`dist` directories before using them with this server. Nodes and non-static
+development/test hubs do not require a production build; the latter retain
+the version-only API response.
+
+The client compares build IDs when available, falling back to package versions
+for older hubs. Registration URLs and shell caches use the build ID. The ID is
+also embedded in the worker so an older, persistent registration URL cannot
+choose the cache namespace of newly fetched worker code. Cache reads stay
+within that worker's namespace, and online navigation does not replace the
+installed offline shell with another release's HTML. Update checks retarget
+even a waiting worker after a rollback, and successive same-version builds can
+each announce an update without changing the version shown in App settings.
+Update now rechecks the deployed identity before activating a waiting worker,
+so a toast left open across a rollback cannot activate the obsolete build.
+If that recheck fails, the current app stays active and the error is surfaced.
+
 ## Post-merge and post-graduation cleanup
 
 Cleanup is part of completing the change:

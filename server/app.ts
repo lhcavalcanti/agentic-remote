@@ -1,11 +1,12 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { realpath } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyMultipart from '@fastify/multipart'
 import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
+import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
 import { AgentService } from './agent-service.js'
 import { ClaudeAgentService } from './claude-agent-service.js'
 import { ComputerManager } from './computer-manager.js'
@@ -73,8 +74,23 @@ export async function buildApp(
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
 }> {
-  const app = Fastify({ logger: options.logger ?? true })
   const role = options.role ?? 'hub'
+  let publicDirectory: string | undefined
+  let appVersion: AppVersion | undefined
+  if (role === 'hub' && options.serveStatic) {
+    const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
+    const configuredDirectory = process.env.AGENTIC_REMOTE_RELEASE_DIR?.trim()
+      ? path.resolve(process.env.AGENTIC_REMOTE_RELEASE_DIR)
+      : path.resolve(serverDirectory, '../dist')
+    publicDirectory = await realpath(configuredDirectory)
+    appVersion = parseAppVersion(
+      JSON.parse(await readFile(path.join(publicDirectory, 'build-info.json'), 'utf8')),
+    )
+    if (!appVersion.buildId) {
+      throw new Error('The static app build identity is missing; rebuild the app')
+    }
+  }
+  const app = Fastify({ logger: options.logger ?? true })
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
   const service =
     options.service ??
@@ -163,7 +179,7 @@ export async function buildApp(
     await registerFileUploadRoutes(app, manager)
     app.get('/api/version', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
-      return { version: identity.info.version }
+      return appVersion ?? { version: identity.info.version }
     })
   }
 
@@ -173,12 +189,7 @@ export async function buildApp(
     node: identity.info,
   }))
 
-  if (role === 'hub' && options.serveStatic) {
-    const serverDirectory = path.dirname(fileURLToPath(import.meta.url))
-    const configuredDirectory = process.env.AGENTIC_REMOTE_RELEASE_DIR?.trim()
-      ? path.resolve(process.env.AGENTIC_REMOTE_RELEASE_DIR)
-      : path.resolve(serverDirectory, '../dist')
-    const publicDirectory = await realpath(configuredDirectory)
+  if (publicDirectory) {
     await app.register(fastifyStatic, {
       root: publicDirectory,
       wildcard: false,

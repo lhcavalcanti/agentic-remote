@@ -161,8 +161,24 @@ one store transaction. Reorder operations use this same boundary and must not
 add per-operation rollback. External provider delivery is not part of the
 filesystem transaction.
 
-The on-disk version and atomic-rename durability boundary are unchanged; this
-requires no stored-state migration or history rewrite.
+### Durable identity retirement
+
+Version-1 state can include an identifier-only `retiredSessionIds` ledger.
+Clear and delete record retirement in the same atomic write as the identity
+change, independently of any surviving session. Deleting the last replacement
+therefore cannot make an ancestor discoverable again when external provider
+cleanup failed. Direct creation, provider discovery, reads, and terminal
+recovery all reject or exclude retired identities.
+
+Legacy `replacedSessionIds` are indexed in memory without an eager file rewrite
+and retained by subsequent successful writes. Retirement lookups are cached by
+immutable snapshot array, so reads and streamed tokens do not scan the ledger.
+Rejected candidate writes never expose their retirement entries.
+
+The on-disk version and atomic-rename boundary remain unchanged, but the ledger
+is additive persistent metadata. A runtime predating retirement support can
+ignore it; rollout and rollback of this stateful change require explicit review
+rather than assuming an older binary preserves retirement.
 
 ## Pairing flow
 

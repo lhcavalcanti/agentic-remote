@@ -30,6 +30,7 @@ export class SessionReplacementCleanupError extends Error {
 interface StoredState {
   version: 1
   sessions: Record<string, StoredSession>
+  retiredSessionIds?: string[]
 }
 
 interface StoredSession extends SessionDetail {
@@ -60,6 +61,13 @@ interface StreamMutation {
 type PendingChange = PendingMutation | StreamMutation
 
 type SessionProjection<T> = T | ((session: SessionDetail) => T)
+
+const emptyRetirements: ReadonlySet<string> = new Set()
+
+function isSessionIdList(value: unknown): value is string[] {
+  return Array.isArray(value) &&
+    value.every((id) => typeof id === 'string' && id.length > 0)
+}
 
 function activityDuration(startedAt: string, completedAt: string): number | undefined {
   const start = Date.parse(startedAt)
@@ -103,6 +111,7 @@ export class SessionStore {
   private writingState?: StoredState
   private liveMutableSessions = new WeakSet<StoredSession>()
   private readonly streamTargets = new WeakMap<ChatMessage[], Map<string, ChatMessage>>()
+  private readonly retirementCache = new WeakMap<string[], ReadonlySet<string>>()
 
   constructor(
     directory = resolveDataDirectory(),
@@ -116,7 +125,11 @@ export class SessionStore {
     try {
       const raw = await readFile(this.statePath, 'utf8')
       const parsed = JSON.parse(raw) as StoredState
-      if (parsed.version !== 1 || typeof parsed.sessions !== 'object') {
+      if (
+        parsed.version !== 1 ||
+        typeof parsed.sessions !== 'object' ||
+        (parsed.retiredSessionIds !== undefined && !isSessionIdList(parsed.retiredSessionIds))
+      ) {
         throw new Error('Unsupported Agentic Remote state format')
       }
       this.state = parsed
@@ -128,7 +141,14 @@ export class SessionStore {
       await this.persist()
     }
 
+    const legacyRetirements: string[] = []
     for (const session of Object.values(this.state.sessions)) {
+      if (session.replacedSessionIds !== undefined) {
+        if (!isSessionIdList(session.replacedSessionIds)) {
+          throw new Error('Invalid session retirement metadata')
+        }
+        for (const id of session.replacedSessionIds) legacyRetirements.push(id)
+      }
       session.revision ??= 0
       session.provider ??= 'copilot'
       session.isOpen = session.managedOpen === true
@@ -154,28 +174,54 @@ export class SessionStore {
         }
       }
     }
+    this.retire(this.state, legacyRetirements)
     this.checkpoint = this.state
     this.liveMutableSessions = new WeakSet()
   }
 
   list(): SessionDetail[] {
     return Object.values(this.state.sessions)
+      .filter((session) => !this.isRetiredSession(session.id))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .map(cloneSession)
   }
 
   get(id: string): SessionDetail | undefined {
-    if (!Object.hasOwn(this.state.sessions, id)) {
+    if (!Object.hasOwn(this.state.sessions, id) || this.isRetiredSession(id)) {
       return undefined
     }
     const session = this.state.sessions[id]
     return session ? cloneSession(session) : undefined
   }
 
+  isRetiredSession(id: string): boolean {
+    return this.retiredIds(this.state).has(id)
+  }
+
+  private retiredIds(state: StoredState): ReadonlySet<string> {
+    if (!state.retiredSessionIds) return emptyRetirements
+    let retired = this.retirementCache.get(state.retiredSessionIds)
+    if (!retired) {
+      retired = new Set(state.retiredSessionIds)
+      this.retirementCache.set(state.retiredSessionIds, retired)
+    }
+    return retired
+  }
+
+  private retire(state: StoredState, ids: readonly string[]): void {
+    if (!ids.length) return
+    const retired = new Set(this.retiredIds(state))
+    for (const id of ids) retired.add(id)
+    const recorded = [...retired]
+    state.retiredSessionIds = recorded
+    // The array belongs to this snapshot, so rejected writes never publish it.
+    this.retirementCache.set(recorded, retired)
+  }
+
   /** Queue a read behind admitted mutations before making a provider-side decision. */
   async readAfterWrites(sessionId: string): Promise<SessionDetail> {
     return this.change((state) => {
-      if (!state.sessions[sessionId]) {
+      if (!state.sessions[sessionId] || this.retiredIds(state).has(sessionId)) {
         throw new Error(`Session ${sessionId} does not exist`)
       }
       return () => this.requireSession(sessionId)
@@ -183,7 +229,7 @@ export class SessionStore {
   }
 
   backend(id: string): StoredSession['backend'] | undefined {
-    return this.state.sessions[id]?.backend
+    return this.isRetiredSession(id) ? undefined : this.state.sessions[id]?.backend
   }
 
   async create(
@@ -193,25 +239,35 @@ export class SessionStore {
       backend?: 'sdk' | 'terminal'
     } = {},
   ): Promise<SessionDetail> {
+    const incoming = cloneSession(session)
+    const retired = incoming.replacedSessionIds === undefined ? [] : incoming.replacedSessionIds
+    if (!isSessionIdList(retired) || retired.includes(incoming.id)) {
+      throw new Error('Invalid session retirement metadata')
+    }
     return this.change((state) => {
-      state.sessions[session.id] = {
-        ...cloneSession(session),
-        provider: session.provider || 'copilot',
+      if (this.retiredIds(state).has(incoming.id)) {
+        throw new Error('Session identity has been retired')
+      }
+      state.sessions[incoming.id] = {
+        ...incoming,
+        provider: incoming.provider || 'copilot',
         revision: Math.max(
-          session.revision ?? 1,
-          (state.sessions[session.id]?.revision ?? 0) + 1,
+          incoming.revision ?? 1,
+          (state.sessions[incoming.id]?.revision ?? 0) + 1,
         ),
         managedOpen: options.managedOpen,
         executionMode: undefined,
         backend: options.backend,
       }
-      return () => this.requireSession(session.id)
-    })
+      this.retire(state, retired)
+      return () => this.requireSession(incoming.id)
+    }, retired.length > 0)
   }
 
   async syncDiscovered(sessions: DiscoveredSession[]): Promise<void> {
     return this.change((state) => {
       for (const discovered of sessions) {
+        if (this.retiredIds(state).has(discovered.id)) continue
         const previous = state.sessions[discovered.id]
         if (previous) {
           const existing = {
@@ -302,6 +358,7 @@ export class SessionStore {
     const active = new Set(sessionIds)
     return this.change((state) => {
       for (const session of Object.values(state.sessions)) {
+        if (this.retiredIds(state).has(session.id)) continue
         state.sessions[session.id] = {
           ...session,
           revision: (session.revision ?? 0) + 1,
@@ -326,6 +383,7 @@ export class SessionStore {
     const knownSdk = new Set(sdkSessionIds)
     return this.change((state) => {
       for (const session of Object.values(state.sessions)) {
+        if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
           state.sessions[session.id] = {
             ...session,
@@ -350,6 +408,7 @@ export class SessionStore {
     return Object.values(this.state.sessions)
       .filter(
         (session) =>
+          !this.isRetiredSession(session.id) &&
           session.backend === 'terminal' &&
           session.managedOpen === true &&
           // A suspended session is meant to have nothing running for it.
@@ -486,8 +545,15 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     const replacement = await this.change((state) => {
       const existing = state.sessions[sessionId]
-      if (!existing) {
+      if (!existing || this.retiredIds(state).has(sessionId)) {
         throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (
+        sessionId === replacementId ||
+        Object.hasOwn(state.sessions, replacementId) ||
+        this.retiredIds(state).has(replacementId)
+      ) {
+        throw new Error('Replacement session identity is not available')
       }
       state.sessions[replacementId] = {
         ...existing,
@@ -521,6 +587,7 @@ export class SessionStore {
             }
           : undefined,
       }
+      this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
       return () => this.requireSession(replacementId)
     }, true)
@@ -677,6 +744,11 @@ export class SessionStore {
 
   async remove(sessionId: string): Promise<void> {
     await this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (existing) {
+        // Retirement must outlive the last descendant, even if provider cleanup failed.
+        this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
+      }
       delete state.sessions[sessionId]
       return () => undefined
     }, true)
@@ -893,7 +965,7 @@ export class SessionStore {
   ): Promise<SessionDetail | undefined> {
     return this.change((state) => {
       const existing = state.sessions[sessionId]
-      if (!existing) {
+      if (!existing || this.retiredIds(state).has(sessionId)) {
         throw new Error(`Session ${sessionId} does not exist`)
       }
       const session = structuredClone(existing)
@@ -909,7 +981,7 @@ export class SessionStore {
   private mutateInMemory(change: StreamMutation): SessionDetail {
     const { sessionId, messageId } = change
     const session = this.state.sessions[sessionId]
-    if (!session) {
+    if (!session || this.isRetiredSession(sessionId)) {
       throw new Error(`Session ${sessionId} does not exist`)
     }
     if (!this.streamTarget(session.messages, messageId)) {
@@ -945,7 +1017,7 @@ export class SessionStore {
     mutableSessions: WeakSet<StoredSession>,
   ): void {
     let session = state.sessions[change.sessionId]
-    if (!session) {
+    if (!session || this.retiredIds(state).has(change.sessionId)) {
       return
     }
     if (!mutableSessions.has(session)) {
@@ -1014,7 +1086,7 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.change((state) => {
       const existing = state.sessions[sessionId]
-      if (!existing) {
+      if (!existing || this.retiredIds(state).has(sessionId)) {
         throw new Error(`Session ${sessionId} does not exist`)
       }
       if (condition && !condition(existing)) {
@@ -1120,6 +1192,7 @@ export class SessionStore {
           try {
             const resolve = change.apply(draft)
             durableChange ||= (
+              draft.retiredSessionIds !== candidate.retiredSessionIds ||
               Object.keys(draft.sessions).length !== Object.keys(candidate.sessions).length ||
               Object.entries(draft.sessions).some(
                 ([id, session]) => session !== candidate.sessions[id],

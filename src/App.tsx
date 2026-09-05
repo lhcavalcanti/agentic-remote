@@ -7877,10 +7877,13 @@ function App() {
     if (loading) {
       return
     }
+    // An upsert can settle the pending ref before this render's fallback runs.
+    // Its session membership must come from the same latest snapshot.
     setSelectedKey((current) =>
       current &&
-      (sessions.some((session) => sessionKey(session) === current) ||
+      (sessionsRef.current.some((session) => sessionKey(session) === current) ||
         pendingReplacements.current.has(current) ||
+        clearingSessions.current.has(current) ||
         // Its computer did not answer the most recent time it was asked, so
         // nobody has said this session is not there. Moving the reader off it
         // sends them somewhere they never asked for, and the session arriving
@@ -7899,13 +7902,13 @@ function App() {
         ) || 0) < latestListing.current &&
           !removedSessions.current.has(current)))
         ? current
-        : sessions[0]
-          ? sessionKey(sessions[0])
+        : sessionsRef.current[0]
+          ? sessionKey(sessionsRef.current[0])
           : undefined,
     )
     // `selectedKey` is a dependency because history can name a session that
     // has since been deleted, and that has to fall back to a real one.
-  }, [loading, selectedKey, sessions])
+  }, [clearing, loading, selectedKey, sessions])
 
   useEffect(() => {
     if (loading) {
@@ -8318,6 +8321,7 @@ function App() {
         setSessions((current) => upsertSession(current, detail))
       } else if (
         selectedAtRefresh &&
+        !clearingSessions.current.has(sessionKey(selectedAtRefresh)) &&
         !pendingReplacements.current.has(sessionKey(selectedAtRefresh)) &&
         !replacedInto.current.has(sessionKey(selectedAtRefresh))
       ) {

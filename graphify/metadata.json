@@ -117,9 +117,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 96,
+  "communities": 101,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5500,
+  "edges": 5501,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -151,7 +151,7 @@
     "bin/agentic-remote-promotion-setup": "8c90f5750c7eb945098ee3b170a4f0f25fbd4dc1b7543771f8257c0f88ed7e1a",
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "3b14ebabd09116b36c2f22478284831a9a676b119e7cba2066250635b62a69d3",
+    "docs/app-spec.md": "337f38f0b4c7e83a7e56290df703254d35cdecf6f200fb02cd4e9d19cbfadb73",
     "docs/architecture.md": "8fc8546bfbbdef24a89707aeef3ac0dcb74e8ff4e551c0fea809ab959fd0a57c",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -256,8 +256,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "4b3efdf99deea7baf1bbed55ca1b1358041e8791049039b4ef43f301fce09219",
-    "src/App.tsx": "05e7cb42a6b00f85f0e6b06ff30a2aa3335dddff6a566e2031d37174ce2c9c56",
+    "src/App.test.tsx": "f093a6c58e7181e8ae14f0b3b5c7c87dd4019149a41740fa93c422bd1ef47660",
+    "src/App.tsx": "7470db3c9936524433d635ffeac082b9a0dcb49fe63bd405e94be7a62f4aad21",
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
     "src/MermaidDiagram.test.tsx": "db09c107f11b4c5f22c69cc6f8d50ae6bcc25944ec5601a535986122f5dc1281",
     "src/MermaidDiagram.tsx": "98849de396761797dad407e96ea609fe233756b156462b349150fbb6f69f16a2",
@@ -341,22 +341,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "704da8979be9fca5e30f890ce73fff5eba784ee5c0ba15c331211340ca1bcf1c",
-    "communities.json": "a95e3ff1716c1292f77e87de5871a302e9d68fdee02346c9f6af33ada1a51c40",
-    "graph.html": "17d244b039a8f2ab9ad3a4669d9c6a50d008cbb8cbfa6d78ed9b8bbd7fd34240",
-    "graph.json": "d0a25f5affb7f479925091c44a585e0c63a825b93d892d1637e4cbfb7a01a9f4"
+    "GRAPH_REPORT.md": "9517d1b7ff63446a2346b551960f8c10d1bc1ea8eaecfd16757fb308ee480e89",
+    "communities.json": "60ae08a5609efe34fd6ac27a9652d07689cb1e1a95e694351c1131946581b4b5",
+    "graph.html": "aa75ee39c5bf97a9dcc082def073f770f9a8de9b339b3c6a7a6b217eaa9f66aa",
+    "graph.json": "6698cb72d23ae630294c284199c9e8127946b1a65d2df67e76d2c14920294c1b"
   },
   "schema_version": 1,
-  "source_commit": "7c981e83362caa1fb08e051543ea20c04c5fbd39",
-  "source_fingerprint": "707fd5026f235344306dfeaf795eb1e82a96aa5140415b51b84a0f28f83d6244",
+  "source_commit": "51010618566e4d7327846a6dac89f10d8275af7b",
+  "source_fingerprint": "c5514f0d230d0d803c1b5939c936419590914b44840325d69f506341c9b2ac60",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "server/agent-service.ts",
-    "server/claude-agent-service.ts",
-    "server/session-store-durability.test.ts",
-    "server/session-store-providers.test.ts",
-    "server/session-store.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts"
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

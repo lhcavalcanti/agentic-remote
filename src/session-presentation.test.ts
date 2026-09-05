@@ -90,6 +90,24 @@ describe('session presentation', () => {
       })
   })
 
+  it('keeps a persisted delivery failure discoverable even when passive status returns to idle', () => {
+    const failed = {
+      ...session,
+      failedPrompt: { content: 'A prompt still needs recovery', failedAt: '2026-09-05T00:00:00Z' },
+    }
+    expect(sessionPresentation(failed, tasks)).toMatchObject({
+      state: 'error', needsAttention: true, working: false,
+    })
+    expect(sessionPresentation(failed, tasks, false)).toMatchObject({
+      state: 'offline', needsAttention: true, working: false,
+    })
+  })
+
+  it('can search the current computer name without rewriting cached session metadata', () => {
+    expect(matchesSessionSearch(session, 'renamed studio', 'Renamed Studio')).toBe(true)
+    expect(session.computerName).toBe('Studio')
+  })
+
   it.each([
     ['  STUDIO  claude ', true],
     ['sdk release', true],

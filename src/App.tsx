@@ -5943,6 +5943,7 @@ function KnowledgeReader({
 function WorkspaceDialog({
   initialKind,
   initialPath,
+  insertUnavailableReason,
   session,
   onClose,
   onInsert,
@@ -5950,6 +5951,7 @@ function WorkspaceDialog({
 }: {
   initialKind?: 'file' | 'folder'
   initialPath?: string
+  insertUnavailableReason?: string
   session: ManagedSession
   onClose: () => void
   onInsert: (file: WorkspaceFile, ask: boolean) => void
@@ -6506,13 +6508,28 @@ function WorkspaceDialog({
                 ) : null}
               </div>
               <div className="workspace-preview__actions">
-                <button onClick={() => onInsert(file, false)} type="button">
+                <button
+                  aria-describedby={insertUnavailableReason ? 'workspace-insert-hint' : undefined}
+                  disabled={loading || Boolean(insertUnavailableReason)}
+                  onClick={() => onInsert(file, false)}
+                  type="button"
+                >
                   Insert path
                 </button>
-                <button onClick={() => onInsert(file, true)} type="button">
+                <button
+                  aria-describedby={insertUnavailableReason ? 'workspace-insert-hint' : undefined}
+                  disabled={loading || Boolean(insertUnavailableReason)}
+                  onClick={() => onInsert(file, true)}
+                  type="button"
+                >
                   Ask agent about file
                 </button>
               </div>
+              {insertUnavailableReason ? (
+                <p className="workspace-preview__hint" id="workspace-insert-hint" role="status">
+                  {insertUnavailableReason}
+                </p>
+              ) : null}
               {outlineOpen && outline.length > 0 ? (
                 <nav aria-label="Document outline" className="workspace-outline">
                   {outline.map((heading) => (
@@ -6796,7 +6813,7 @@ function App() {
   // whenever the reader moves, which would fight the user's own navigation.
   const knowledgePositionsRef = useRef<Record<string, KnowledgePosition>>({})
   const restoreKnowledgeRef = useRef<
-    (position: KnowledgePosition, key: string) => void
+    (position: KnowledgePosition, key: string, sameViewOwner: boolean) => void
   >(() => {})
   // Toggling the panel must not send the tree back to the top, so its scroll
   // offset is kept across hides and session switches.
@@ -7334,6 +7351,16 @@ function App() {
     selected?.pendingUserInput?.requestId
   const selectedComputerId = selected?.computerId
   const selectedSessionId = selected?.id
+  const selectedComputerOnline = computers.some(
+    (computer) => computer.id === selectedComputerId && computer.online,
+  )
+  const selectedLifecycleBlocked = !selectedComputerOnline ||
+    selected?.status !== 'idle' ||
+    selected?.suspended === true ||
+    Boolean(selected?.pendingUserInput || selected?.pendingPermission)
+  const workspaceInsertUnavailableReason = selected && !selectedComputerOnline
+    ? `Reconnect ${selected.computerName} to add a file reference.`
+    : undefined
   const selectedNotificationsMuted = selected
     ? mutedSessions.includes(sessionKey(selected))
     : false
@@ -7801,7 +7828,7 @@ function App() {
     restoreFailedPromptRef.current = restoreFailedPrompt
     followReplacementsRef.current = followReplacements
     loadKnowledgeFolderRef.current = loadKnowledgeFolder
-    restoreKnowledgeRef.current = (position: KnowledgePosition, key: string) => {
+    restoreKnowledgeRef.current = (position, key, sameViewOwner) => {
       const rootId = position.rootId
       if (!rootId) {
         return
@@ -7810,6 +7837,18 @@ function App() {
       const current = () => token === knowledgeRequest.current
       void (async () => {
         try {
+          // A file handoff hides the phone reader, not its document. Rebuilding
+          // an unchanged view would discard its scroll, anchor and raw mode.
+          if (
+            sameViewOwner &&
+            activeRootId === rootId &&
+            knowledgePath === (position.path || knowledgeRootPath) &&
+            knowledgeFile?.path === position.file &&
+            knowledgeFile
+          ) {
+            applyKnowledgeScrollRef.current(key)
+            return
+          }
           const switchedRoot = rootId !== activeRootId
           if (switchedRoot) {
             if (!(await selectRoot(rootId, true))) {
@@ -7997,7 +8036,8 @@ function App() {
     knowledgeRequest.current += 1
     knowledgePendingScrollKey.current = action.key
     knowledgeRestoreStartedKey.current = action.key
-    if (knowledgeViewOwnerKey.current !== action.key) {
+    const sameViewOwner = knowledgeViewOwnerKey.current === action.key
+    if (!sameViewOwner) {
       // Whatever is on screen belongs to another session, so it goes before
       // this one's content arrives — and stays gone if the remembered
       // position names no document.
@@ -8005,7 +8045,7 @@ function App() {
     }
     knowledgeViewOwnerKey.current = action.key
     setKnowledgeLoading(false)
-    restoreKnowledgeRef.current(action.position, action.key)
+    restoreKnowledgeRef.current(action.position, action.key, sameViewOwner)
   }, [knowledgeMode, selectedKey, roots, knowledgePositions])
 
   // Reopening the panel puts the tree back where it was left, so switching
@@ -9792,7 +9832,10 @@ function App() {
       ? followReplacementsRef.current(rawTargetKey)
       : rawTargetKey
     updateComposerDrafts([targetKey], (current) => {
-      const existing = current[targetKey] || { text: '', pastes: [] }
+      const existing = durableComposerDraft(
+        targetKey,
+        current[targetKey] || { text: '', pastes: [] },
+      )
       const separator = existing.text
         ? existing.text.endsWith('\n')
           ? '\n'
@@ -9972,11 +10015,16 @@ function App() {
   function focusComposer(targetKey: string | undefined) {
     window.requestAnimationFrame(() => {
       const current = selectedRef.current
-      if (!targetKey || !current || sessionKey(current) !== targetKey) {
+      if (
+        !targetKey ||
+        !current ||
+        sessionKey(current) !== targetKey ||
+        document.querySelector('.dialog[aria-modal="true"]')
+      ) {
         return
       }
       const textarea = composerRef.current
-      textarea?.focus()
+      textarea?.focus({ preventScroll: true })
       const end = textarea?.value.length || 0
       textarea?.setSelectionRange(end, end)
     })
@@ -11142,12 +11190,25 @@ function App() {
   }
 
 
-  function insertWorkspaceFile(file: WorkspaceFile, ask: boolean) {
-    if (!selected) return
-    const targetKey = sessionKey(selected)
+  function insertWorkspaceFile(target: ManagedSession, file: WorkspaceFile, ask: boolean) {
+    const current = selectedRef.current
+    const targetKey = sessionKey(target)
+    if (
+      !current ||
+      sessionKey(current) !== targetKey ||
+      current.cwd !== target.cwd ||
+      removedSessions.current.has(targetKey)
+    ) {
+      setError('Reopen this file from the current session before adding a reference.')
+      return
+    }
+    if (!computersRef.current.some((computer) => computer.id === target.computerId && computer.online)) {
+      setError(`Reconnect ${target.computerName} to add a file reference.`)
+      return
+    }
     appendComposerForKey(
       targetKey,
-      workspaceFilePrompt(selected.cwd, file.path, ask),
+      workspaceFilePrompt(target.cwd, file.path, ask),
     )
     setWorkspaceOpen(false)
     setWorkspaceInitialPath(undefined)
@@ -11156,7 +11217,17 @@ function App() {
   }
 
   function askAboutKnowledgeFile(file: WorkspaceFile) {
-    if (!selected || !activeRoot || knowledgeAskUnavailableReason || knowledgeLoading) {
+    if (
+      !selected ||
+      !activeRoot ||
+      !rootsRef.current.includes(activeRoot) ||
+      !computersRef.current.some((computer) => computer.id === activeRoot.computerId && computer.online) ||
+      knowledgeAskUnavailableReason ||
+      knowledgeLoading ||
+      knowledgeFile !== file ||
+      knowledgeViewOwnerKey.current !== selectedKey ||
+      removedSessions.current.has(sessionKey(selected))
+    ) {
       setError(
         knowledgeAskUnavailableReason ||
           'Wait for the file to finish opening in this session before asking about it.',
@@ -12183,6 +12254,7 @@ function App() {
               <button
                 aria-label="Rename session"
                 className="session-action"
+                disabled={!selectedComputerOnline}
                 onClick={() => setRenameOpen(true)}
                 type="button"
               >
@@ -12222,8 +12294,7 @@ function App() {
                   className="session-action"
                   disabled={
                     movingToTmux ||
-                    selected.status !== 'idle' ||
-                    selected.suspended === true ||
+                    selectedLifecycleBlocked ||
                     suspending
                   }
                   onClick={() => void moveSelectedSessionToTmux()}
@@ -12242,7 +12313,7 @@ function App() {
                 aria-label="Restart session"
                 className="session-action"
                 disabled={
-                  restarting || selected.suspended || selected.status !== 'idle'
+                  restarting || selectedLifecycleBlocked
                 }
                 onClick={() => void restartSelectedSession()}
                 type="button"
@@ -12255,7 +12326,7 @@ function App() {
                 aria-label="Clear conversation"
                 className="session-action session-action--danger"
                 disabled={
-                  clearing || selected.suspended || selected.status !== 'idle'
+                  clearing || selectedLifecycleBlocked
                 }
                 onClick={() => void clearSelectedConversation()}
                 type="button"
@@ -12264,14 +12335,18 @@ function App() {
                 <span>Clear conversation</span>
               </button>
               <button
+                aria-describedby="close-session-description"
                 aria-label="Close session"
                 className="session-action session-action--danger"
-                disabled={deleting}
+                disabled={deleting || !selectedComputerOnline}
                 onClick={() => void closeSelectedSession()}
                 type="button"
               >
                 <Trash2 size={18} />
-                <span>Close session</span>
+                <span>
+                  Close session
+                  <small id="close-session-description">Permanently deletes this session and history</small>
+                </span>
               </button>
             </SessionActions>
           ) : null}
@@ -12999,12 +13074,14 @@ function App() {
         <WorkspaceDialog
           initialKind={workspaceInitialKind}
           initialPath={workspaceInitialPath}
+          insertUnavailableReason={workspaceInsertUnavailableReason}
+          key={`${selectedKey}:${selected.cwd}`}
           onClose={() => {
             setWorkspaceOpen(false)
             setWorkspaceInitialPath(undefined)
             setWorkspaceInitialKind(undefined)
           }}
-          onInsert={insertWorkspaceFile}
+          onInsert={(file, ask) => insertWorkspaceFile(selected, file, ask)}
           onMoved={(session) => {
             setSessions((current) => upsertSession(current, session))
             setWorkspaceOpen(false)

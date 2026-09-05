@@ -369,6 +369,7 @@ export const fixtureBackgroundTasks: Record<string, BackgroundTaskSnapshot> = {
         id: 'fixture-handbook-link-task',
         type: 'agent',
         description: 'Check handbook references',
+        prompt: 'Check the handbook links without changing the files.',
         status: 'running',
         startedAt: '2026-09-04T16:12:00.000Z',
         activeTimeMs: 24_000,
@@ -429,6 +430,7 @@ export interface WorkspaceFixtureOptions {
   baseUrl: string
   selectedSessionId?: string
   knowledgeMode?: 'hidden' | 'docked' | 'expanded'
+  preserveStorageOnReload?: boolean
 }
 
 export interface WorkspaceFixture {
@@ -489,16 +491,20 @@ export async function setupWorkspaceFixture(
   page.on('pageerror', (error) => failures.push(`Page error: ${error.message}`))
   await page.clock.setFixedTime(new Date(FIXTURE_NOW))
   await context.addInitScript(
-    ({ origin, storage }) => {
+    ({ origin, storage, preserveStorageOnReload }) => {
       if (location.origin !== origin) return
+      const seeded = 'agentic-remote:workspace-fixture-seeded'
+      if (preserveStorageOnReload && sessionStorage.getItem(seeded)) return
       localStorage.clear()
       sessionStorage.clear()
       for (const [key, value] of Object.entries(storage)) {
         localStorage.setItem(`agentic-remote:${key}`, JSON.stringify(value))
       }
+      if (preserveStorageOnReload) sessionStorage.setItem(seeded, '1')
     },
     {
       origin: baseUrl.origin,
+      preserveStorageOnReload: options.preserveStorageOnReload ?? false,
       storage: {
         'knowledge-mode': options.knowledgeMode ?? 'docked',
         'knowledge-root': KNOWLEDGE_ROOT_ID,

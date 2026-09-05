@@ -60,8 +60,8 @@ export function SessionActions({ children }: { children: ReactNode }) {
             if (button && !button.disabled) {
               setOpen(false)
               // A dialog opened by the action owns focus; don't pull it back.
-              if (rootRef.current?.contains(document.activeElement)) {
-                triggerRef.current?.focus()
+              if (!document.querySelector('[role="dialog"][aria-modal="true"]')) {
+                triggerRef.current?.focus({ preventScroll: true })
               }
             }
           }}

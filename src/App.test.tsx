@@ -1108,23 +1108,22 @@ describe('App', () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
 
-    // Start navigating, so history is active and tracking the empty draft.
-    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    fireEvent.change(textarea, { target: { value: 'Unsent walking notes' } })
+    fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
     expect(textarea).toHaveValue('Second prompt')
 
-    // Dictation appends to the composer without replacing it, and without
-    // going through the textarea's change handler.
+    // A programmatic append belongs to the hidden draft, not the preview.
     const file = new File(['audio'], 'idea.webm', { type: 'audio/webm' })
     fireEvent.drop(textarea.closest('.composer')!, {
       dataTransfer: { files: [file], types: ['Files'] },
     })
     await waitFor(() =>
-      expect(textarea).toHaveValue('Second prompt\n\nTranscribed walking idea'),
+      expect(textarea).toHaveValue('Unsent walking notes\n\nTranscribed walking idea'),
     )
 
     // Navigating again must not discard the dictated text.
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
-    expect(textarea).toHaveValue('Second prompt\n\nTranscribed walking idea')
+    expect(textarea).toHaveValue('Unsent walking notes\n\nTranscribed walking idea')
   })
 
   it('does not let history navigation overwrite a programmatic draft', async () => {
@@ -3883,7 +3882,7 @@ describe('App', () => {
       fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
       await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
-      fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+      fireEvent.click(sessionAction('Close session'))
       await waitFor(() => expect(screen.queryByText('Project chat')).not.toBeInTheDocument())
       await act(async () => {
         if (outcome === 'accepted') {
@@ -4008,7 +4007,7 @@ describe('App', () => {
       clipboardData: { getData: () => pasted },
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() =>
       expect(clearConversation).toHaveBeenCalledWith(
         'computer-1',
@@ -4316,7 +4315,7 @@ describe('App', () => {
     fireEvent.paste(textarea, {
       clipboardData: { getData: () => pasted },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(clearConversation).toHaveBeenCalledOnce())
     act(() => {
       MockWebSocket.instances[0]?.onmessage?.({
@@ -5092,7 +5091,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+    fireEvent.click(sessionAction('Rename session'))
 
     // The frame takes the focus only when the dialog has not placed it
     // itself. Pulling it back here would take the reader out of the field
@@ -5101,6 +5100,9 @@ describe('App', () => {
     expect(name).toHaveFocus()
     fireEvent.change(name, { target: { value: 'Typed straight away' } })
     expect(name).toHaveValue('Typed straight away')
+    fireEvent.keyDown(name, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Rename session' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Session actions' })).toHaveFocus()
   })
 
   it('fills the new-session dialog in once the computers arrive', async () => {
@@ -5144,6 +5146,7 @@ describe('App', () => {
       },
     ])
     render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
     expect(await screen.findAllByText('worker docs')).not.toHaveLength(0)
 
     act(() => {
@@ -6375,7 +6378,9 @@ describe('App', () => {
         'session-1',
       ),
     )
-    expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByText('Hello agent')).not.toBeInTheDocument(),
+    )
     expect(textarea).toHaveValue('Keep this draft')
 
     vi.mocked(clearConversation).mockClear()
@@ -7949,6 +7954,376 @@ describe('App', () => {
       return screen.getByRole('button', { name: 'Ask agent about file' })
     }
 
+    it.each(['knowledge', 'workspace'] as const)(
+      'appends %s references to the hidden recovery draft, not its history preview',
+      async (source) => {
+        const pasted = Array.from({ length: 21 }, (_, index) => `recovered ${index}`).join('\r\n')
+        const failed = {
+          ...session,
+          failedPrompt: {
+            content: 'Recover this prompt',
+            failedAt: '2026-09-05T00:00:00.000Z',
+          },
+        }
+        vi.mocked(listSessions).mockResolvedValue([failed])
+        vi.mocked(getSession).mockResolvedValue(failed)
+        const rendered = render(<App />)
+        const composer = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+        await waitFor(() => expect(composer).toHaveValue(failed.failedPrompt.content))
+        composer.setSelectionRange(0, composer.value.length)
+        fireEvent.paste(composer, { clipboardData: { getData: () => pasted } })
+        fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+        expect(composer).toHaveValue('Hello agent')
+
+        if (source === 'knowledge') {
+          fireEvent.click(await openNote())
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: 'Browse current session folder' }))
+          fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+          fireEvent.click(await screen.findByRole('button', { name: 'Ask agent about file' }))
+        }
+        const path = source === 'knowledge'
+          ? '/home/tester/docs/guide.md'
+          : '/home/tester/src/project/README.md'
+        const reference = `Please review \`${path}\` and help me with it.`
+        const display = `[Paste #1 - 21 lines]\n\n${reference}`
+        expect(composer).toHaveValue(display)
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(executeCommand).not.toHaveBeenCalled()
+        const saved = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')
+        expect(saved['computer-1:session-1'].pastes).toHaveLength(1)
+        expect(saved['computer-1:session-1'].pastes[0].content).toBe(pasted)
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-draft-failures') || '{}',
+        )['computer-1:session-1']).toBe(failed.failedPrompt.failedAt)
+
+        rendered.unmount()
+        render(<App />)
+        expect(await screen.findByLabelText('Message')).toHaveValue(display)
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+        await waitFor(() =>
+          expect(sendMessage).toHaveBeenLastCalledWith(computer.id, session.id, {
+            content: `${pasted}\n\n${reference}`,
+            enqueue: false,
+            acknowledgesFailure: failed.failedPrompt.failedAt,
+          }),
+        )
+      },
+    )
+
+    it.each([
+      { enqueue: false, accepted: true },
+      { enqueue: true, accepted: true },
+      { enqueue: false, accepted: false },
+      { enqueue: true, accepted: false },
+    ])(
+      'keeps a file handoff and newer pastes through replacement and settlement ($enqueue, $accepted)',
+      async ({ enqueue, accepted }) => {
+        const original = Array.from({ length: 21 }, (_, index) => `submitted ${index}`).join('\n')
+        const newer = Array.from({ length: 22 }, (_, index) => `newer ${index}`).join('\n')
+        const running = { ...session, status: 'running' as const }
+        const replacement = { ...running, id: 'replacement-1' }
+        const final = { ...running, id: 'replacement-2' }
+        vi.mocked(listSessions).mockResolvedValue([running])
+        vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+          id === final.id ? final : id === replacement.id ? replacement : running,
+        )
+        let resolveSend!: (value: ManagedSession) => void
+        let rejectSend!: (reason: Error) => void
+        vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve, reject) => {
+          resolveSend = resolve
+          rejectSend = reject
+        }))
+        const rendered = render(<App />)
+        const composer = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+        fireEvent.paste(composer, { clipboardData: { getData: () => original } })
+        fireEvent.click(screen.getByRole('button', { name: enqueue ? 'Queue message' : 'Send message' }))
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+        const pending = JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+        )['computer-1:session-1'].pendingSubmission
+        fireEvent.change(composer, { target: { value: 'Newer ' } })
+        composer.setSelectionRange(composer.value.length, composer.value.length)
+        fireEvent.paste(composer, { clipboardData: { getData: () => newer } })
+        fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+        expect(composer).toHaveValue('Hello agent')
+        fireEvent.click(await openNote())
+        const reference = 'Please review `/home/tester/docs/guide.md` and help me with it.'
+        expect(composer).toHaveValue(`Newer [Paste #1 - 22 lines]\n\n${reference}`)
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+        )['computer-1:session-1'].pendingSubmission).toEqual(pending)
+        expect(sendMessage).toHaveBeenCalledOnce()
+
+        await act(async () => {
+          for (const [from, to] of [[running, replacement], [replacement, final]]) {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({
+                type: 'session.removed',
+                computerId: computer.id,
+                sessionId: from.id,
+                replacedBy: to.id,
+              }),
+            } as MessageEvent)
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'session.upserted', session: to }),
+            } as MessageEvent)
+          }
+        })
+        await waitFor(() => expect(window.location.search).toContain(`session=${final.id}`))
+        await act(async () => {
+          if (accepted) resolveSend(running)
+          else rejectSend(new Error('Delivery could not be confirmed by fixture'))
+        })
+        const saved = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')
+        expect(saved['computer-1:session-1']).toBeUndefined()
+        expect(saved['computer-1:replacement-1']).toBeUndefined()
+        expect(saved['computer-1:replacement-2'].pendingSubmission).toBeUndefined()
+        const expected = `${accepted ? '' : `${original}\n\n`}Newer ${newer}\n\n${reference}`
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        )['computer-1:replacement-2']).toBe(expected)
+        const display = (screen.getByLabelText('Message') as HTMLTextAreaElement).value
+        expect(saved['computer-1:replacement-2'].pastes).toHaveLength(accepted ? 1 : 2)
+        expect(display).not.toContain('Hello agent')
+        rendered.unmount()
+        vi.mocked(listSessions).mockResolvedValue([final])
+        render(<App />)
+        await screen.findByLabelText('Message')
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        )['computer-1:replacement-2']).toBe(expected)
+        expect(sendMessage).toHaveBeenCalledOnce()
+      },
+    )
+
+    it('warns rather than authorizing a send when a file handoff cannot save its draft', async () => {
+      render(<App />)
+      const composer = await screen.findByLabelText('Message')
+      fireEvent.change(composer, { target: { value: 'Unsent draft' } })
+      fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+      const ask = await openNote()
+      const setItem = Storage.prototype.setItem
+      const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
+        function (this: Storage, key, value) {
+          if (this === localStorage && key.startsWith('agentic-remote:composer')) {
+            throw new DOMException('Fixture storage is full', 'QuotaExceededError')
+          }
+          setItem.call(this, key, value)
+        },
+      )
+      try {
+        fireEvent.click(ask)
+        expect(composer).toHaveValue(
+          'Unsent draft\n\nPlease review `/home/tester/docs/guide.md` and help me with it.',
+        )
+        expect(screen.getByText(/Draft changes could not be saved/)).toBeVisible()
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(screen.getByText(/Message was not sent/)).toBeVisible()
+      } finally {
+        storage.mockRestore()
+      }
+      fireEvent.change(composer, { target: { value: 'Saved after repair' } })
+      expect(screen.queryByText(/could not be saved/)).toBeNull()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('keeps an unreadable initial draft untouched when adding a file reference', async () => {
+      const saved = JSON.stringify({ 'computer-1:session-1': { text: 'Saved original', pastes: [] } })
+      localStorage.setItem('agentic-remote:composer-drafts-v2', saved)
+      localStorage.setItem('agentic-remote:composer-drafts-generation', '1')
+      localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+        'computer-1:session-1': 'Saved original',
+      }))
+      const getItem = Storage.prototype.getItem
+      const storage = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(
+        function (this: Storage, key) {
+          if (this === localStorage && key.startsWith('agentic-remote:composer')) {
+            throw new DOMException('Fixture read denied', 'SecurityError')
+          }
+          return getItem.call(this, key)
+        },
+      )
+      let rendered: ReturnType<typeof render> | undefined
+      try {
+        rendered = render(<App />)
+        const composer = await screen.findByLabelText('Message')
+        fireEvent.change(composer, { target: { value: 'New editable text' } })
+        fireEvent.click(await openNote())
+        expect(composer).toHaveValue(
+          'New editable text\n\nPlease review `/home/tester/docs/guide.md` and help me with it.',
+        )
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(getItem.call(localStorage, 'agentic-remote:composer-drafts-v2')).toBe(saved)
+        expect(screen.getByText(/Message was not sent/)).toBeVisible()
+      } finally {
+        storage.mockRestore()
+        rendered?.unmount()
+      }
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue('Saved original')
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not steal focus from a dialog opened before the handoff focus frame', async () => {
+      render(<App />)
+      const ask = await openNote()
+      const frames: FrameRequestCallback[] = []
+      const animation = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+      try {
+        fireEvent.click(ask)
+        fireEvent.click(sessionAction('Rename session'))
+        const name = screen.getByLabelText('Session name')
+        expect(name).toHaveFocus()
+        act(() => {
+          while (frames.length) frames.shift()!(0)
+        })
+        expect(name).toHaveFocus()
+      } finally {
+        animation.mockRestore()
+      }
+    })
+
+    it('disables a cached session-file handoff when its owning computer goes offline', async () => {
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Browse current session folder' }))
+      fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+      const ask = await screen.findByRole('button', { name: 'Ask agent about file' })
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'computer.updated',
+            computer: { ...computer, online: false },
+          }),
+        } as MessageEvent)
+      })
+      expect(ask).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Insert path' })).toBeDisabled()
+      expect(screen.getByText('Reconnect development to add a file reference.')).toBeVisible()
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Message')).toHaveValue('')
+    })
+
+    it('reloads session-file ownership when the same session changes working folder', async () => {
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Browse current session folder' }))
+      fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+      await screen.findByRole('button', { name: 'Ask agent about file' })
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.upserted',
+            session: { ...session, cwd: '/home/tester/new-project' },
+          }),
+        } as MessageEvent)
+      })
+      expect(screen.queryByRole('button', { name: 'Ask agent about file' })).toBeNull()
+      fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask agent about file' }))
+      expect(screen.getByLabelText('Message')).toHaveValue(
+        'Please review `/home/tester/new-project/README.md` and help me with it.',
+      )
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it.each([390, 1280])(
+      'preserves the document, anchor, tree offset and reader preference through a handoff at %ipx',
+      async (width) => {
+        const previousWidth = window.innerWidth
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+        localStorage.setItem('agentic-remote:reader-width', '760')
+        vi.mocked(readKnowledgeFile).mockImplementation(async (_root, path) => ({
+          ...note,
+          path,
+          name: path,
+          content: '# Workspace guide\n\n[Go to details](section.md#details)\n\n## Details\n\nKeep this section.',
+        }))
+        try {
+          render(<App />)
+          await openNote()
+          fireEvent.click(screen.getByRole('link', { name: 'Go to details' }))
+          await waitFor(() => expect(readKnowledgeFile).toHaveBeenCalledTimes(2))
+          await act(async () => {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          })
+          const content = document.querySelector<HTMLElement>('.knowledge-reader .workspace-preview__content')!
+          const tree = screen.getByRole('navigation', { name: 'Knowledge' })
+          content.scrollTop = 270
+          tree.scrollTop = 70
+          fireEvent.scroll(tree)
+          if (width > 960) {
+            fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+          }
+          fireEvent.click(screen.getByRole('button', { name: 'Ask agent about file' }))
+          if (width <= 960) {
+            fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+          }
+          await act(async () => {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          })
+          expect(document.querySelector('.knowledge-reader .workspace-preview__content')).toBe(content)
+          expect(content.scrollTop).toBe(270)
+          expect(screen.getByRole('navigation', { name: 'Knowledge' }).scrollTop).toBe(70)
+          expect(screen.getByRole('heading', { name: 'Details' })).toBeVisible()
+          expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+          expect(localStorage.getItem('agentic-remote:reader-width')).toBe('760')
+          expect(sendMessage).not.toHaveBeenCalled()
+          expect(window.location.hash).toBe('')
+        } finally {
+          Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
+        }
+      },
+    )
+
+    it('keeps drafts, queued work, selection and reading positions when the current session is filtered out', async () => {
+      const queued = {
+        ...session,
+        queuedCount: 1,
+        queuedPrompts: [{ id: 'queued', content: 'Keep this queued work', createdAt: session.updatedAt }],
+      }
+      vi.mocked(listSessions).mockResolvedValue([queued])
+      vi.mocked(getSession).mockResolvedValue(queued)
+      vi.mocked(listComputers).mockResolvedValue([
+        computer,
+        { ...secondComputer, online: false },
+        { ...secondComputer, id: 'empty-computer', name: 'Empty computer' },
+      ])
+      render(<App />)
+      const composer = await screen.findByLabelText('Message')
+      fireEvent.change(composer, { target: { value: 'Do not replace this draft' } })
+      await openNote()
+      const content = document.querySelector<HTMLElement>('.knowledge-reader .workspace-preview__content')!
+      await act(async () => {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      })
+      content.scrollTop = 175
+      const savedDraft = localStorage.getItem('agentic-remote:composer-drafts-v2')
+      const savedPosition = localStorage.getItem('agentic-remote:knowledge-session-positions')
+      const address = window.location.search
+      const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+      fireEvent.change(search, { target: { value: 'no matching session' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
+      for (const name of [computer.name, secondComputer.name, 'Empty computer']) {
+        expect(screen.getByRole('region', { name })).toBeVisible()
+      }
+      expect(screen.getByRole('status', { name: 'Session filter results' })).toHaveTextContent('0 of 1 sessions')
+      expect(composer).toHaveValue('Do not replace this draft')
+      expect(content.scrollTop).toBe(175)
+      expect(screen.getByText('Keep this queued work')).toBeVisible()
+      expect(localStorage.getItem('agentic-remote:composer-drafts-v2')).toBe(savedDraft)
+      expect(localStorage.getItem('agentic-remote:knowledge-session-positions')).toBe(savedPosition)
+      expect(window.location.search).toBe(address)
+      fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+      expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute('aria-current', 'page')
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(removeQueuedPrompt).not.toHaveBeenCalled()
+    })
+
     it('appends the owning-root path to the existing draft without sending', async () => {
       render(<App />)
       const composer = await screen.findByLabelText('Message')
@@ -8046,6 +8421,49 @@ describe('App', () => {
     expect(screen.queryByRole('group', { name: 'Session actions' })).toBeNull()
     expect(document.querySelector('.workspace')).toHaveClass('workspace--docked')
     expect(screen.getByRole('button', { name: 'Session actions' })).toHaveFocus()
+  })
+
+  it('keeps offline lifecycle actions unavailable while allowing hub-owned notification settings', async () => {
+    vi.mocked(listSessions).mockResolvedValue([{ ...session, executionMode: 'sdk' }])
+    vi.mocked(getSession).mockResolvedValue({ ...session, executionMode: 'sdk' })
+    render(<App />)
+    await screen.findByLabelText('Message')
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, online: false } }),
+      } as MessageEvent)
+    })
+    openSessionActions()
+    for (const name of ['Rename session', 'Restart session', 'Clear conversation', 'Close session', 'Move session to tmux']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    expect(screen.getByRole('button', { name: 'Mute session notifications' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Close session' })).toHaveAccessibleDescription(
+      'Permanently deletes this session and history',
+    )
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect(clearConversation).not.toHaveBeenCalled()
+    expect(restartSession).not.toHaveBeenCalled()
+    expect(moveSessionToTmux).not.toHaveBeenCalled()
+  })
+
+  it('does not let a stale idle status authorize restart, clear, migration or suspend over a pending question', async () => {
+    const pending = {
+      ...session,
+      executionMode: 'sdk' as const,
+      pendingUserInput: { requestId: 'question', question: 'Keep this pending', choices: [], allowFreeform: true },
+    }
+    vi.mocked(listSessions).mockResolvedValue([pending])
+    vi.mocked(getSession).mockResolvedValue(pending)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Keep this pending' })
+    openSessionActions()
+    for (const name of ['Restart session', 'Clear conversation', 'Move session to tmux', 'Suspend Project chat']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled()
+    expect(replyUserInput).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   it('moves the session to a folder browsed in Knowledge', async () => {

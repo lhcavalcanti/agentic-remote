@@ -240,6 +240,27 @@ async function desktop(page: Page, fixture: WorkspaceFixture) {
       .toHaveValue(new RegExp(KNOWLEDGE_FILE_PATH.replace('.', '\\.')))
     expect(fixture.requests.some((request) => request.path.endsWith('/messages'))).toBe(false)
     await capture(page, fixture, 'desktop-file-question-draft')
+
+    const originalViewport = page.viewportSize()!
+    const sidebar = page.getByRole('separator', { name: 'Resize sidebar', exact: true })
+    const handle = await sidebar.boundingBox()
+    if (!handle) throw new Error('The desktop sidebar resize control is missing.')
+    await page.mouse.move(handle.x + handle.width / 2, 160)
+    await page.mouse.down()
+    await page.mouse.move(560, 160, { steps: 4 })
+    await page.mouse.up()
+    await page.setViewportSize({ width: 961, height: 430 })
+    await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+    const panel = await page.locator('.session-actions__panel').boundingBox()
+    const conversation = await page.locator('.conversation').boundingBox()
+    if (!panel || !conversation) throw new Error('The narrow conversation disclosure is missing.')
+    expect(panel.x).toBeGreaterThanOrEqual(conversation.x)
+    expect(panel.x + panel.width).toBeLessThanOrEqual(conversation.x + conversation.width)
+    // Bounding boxes alone miss a disclosure painted behind the composer.
+    await page.getByRole('button', { name: 'Close session', exact: true }).click({ trial: true })
+    await page.keyboard.press('Escape')
+    await page.setViewportSize(originalViewport)
+    await sidebar.press('Home')
   }
 }
 
@@ -317,6 +338,11 @@ async function phone(page: Page, fixture: WorkspaceFixture) {
       await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport()
       expect(await composer.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)))
         .toBeGreaterThanOrEqual(16)
+      const disclosure = page.getByRole('button', { name: 'Session actions', exact: true })
+      await disclosure.click()
+      await page.getByRole('button', { name: 'Close session', exact: true }).click({ trial: true })
+      await page.keyboard.press('Escape')
+      await expect(disclosure).toBeFocused()
     }
     await capture(page, fixture, 'phone-short-viewport')
   }

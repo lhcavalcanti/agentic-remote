@@ -149,6 +149,33 @@ describe('session navigation', () => {
     expect(within(screen.getByRole('region', { name: 'Travel laptop' }))
       .getAllByText('Offline')).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Suspend Last known work' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Suspend Choose a direction' })).toBeDisabled()
+  })
+
+  it('keeps empty computers and qualifies cached offline task counts', () => {
+    const offlineTasks = {
+      ...backgroundTasks,
+      'travel:offline': { tasks: [], runningCount: 2, supported: true },
+    }
+    render(
+      <DndContext>
+        <SessionNavigation
+          {...actions}
+          backgroundTasks={offlineTasks}
+          computers={[...computers, { ...computers[0], id: 'empty', name: 'Empty computer' }]}
+          loading={false}
+          selectedKey="studio:review"
+          sessionsByComputer={sessionsByComputer}
+        />
+      </DndContext>,
+    )
+    expect(screen.getByRole('region', { name: 'Empty computer' })).toHaveTextContent('No open sessions')
+    const cachedTasks = screen.getByRole('button', { name: 'View background tasks for Last known work' })
+    expect(cachedTasks).toHaveTextContent('2 tasks · last known')
+    expect(cachedTasks).toHaveAttribute('title', 'Last known background tasks; reconnect to refresh their state')
+    fireEvent.click(screen.getByRole('button', { name: 'Working' }))
+    expect(screen.getByRole('status', { name: 'Session filter results' })).toHaveTextContent('1 of 4 sessions')
+    expect(screen.getByRole('region', { name: 'Empty computer' })).toHaveTextContent('No matching sessions')
   })
 
   it('clears a search with Escape without dismissing the workspace', () => {
@@ -162,5 +189,28 @@ describe('session navigation', () => {
     fireEvent.change(search, { target: { value: 'notes' } })
     fireEvent.click(screen.getByRole('button', { name: 'Clear session search' }))
     expect(search).toHaveFocus()
+  })
+
+  it('uses authoritative computer names for filtering and accessible ownership labels', () => {
+    render(
+      <DndContext>
+        <SessionNavigation
+          {...actions}
+          backgroundTasks={backgroundTasks}
+          computers={computers.map((computer) =>
+            computer.id === 'studio' ? { ...computer, name: 'Renamed Studio' } : computer,
+          )}
+          loading={false}
+          selectedKey="studio:review"
+          sessionsByComputer={sessionsByComputer}
+        />
+      </DndContext>,
+    )
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), {
+      target: { value: 'Renamed Studio' },
+    })
+    expect(screen.getByRole('status', { name: 'Session filter results' })).toHaveTextContent('2 of 4 sessions')
+    expect(screen.getByRole('button', { name: /^Review the release,/ })).toHaveAccessibleName(/Renamed Studio/)
+    expect(session.computerName).toBe('Studio')
   })
 })

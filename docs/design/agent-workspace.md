@@ -104,7 +104,8 @@ not additional controls.
 - Search title, computer, provider, execution mode, or working folder. Multiple
   search terms must all match; search never scans transcripts or files.
 - All shows the existing ordered list. Needs you shows questions, permissions,
-  waiting sessions, and errors. Working includes background tasks even when
+  waiting sessions, and errors, including a persisted failed delivery after the
+  passive status returns to idle. Working includes background tasks even when
   the foreground is idle.
 - Counts describe the whole workspace; the filtered result reports how many
   sessions match. Every configured computer stays present, including empty
@@ -115,6 +116,8 @@ not additional controls.
 - Search/filter state is transient. Selection, drafts, browser session URLs,
   and Knowledge state keep their current owners. Clear filters restores the
   existing order; reordering is unavailable while items are filtered.
+- The owning computer's current name is used for search and accessible labels,
+  without rewriting a cached session's metadata.
 
 ### 2. Give the conversation its header back
 
@@ -126,6 +129,10 @@ Each action keeps its existing label, confirmation, and disabled state. The
 disclosure uses ordinary focusable buttons and Tab navigation. Escape closes
 only the disclosure and restores its trigger; outside interaction dismisses
 it without stealing focus. A session switch remounts it closed.
+Offline lifecycle actions are unavailable, and pending questions or permissions
+block idle-only actions even if the passive status is stale. Close session
+explicitly describes its permanent deletion of the session and history.
+Notification mute remains hub-owned and usable while a computer is offline.
 
 ### 3. Read, then ask deliberately
 
@@ -136,11 +143,19 @@ more line spacing, and a bounded reading width in expanded mode.
 Ask agent about file appends an absolute, owning-root-qualified file reference
 to the current draft. It never uploads the document, copies its contents,
 creates a session, sends a message, or discards existing text.
+An active history preview is not that draft: the handoff restores and extends
+the original text and collapsed-paste metadata. Pending submission identities,
+failure ownership, and newer writing continue through clear replacements.
+Storage failures remain visible and cannot authorize delivery.
 
 The handoff is available only when the selected session and root share an
 online computer. Otherwise the disabled action explains which computer needs
 a session or reconnection. On a phone it returns to the conversation; on
 desktop it restores the docked view. The document can be reopened afterward.
+Reopening the unchanged document in the same session preserves its scroll,
+anchor, and rendered/raw view instead of rebuilding the reader. A session-file
+preview is separately scoped to its session and working folder; cached offline
+references are disabled with an explanation.
 
 ### 4. Quiet surfaces, meaningful color
 
@@ -157,6 +172,12 @@ On a phone, Send is explicitly labeled and header actions have 40px targets.
 The desktop sidebar gives sessions more space while retaining an independently
 scrollable Knowledge tree. Offline sessions cannot be suspended or resumed
 until their computer reconnects.
+Cached task counts are identified as last known while offline. Short viewports
+allow the outer drawer to scroll, keeping both navigation panes usable below
+the fixed search controls. The session-actions disclosure is bounded by the
+conversation's actual width, including a wide sidebar and a resized reader.
+It stays above the composer on short screens; the capture checks pointer
+actionability without executing a destructive action, not only bounding boxes.
 
 The welcome screen also offers Open Knowledge without creating a session.
 There are no invented dashboards, usage metrics, or empty decorative charts.
@@ -226,6 +247,15 @@ form, and related behavior), [#150](https://github.com/lhcavalcanti/agentic-remo
 and [#171](https://github.com/lhcavalcanti/agentic-remote/pull/171) (queue controls),
 and [#160](https://github.com/lhcavalcanti/agentic-remote/pull/160) (collapsed paste).
 This draft does not cherry-pick or reimplement those changes.
+
+The coordinated local review candidate now integrates reviewed core commit
+`125ec298fdc6748cca5fde8a49690030f41bf739` through the PR #191 reader/branding
+candidate with normal merges. The reader retains its responsive/saved-width
+contract and the 36px shared accent-aware SVG. The existing capture comparator
+still permits at most 12 differing decoded RGBA pixels and rejects larger or
+dimension-changing frames. The synthetic fixture can optionally seed storage
+only once to exercise real reload persistence without accessing a live service.
+Queue APIs remain unchanged for the parent review's separate #150 integration.
 
 The branch is intentionally a **draft**. Development browser evidence uses
 synthetic API fixtures on a loopback UI runtime. It is not a claim to have

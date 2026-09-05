@@ -397,6 +397,10 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Search MUST bound file count, result count, individual text size, and total
   text bytes, and SHOULD skip generated dependency/build directories.
 - Insert path and Ask agent about file MUST update the draft without auto-send.
+  File references MUST belong to the current online owning computer and session.
+  A history preview MUST NOT replace the hidden unsent text or collapsed pastes
+  when a reference is appended. A cached session-file preview MUST be reopened
+  when the session or its working folder changes.
 
 ### 8.2 Phone reading mode
 
@@ -453,6 +457,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
   file does not depend on how much room the reader is taking.
 - Reopening the panel MUST resume the tree where it was left rather than
   scrolling back to the top.
+- Returning from a file-to-draft handoff to the same session's unchanged
+  document MUST preserve its scroll, section anchor, and rendered/raw view.
 - Folders MUST expand in place as a tree rather than replacing the listing, so
   a parent stays visible while a child is open. Children are loaded on first
   expansion and reused afterwards.

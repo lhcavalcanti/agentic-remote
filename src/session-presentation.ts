@@ -89,7 +89,7 @@ export function sessionPresentation(
       ? 'permission'
       : session.status === 'waiting'
         ? 'waiting'
-        : session.status === 'error'
+        : session.status === 'error' || session.failedPrompt
           ? 'error'
           : session.suspended
             ? 'suspended'
@@ -115,12 +115,13 @@ export function sessionPresentation(
 export function matchesSessionSearch(
   session: ManagedSession,
   query: string,
+  computerName = session.computerName,
 ): boolean {
   const searchable = [
     session.title,
     session.cwd,
     shortPath(session.cwd),
-    session.computerName,
+    computerName,
     providerName(session.provider),
     executionModeName(session.executionMode),
   ].join(' ').toLowerCase()

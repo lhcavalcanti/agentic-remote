@@ -53,6 +53,7 @@ function SortableSessionItem({
   session,
   selected,
   backgroundTasks,
+  computerName,
   online,
   filtering,
   onSelectSession,
@@ -63,6 +64,7 @@ function SortableSessionItem({
   session: ManagedSession
   selected: boolean
   backgroundTasks?: BackgroundTaskSnapshot
+  computerName: string
   online: boolean
   filtering: boolean
 }) {
@@ -80,7 +82,9 @@ function SortableSessionItem({
   const presentation = sessionPresentation(session, backgroundTasks, online)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
   const suspendUnavailable =
-    !online || suspending || (!session.suspended && session.status !== 'idle')
+    !online || suspending || (!session.suspended && (
+      session.status !== 'idle' || Boolean(session.pendingUserInput || session.pendingPermission)
+    ))
   return (
     <div
       className={`session-item session-item--tone-${computerTone(
@@ -108,12 +112,12 @@ function SortableSessionItem({
           providerName(session.provider),
           executionModeName(session.executionMode),
           presentation.description,
-          session.computerName,
+          computerName,
           shortPath(session.cwd),
         ].filter(Boolean).join(', ')}
         className="session-item__open"
         onClick={() => onSelectSession(session)}
-        title={`${session.title}\n${session.computerName} · ${session.cwd}\n${presentation.description}`}
+        title={`${session.title}\n${computerName} · ${session.cwd}\n${presentation.description}`}
         type="button"
       >
         <span className="session-item__text">
@@ -137,11 +141,12 @@ function SortableSessionItem({
       {runningBackgroundTasks > 0 ? (
         <button
           aria-label={`View background tasks for ${session.title}`}
-          className="session-item__tasks session-item__tasks--interactive"
+          className={`session-item__tasks session-item__tasks--interactive${online ? '' : ' session-item__tasks--offline'}`}
           onClick={() => onOpenSessionTasks(session)}
+          title={online ? undefined : 'Last known background tasks; reconnect to refresh their state'}
           type="button"
         >
-          {runningBackgroundTasks} task{runningBackgroundTasks === 1 ? '' : 's'}
+          {runningBackgroundTasks} task{runningBackgroundTasks === 1 ? '' : 's'}{online ? '' : ' · last known'}
         </button>
       ) : null}
       <button
@@ -156,7 +161,7 @@ function SortableSessionItem({
         onClick={() => onToggleSessionSuspended(session)}
         title={
           !online
-            ? `Reconnect ${session.computerName} to manage this session`
+            ? `Reconnect ${computerName} to manage this session`
             : session.suspended
             ? 'Start this session up again'
             : suspendUnavailable
@@ -235,6 +240,7 @@ function SortableComputerGroup({
             <SortableSessionItem
               {...actions}
               backgroundTasks={taskSnapshot(backgroundTasks, session)}
+              computerName={computer.name}
               filtering={filtering}
               key={sessionKey(session)}
               online={computer.online}
@@ -283,7 +289,7 @@ export function SessionNavigation({
         ),
       }))
       const visible = classified.filter(({ session, state }) =>
-        matchesSessionSearch(session, query) &&
+        matchesSessionSearch(session, query, computer.name) &&
           (filter === 'all' ||
             (filter === 'attention' && state.needsAttention) ||
             (filter === 'working' && state.working)),

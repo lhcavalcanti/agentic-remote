@@ -135,7 +135,9 @@ button {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-right: 1px solid var(--border);
   background: var(--panel);
 }
@@ -405,7 +407,7 @@ button {
    only ever has to hold the document. */
 .sidebar-knowledge {
   display: flex;
-  min-height: 120px;
+  min-height: 220px;
   /* Sessions and files share the sidebar: files take up to half, and each
      scrolls on its own rather than growing over the other. */
   flex: 1 1 45%;
@@ -758,6 +760,7 @@ button {
 .knowledge-reader__context {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -766,6 +769,7 @@ button {
 }
 
 .knowledge-reader__context > div {
+  flex: 1 1 160px;
   min-width: 0;
 }
 
@@ -779,6 +783,7 @@ button {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .knowledge-reader__context button:disabled {
@@ -1002,7 +1007,9 @@ button {
 .sidebar__body {
   display: flex;
   min-width: 0;
-  min-height: 0;
+  /* Keep a usable list below search even in a short visual viewport. The
+     outer sidebar scrolls when both navigation panes cannot fit. */
+  min-height: 260px;
   flex: 1 1 55%;
   flex-direction: column;
   overflow: hidden;
@@ -1464,7 +1471,12 @@ button {
   background: transparent;
 }
 
+.session-item__tasks--offline {
+  color: var(--muted);
+}
+
 .conversation {
+  container: conversation / inline-size;
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -1496,6 +1508,8 @@ button {
 .conversation-header {
   grid-area: header;
   display: flex;
+  position: relative;
+  z-index: 6;
   height: 64px;
   align-items: center;
   gap: 8px;
@@ -1558,7 +1572,12 @@ button {
   right: 0;
   width: 248px;
   max-width: calc(100vw - 24px);
-  max-height: calc(var(--visual-viewport-height, 100dvh) - 110px);
+  max-width: min(calc(100vw - 24px), calc(100cqw - 24px));
+  max-height: calc(
+    var(--visual-viewport-height, 100dvh) -
+    var(--app-content-safe-area-top) -
+    max(16px, env(safe-area-inset-bottom)) - 80px
+  );
   padding: 6px;
   overflow-y: auto;
   border: 1px solid var(--border-strong);
@@ -1603,6 +1622,19 @@ button {
 
 .session-action--danger {
   color: var(--danger);
+}
+
+.session-action > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-action small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .session-action:disabled {
@@ -4123,6 +4155,14 @@ button {
   line-height: 1.6;
 }
 
+.workspace-preview__hint {
+  margin: 0;
+  padding: 9px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .workspace-preview__content pre {
   margin: 0;
   overflow: visible;
@@ -4661,6 +4701,7 @@ button {
 
   .session-search button {
     width: 40px;
+    height: 40px;
   }
 
   .workspace-preview__actions {

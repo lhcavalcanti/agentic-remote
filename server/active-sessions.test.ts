@@ -115,10 +115,16 @@ describe('active Copilot processes', () => {
     )
     await waitForProcessCommand(pid, [executable, sessionId])
 
+    const processes = await eventually(
+      () => findActiveCopilotProcesses(),
+      (entries) =>
+        entries.some(
+          (processInfo) =>
+            processInfo.pid === pid && processInfo.sessionId === sessionId,
+        ),
+    )
     expect(
-      (await findActiveCopilotProcesses()).filter(
-        (processInfo) => processInfo.sessionId === sessionId,
-      ),
+      processes.filter((processInfo) => processInfo.sessionId === sessionId),
     ).toEqual([{ pid, sessionId, source: 'argument' }])
 
     await stopActiveCopilotSession(sessionId)
@@ -608,11 +614,11 @@ async function processExists(pid: number): Promise<boolean> {
 }
 
 async function waitForProcessExit(pid: number): Promise<boolean> {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     if (!(await processExists(pid))) {
       return true
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return false
 }

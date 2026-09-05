@@ -988,7 +988,7 @@ function contextSizeLabel(
 }
 
 const dialogFocusable =
-  'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
 
 function DialogFrame({
   title,
@@ -1037,20 +1037,28 @@ function DialogFrame({
       dialog.current?.focus()
     }
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Tab' || !dialog.current) {
+      if (
+        event.key !== 'Tab' ||
+        event.defaultPrevented ||
+        !dialog.current ||
+        [...document.querySelectorAll('.dialog[aria-modal="true"]')].at(-1) !== dialog.current
+      ) {
         return
       }
       const reachable = [
         ...dialog.current.querySelectorAll<HTMLElement>(dialogFocusable),
       ].filter(
         (element) =>
-          !element.hasAttribute('disabled') &&
+          !element.matches(':disabled') &&
+          element.getAttribute('tabindex') !== '-1' &&
           element.getAttribute('aria-hidden') !== 'true' &&
           (element.offsetWidth > 0 ||
             element.offsetHeight > 0 ||
             element === document.activeElement),
       )
       if (reachable.length === 0) {
+        event.preventDefault()
+        dialog.current.focus()
         return
       }
       const first = reachable[0]
@@ -1061,7 +1069,7 @@ function DialogFrame({
       // away with the mode it belonged to. The focus falls to the body, and
       // Tab from there walks the page behind a dialog that says it is out of
       // reach, so it is brought back in.
-      if (!(active instanceof HTMLElement && dialog.current.contains(active))) {
+      if (!reachable.some((element) => element === active)) {
         event.preventDefault()
         ;(event.shiftKey ? last : first).focus()
         return
@@ -1077,7 +1085,12 @@ function DialogFrame({
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      opener?.focus?.()
+      const remaining = [...document.querySelectorAll<HTMLElement>('.dialog[aria-modal="true"]')].at(-1)
+      if (!remaining || (opener && remaining.contains(opener))) {
+        if (opener?.isConnected) opener.focus()
+      } else if (!remaining.contains(document.activeElement)) {
+        remaining.focus()
+      }
     }
   }, [])
 
@@ -1135,6 +1148,7 @@ function NewSessionDialog({
   const [directoryListing, setDirectoryListing] =
     useState<DirectoryListing>()
   const [loadingDirectories, setLoadingDirectories] = useState(false)
+  const [directoryComputerId, setDirectoryComputerId] = useState<string>()
   const directoryRequest = useRef(0)
   const [terminalBacked, setTerminalBacked] = useState(true)
   const [allowAllPermissions, setAllowAllPermissions] = useState(true)
@@ -1153,10 +1167,12 @@ function NewSessionDialog({
     [computers],
   )
   const initialized = useRef(false)
+  const initialSelection = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     if (!open) {
       initialized.current = false
+      initialSelection.current = undefined
       return
     }
     // Opening the dialog is what fills it in. `available` and the stored
@@ -1178,9 +1194,11 @@ function NewSessionDialog({
       return
     }
     initialized.current = true
+    initialSelection.current = initialComputerId
     setComputerId(initialComputerId)
     setProvider('copilot')
     setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
+    setDirectoryComputerId(initialComputerId)
     setDirectoryListing(undefined)
     setTerminalBacked(true)
     setAllowAllPermissions(true)
@@ -1199,11 +1217,15 @@ function NewSessionDialog({
   // The chosen computer can be unpaired, or go offline, while the dialog is
   // still open. Left alone the selection stays truthy and Create stays
   // enabled, so submitting aimed at a computer that is no longer there. Only
-  // the selection is reconciled; the folder, provider, and mode already
-  // chosen are still what the reader wants.
+  // the computer and its folder are reconciled; provider and mode remain
+  // what the reader chose.
   useEffect(() => {
     if (!open || !initialized.current) {
       return
+    }
+    if (initialSelection.current !== undefined) {
+      if (computerId !== initialSelection.current) return
+      initialSelection.current = undefined
     }
     if (available.some((computer) => computer.id === computerId)) {
       return
@@ -1213,6 +1235,10 @@ function NewSessionDialog({
       available[0]?.id || ''
     directoryRequest.current += 1
     setComputerId(nextComputerId)
+    setCwd('')
+    setDirectoryListing(undefined)
+    setDirectoryComputerId(undefined)
+    setLoadingDirectories(Boolean(nextComputerId))
     setHistoryKey('')
   }, [open, computerId, available, defaultComputerId])
 
@@ -1233,6 +1259,7 @@ function NewSessionDialog({
         if (active && request === directoryRequest.current) {
           setDirectoryListing(listing)
           setCwd(listing.path)
+          setDirectoryComputerId(computerId)
         }
       })
       .catch((caught: unknown) => {
@@ -1301,6 +1328,7 @@ function NewSessionDialog({
       if (request === directoryRequest.current) {
         setDirectoryListing(listing)
         setCwd(listing.path)
+        setDirectoryComputerId(computerId)
       }
     } catch (caught) {
       if (request === directoryRequest.current) {
@@ -1318,6 +1346,14 @@ function NewSessionDialog({
     setSubmitting(true)
     setError(undefined)
     try {
+      if (
+        !available.some((computer) => computer.id === computerId) ||
+        (mode === 'new' && (
+          directoryComputerId !== computerId || !cwd.trim()
+        ))
+      ) {
+        throw new Error('Choose an available computer and wait for its folder to load.')
+      }
       if (mode === 'new') {
         const defaultRuntime = providerRuntimeModels
           ? normalizedRuntimeSelection(
@@ -1429,6 +1465,9 @@ function NewSessionDialog({
               setProvider('copilot')
               setHistoryKey('')
               setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
+              setDirectoryListing(undefined)
+              setDirectoryComputerId(nextComputerId || undefined)
+              setLoadingDirectories(Boolean(nextComputerId))
             }}
             value={computerId}
           >
@@ -1595,10 +1634,12 @@ function NewSessionDialog({
           className="primary-button dialog__submit"
           disabled={
             submitting ||
-            !computerId ||
+            !selectedComputer ||
             Boolean(defaultModel && runtimeLoading) ||
             Boolean(defaultModel && runtimeError) ||
-            (mode === 'new' && !selectedProvider?.available) ||
+            (mode === 'new' && (
+              !selectedProvider?.available || directoryComputerId !== computerId
+            )) ||
             (mode === 'new'
               ? !cwd.trim()
               : !previousSessions.some((session) => sessionKey(session) === historyKey))
@@ -6301,7 +6342,7 @@ function App() {
   // Roots are browsable without a session, so reading position is kept under
   // a reserved key rather than being unreachable.
   const knowledgePanelKey = selectedKey || sessionlessKnowledgeKey
-  const [roots, setRoots] = useState<KnowledgeRoot[]>([])
+  const [roots, setRootsState] = useState<KnowledgeRoot[]>([])
   const [knowledgeRootsLoaded, setKnowledgeRootsLoaded] = useState(false)
   const [activeRootId, setActiveRootId] = useState<string | undefined>(() =>
     readStoredOrder<string | undefined>(
@@ -6324,14 +6365,18 @@ function App() {
   // Read from the socket handler, which is bound once and would otherwise
   // close over whichever roots existed when it was bound.
   const rootsRef = useRef<KnowledgeRoot[]>([])
+  const setRoots = useCallback((
+    update: KnowledgeRoot[] | ((current: KnowledgeRoot[]) => KnowledgeRoot[]),
+  ) => {
+    const next = typeof update === 'function' ? update(rootsRef.current) : update
+    rootsRef.current = next
+    setRootsState(next)
+  }, [])
   const activeRootIdRef = useRef<string | undefined>(undefined)
   // Computers this browser has been told to forget. Held so an answer still
   // on its way can be discarded rather than restoring what was removed.
   const forgottenComputers = useRef(new Set<string>())
   const knowledgeComputerLifetimes = useRef(new Map<string, number>())
-  useEffect(() => {
-    rootsRef.current = roots
-  }, [roots])
   useEffect(() => {
     activeRootIdRef.current = activeRootId
   }, [activeRootId])
@@ -8593,6 +8638,9 @@ function App() {
           },
           }))
         } else if (event.type === 'computer.updated') {
+          // The hub filters retired clients before publishing this event.
+          // A new pairing may be announced by another tab without a refresh.
+          forgottenComputers.current.delete(event.computer.id)
           eventSequenceRef.current += 1
           // Only the computer record is newer, not its sessions. A paired node
           // going offline is an ordinary update, and treating it as reason to
@@ -12005,10 +12053,6 @@ function App() {
           // one that says so. Without this the mark set when it was removed
           // would outlive it and go on discarding its answers.
           forgottenComputers.current.delete(computer.id)
-          knowledgeComputerLifetimes.current.set(
-            computer.id,
-            (knowledgeComputerLifetimes.current.get(computer.id) || 0) + 1,
-          )
           eventSequenceRef.current += 1
           computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
           computersRef.current = upsertComputer(computersRef.current, computer)

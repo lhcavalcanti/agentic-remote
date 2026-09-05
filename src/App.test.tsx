@@ -3181,6 +3181,149 @@ describe('App', () => {
     await waitFor(() => expect(activateSession).toHaveBeenCalledWith(secondComputer.id, historicalSession.id))
   })
 
+  it('accepts fresh Knowledge after another tab announces a re-pairing', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+      id: 'fresh-pairing-root', computerId: secondComputer.id,
+      computerName: secondComputer.name, path: '/home/worker/docs',
+      name: 'Fresh pairing docs', createdAt: '2026-09-05T00:00:00.000Z',
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }),
+      } as MessageEvent)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+    fireEvent.change(within(dialog).getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    const add = within(dialog).getByRole('button', { name: 'Add this folder' })
+    await waitFor(() => expect(add).toBeEnabled())
+    fireEvent.click(add)
+    expect(await screen.findAllByText('Fresh pairing docs')).not.toHaveLength(0)
+    expect(listComputers).toHaveBeenCalledOnce()
+  })
+
+  it.each(['automatic', 'manual'])(
+    'keeps the folder owned by its computer after %s selection changes',
+    async (selection) => {
+      const remote = { ...secondComputer, providers: computer.providers }
+      let finish!: (value: Awaited<ReturnType<typeof listDirectories>>) => void
+      const pending = new Promise<Awaited<ReturnType<typeof listDirectories>>>((resolve) => {
+        finish = resolve
+      })
+      vi.mocked(listComputers).mockResolvedValue([computer, remote])
+      vi.mocked(listDirectories).mockImplementation((id) => id === remote.id
+        ? pending
+        : Promise.resolve({ path: '/home/local/project', directories: [] }))
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+      const dialog = await screen.findByRole('dialog', { name: 'Choose a folder' })
+      const create = within(dialog).getByRole('button', { name: 'Create session' })
+      await waitFor(() => expect(create).toBeEnabled())
+      fireEvent.change(within(dialog).getByLabelText('Agent provider'), {
+        target: { value: 'claude' },
+      })
+      if (selection === 'automatic') {
+        act(() => {
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({
+              type: 'computer.updated', computer: { ...computer, online: false },
+            }),
+          } as MessageEvent)
+        })
+      } else {
+        fireEvent.change(within(dialog).getByLabelText('Computer'), {
+          target: { value: remote.id },
+        })
+      }
+      await waitFor(() => expect(within(dialog).getByLabelText('Computer')).toHaveValue(remote.id))
+      if (selection === 'manual') {
+        expect(create).toBeEnabled()
+        fireEvent.click(create)
+        await waitFor(() => expect(createSession).toHaveBeenCalledWith(
+          remote.id, expect.objectContaining({ cwd: '~', provider: 'copilot' }),
+        ))
+        await act(async () => { finish({ path: '/home/worker/project', directories: [] }) })
+        return
+      }
+      expect(create).toBeDisabled()
+      fireEvent.submit(create.closest('form')!)
+      await within(dialog).findByText(/wait for its folder to load/)
+      expect(createSession).not.toHaveBeenCalled()
+      await act(async () => { finish({ path: '/home/worker/project', directories: [] }) })
+      await waitFor(() => expect(create).toBeEnabled())
+      fireEvent.click(create)
+      await waitFor(() => expect(createSession).toHaveBeenCalledWith(
+        remote.id,
+        expect.objectContaining({
+          cwd: '/home/worker/project',
+          provider: selection === 'automatic' ? 'claude' : 'copilot',
+        }),
+      ))
+    },
+  )
+
+  it('does not enable creation with an old folder when fallback loading fails', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listDirectories).mockImplementation(async (id) => {
+      if (id === secondComputer.id) throw new Error('New folder is unavailable')
+      return { path: '/home/local/project', directories: [] }
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    const dialog = await screen.findByRole('dialog', { name: 'Choose a folder' })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Create session' })).toBeEnabled())
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'computer.updated', computer: { ...computer, online: false },
+        }),
+      } as MessageEvent)
+    })
+    await within(dialog).findByText('New folder is unavailable')
+    expect(within(dialog).getByRole('button', { name: 'Create session' })).toBeDisabled()
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
+  it('includes native summary controls in modal Tab and Shift+Tab wrapping', async () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(100)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'task-summary', type: 'agent', status: 'running',
+        description: 'Inspect the prompt', prompt: 'Read the source without changing it',
+        startedAt: '2026-09-05T00:00:00.000Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'View background tasks for Project chat',
+    }))
+    const dialog = await screen.findByRole('dialog', { name: 'Background tasks · Project chat' })
+    const summary = within(dialog).getByText('Prompt', { selector: 'summary' })
+    const close = within(dialog).getByRole('button', { name: 'Close' })
+    summary.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(close).toHaveFocus()
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(summary).toHaveFocus()
+    summary.setAttribute('tabindex', '-1')
+    summary.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(close).toHaveFocus()
+  })
+
   it('takes the focus it claims and gives it back on Escape', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -680,7 +680,7 @@ describe('SessionStore', () => {
   })
 
   it('leaves the queue alone when recording a failed prompt cannot be written', async () => {
-    const { store } = await createStore()
+    const { directory, store } = await createStore()
     await store.create({
       id: 'session-failed',
       cwd: '/tmp/project',
@@ -697,11 +697,8 @@ describe('SessionStore', () => {
     const queued = store.get('session-failed')?.queuedPrompts?.[0]
     expect(queued).toBeDefined()
 
-    const store_ = store as unknown as { persist: () => Promise<void> }
-    const originalPersist = store_.persist.bind(store_)
-    store_.persist = async () => {
-      throw new Error('disk full')
-    }
+    const blockedWrite = path.join(directory, 'state.json.tmp')
+    await mkdir(blockedWrite)
 
     // The caller reports the send as unrecovered when this rejects. Leaving
     // the queue entry removed and the prompt recorded as needing recovery
@@ -709,9 +706,9 @@ describe('SessionStore', () => {
     // a restart delivered it beside the draft.
     await expect(
       store.setFailedPrompt('session-failed', queued!.id, 'Deploy it'),
-    ).rejects.toThrow(/disk full/)
+    ).rejects.toThrow(/EISDIR/)
 
-    store_.persist = originalPersist
+    await rm(blockedWrite, { recursive: true })
     const after = store.get('session-failed')
     expect(after?.failedPrompt).toBeUndefined()
     expect(after?.queuedPrompts?.map((prompt) => prompt.id)).toEqual([
@@ -721,7 +718,7 @@ describe('SessionStore', () => {
   })
 
   it('keeps the failed prompt when clearing it cannot be written', async () => {
-    const { store } = await createStore()
+    const { directory, store } = await createStore()
     await store.create({
       id: 'session-clear',
       cwd: '/tmp/project',
@@ -732,20 +729,17 @@ describe('SessionStore', () => {
     })
     await store.setFailedPrompt('session-clear', 'missing', 'Deploy it')
 
-    const store_ = store as unknown as { persist: () => Promise<void> }
-    const originalPersist = store_.persist.bind(store_)
-    store_.persist = async () => {
-      throw new Error('disk full')
-    }
+    const blockedWrite = path.join(directory, 'state.json.tmp')
+    await mkdir(blockedWrite)
 
     // A submission that had already succeeded was reported as failed and
     // handed back as a draft, while the marker stayed on disk to be found
     // again after a restart and delivered a second time.
     await expect(store.clearFailedPrompt('session-clear')).rejects.toThrow(
-      /disk full/,
+      /EISDIR/,
     )
 
-    store_.persist = originalPersist
+    await rm(blockedWrite, { recursive: true })
     expect(store.get('session-clear')?.failedPrompt?.content).toBe('Deploy it')
   })
 
@@ -798,9 +792,9 @@ describe('SessionStore', () => {
 
     await expect(
       store.renameSession('session-late', 'Renamed after closing'),
-    ).resolves.toMatchObject({ title: 'Renamed after closing' })
+    ).rejects.toThrow('Session store is closed')
     await store.flush()
-
+    expect(store.get('session-late')?.title).toBe('Project')
     expect(existsSync(directory)).toBe(false)
   })
 })

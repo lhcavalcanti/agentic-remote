@@ -34,6 +34,26 @@ interface StoredSession extends SessionDetail {
   workspaceTitle?: boolean
 }
 
+interface PendingMutation {
+  kind: 'mutation'
+  separateCommit?: boolean
+  apply(state: StoredState): () => void
+  reject(error: unknown): void
+}
+
+interface StreamMutation {
+  kind: 'append' | 'content'
+  sessionId: string
+  messageId: string
+  content: string
+  updatedAt: string
+  revisions: number
+}
+
+type PendingChange = PendingMutation | StreamMutation
+
+type SessionProjection<T> = T | ((session: SessionDetail) => T)
+
 function activityDuration(startedAt: string, completedAt: string): number | undefined {
   const start = Date.parse(startedAt)
   const end = Date.parse(completedAt)
@@ -69,8 +89,16 @@ export class SessionStore {
   private readonly directory: string
   private readonly statePath: string
   private state: StoredState = { version: 1, sessions: {} }
+  private checkpoint = this.state
   private writeQueue: Promise<void> = Promise.resolve()
   private pendingPersist?: Promise<void>
+  private closed = false
+  private closeTask?: Promise<void>
+  private readonly fileWrites = new Set<Promise<void>>()
+  private pendingChanges: PendingChange[] = []
+  private writingState?: StoredState
+  private liveMutableSessions = new WeakSet<StoredSession>()
+  private readonly streamTargets = new WeakMap<ChatMessage[], Map<string, ChatMessage>>()
 
   constructor(
     directory = resolveDataDirectory(),
@@ -122,6 +150,8 @@ export class SessionStore {
         }
       }
     }
+    this.checkpoint = this.state
+    this.liveMutableSessions = new WeakSet()
   }
 
   list(): SessionDetail[] {
@@ -138,6 +168,16 @@ export class SessionStore {
     return session ? cloneSession(session) : undefined
   }
 
+  /** Queue a read behind admitted mutations before making a provider-side decision. */
+  async readAfterWrites(sessionId: string): Promise<SessionDetail> {
+    return this.change((state) => {
+      if (!state.sessions[sessionId]) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      return () => this.requireSession(sessionId)
+    })
+  }
+
   backend(id: string): StoredSession['backend'] | undefined {
     return this.state.sessions[id]?.backend
   }
@@ -149,43 +189,55 @@ export class SessionStore {
       backend?: 'sdk' | 'terminal'
     } = {},
   ): Promise<SessionDetail> {
-    this.state.sessions[session.id] = {
-      ...cloneSession(session),
-      provider: session.provider || 'copilot',
-      revision: session.revision ?? 1,
-      managedOpen: options.managedOpen,
-      executionMode: undefined,
-      backend: options.backend,
-    }
-    await this.persist()
-    return cloneSession(this.state.sessions[session.id])
+    return this.change((state) => {
+      state.sessions[session.id] = {
+        ...cloneSession(session),
+        provider: session.provider || 'copilot',
+        revision: Math.max(
+          session.revision ?? 1,
+          (state.sessions[session.id]?.revision ?? 0) + 1,
+        ),
+        managedOpen: options.managedOpen,
+        executionMode: undefined,
+        backend: options.backend,
+      }
+      return () => this.requireSession(session.id)
+    })
   }
 
   async syncDiscovered(sessions: DiscoveredSession[]): Promise<void> {
-    for (const discovered of sessions) {
-      const existing = this.state.sessions[discovered.id]
-      if (existing) {
-        if (!existing.contextCwd) {
-          existing.cwd = discovered.cwd
+    return this.change((state) => {
+      for (const discovered of sessions) {
+        const previous = state.sessions[discovered.id]
+        if (previous) {
+          const existing = {
+            ...previous,
+            revision: (previous.revision ?? 0) + 1,
+          }
+          if (!existing.contextCwd) {
+            existing.cwd = discovered.cwd
+          }
+          if (!existing.customTitle && !existing.workspaceTitle) {
+            existing.title = discovered.title || existing.title
+          }
+          if (discovered.updatedAt > existing.updatedAt) {
+            existing.updatedAt = discovered.updatedAt
+          }
+          existing.isOpen ??= false
+          state.sessions[discovered.id] = existing
+          continue
         }
-        if (!existing.customTitle && !existing.workspaceTitle) {
-          existing.title = discovered.title || existing.title
+        state.sessions[discovered.id] = {
+          ...discovered,
+          provider: 'copilot',
+          revision: 1,
+          status: 'idle',
+          isOpen: false,
+          messages: [],
         }
-        if (discovered.updatedAt > existing.updatedAt) {
-          existing.updatedAt = discovered.updatedAt
-        }
-        existing.isOpen ??= false
-        continue
       }
-      this.state.sessions[discovered.id] = {
-        ...discovered,
-        provider: 'copilot',
-        status: 'idle',
-        isOpen: false,
-        messages: [],
-      }
-    }
-    await this.persist()
+      return () => undefined
+    })
   }
 
   async replaceMessages(
@@ -199,19 +251,25 @@ export class SessionStore {
 
   async replaceTranscript(
     sessionId: string,
-    messages: ChatMessage[],
+    messages: SessionProjection<ChatMessage[]>,
     status: SessionStatus,
     activity?: string,
-    runtime?: SessionRuntimeInfo,
-    cwd?: string,
+    runtime?: SessionProjection<SessionRuntimeInfo | undefined>,
+    cwd?: SessionProjection<string | undefined>,
     contextCwd = false,
-    pendingUserInput?: PendingUserInput | null,
+    pendingUserInput?: SessionProjection<PendingUserInput | null | undefined>,
     observedQueueDispatchAt?: string,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      session.messages = messages
-      if (pendingUserInput !== undefined) {
-        session.pendingUserInput = pendingUserInput || undefined
+      const nextMessages = typeof messages === 'function' ? messages(session) : messages
+      const nextRuntime = typeof runtime === 'function' ? runtime(session) : runtime
+      const nextCwd = typeof cwd === 'function' ? cwd(session) : cwd
+      const nextUserInput = typeof pendingUserInput === 'function'
+        ? pendingUserInput(session)
+        : pendingUserInput
+      session.messages = nextMessages
+      if (nextUserInput !== undefined) {
+        session.pendingUserInput = nextUserInput || undefined
       }
       const newerTerminalDispatch =
         session.queueDispatchAt &&
@@ -224,30 +282,36 @@ export class SessionStore {
       session.activity = session.pendingPermission?.title ||
         session.pendingUserInput?.question ||
         (newerTerminalDispatch ? session.activity : activity)
-      if (runtime) {
-        session.runtime = runtime
+      if (nextRuntime) {
+        session.runtime = nextRuntime
       }
-      if (cwd && (!session.contextCwd || contextCwd)) {
-        session.cwd = cwd
+      if (nextCwd && (!session.contextCwd || contextCwd)) {
+        session.cwd = nextCwd
         session.contextCwd ||= contextCwd
       }
       session.updatedAt =
-        messages.at(-1)?.createdAt || session.updatedAt
+        nextMessages.at(-1)?.createdAt || session.updatedAt
     })
   }
 
   async syncOpen(sessionIds: string[]): Promise<void> {
     const active = new Set(sessionIds)
-    for (const session of Object.values(this.state.sessions)) {
-      session.isOpen =
-        active.has(session.id) ||
-        // A suspended session has nothing running by design. Reading that as
-        // closed would hide it from the list, and the only way back to it is
-        // the button on the session itself.
-        session.suspended === true ||
-        (session.managedOpen === true && session.backend !== 'terminal')
-    }
-    await this.persist()
+    return this.change((state) => {
+      for (const session of Object.values(state.sessions)) {
+        state.sessions[session.id] = {
+          ...session,
+          revision: (session.revision ?? 0) + 1,
+          isOpen:
+            active.has(session.id) ||
+            // A suspended session has nothing running by design. Reading that as
+            // closed would hide it from the list, and the only way back to it is
+            // the button on the session itself.
+            session.suspended === true ||
+            (session.managedOpen === true && session.backend !== 'terminal'),
+        }
+      }
+      return () => undefined
+    })
   }
 
   async syncBackends(
@@ -256,16 +320,26 @@ export class SessionStore {
   ): Promise<void> {
     const activeTerminal = new Set(terminalSessionIds)
     const knownSdk = new Set(sdkSessionIds)
-    for (const session of Object.values(this.state.sessions)) {
-      if (activeTerminal.has(session.id)) {
-        session.backend = 'terminal'
-        session.managedOpen = true
-        session.isOpen = true
-      } else if (!session.backend && knownSdk.has(session.id)) {
-        session.backend = 'sdk'
+    return this.change((state) => {
+      for (const session of Object.values(state.sessions)) {
+        if (activeTerminal.has(session.id)) {
+          state.sessions[session.id] = {
+            ...session,
+            revision: (session.revision ?? 0) + 1,
+            backend: 'terminal',
+            managedOpen: true,
+            isOpen: true,
+          }
+        } else if (!session.backend && knownSdk.has(session.id)) {
+          state.sessions[session.id] = {
+            ...session,
+            revision: (session.revision ?? 0) + 1,
+            backend: 'sdk',
+          }
+        }
       }
-    }
-    await this.persist()
+      return () => undefined
+    })
   }
 
   terminalRecoverySessions(): SessionDetail[] {
@@ -347,7 +421,7 @@ export class SessionStore {
       session.cwd = cwd
       session.contextCwd = true
       session.updatedAt = updatedAt
-    })
+    }, (session) => session.cwd !== cwd)
   }
 
   async updateAutomaticTitle(
@@ -356,12 +430,10 @@ export class SessionStore {
     updatedAt: string,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      if (!session.customTitle) {
-        session.title = title
-        session.workspaceTitle = true
-        session.updatedAt = updatedAt
-      }
-    })
+      session.title = title
+      session.workspaceTitle = true
+      session.updatedAt = updatedAt
+    }, (session) => !session.customTitle && session.title !== title)
   }
 
   async syncWorkspaceMetadata(
@@ -380,7 +452,10 @@ export class SessionStore {
       if (metadata.updatedAt && metadata.updatedAt > session.updatedAt) {
         session.updatedAt = metadata.updatedAt
       }
-    })
+    }, (session) =>
+      metadata.cwd !== session.cwd ||
+      Boolean(metadata.title && metadata.title !== session.title),
+    )
   }
 
   async clearConversation(sessionId: string): Promise<SessionDetail> {
@@ -405,47 +480,48 @@ export class SessionStore {
     sessionId: string,
     replacementId: string,
   ): Promise<SessionDetail> {
-    const existing = this.state.sessions[sessionId]
-    if (!existing) {
-      throw new Error(`Session ${sessionId} does not exist`)
-    }
-    const replacement: StoredSession = {
-      ...existing,
-      id: replacementId,
-      // The predecessor's own ancestry comes too: a client that missed both
-      // clears has state under a session the predecessor already replaced.
-      // Kept whole rather than capped: what a browser is holding has no
-      // matching expiry, and a client that was away long enough to miss many
-      // clears is exactly the one still holding the oldest id. Dropping the
-      // far end of the ancestry is what leaves that state with no way back.
-      replacedSessionIds: [
-        ...(existing.replacedSessionIds || []),
-        sessionId,
-      ],
-      revision: (existing.revision ?? 0) + 1,
-      messages: [],
-      status: 'idle',
-      isOpen: true,
-      activity: undefined,
-      pendingPermission: undefined,
-      pendingUserInput: undefined,
-      queuedPrompts: [],
-      queuedCount: 0,
-      queueDispatchAt: undefined,
-      updatedAt: new Date().toISOString(),
-      runtime: existing.runtime
-        ? {
-            ...existing.runtime,
-            contextTokens: undefined,
-            contextEstimated: undefined,
-          }
-        : undefined,
-    }
-    delete this.state.sessions[sessionId]
-    this.state.sessions[replacementId] = replacement
-    await this.persist()
+    const replacement = await this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      state.sessions[replacementId] = {
+        ...existing,
+        id: replacementId,
+        // The predecessor's own ancestry comes too: a client that missed both
+        // clears has state under a session the predecessor already replaced.
+        // Kept whole rather than capped: what a browser is holding has no
+        // matching expiry, and a client that was away long enough to miss many
+        // clears is exactly the one still holding the oldest id. Dropping the
+        // far end of the ancestry is what leaves that state with no way back.
+        replacedSessionIds: [
+          ...(existing.replacedSessionIds || []),
+          sessionId,
+        ],
+        revision: (existing.revision ?? 0) + 1,
+        messages: [],
+        status: 'idle',
+        isOpen: true,
+        activity: undefined,
+        pendingPermission: undefined,
+        pendingUserInput: undefined,
+        queuedPrompts: [],
+        queuedCount: 0,
+        queueDispatchAt: undefined,
+        updatedAt: new Date().toISOString(),
+        runtime: existing.runtime
+          ? {
+              ...existing.runtime,
+              contextTokens: undefined,
+              contextEstimated: undefined,
+            }
+          : undefined,
+      }
+      delete state.sessions[sessionId]
+      return () => this.requireSession(replacementId)
+    }, true)
     await this.removeUploads(sessionId)
-    return cloneSession(replacement)
+    return replacement
   }
 
   async enqueuePrompt(
@@ -490,57 +566,16 @@ export class SessionStore {
     content: string,
     uncertain = false,
   ): Promise<SessionDetail> {
-    // Put back if the write does not land. The caller reports the send as
-    // unrecovered when this rejects, but the queue entry had already gone from
-    // memory and the prompt was already recorded as needing recovery, so the
-    // snapshot handed back described a prompt the reader owned while the copy
-    // on disk was still queued -- and a restart delivered it beside the draft.
-    const existing = this.state.sessions[sessionId]
-    if (!existing) {
-      throw new Error(`Session ${sessionId} does not exist`)
-    }
-    const previousQueue = existing.queuedPrompts
-    const previousCount = existing.queuedCount
-    const previousFailed = existing.failedPrompt
-    const previousRevision = existing.revision
-    // Held so the rollback can tell this call's own values from anybody's.
-    let applied: StoredSession['failedPrompt']
-    let appliedQueue: StoredSession['queuedPrompts']
-    try {
-      return await this.mutate(sessionId, (stored) => {
-        const queue = stored.queuedPrompts || []
-        stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
-        stored.queuedCount = stored.queuedPrompts.length
-        stored.failedPrompt = {
-          content,
-          failedAt: new Date().toISOString(),
-          ...(uncertain ? { uncertain: true } : {}),
-        }
-        applied = stored.failedPrompt
-        appliedQueue = stored.queuedPrompts
-      })
-    } catch (error) {
-      // Only the fields this call changed, and only where they are still what
-      // it left. Another mutation can land while the write is outstanding, and
-      // that write covers this change too: putting everything back would undo
-      // theirs, while putting nothing back leaves a change in memory that
-      // never reached disk -- a draft handed to a reader whose queued copy a
-      // restart still finds.
-      const current = this.state.sessions[sessionId]
-      if (current) {
-        if (current.failedPrompt === applied) {
-          current.failedPrompt = previousFailed
-        }
-        if (current.queuedPrompts === appliedQueue) {
-          current.queuedPrompts = previousQueue
-          current.queuedCount = previousCount
-        }
-        if (current.revision === (previousRevision ?? 0) + 1) {
-          current.revision = previousRevision
-        }
+    return this.mutate(sessionId, (stored) => {
+      const queue = stored.queuedPrompts || []
+      stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
+      stored.queuedCount = stored.queuedPrompts.length
+      stored.failedPrompt = {
+        content,
+        failedAt: new Date().toISOString(),
+        ...(uncertain ? { uncertain: true } : {}),
       }
-      throw error
-    }
+    })
   }
 
   /**
@@ -555,91 +590,41 @@ export class SessionStore {
     prompt: QueuedPrompt,
     answers: string | undefined,
   ): Promise<SessionDetail> {
-    const existing = this.state.sessions[sessionId]
-    if (!existing) {
-      throw new Error(`Session ${sessionId} does not exist`)
-    }
-    const previousQueue = existing.queuedPrompts
-    const previousCount = existing.queuedCount
-    const previousFailed = existing.failedPrompt
-    const previousRevision = existing.revision
-    let appliedQueue: StoredSession['queuedPrompts']
-    let clearedFailure = false
-    try {
-      return await this.mutate(sessionId, (session) => {
-        const queue = session.queuedPrompts || []
-        session.queuedPrompts = [...queue, prompt]
-        session.queuedCount = session.queuedPrompts.length
-        appliedQueue = session.queuedPrompts
-        if (
-          session.failedPrompt &&
-          (answers === undefined || session.failedPrompt.failedAt === answers)
-        ) {
-          session.failedPrompt = undefined
-          clearedFailure = true
-        }
-      })
-    } catch (error) {
-      // Put back what this call changed, and only where it is still what this
-      // call left. Without it the caller reported a failure while memory held
-      // an unblocked queued copy that never reached disk.
-      const current = this.state.sessions[sessionId]
-      if (current) {
-        if (current.queuedPrompts === appliedQueue) {
-          current.queuedPrompts = previousQueue
-          current.queuedCount = previousCount
-        }
-        if (clearedFailure && current.failedPrompt === undefined) {
-          current.failedPrompt = previousFailed
-        }
-        if (current.revision === (previousRevision ?? 0) + 1) {
-          current.revision = previousRevision
-        }
+    return this.mutate(sessionId, (session) => {
+      const queue = session.queuedPrompts || []
+      session.queuedPrompts = [...queue, prompt]
+      session.queuedCount = session.queuedPrompts.length
+      if (
+        session.failedPrompt &&
+        (answers === undefined || session.failedPrompt.failedAt === answers)
+      ) {
+        session.failedPrompt = undefined
       }
-      throw error
-    }
+    })
   }
 
   async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {
-    // Put back if the write does not land, for the same reason as recording
-    // one. A submission that had already succeeded was reported as failed and
-    // handed back as a draft, while the marker stayed on disk to be found
-    // again after a restart and delivered a second time.
-    const existing = this.state.sessions[sessionId]
-    if (!existing) {
-      throw new Error(`Session ${sessionId} does not exist`)
-    }
-    const previousFailed = existing.failedPrompt
-    const previousRevision = existing.revision
-    try {
-      return await this.mutate(sessionId, (stored) => {
-        stored.failedPrompt = undefined
-      })
-    } catch (error) {
-      // As above: put back only this call's own change, and leave anything
-      // written since alone. Skipping the rollback outright left the marker
-      // cleared in memory and still on disk, to reappear after a restart and
-      // invite the accepted prompt to be sent again.
-      const current = this.state.sessions[sessionId]
-      if (current) {
-        if (current.failedPrompt === undefined) {
-          current.failedPrompt = previousFailed
-        }
-        if (current.revision === (previousRevision ?? 0) + 1) {
-          current.revision = previousRevision
-        }
-      }
-      throw error
-    }
+    return this.mutate(sessionId, (stored) => {
+      stored.failedPrompt = undefined
+    })
   }
 
   async shiftQueuedPrompt(
     sessionId: string,
   ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {
-    const first = this.state.sessions[sessionId]?.queuedPrompts?.[0]
-    return first
-      ? this.removeQueuedPrompt(sessionId, first.id)
-      : { session: this.requireSession(sessionId) }
+    if (
+      !this.pendingPersist &&
+      !this.writingState &&
+      !this.state.sessions[sessionId]?.queuedPrompts?.length
+    ) {
+      return { session: this.requireSession(sessionId) }
+    }
+    let prompt: QueuedPrompt | undefined
+    const session = await this.mutate(sessionId, (stored) => {
+      prompt = stored.queuedPrompts?.shift()
+      stored.queuedCount = stored.queuedPrompts?.length || 0
+    })
+    return { session, prompt }
   }
 
   queueDispatchAt(sessionId: string): string | undefined {
@@ -683,12 +668,31 @@ export class SessionStore {
   }
 
   async remove(sessionId: string): Promise<void> {
-    delete this.state.sessions[sessionId]
-    await this.persist()
+    await this.change((state) => {
+      delete state.sessions[sessionId]
+      return () => undefined
+    }, true)
     await this.removeUploads(sessionId)
   }
 
   async saveUpload(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
+    if (this.closed) throw new Error('Session store is closed')
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => { finish = resolve })
+    this.fileWrites.add(pending)
+    try {
+      return await this.writeUpload(sessionId, filename, data)
+    } finally {
+      this.fileWrites.delete(pending)
+      finish()
+    }
+  }
+
+  private async writeUpload(
     sessionId: string,
     filename: string,
     data: Buffer,
@@ -817,13 +821,13 @@ export class SessionStore {
   }
 
   streamMessage(sessionId: string, messageId: string, chunk: string): SessionDetail {
-    return this.mutateInMemory(sessionId, (session) => {
-      const message = session.messages.find((entry) => entry.id === messageId)
-      if (!message) {
-        throw new Error(`Message ${messageId} does not exist`)
-      }
-      message.content += chunk
-      session.updatedAt = new Date().toISOString()
+    return this.mutateInMemory({
+      kind: 'append',
+      sessionId,
+      messageId,
+      content: chunk,
+      updatedAt: new Date().toISOString(),
+      revisions: 1,
     })
   }
 
@@ -832,22 +836,13 @@ export class SessionStore {
     messageId: string,
     content: string,
   ): SessionDetail {
-    return this.mutateInMemory(sessionId, (session) => {
-      const message = session.messages.find((entry) => entry.id === messageId)
-      if (!message) {
-        throw new Error(`Message ${messageId} does not exist`)
-      }
-      message.content = content
-      for (const entry of session.messages) {
-        if (
-          entry.role === 'activity' &&
-          entry.activityStatus === 'running'
-        ) {
-          entry.activityStatus = 'completed'
-        }
-      }
-      session.activity = undefined
-      session.updatedAt = new Date().toISOString()
+    return this.mutateInMemory({
+      kind: 'content',
+      sessionId,
+      messageId,
+      content,
+      updatedAt: new Date().toISOString(),
+      revisions: 1,
     })
   }
 
@@ -874,6 +869,25 @@ export class SessionStore {
     })
   }
 
+  async clearPendingRequest(
+    sessionId: string,
+    kind: 'pendingPermission' | 'pendingUserInput',
+    requestId: string,
+    continuation?: { status: SessionStatus; activity?: string },
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session[kind] = undefined
+      if (continuation) {
+        session.status = session.pendingPermission || session.pendingUserInput
+          ? 'waiting'
+          : continuation.status
+        session.activity = session.pendingPermission?.title ||
+          session.pendingUserInput?.question ||
+          continuation.activity
+      }
+    }, (session) => session[kind]?.requestId === requestId)
+  }
+
   async update(
     sessionId: string,
     mutation: (session: SessionDetail) => void,
@@ -881,17 +895,118 @@ export class SessionStore {
     return this.mutate(sessionId, mutation)
   }
 
-  private mutateInMemory(
+  /** A false result is an explicit no-op; validation and write errors still reject. */
+  async updateIf(
     sessionId: string,
-    mutation: (session: StoredSession) => void,
-  ): SessionDetail {
+    mutation: (session: SessionDetail) => boolean,
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      const session = structuredClone(existing)
+      if (!mutation(session)) {
+        return () => undefined
+      }
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  private mutateInMemory(change: StreamMutation): SessionDetail {
+    if (this.closed) throw new Error('Session store is closed')
+    const { sessionId, messageId } = change
     const session = this.state.sessions[sessionId]
     if (!session) {
       throw new Error(`Session ${sessionId} does not exist`)
     }
-    mutation(session)
-    session.revision = (session.revision ?? 0) + 1
-    return cloneSession(session)
+    if (!this.streamTarget(session.messages, messageId)) {
+      throw new Error(`Message ${messageId} does not exist`)
+    }
+    if (this.state === this.checkpoint) {
+      this.state = { ...this.state, sessions: { ...this.state.sessions } }
+    }
+    this.applyStream(this.state, change, this.liveMutableSessions)
+
+    // Keep only changes, not history snapshots, between checkpoints. Consecutive
+    // tokens share one entry; their position relative to awaited mutations is
+    // preserved even when those mutations are still waiting to start writing.
+    const previous = this.pendingChanges.at(-1)
+    if (
+      change.kind === 'append' &&
+      previous?.kind === 'append' &&
+      previous.sessionId === sessionId &&
+      previous.messageId === messageId
+    ) {
+      previous.content += change.content
+      previous.updatedAt = change.updatedAt
+      previous.revisions += 1
+    } else {
+      this.pendingChanges.push(change)
+    }
+    return this.requireSession(sessionId)
+  }
+
+  private applyStream(
+    state: StoredState,
+    change: StreamMutation,
+    mutableSessions: WeakSet<StoredSession>,
+  ): void {
+    let session = state.sessions[change.sessionId]
+    if (!session) {
+      return
+    }
+    if (!mutableSessions.has(session)) {
+      // Detach once per live view/batch, not once per token. Neither the last
+      // checkpoint nor an in-flight snapshot may share mutable messages.
+      session = structuredClone(session)
+      state.sessions[change.sessionId] = session
+      mutableSessions.add(session)
+    }
+    const message = this.streamTarget(session.messages, change.messageId)
+    if (message) {
+      if (change.kind === 'append') {
+        message.content += change.content
+      } else {
+        message.content = change.content
+        for (const entry of session.messages) {
+          if (entry.role === 'activity' && entry.activityStatus === 'running') {
+            entry.activityStatus = 'completed'
+          }
+        }
+        session.activity = undefined
+      }
+      session.updatedAt = change.updatedAt
+    }
+    // A clear may remove a message before its later deltas are checkpointed.
+    // Its snapshot must still outrank the live view those deltas published.
+    session.revision = (session.revision ?? 0) + change.revisions
+  }
+
+  private restoreStreams(changes: PendingChange[]): void {
+    this.pendingChanges = [
+      ...changes.filter((change) => change.kind !== 'mutation'),
+      ...this.pendingChanges,
+    ]
+  }
+
+  private streamTarget(messages: ChatMessage[], id: string): ChatMessage | undefined {
+    let targets = this.streamTargets.get(messages)
+    if (!targets) {
+      targets = new Map()
+      this.streamTargets.set(messages, targets)
+    }
+    const cached = targets.get(id)
+    if (cached) {
+      return cached
+    }
+    const message = messages.find((entry) => entry.id === id)
+    if (message) {
+      targets.set(id, message)
+    }
+    return message
   }
 
   private requireSession(sessionId: string): SessionDetail {
@@ -905,35 +1020,184 @@ export class SessionStore {
   private async mutate(
     sessionId: string,
     mutation: (session: StoredSession) => void,
+    condition?: (session: StoredSession) => boolean,
   ): Promise<SessionDetail> {
-    const session = this.mutateInMemory(sessionId, mutation)
-    await this.persist()
-    return session
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (condition && !condition(existing)) {
+        return () => this.requireSession(sessionId)
+      }
+      const session = structuredClone(existing)
+      mutation(session)
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  private change<T>(
+    mutation: (state: StoredState) => () => T,
+    separateCommit = false,
+  ): Promise<T> {
+    if (this.closed) return Promise.reject(new Error('Session store is closed'))
+    return new Promise((resolve, reject) => {
+      this.pendingChanges.push({
+        kind: 'mutation',
+        separateCommit,
+        apply: (state) => {
+          const result = mutation(state)
+          return () => {
+            try {
+              resolve(result())
+            } catch (error) {
+              reject(error)
+            }
+          }
+        },
+        reject,
+      })
+      // Only the batch that actually prepares this mutation may settle it.
+      // A preceding destructive boundary can leave it waiting for another write.
+      void this.persist()
+    })
+  }
+
+  private takeBatch(): PendingChange[] {
+    // Destructive operations commit alone. Earlier results are resolved while
+    // their IDs still exist; following callers cannot inherit this write's error.
+    const boundary = this.pendingChanges.findIndex(
+      (change) => change.kind === 'mutation' && change.separateCommit,
+    )
+    const earlierMutation = boundary >= 0 && this.pendingChanges
+      .slice(0, boundary)
+      .some((change) => change.kind === 'mutation')
+    const end = boundary < 0
+      ? this.pendingChanges.length
+      : earlierMutation ? boundary : boundary + 1
+    const changes = this.pendingChanges.splice(0, end)
+    if (this.pendingChanges.some((change) => change.kind === 'mutation')) {
+      void this.persist()
+    }
+    return changes
   }
 
   // Settle outstanding writes so a caller can know that stopping is complete.
   // Without this a write can land after shutdown, against a directory the
   // caller believes it is free to remove.
   async flush(): Promise<void> {
-    await this.writeQueue
+    let current: Promise<void>
+    let failure: unknown
+    let failed = false
+    do {
+      current = this.writeQueue
+      try {
+        await current
+      } catch (error) {
+        failure = error
+        failed = true
+      }
+    } while (current !== this.writeQueue)
+    if (failed) {
+      throw failure
+    }
   }
 
-  private persist(): Promise<void> {
-    // Collapse writes queued behind an in-flight one: they would each
-    // re-serialise every session, and the snapshot is taken when the write
-    // starts, so a single write covers all mutations made until then.
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask
+    this.closed = true
+    this.closeTask = (async () => {
+      await Promise.all([...this.fileWrites])
+      await this.flush()
+      // Closing is a checkpoint even when the only remaining work is live text.
+      if (this.pendingChanges.length) await this.persist(true)
+    })()
+    return this.closeTask
+  }
+
+  private persist(checkpointStreams = false): Promise<void> {
     if (this.pendingPersist) {
       return this.pendingPersist
     }
-    const task = this.writeQueue.then(async () => {
+    const task = this.writeQueue.catch(() => undefined).then(async () => {
+      // Close the batch before preparing/serializing it. A call arriving during
+      // I/O belongs to the next write, never to this write's acknowledgement.
       this.pendingPersist = undefined
-      const snapshot = JSON.stringify(this.state)
-      const temporaryPath = `${this.statePath}.tmp`
-      await writeFile(temporaryPath, snapshot, { mode: 0o600 })
-      await rename(temporaryPath, this.statePath)
+      const changes = this.takeBatch()
+      let candidate = {
+        ...this.checkpoint,
+        sessions: { ...this.checkpoint.sessions },
+      }
+      const mutableSessions = new WeakSet<StoredSession>()
+      const applied: (() => void)[] = []
+      let durableChange = false
+      try {
+        for (const change of changes) {
+          if (change.kind !== 'mutation') {
+            this.applyStream(candidate, change, mutableSessions)
+            continue
+          }
+          const draft = { ...candidate, sessions: { ...candidate.sessions } }
+          try {
+            const resolve = change.apply(draft)
+            durableChange ||= (
+              Object.keys(draft.sessions).length !== Object.keys(candidate.sessions).length ||
+              Object.entries(draft.sessions).some(
+                ([id, session]) => session !== candidate.sessions[id],
+              )
+            )
+            candidate = draft
+            applied.push(resolve)
+          } catch (error) {
+            change.reject(error)
+          }
+        }
+        if (changes.length && !durableChange && !checkpointStreams) {
+          this.restoreStreams(changes)
+          for (const resolve of applied) {
+            resolve()
+          }
+          return
+        }
+        const snapshot = JSON.stringify(candidate)
+        this.writingState = candidate
+        const temporaryPath = `${this.statePath}.tmp`
+        await writeFile(temporaryPath, snapshot, { mode: 0o600 })
+        await rename(temporaryPath, this.statePath)
+        // Only replay live deltas over the committed candidate. Applying queued
+        // mutations here would publish changes whose own write can still fail.
+        const visible = { ...candidate, sessions: { ...candidate.sessions } }
+        const liveMutableSessions = new WeakSet<StoredSession>()
+        for (const change of this.pendingChanges) {
+          if (change.kind !== 'mutation') {
+            this.applyStream(visible, change, liveMutableSessions)
+          }
+        }
+        this.checkpoint = candidate
+        this.state = visible
+        this.liveMutableSessions = liveMutableSessions
+      } catch (error) {
+        this.restoreStreams(changes)
+        for (const change of changes) {
+          if (change.kind === 'mutation') {
+            change.reject(error)
+          }
+        }
+        throw error
+      } finally {
+        this.writingState = undefined
+      }
+      // Read results only after installation, including newer live deltas and
+      // the rest of this successful batch, never a later uncommitted mutation.
+      for (const resolve of applied) {
+        resolve()
+      }
     })
     this.pendingPersist = task
-    this.writeQueue = task.catch(() => undefined)
+    this.writeQueue = task
+    void task.catch(() => undefined)
     return task
   }
 

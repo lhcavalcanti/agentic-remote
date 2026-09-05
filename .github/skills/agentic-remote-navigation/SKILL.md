@@ -83,17 +83,22 @@ This is the area most likely to be extended, so its current limits matter.
   and reached through `/api/computers/:computerId/sessions/:sessionId/workspace`.
 - Paths are relative and confined to the root. Absolute paths, `..`, hidden
   segments, and escaping symlinks are rejected by `resolveWorkspacePath`.
-- Previewable types are Markdown, PDF, and a text extension allowlist
-  (`.csv .json .log .md .markdown .tsv .txt .yaml .yml`). **Images are not
-  previewable**, so images embedded in Markdown do not resolve today.
-- Limits: 2 MiB text, 25 MiB PDF, 2000 directory entries; search is bounded and
-  skips `node_modules`, `dist`, `build`, `coverage`.
-- **Knowledge is metadata only.** A `KnowledgeBookmark` stores
-  `(computerId, sessionId, path, kind, name)`; content never leaves the owning
-  computer. Because every bookmark is tied to a session, a bookmark breaks when
-  its session is deleted, and there is no session-independent knowledge root.
-- Opening a bookmark selects its session and reopens the session-scoped
-  workspace dialog; Knowledge itself has no tree, search, or sorting.
+- Previewable types are Markdown, PDF, images (`.png .jpg .jpeg .gif .webp
+  .svg`), and a text extension allowlist (`.csv .json .log .md .markdown .tsv
+  .txt .yaml .yml`). Anything else is refused with `415`.
+- Limits: 2 MiB text, 25 MiB PDF, 10 MiB image, 2000 directory entries; search
+  is bounded and skips `node_modules`, `dist`, `build`, `coverage`.
+- A refused path carries its reason: `400` for a path that is not allowed,
+  `403` for one outside the root, `404` for one that is not there, `413` for
+  one that is too large.
+- **Knowledge is metadata only.** A `KnowledgeRoot` stores
+  `(computerId, computerName, path, name)`; content never leaves the owning
+  computer. A root is browsed through `/api/knowledge/roots/:rootId/entries`
+  and read through `.../file`, both of which resolve on the owning computer.
+- A root is independent of any session, and `validateKnowledgeRoot` allows any
+  directory the user can read -- read-only browsing, unlike a session working
+  directory, which stays confined because an agent executes there.
+- Removing a computer removes the roots that named folders on it.
 
 ## Deployment topology
 
@@ -246,13 +251,13 @@ working tree, so uncommitted edits are never live.
 
 ## Known gaps
 
-- Invalid workspace or session paths surface as an opaque `500` rather than a
-  `4xx` with the reason, so the UI cannot explain a refused folder.
-- Knowledge cannot define a computer-plus-root knowledge base independent of
-  sessions, and has no integrated Markdown reading experience. Planned in
-  issue #11 (PRD), with the near-term panel navigation work in issue #12.
-- Markdown is rendered without heading anchors, relative-image resolution, or
-  intra-document navigation. Images are not previewable at all, so an embedded
-  `![](./x.png)` cannot resolve.
+- The tmux-backed integration tests are timing-sensitive and fail roughly one
+  run in ten when the machine is busy (`active-sessions.test.ts`,
+  `terminal-session.test.ts`, `agent-service.test.ts`). Because local
+  validation is the whole promotion gate, re-run before concluding a change
+  broke something.
+- Markdown is rendered without heading anchors. The outline is matched to the
+  document by position among the rendered headings, so anything that renders a
+  heading has to be counted by `outlineFromMarkdown`.
 - A session can appear `idle` while its agent is running; the tmux-backed
   status derivation described above is the place to investigate.

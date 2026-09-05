@@ -12,6 +12,7 @@ import ReaderWorkspace from './ReaderWorkspace'
 import type {
   CSSProperties,
   ChangeEvent,
+  ClipboardEvent as ReactClipboardEvent,
   DragEvent as ReactDragEvent,
   FormEvent,
   KeyboardEvent,
@@ -296,6 +297,29 @@ function readStoredOrder<T>(key: string, fallback: T): T {
   }
 }
 
+/**
+ * Remembering something is a convenience, and storage is not always there to
+ * remember it in. Safari with cookies blocked throws on the first access, and
+ * a full quota throws on the write; both happen inside effects, where an
+ * exception unmounts the whole tree and leaves a blank page. Reads were
+ * already guarded, so the writes are guarded the same way.
+ */
+function writeStored(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Losing a remembered preference is not a reason to take the app down.
+  }
+}
+
+function clearStored(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // As above.
+  }
+}
+
 type StatuslineSettings = {
   enabled: boolean
   computer: boolean
@@ -369,6 +393,492 @@ type ComposerHistoryState = {
   messages: string[]
   index: number
   draft: string
+  draftPastes: CollapsedPaste[]
+}
+
+type CollapsedPaste = {
+  key: string
+  id: number
+  content: string
+  lineCount: number
+  start: number
+}
+
+type ComposerContent = {
+  text: string
+  pastes: CollapsedPaste[]
+}
+
+type ComposerSubmission = ComposerContent & {
+  id: string
+  originKey?: string
+  acknowledgesFailure?: string
+  accepted?: boolean
+}
+
+type ComposerAcceptanceReceipt = { key: string; id: string }
+
+type ComposerDraft = ComposerContent & {
+  pendingSubmission?: ComposerSubmission
+  deliveryUncertain?: boolean
+}
+
+type ComposerDrafts = Record<string, ComposerDraft>
+type ComposerPersistenceResult =
+  | { ok: true }
+  | { ok: false; error: string }
+
+const collapsedPasteLineThreshold = 20
+const composerDraftsStorageKey = 'agentic-remote:composer-drafts-v2'
+// Set the first time this build persists, and never cleared. Its presence is
+// what tells a first upgrade from a return to one.
+const composerDraftsGenerationKey = 'agentic-remote:composer-drafts-generation'
+const composerAcceptanceReceiptLimit = 64
+// Whether a legacy paste payload could not be matched to its label. Its key is
+// then kept, because it holds the only copy of that text.
+const unmigratedComposerPastes = { current: false }
+let collapsedPasteKeySequence = 0
+
+function newCollapsedPasteKey(): string {
+  collapsedPasteKeySequence += 1
+  return `${Date.now().toString(36)}-${collapsedPasteKeySequence.toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+function readComposerAcceptanceReceipts(strict = false): ComposerAcceptanceReceipt[] {
+  const stored: unknown = strict
+    ? JSON.parse(localStorage.getItem(composerDraftsGenerationKey) ?? '1')
+    : readStoredOrder<unknown>(composerDraftsGenerationKey, 1)
+  if (!stored || typeof stored !== 'object' || !('accepted' in stored)) {
+    return []
+  }
+  return Array.isArray(stored.accepted)
+    ? stored.accepted.filter((entry): entry is ComposerAcceptanceReceipt =>
+        entry !== null &&
+        typeof entry === 'object' &&
+        typeof entry.key === 'string' &&
+        entry.key.length > 0 &&
+        typeof entry.id === 'string' &&
+        entry.id.length > 0,
+      )
+    : []
+}
+
+function hasComposerAcceptanceReceipt(
+  receipts: ComposerAcceptanceReceipt[],
+  key: string,
+  submission: ComposerSubmission,
+): boolean {
+  return receipts.some((receipt) =>
+    receipt.key === (submission.originKey || key) && receipt.id === submission.id,
+  )
+}
+
+function reconcileAcceptedComposerDrafts(
+  drafts: ComposerDrafts,
+  receipts: ComposerAcceptanceReceipt[],
+  retire: boolean,
+): ComposerDrafts {
+  let result = drafts
+  for (const [key, draft] of Object.entries(drafts)) {
+    const pending = draft.pendingSubmission
+    if (!pending || (!pending.accepted && !hasComposerAcceptanceReceipt(receipts, key, pending))) {
+      continue
+    }
+    if (retire) {
+      const { pendingSubmission: _accepted, ...remaining } = draft
+      if (result === drafts) {
+        result = { ...drafts }
+      }
+      if (remaining.text) {
+        result[key] = remaining
+      } else {
+        delete result[key]
+      }
+    } else if (!pending.accepted) {
+      result = {
+        ...result,
+        [key]: { ...draft, pendingSubmission: { ...pending, accepted: true } },
+      }
+    }
+  }
+  return result
+}
+
+function collapsedPasteLabel(paste: CollapsedPaste): string {
+  return `[Paste #${paste.id} - ${paste.lineCount} lines]`
+}
+
+function pastedLineCount(content: string): number {
+  return content.split(/\r\n|\r|\n/).length
+}
+
+function validComposerPastes(
+  text: string,
+  value: unknown,
+): CollapsedPaste[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.filter(
+    (paste): paste is CollapsedPaste => {
+      if (paste === null || typeof paste !== 'object') {
+        return false
+      }
+      const candidate = paste as CollapsedPaste
+      return (
+        Number.isInteger(candidate.id) &&
+        candidate.id > 0 &&
+        typeof candidate.key === 'string' &&
+        candidate.key.length > 0 &&
+        typeof candidate.content === 'string' &&
+        Number.isInteger(candidate.lineCount) &&
+        candidate.lineCount > collapsedPasteLineThreshold &&
+        Number.isInteger(candidate.start) &&
+        candidate.start >= 0 &&
+        text.slice(
+          candidate.start,
+          candidate.start + collapsedPasteLabel(candidate).length,
+        ) === collapsedPasteLabel(candidate)
+      )
+    },
+  )
+}
+
+function prependComposerContent(
+  submitted: ComposerContent,
+  existing: ComposerContent,
+): ComposerContent {
+  const submittedKeys = new Set(submitted.pastes.map((paste) => paste.key))
+  const retained = existing.pastes.filter(
+    (paste) => !submittedKeys.has(paste.key),
+  )
+  const usedIds = new Set(retained.map((paste) => paste.id))
+  let nextId = Math.max(0, ...usedIds)
+  let cursor = 0
+  let text = ''
+  const pastes: CollapsedPaste[] = []
+  for (const paste of [...submitted.pastes].sort(
+    (left, right) => left.start - right.start,
+  )) {
+    const oldLabel = collapsedPasteLabel(paste)
+    if (
+      paste.start < cursor ||
+      submitted.text.slice(paste.start, paste.start + oldLabel.length) !== oldLabel
+    ) {
+      continue
+    }
+    text += submitted.text.slice(cursor, paste.start)
+    let id = paste.id
+    if (usedIds.has(id)) {
+      do {
+        nextId += 1
+      } while (usedIds.has(nextId))
+      id = nextId
+    } else {
+      nextId = Math.max(nextId, id)
+    }
+    usedIds.add(id)
+    const restored = { ...paste, id, start: text.length }
+    text += collapsedPasteLabel(restored)
+    pastes.push(restored)
+    cursor = paste.start + oldLabel.length
+  }
+  text += submitted.text.slice(cursor)
+  const separator = text && existing.text
+    ? text.endsWith('\n') ? '\n' : '\n\n'
+    : ''
+  const shift = text.length + separator.length
+  return {
+    text: `${text}${separator}${existing.text}`,
+    pastes: [
+      ...pastes,
+      ...retained.map((paste) => ({ ...paste, start: paste.start + shift })),
+    ],
+  }
+}
+
+function recoverPendingComposerDraft(draft: ComposerDraft): ComposerDraft {
+  const { pendingSubmission, ...remaining } = draft
+  if (pendingSubmission?.accepted) {
+    return remaining
+  }
+  return pendingSubmission
+    ? {
+        ...remaining,
+        ...prependComposerContent(pendingSubmission, remaining),
+        deliveryUncertain: true,
+      }
+    : draft
+}
+
+function writeComposerContent(
+  drafts: ComposerDrafts,
+  key: string,
+  content: ComposerContent,
+): ComposerDrafts {
+  const draft = { ...drafts[key], ...content }
+  if (!draft.text) {
+    delete draft.deliveryUncertain
+    if (!draft.pendingSubmission) {
+      const { [key]: _removed, ...remaining } = drafts
+      return remaining
+    }
+  }
+  return { ...drafts, [key]: draft }
+}
+
+function readComposerDrafts(): ComposerDrafts {
+  const stored = readStoredOrder<unknown>(composerDraftsStorageKey, {})
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    return readLegacyComposerDrafts()
+  }
+  const result: ComposerDrafts = {}
+  const receipts = readComposerAcceptanceReceipts()
+  const acceptedLegacySnapshots: Record<string, string> = {}
+  for (const [key, value] of Object.entries(stored)) {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      typeof (value as ComposerDraft).text !== 'string'
+    ) {
+      continue
+    }
+    const candidate = value as ComposerDraft
+    const draft: ComposerDraft = {
+      text: candidate.text,
+      pastes: validComposerPastes(candidate.text, candidate.pastes),
+    }
+    if (candidate.deliveryUncertain === true) {
+      draft.deliveryUncertain = true
+    }
+    const pending = candidate.pendingSubmission
+    if (
+      pending &&
+      typeof pending === 'object' &&
+      typeof pending.id === 'string' &&
+      typeof pending.text === 'string' &&
+      pending.text
+    ) {
+      draft.pendingSubmission = {
+        id: pending.id,
+        ...(typeof pending.originKey === 'string' ? { originKey: pending.originKey } : {}),
+        text: pending.text,
+        pastes: validComposerPastes(pending.text, pending.pastes),
+        ...(typeof pending.acknowledgesFailure === 'string'
+          ? { acknowledgesFailure: pending.acknowledgesFailure }
+          : {}),
+      }
+    }
+    if (draft.pendingSubmission && hasComposerAcceptanceReceipt(receipts, key, draft.pendingSubmission)) {
+      const beforeAcceptance = recoverPendingComposerDraft(draft)
+      acceptedLegacySnapshots[key] = expandComposerPastes(
+        beforeAcceptance.text,
+        beforeAcceptance.pastes,
+      )
+      draft.pendingSubmission.accepted = true
+    }
+    const recovered = draft.pendingSubmission?.accepted
+      ? draft
+      : recoverPendingComposerDraft(draft)
+    if (recovered.text || recovered.pendingSubmission?.accepted) {
+      result[key] = recovered
+    }
+  }
+  const legacy = readLegacyComposerDrafts()
+  // An older build writes only the legacy key, so after a rollback and back
+  // again its drafts are the newer ones -- and taking this state whenever it
+  // held anything at all wrote the stale copy straight back over them. Where
+  // the two disagree about a session, the legacy text is what was written
+  // last.
+  // Whether this build has ever written here. Without it, a legacy map and a
+  // v2 map are the same picture whether this is a first upgrade or a return
+  // from one -- and the two want opposite answers. On a first upgrade the
+  // legacy map is everything there is. On a return, the older build has been
+  // writing it in full ever since, so a session it holds nothing for is one
+  // whose draft was sent or cleared over there, and keeping ours brought that
+  // draft back from the dead.
+  const returning = localStorage.getItem(composerDraftsGenerationKey) !== null
+  if (returning) {
+    for (const key of Object.keys(result)) {
+      if (!legacy[key]) {
+        delete result[key]
+      }
+    }
+  }
+  for (const [key, draft] of Object.entries(legacy)) {
+    const mine = result[key]
+    // The legacy copy may still contain the accepted submission if cleanup
+    // stopped between writes. Only this exact old snapshot is superseded;
+    // writing from an older build still wins when it differs.
+    if (mine?.pendingSubmission?.accepted && acceptedLegacySnapshots[key] === draft.text) {
+      continue
+    }
+    if (!mine || expandComposerPastes(mine.text, mine.pastes) !== draft.text) {
+      result[key] = draft
+    }
+  }
+  return Object.keys(result).length > 0 ? result : legacy
+}
+
+function readLegacyComposerDrafts(): ComposerDrafts {
+  const stored = readStoredOrder<Record<string, unknown>>(
+    'agentic-remote:composer-drafts',
+    {},
+  )
+  const storedPastes = readStoredOrder<Record<string, unknown>>(
+    'agentic-remote:composer-pastes',
+    {},
+  )
+  return Object.fromEntries(
+    Object.entries(stored)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+      .map(([key, text]) => {
+        const pastes = Array.isArray(storedPastes[key])
+          ? storedPastes[key]
+              .flatMap((value): CollapsedPaste[] => {
+                if (!value || typeof value !== 'object') {
+                  return []
+                }
+                const paste = value as Omit<CollapsedPaste, 'key' | 'start'>
+                if (
+                  !Number.isInteger(paste.id) ||
+                  paste.id <= 0 ||
+                  typeof paste.content !== 'string' ||
+                  !Number.isInteger(paste.lineCount) ||
+                  paste.lineCount <= collapsedPasteLineThreshold
+                ) {
+                  return []
+                }
+                const label = collapsedPasteLabel({
+                  ...paste,
+                  key: '',
+                  start: 0,
+                })
+                const start = text.indexOf(label)
+                if (
+                  start < 0 ||
+                  text.indexOf(label, start + label.length) >= 0
+                ) {
+                  // The label appears twice, so which one carries the payload
+                  // cannot be told. Its metadata is left behind rather than
+                  // guessed at, and the payload key is kept so nothing is lost.
+                  unmigratedComposerPastes.current = true
+                  return []
+                }
+                return [
+                  {
+                    ...paste,
+                    key: `legacy:${key}:${paste.id}:${start}`,
+                    start,
+                  },
+                ]
+              })
+              .sort((left, right) => left.start - right.start)
+              .filter(
+                (paste, index, all) =>
+                  index === 0 ||
+                  all[index - 1].start +
+                    collapsedPasteLabel(all[index - 1]).length <=
+                    paste.start,
+              )
+          : []
+        return [key, { text, pastes }]
+      }),
+  )
+}
+
+function activeComposerPastes(
+  value: string,
+  pastes: CollapsedPaste[],
+): CollapsedPaste[] {
+  return pastes.filter((paste) => {
+    const label = collapsedPasteLabel(paste)
+    return value.slice(paste.start, paste.start + label.length) === label
+  })
+}
+
+function expandComposerPastes(
+  value: string,
+  pastes: CollapsedPaste[],
+): string {
+  let offset = 0
+  let expanded = ''
+  const ordered = [...pastes].sort((left, right) => left.start - right.start)
+  for (const paste of ordered) {
+    const label = collapsedPasteLabel(paste)
+    if (
+      paste.start < offset ||
+      value.slice(paste.start, paste.start + label.length) !== label
+    ) {
+      continue
+    }
+    expanded += value.slice(offset, paste.start)
+    expanded += paste.content
+    offset = paste.start + label.length
+  }
+  // Put back exactly as written. What is typed around a paste is part of the
+  // message -- indentation before it, a newline after it -- and trimming the
+  // ends quietly rewrote the prompt. Emptiness and whether it is a command are
+  // decided from a trimmed copy where they are asked, not here.
+  return expanded + value.slice(offset)
+}
+
+function reconcileComposerPastes(
+  before: string,
+  after: string,
+  pastes: CollapsedPaste[],
+): CollapsedPaste[] {
+  if (before === after || pastes.length === 0) {
+    return pastes
+  }
+  let prefix = 0
+  while (
+    prefix < before.length &&
+    prefix < after.length &&
+    before[prefix] === after[prefix]
+  ) {
+    prefix += 1
+  }
+  let suffix = 0
+  while (
+    suffix < before.length - prefix &&
+    suffix < after.length - prefix &&
+    before[before.length - suffix - 1] === after[after.length - suffix - 1]
+  ) {
+    suffix += 1
+  }
+  const replacedEnd = before.length - suffix
+  const delta = after.length - before.length
+  return pastes.flatMap((paste) => {
+    const end = paste.start + collapsedPasteLabel(paste).length
+    if (end <= prefix) {
+      return [paste]
+    }
+    if (paste.start >= replacedEnd) {
+      return [{ ...paste, start: paste.start + delta }]
+    }
+    return []
+  })
+}
+
+function composerPastesAfterRangeEdit(
+  pastes: CollapsedPaste[],
+  start: number,
+  end: number,
+  insertedLength: number,
+): CollapsedPaste[] {
+  const delta = insertedLength - (end - start)
+  return pastes.flatMap((paste) => {
+    const pasteEnd = paste.start + collapsedPasteLabel(paste).length
+    if (pasteEnd <= start) {
+      return [paste]
+    }
+    if (paste.start >= end) {
+      return [{ ...paste, start: paste.start + delta }]
+    }
+    return []
+  })
 }
 
 /**
@@ -965,6 +1475,9 @@ function contextSizeLabel(
   return limit ? `${compactTokens(limit)} tokens` : 'Automatic'
 }
 
+const dialogFocusable =
+  'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
+
 function DialogFrame({
   title,
   eyebrow,
@@ -978,6 +1491,97 @@ function DialogFrame({
   children: ReactNode
   className?: string
 }) {
+  const dialog = useRef<HTMLElement>(null)
+  // Read while rendering, before the dialog is committed, so this is whatever
+  // opened it. Reading it from the effect instead named a field inside the
+  // dialog that React had already focused, and handing the focus back to
+  // something that is about to unmount is the same as dropping it.
+  const [opener] = useState<HTMLElement | null>(() =>
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  )
+
+  useEffect(() => {
+    // The frame says `aria-modal`, which tells a reader the page behind it is
+    // out of reach. Taking the focus, keeping Tab inside it, and handing the
+    // focus back on the way out are what make that true rather than a claim.
+    //
+    // A dialog that has already put the focus somewhere of its own -- a title
+    // being renamed, a search field -- is left alone. Pulling it back to the
+    // frame would take the reader out of the field they were placed in, and
+    // typing straight away would go nowhere.
+    //
+    // Escape is deliberately not answered here. The app closes the topmost
+    // layer itself, in the order they are stacked and only when nothing
+    // nearer has already answered the key, and a second closer on the frame
+    // would be the same decision made again with less to go on.
+    if (
+      !(
+        document.activeElement instanceof HTMLElement &&
+        dialog.current?.contains(document.activeElement)
+      )
+    ) {
+      dialog.current?.focus()
+    }
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.key !== 'Tab' ||
+        event.defaultPrevented ||
+        !dialog.current ||
+        [...document.querySelectorAll('.dialog[aria-modal="true"]')].at(-1) !== dialog.current
+      ) {
+        return
+      }
+      const reachable = [
+        ...dialog.current.querySelectorAll<HTMLElement>(dialogFocusable),
+      ].filter(
+        (element) =>
+          !element.matches(':disabled') &&
+          element.getAttribute('tabindex') !== '-1' &&
+          element.getAttribute('aria-hidden') !== 'true' &&
+          (element.offsetWidth > 0 ||
+            element.offsetHeight > 0 ||
+            element === document.activeElement),
+      )
+      if (reachable.length === 0) {
+        event.preventDefault()
+        dialog.current.focus()
+        return
+      }
+      const first = reachable[0]
+      const last = reachable[reachable.length - 1]
+      const active = document.activeElement
+      // The control that had the focus can be removed or disabled while the
+      // dialog is open -- a button that stops applying, a field that goes
+      // away with the mode it belonged to. The focus falls to the body, and
+      // Tab from there walks the page behind a dialog that says it is out of
+      // reach, so it is brought back in.
+      if (!reachable.some((element) => element === active)) {
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+        return
+      }
+      if (event.shiftKey && (active === first || active === dialog.current)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      const remaining = [...document.querySelectorAll<HTMLElement>('.dialog[aria-modal="true"]')].at(-1)
+      if (!remaining || (opener && remaining.contains(opener))) {
+        if (opener?.isConnected) opener.focus()
+      } else if (!remaining.contains(document.activeElement)) {
+        remaining.focus()
+      }
+    }
+  }, [])
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -985,7 +1589,9 @@ function DialogFrame({
         aria-modal="true"
         className={`dialog ${className || ''}`}
         onMouseDown={(event) => event.stopPropagation()}
+        ref={dialog}
         role="dialog"
+        tabIndex={-1}
       >
         <div className="dialog__header">
           <div>
@@ -1030,6 +1636,7 @@ function NewSessionDialog({
   const [directoryListing, setDirectoryListing] =
     useState<DirectoryListing>()
   const [loadingDirectories, setLoadingDirectories] = useState(false)
+  const [directoryComputerId, setDirectoryComputerId] = useState<string>()
   const directoryRequest = useRef(0)
   const [terminalBacked, setTerminalBacked] = useState(true)
   const [allowAllPermissions, setAllowAllPermissions] = useState(true)
@@ -1047,28 +1654,81 @@ function NewSessionDialog({
     () => computers.filter((computer) => computer.online),
     [computers],
   )
+  const initialized = useRef(false)
+  const initialSelection = useRef<string | undefined>(undefined)
 
   useEffect(() => {
-    if (open) {
-      const initialComputerId = defaultComputerId || available[0]?.id || ''
-      setComputerId(initialComputerId)
-      setProvider('copilot')
-      setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
-      setDirectoryListing(undefined)
-      setTerminalBacked(true)
-      setAllowAllPermissions(true)
-      setMode('new')
-      setHistoryKey('')
-      setError(undefined)
-      setLoadingHistory(true)
-      void listHistory()
-        .then(setHistory)
-        .catch((caught: unknown) => {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        })
-        .finally(() => setLoadingHistory(false))
+    if (!open) {
+      initialized.current = false
+      initialSelection.current = undefined
+      return
     }
+    // Opening the dialog is what fills it in. `available` and the stored
+    // folders are rebuilt whenever any computer event arrives -- a node going
+    // online, a status refresh on returning to the tab -- and re-running this
+    // while the dialog is open threw away the provider, mode, folder, and
+    // previous session the reader had already chosen.
+    if (initialized.current) {
+      return
+    }
+    const initialComputerId =
+      available.find((computer) => computer.id === defaultComputerId)?.id ||
+      available[0]?.id || ''
+    // Opening before the first computer snapshot has landed leaves nothing to
+    // choose. Marking the dialog filled in at that point stranded it: the
+    // computers arrived, this returned at the guard above, and Create stayed
+    // disabled with no computer selected until the dialog was reopened.
+    if (!initialComputerId) {
+      return
+    }
+    initialized.current = true
+    initialSelection.current = initialComputerId
+    setComputerId(initialComputerId)
+    setProvider('copilot')
+    setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
+    setDirectoryComputerId(initialComputerId)
+    setDirectoryListing(undefined)
+    setTerminalBacked(true)
+    setAllowAllPermissions(true)
+    setMode('new')
+    setHistoryKey('')
+    setError(undefined)
+    setLoadingHistory(true)
+    void listHistory()
+      .then(setHistory)
+      .catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      })
+      .finally(() => setLoadingHistory(false))
   }, [open, defaultComputerId, defaultSessionFolders, available])
+
+  // The chosen computer can be unpaired, or go offline, while the dialog is
+  // still open. Left alone the selection stays truthy and Create stays
+  // enabled, so submitting aimed at a computer that is no longer there. Only
+  // the computer and its folder are reconciled; provider and mode remain
+  // what the reader chose.
+  useEffect(() => {
+    if (!open || !initialized.current) {
+      return
+    }
+    if (initialSelection.current !== undefined) {
+      if (computerId !== initialSelection.current) return
+      initialSelection.current = undefined
+    }
+    if (available.some((computer) => computer.id === computerId)) {
+      return
+    }
+    const nextComputerId =
+      available.find((computer) => computer.id === defaultComputerId)?.id ||
+      available[0]?.id || ''
+    directoryRequest.current += 1
+    setComputerId(nextComputerId)
+    setCwd('')
+    setDirectoryListing(undefined)
+    setDirectoryComputerId(undefined)
+    setLoadingDirectories(Boolean(nextComputerId))
+    setHistoryKey('')
+  }, [open, computerId, available, defaultComputerId])
 
   useEffect(() => {
     if (!open || mode !== 'new' || !computerId) {
@@ -1087,6 +1747,7 @@ function NewSessionDialog({
         if (active && request === directoryRequest.current) {
           setDirectoryListing(listing)
           setCwd(listing.path)
+          setDirectoryComputerId(computerId)
         }
       })
       .catch((caught: unknown) => {
@@ -1155,6 +1816,7 @@ function NewSessionDialog({
       if (request === directoryRequest.current) {
         setDirectoryListing(listing)
         setCwd(listing.path)
+        setDirectoryComputerId(computerId)
       }
     } catch (caught) {
       if (request === directoryRequest.current) {
@@ -1172,6 +1834,14 @@ function NewSessionDialog({
     setSubmitting(true)
     setError(undefined)
     try {
+      if (
+        !available.some((computer) => computer.id === computerId) ||
+        (mode === 'new' && (
+          directoryComputerId !== computerId || !cwd.trim()
+        ))
+      ) {
+        throw new Error('Choose an available computer and wait for its folder to load.')
+      }
       if (mode === 'new') {
         const defaultRuntime = providerRuntimeModels
           ? normalizedRuntimeSelection(
@@ -1207,7 +1877,11 @@ function NewSessionDialog({
         setCwd('')
       } else {
         const previous = history.find(
-          (session) => sessionKey(session) === historyKey,
+          (session) =>
+            sessionKey(session) === historyKey &&
+            session.computerId === computerId &&
+            available.some((computer) => computer.id === session.computerId) &&
+            !session.isOpen,
         )
         if (!previous) {
           throw new Error('Choose a previous session')
@@ -1279,6 +1953,9 @@ function NewSessionDialog({
               setProvider('copilot')
               setHistoryKey('')
               setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
+              setDirectoryListing(undefined)
+              setDirectoryComputerId(nextComputerId || undefined)
+              setLoadingDirectories(Boolean(nextComputerId))
             }}
             value={computerId}
           >
@@ -1445,11 +2122,15 @@ function NewSessionDialog({
           className="primary-button dialog__submit"
           disabled={
             submitting ||
-            !computerId ||
+            !selectedComputer ||
             Boolean(defaultModel && runtimeLoading) ||
             Boolean(defaultModel && runtimeError) ||
-            (mode === 'new' && !selectedProvider?.available) ||
-            (mode === 'new' ? !cwd.trim() : !historyKey)
+            (mode === 'new' && (
+              !selectedProvider?.available || directoryComputerId !== computerId
+            )) ||
+            (mode === 'new'
+              ? !cwd.trim()
+              : !previousSessions.some((session) => sessionKey(session) === historyKey))
           }
           type="submit"
         >
@@ -3327,12 +4008,6 @@ function UserInputCard({
   const [values, setValues] = useState<Record<string, UserInputFieldValue>>(
     () => initialUserInputValues(request.form),
   )
-
-  useEffect(() => {
-    setSelected([])
-    setAnswer('')
-    setValues(initialUserInputValues(request.form))
-  }, [request.requestId, request.form])
 
   if (request.form) {
     const canSubmit = request.form.fields.every(
@@ -6132,10 +6807,40 @@ function App() {
     Record<string, BackgroundTaskSnapshot>
   >({})
   const [selectedKey, setSelectedKey] = useState<string>()
-  const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>(
-    () => readStoredOrder('agentic-remote:composer-drafts', {}),
-  )
+  const composerInitialReadFailure = useRef<string | undefined>(undefined)
+  const [composerDrafts, setComposerDrafts] = useState<ComposerDrafts>(() => {
+    try {
+      for (const key of [
+        composerDraftsStorageKey, composerDraftsGenerationKey,
+        'agentic-remote:composer-drafts', 'agentic-remote:composer-pastes',
+        'agentic-remote:composer-draft-failures', 'agentic-remote:composer-draft-recovered',
+      ]) {
+        localStorage.getItem(key)
+      }
+      return readComposerDrafts()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      composerInitialReadFailure.current =
+        `Saved drafts could not be read (${detail}). Copy new text and reload after storage is available.`
+      return {}
+    }
+  })
+  const [composerStorageError, setComposerStorageError] =
+    useState<string | undefined>(composerInitialReadFailure.current)
+  const composerDraftsRef = useRef(composerDrafts)
+  const composerAcceptanceReceipts = useRef(readComposerAcceptanceReceipts())
+  const composerMounted = useRef(true)
   const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
+  const composerEditRef = useRef<
+    | {
+        key: string
+        before: string
+        start: number
+        end: number
+        inputType: string
+      }
+    | undefined
+  >(undefined)
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
   const [cwdOpen, setCwdOpen] = useState(false)
@@ -6155,7 +6860,7 @@ function App() {
   // Roots are browsable without a session, so reading position is kept under
   // a reserved key rather than being unreachable.
   const knowledgePanelKey = selectedKey || sessionlessKnowledgeKey
-  const [roots, setRoots] = useState<KnowledgeRoot[]>([])
+  const [roots, setRootsState] = useState<KnowledgeRoot[]>([])
   const [knowledgeRootsLoaded, setKnowledgeRootsLoaded] = useState(false)
   const [activeRootId, setActiveRootId] = useState<string | undefined>(() =>
     readStoredOrder<string | undefined>(
@@ -6175,6 +6880,24 @@ function App() {
   const [knowledgeFragment, setKnowledgeFragment] = useState<string>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
+  // Read from the socket handler, which is bound once and would otherwise
+  // close over whichever roots existed when it was bound.
+  const rootsRef = useRef<KnowledgeRoot[]>([])
+  const setRoots = useCallback((
+    update: KnowledgeRoot[] | ((current: KnowledgeRoot[]) => KnowledgeRoot[]),
+  ) => {
+    const next = typeof update === 'function' ? update(rootsRef.current) : update
+    rootsRef.current = next
+    setRootsState(next)
+  }, [])
+  const activeRootIdRef = useRef<string | undefined>(undefined)
+  // Computers this browser has been told to forget. Held so an answer still
+  // on its way can be discarded rather than restoring what was removed.
+  const forgottenComputers = useRef(new Set<string>())
+  const knowledgeComputerLifetimes = useRef(new Map<string, number>())
+  useEffect(() => {
+    activeRootIdRef.current = activeRootId
+  }, [activeRootId])
   const [addRootInitialLocation, setAddRootInitialLocation] = useState<{
     computerId: string
     path: string
@@ -6242,6 +6965,7 @@ function App() {
   const restoredDraftContents = useRef<Record<string, string>>(
     readStoredOrder('agentic-remote:composer-draft-recovered', {}),
   )
+  const composerRecoveryStorageDirty = useRef(false)
   // The history listener is bound once, so it reads the resolver through a ref
   // rather than closing over the first one.
   const followReplacementsRef = useRef<(key: string) => string>((key) => key)
@@ -6632,11 +7356,7 @@ function App() {
   function commitSidebarWidth(width: number) {
     const next = clampSidebarWidth(width)
     setSidebarWidth(next)
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next))
-    } catch {
-      // A blocked storage quota should not stop the drag from working.
-    }
+    writeStored(SIDEBAR_WIDTH_KEY, String(next))
   }
 
   function sidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
@@ -6789,7 +7509,16 @@ function App() {
     : undefined
   const selectedRunningBackgroundTasks =
     selectedBackgroundTasks?.runningCount || 0
-  const composer = selectedKey ? composerDrafts[selectedKey] || '' : ''
+  const composer = selectedKey ? composerDrafts[selectedKey]?.text || '' : ''
+  const selectedSubmission = selectedKey
+    ? composerDrafts[selectedKey]?.pendingSubmission
+    : undefined
+  const acceptanceReceiptMissing = selectedKey && selectedSubmission?.accepted &&
+    !hasComposerAcceptanceReceipt(
+      composerAcceptanceReceipts.current,
+      selectedKey,
+      selectedSubmission,
+    )
   // What each shortcut answers to now: its default unless the reader has
   // changed it.
   const shortcuts = shortcutDefaults.map((entry) => ({
@@ -6810,9 +7539,17 @@ function App() {
     Boolean(selected?.pendingPermission || selected?.pendingUserInput)
   selectedRef.current = selected
   sessionsRef.current = sessions
-  const currentTool = selected?.messages.findLast(
-    (message) =>
-      message.role === 'activity' && message.activityStatus === 'running',
+  // Only the running tool is wanted, but finding it walks the whole
+  // transcript, and this sits in the render path -- which every composer
+  // keystroke runs. Held against the messages so typing does not re-scan a
+  // long session for something that has not changed.
+  const currentTool = useMemo(
+    () =>
+      selected?.messages.findLast(
+        (message) =>
+          message.role === 'activity' && message.activityStatus === 'running',
+      ),
+    [selected?.messages],
   )
   const hasRunningTool = currentTool?.activityStatus === 'running'
   const pendingActionId =
@@ -7027,7 +7764,7 @@ function App() {
     if (!knowledgeHydrated.current) {
       return
     }
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-root',
       JSON.stringify(activeRootId),
     )
@@ -7042,21 +7779,21 @@ function App() {
       [activeRootId]: expandedKnowledge,
     }
     restoredKnowledgeExpansion.current = stored
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-expanded',
       JSON.stringify(stored),
     )
   }, [activeRootId, expandedKnowledge])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-roots-open',
       JSON.stringify(knowledgeRootsOpen),
     )
   }, [knowledgeRootsOpen])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-mode',
       JSON.stringify(knowledgeMode),
     )
@@ -7207,7 +7944,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-session-positions',
       JSON.stringify(knowledgePositions),
     )
@@ -7220,7 +7957,7 @@ function App() {
   }, [commandQuery, selectedKey])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       shortcutsStorageKey,
       JSON.stringify(shortcutOverrides),
     )
@@ -7545,7 +8282,7 @@ function App() {
     legacyKnowledgeAdopted.current = true
     const legacy = restoredKnowledge.current
     restoredKnowledge.current = {}
-    localStorage.removeItem('agentic-remote:knowledge-position')
+    clearStored('agentic-remote:knowledge-position')
     if (
       !legacy.rootId ||
       knowledgePositionsRef.current[selectedKey] ||
@@ -7572,16 +8309,27 @@ function App() {
   }, [selectedKey])
 
   useEffect(() => {
+    const lifetimes = new Map(knowledgeComputerLifetimes.current)
     void listKnowledgeRoots()
       .then(async (loaded) => {
-        setRoots(loaded)
+        // This answer was asked for before any computer could be unpaired,
+        // and it names computers rather than being scoped to one. Installing
+        // it as it stands would put back the roots of a computer forgotten
+        // while it was on its way.
+        const live = loaded.filter(
+          (entry) =>
+            !forgottenComputers.current.has(entry.computerId) &&
+            (lifetimes.get(entry.computerId) || 0) ===
+              (knowledgeComputerLifetimes.current.get(entry.computerId) || 0),
+        )
+        setRoots(live)
         setKnowledgeRootsLoaded(true)
         // Only the root is reopened here. Where a session was reading belongs
         // to that session, and this runs before one is known, so applying it
         // would show one session's document under another.
         const remembered = restoredKnowledge.current
         const root =
-          loaded.find((entry) => entry.id === remembered.rootId) || loaded[0]
+          live.find((entry) => entry.id === remembered.rootId) || live[0]
         if (!root) {
           // Nothing to restore, so later changes are safe to persist.
           knowledgeHydrated.current = true
@@ -7703,35 +8451,35 @@ function App() {
   }, [computers, sessions])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:computer-order',
       JSON.stringify(computerOrder),
     )
   }, [computerOrder])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:session-order',
       JSON.stringify(sessionOrder),
     )
   }, [sessionOrder])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:statusline',
       JSON.stringify(statusline),
     )
   }, [statusline])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:default-models',
       JSON.stringify(defaultRuntimes),
     )
   }, [defaultRuntimes])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       defaultSessionFoldersStorageKey,
       JSON.stringify({ version: 1, folders: defaultSessionFolders }),
     )
@@ -7750,12 +8498,147 @@ function App() {
     return applyAccentIcon((theme ?? accentThemes[0]).color)
   }, [accentTheme])
 
-  useEffect(() => {
-    localStorage.setItem(
-      'agentic-remote:composer-drafts',
-      JSON.stringify(composerDrafts),
+  function durableComposerDraft(key: string, draft: ComposerDraft): ComposerDraft {
+    const history = composerHistoryRef.current[key]
+    return history
+      ? { ...draft, text: history.draft, pastes: history.draftPastes }
+      : draft
+  }
+
+  function persistComposerDrafts(drafts: ComposerDrafts): ComposerPersistenceResult {
+    if (composerInitialReadFailure.current) {
+      return { ok: false, error: composerInitialReadFailure.current }
+    }
+    try {
+      // Admission and receipts must fail visibly, unlike best-effort settings.
+      let receipts = readComposerAcceptanceReceipts(true)
+      composerAcceptanceReceipts.current = [...receipts]
+      if (receipts.length > 0) {
+        const stored: ComposerDrafts = JSON.parse(localStorage.getItem(composerDraftsStorageKey) ?? '{}')
+        if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+          throw new Error('Saved draft metadata could not be read safely')
+        }
+        receipts = receipts.filter((receipt) =>
+          Object.entries(stored).some(([key, draft]) =>
+            draft?.pendingSubmission &&
+            hasComposerAcceptanceReceipt([receipt], key, draft.pendingSubmission),
+          ),
+        )
+      }
+      for (const [key, draft] of [
+        ...Object.entries(composerDraftsRef.current),
+        ...Object.entries(drafts),
+      ]) {
+        const pending = draft.pendingSubmission
+        if (!pending?.accepted) {
+          continue
+        }
+        // A preview has no acknowledgement: its hidden recovery still owns
+        // that token. An accepted recovery detaches it even if storage fails.
+        const acknowledged = pending.acknowledgesFailure
+        if (acknowledged !== undefined) {
+          if (restoredFailures.current.get(key) === acknowledged) {
+            restoredFailures.current.delete(key)
+          }
+          if (restoredDraftStamps.current[key] === acknowledged) {
+            const { [key]: _stamp, ...stamps } = restoredDraftStamps.current
+            const { [key]: _content, ...contents } = restoredDraftContents.current
+            restoredDraftStamps.current = stamps
+            restoredDraftContents.current = contents
+            composerRecoveryStorageDirty.current = true
+          }
+        }
+        if (!hasComposerAcceptanceReceipt(receipts, key, pending)) {
+          if (receipts.length >= composerAcceptanceReceiptLimit) {
+            throw new Error('Browser acceptance receipt storage is full; keep this tab open')
+          }
+          receipts.push({ key: pending.originKey || key, id: pending.id })
+        }
+      }
+      // The existing generation marker remains non-null and is still "1"
+      // when empty. Receipts contain only bounded identities, never payloads.
+      if (receipts.length > composerAcceptanceReceiptLimit) {
+        throw new Error('Browser acceptance receipt storage is full; keep this tab open')
+      }
+      localStorage.setItem(
+        composerDraftsGenerationKey,
+        receipts.length > 0 ? JSON.stringify({ version: 1, accepted: receipts }) : '1',
+      )
+      composerAcceptanceReceipts.current = receipts
+      if (composerRecoveryStorageDirty.current) {
+        localStorage.setItem(
+          'agentic-remote:composer-draft-failures',
+          JSON.stringify(restoredDraftStamps.current),
+        )
+        localStorage.setItem(
+          'agentic-remote:composer-draft-recovered',
+          JSON.stringify(restoredDraftContents.current),
+        )
+        composerRecoveryStorageDirty.current = false
+      }
+      const durable = reconcileAcceptedComposerDrafts(
+        Object.fromEntries(
+          Object.entries(drafts).map(([key, draft]) => [
+            key,
+            durableComposerDraft(key, draft),
+          ]),
+        ),
+        receipts,
+        true,
+      )
+      const legacy = JSON.stringify(
+        Object.fromEntries(
+          Object.entries(durable).map(([key, draft]) => {
+            const recoverable = recoverPendingComposerDraft(draft)
+            return [key, expandComposerPastes(recoverable.text, recoverable.pastes)]
+          }),
+        ),
+      )
+      // During retirement, keep the pending identity in v2 until its legacy
+      // copy is clean. Otherwise a failed legacy write would resurrect an
+      // accepted payload with no pending identity left to match to its receipt.
+      if (receipts.length > 0) {
+        localStorage.setItem('agentic-remote:composer-drafts', legacy)
+        localStorage.setItem(composerDraftsStorageKey, JSON.stringify(durable))
+      } else {
+        localStorage.setItem(composerDraftsStorageKey, JSON.stringify(durable))
+        localStorage.setItem('agentic-remote:composer-drafts', legacy)
+      }
+      // Remove legacy payloads only after all three compatibility writes
+      // succeed and none of the old payloads is still awaiting migration.
+      if (!unmigratedComposerPastes.current) {
+        localStorage.removeItem('agentic-remote:composer-pastes')
+      }
+      return { ok: true }
+    } catch (caught) {
+      return {
+        ok: false,
+        error: caught instanceof Error
+          ? `${caught.name}: ${caught.message}`
+          : String(caught),
+      }
+    }
+  }
+
+  function reportComposerStorageFailure(
+    error: string,
+    admissionBlocked = false,
+    originalRestored = false,
+  ) {
+    setComposerStorageError(
+      `${admissionBlocked ? 'Message was not sent. ' : ''}` +
+      `Draft changes could not be saved (${error}). ` +
+      (originalRestored
+        ? 'Your original draft is still editable. Retry sending when storage is available.'
+        : 'Your text is still editable. Keep this page open and copy it before reloading; the saved copy may be out of date.'),
     )
-  }, [composerDrafts])
+  }
+
+  useEffect(() => {
+    composerMounted.current = true
+    updateComposerDrafts([], (current) => ({ ...current }))
+    return () => { composerMounted.current = false }
+  }, [])
 
   useEffect(() => {
     const handleUpdate = (event: Event) => {
@@ -7851,7 +8734,7 @@ function App() {
         // without it a deep link to its ancestor has no way through.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(reconciled)
-        setComputers(loadedComputers)
+        applyComputerSnapshot(loadedComputers, startedAtSequence)
         // A live removal can arrive before this list does, so the address may
         // name a session that has already been replaced, possibly more than
         // once. Falling through to `sessions[0]` would open something the
@@ -8120,13 +9003,6 @@ function App() {
           (computerEventSequenceRef.current.get(session.computerId) || 0) <=
             startedAtSequence,
       )
-      const snapshotComputers = loadedComputers.filter(
-        (computer) =>
-          (computerRecordSequenceRef.current.get(computer.id) || 0) <=
-          startedAtSequence &&
-          (computerEventSequenceRef.current.get(computer.id) || 0) <=
-          startedAtSequence,
-      )
       const answeredFor = new Set(listing.answeredComputerIds)
       if (!claim.whole) {
         // Only the computers this answer reached that the newer one did not.
@@ -8248,24 +9124,7 @@ function App() {
       // first. Selection is only set when nothing has been chosen yet, so
       // this never moves a reader who is already somewhere.
       applyInitialSelection(reconciledForClaim, answeredFor)
-      setComputers((current) => {
-        let reconciled = snapshotComputers
-        for (const existing of current) {
-          // Both watermarks: a removal speaks for the computer's sessions, an
-          // ordinary update speaks only for the record. Reading one when
-          // filtering and the other when preserving dropped a computer that
-          // was merely updated while the refresh was in flight, taking its
-          // whole session group with it.
-          const changedAt = Math.max(
-            computerEventSequenceRef.current.get(existing.id) || 0,
-            computerRecordSequenceRef.current.get(existing.id) || 0,
-          )
-          if (changedAt > startedAtSequence) {
-            reconciled = upsertComputer(reconciled, existing)
-          }
-        }
-        return reconciled
-      })
+      applyComputerSnapshot(loadedComputers, startedAtSequence)
       // A session that changed while the refresh was in flight is described
       // more recently by the event than by the snapshot, exactly as the two
       // reconciliations above assume. A clear moves the mute to a replacement
@@ -8408,7 +9267,7 @@ function App() {
             // A clear issued here has not returned its replacement yet. A node
             // on an older build sends no link, so everything this session
             // carries is held until the response names the replacement.
-            setComposerDrafts((current) => {
+            updateComposerDrafts([removedKey], (current) => {
               const { [removedKey]: _removed, ...remaining } = current
               return remaining
             })
@@ -8448,6 +9307,9 @@ function App() {
           },
           }))
         } else if (event.type === 'computer.updated') {
+          // The hub filters retired clients before publishing this event.
+          // A new pairing may be announced by another tab without a refresh.
+          forgottenComputers.current.delete(event.computer.id)
           eventSequenceRef.current += 1
           // Only the computer record is newer, not its sessions. A paired node
           // going offline is an ordinary update, and treating it as reason to
@@ -8456,7 +9318,8 @@ function App() {
             event.computer.id,
             eventSequenceRef.current,
           )
-          setComputers((current) => upsertComputer(current, event.computer))
+          computersRef.current = upsertComputer(computersRef.current, event.computer)
+          setComputers(computersRef.current)
         } else if (event.type === 'computer.removed') {
           eventSequenceRef.current += 1
           computerEventSequenceRef.current.set(
@@ -8474,9 +9337,14 @@ function App() {
               unshownFailures.current.delete(key)
             }
           }
-          setComputers((current) =>
-            current.filter((computer) => computer.id !== event.computerId),
+          computersRef.current = computersRef.current.filter(
+            (computer) => computer.id !== event.computerId,
           )
+          setComputers(computersRef.current)
+          // A root names a folder on a computer. The hub drops the roots of a
+          // computer that has been unpaired, so a tab still listing one would
+          // offer a document it can no longer fetch.
+          forgetComputerKnowledge(event.computerId)
           // Nothing on a computer that has gone is still on its way.
           for (const key of [...pendingReplacements.current]) {
             if (key.slice(0, key.indexOf(':')) === event.computerId) {
@@ -8498,7 +9366,11 @@ function App() {
               ),
             ),
           )
-          setComposerDrafts((current) =>
+          updateComposerDrafts(
+            Object.keys(composerDraftsRef.current).filter(
+              (key) => key.startsWith(`${event.computerId}:`),
+            ),
+            (current) =>
             Object.fromEntries(
               Object.entries(current).filter(
                 ([key]) => !key.startsWith(`${event.computerId}:`),
@@ -8642,45 +9514,115 @@ function App() {
     }
   }, [composer, viewportHeight])
 
+  // Puts text in the composer as a thing of its own, with no paste metadata
+  // carried over. Reconciling would keep a tracked label that happens to match
+  // one in the new text, so a queued message holding a literal label was sent
+  // with somebody else's pasted payload hidden behind it.
+  function replaceComposer(value: string) {
+    if (!selectedKey) {
+      return
+    }
+    const targetKey = followReplacementsRef.current(selectedKey)
+    updateComposerDrafts([targetKey], (current) =>
+      writeComposerContent(current, targetKey, { text: value, pastes: [] }),
+    )
+  }
+
   function setComposer(value: string) {
     if (!selectedKey) {
       return
     }
-    setComposerForKey(selectedKey, value)
+    const targetKey = followReplacementsRef.current(selectedKey)
+    updateComposerDrafts([targetKey], (current) => {
+      const existing = current[targetKey] || { text: '', pastes: [] }
+      return writeComposerContent(current, targetKey, {
+        text: value,
+        pastes: reconcileComposerPastes(existing.text, value, existing.pastes),
+      })
+    })
   }
 
-  // Every composer write goes through here so none can skip invalidation. Any
-  // write other than history navigation replaces the draft that navigation is
-  // tracking, so navigating afterwards would overwrite text the user never
-  // typed here and could not recover. Editing a queued prompt, dictation,
-  // uploads, and path insertion all reach the composer by different routes.
-  /**
-   * Puts a prompt the queue could not deliver back in the composer.
-   *
-   * Written through the same path as every other composer write, so history
-   * navigation is invalidated with it: left tracking the empty draft it had
-   * before, an ArrowUp and ArrowDown afterwards would replace the recovered
-   * text with that empty draft, losing the only copy there is.
-   */
-  /**
-   * Puts a failure back on offer after the composer was emptied without it
-   * having been sent anywhere.
-   *
-   * The browser-only commands answer in the page and never reach the server,
-   * so the marker is still waiting and the text has just been cleared from
-   * under it. Forgetting it was handled lets the next pass hand it back.
-   */
+  function rememberComposerEdit(
+    textarea: HTMLTextAreaElement,
+    inputType: string,
+  ) {
+    if (!selectedKey) {
+      return
+    }
+    const targetKey = followReplacementsRef.current(selectedKey)
+    composerEditRef.current = {
+      key: targetKey,
+      before: textarea.value,
+      start: textarea.selectionStart ?? textarea.value.length,
+      end: textarea.selectionEnd ?? textarea.selectionStart ?? textarea.value.length,
+      inputType,
+    }
+  }
+
+  function composerBeforeInput(event: FormEvent<HTMLTextAreaElement>) {
+    rememberComposerEdit(
+      event.currentTarget,
+      (event.nativeEvent as InputEvent).inputType || '',
+    )
+  }
+
+  function composerChanged(value: string) {
+    if (!selectedKey) {
+      return
+    }
+    const targetKey = followReplacementsRef.current(selectedKey)
+    const edit = composerEditRef.current
+    composerEditRef.current = undefined
+    updateComposerDrafts([targetKey], (current) => {
+      const existing = current[targetKey] || { text: '', pastes: [] }
+      if (!value) {
+        return writeComposerContent(current, targetKey, { text: '', pastes: [] })
+      }
+      let pastes: CollapsedPaste[] | undefined
+      if (edit?.key === targetKey && edit.before === existing.text) {
+        let start = edit.start
+        let end = edit.end
+        const removed = edit.before.length - value.length
+        if (start === end && removed > 0) {
+          if (edit.inputType.endsWith('Backward')) {
+            start = Math.max(0, start - removed)
+          } else if (edit.inputType.endsWith('Forward')) {
+            end = Math.min(edit.before.length, end + removed)
+          }
+        }
+        const insertedLength =
+          value.length - (edit.before.length - (end - start))
+        if (
+          insertedLength >= 0 &&
+          edit.before.slice(0, start) === value.slice(0, start) &&
+          edit.before.slice(end) === value.slice(start + insertedLength)
+        ) {
+          pastes = composerPastesAfterRangeEdit(
+            existing.pastes,
+            start,
+            end,
+            insertedLength,
+          )
+        }
+      }
+      return writeComposerContent(current, targetKey, {
+        text: value,
+        pastes:
+          pastes ??
+          reconcileComposerPastes(existing.text, value, existing.pastes),
+      })
+    })
+  }
+
   function failureStampFor(key: string): string | undefined {
-    const current = selectedRef.current
-    return current && sessionKey(current) === key
-      ? current.failedPrompt?.failedAt || current.failedPrompt?.content
-      : undefined
+    const current = sessionsRef.current.find((session) => sessionKey(session) === key)
+    return current?.failedPrompt?.failedAt || current?.failedPrompt?.content
   }
 
   function reofferFailedPrompt(key: string) {
-    const current = selectedRef.current
-    const failed =
-      current && sessionKey(current) === key ? current.failedPrompt : undefined
+    const failed = sessionsRef.current.find(
+      (session) => sessionKey(session) === key,
+    )?.failedPrompt
     if (!failed?.content) {
       return
     }
@@ -8692,54 +9634,78 @@ function App() {
     restoreFailedPrompt(key, failed.content, failed.failedAt)
   }
 
-  function restoreFailedPrompt(key: string, content: string, failedAt?: string) {
+  function restoreFailedPrompt(rawKey: string, content: string, failedAt?: string) {
+    const key = followReplacementsRef.current(rawKey)
+    if (removedSessions.current.has(key)) {
+      return
+    }
     const stamp = failedAt || content
     if (handledFailures.current.get(key) === stamp) {
       return
     }
-    // Sending empties the composer before the request is answered, so an
-    // empty composer during one is no evidence that nothing newer was
-    // written. The server clears the marker when that send is accepted, which
-    // is what settles the question; nothing here compares the two clocks.
-    if (submissionsInFlight.current.has(key)) {
+    // An empty editor while a submission is pending is not a free draft.
+    // Only the response to that request can release its ownership.
+    if (
+      submissionsInFlight.current.has(key) ||
+      (composerDraftsRef.current[key]?.pendingSubmission &&
+        !composerDraftsRef.current[key]?.pendingSubmission?.accepted)
+    ) {
       // Kept rather than dropped: if that submission then fails, nothing else
       // comes back to this, and the text would stay invisible while its
       // marker holds the queue.
       unshownFailures.current.set(key, { content, stamp })
       return
     }
-    updateComposerDrafts([key], (current) => {
-      if (restoredDraftStamps.current[key] === stamp) {
-        // This failure's own text was put in the composer, and recorded as
-        // such when it was. The words are deliberately not compared: a reader
-        // who edits what they were handed is still answering this failure, and
-        // requiring them to match meant an edited draft no longer acknowledged
-        // it -- the prompt came back and went on holding the queue.
-        //
-        // Matching on the words alone was the opposite mistake: newer writing
-        // that happened to be identical took this failure's token.
-        handledFailures.current.set(key, stamp)
-        unshownFailures.current.delete(key)
-        restoredFailures.current.set(key, stamp)
-        // Unless the composer is empty. A recovery edited into a command that
-        // this app answers by itself is cleared without anything being sent,
-        // and leaving the record in place meant the text was never offered
-        // again -- invisible, with the marker still holding the queue.
-        return current[key] ? current : { ...current, [key]: content }
-      }
-      if (current[key]) {
-        // Something newer is already there, so this has not been given back
-        // to anyone. Remembered rather than dropped: the composer can empty
-        // again, and until then the marker on the server holds the queue.
-        unshownFailures.current.set(key, { content, stamp })
-        return current
-      }
+    const existing = composerDraftsRef.current[key]
+    const draft = existing ? durableComposerDraft(key, existing) : undefined
+    if (restoredDraftStamps.current[key] === stamp) {
+      // Provenance, rather than matching words, keeps an edited recovery
+      // answering its failure without claiming unrelated newer writing.
       handledFailures.current.set(key, stamp)
       unshownFailures.current.delete(key)
       restoredFailures.current.set(key, stamp)
-      rememberRestoredDraft(key, stamp, content)
-      return { ...current, [key]: content }
-    })
+      // A browser-only command can empty a recovery without answering it.
+      if (!draft?.text) {
+        updateComposerDrafts([key], (current) =>
+          writeComposerContent(current, key, { text: content, pastes: [] }),
+        )
+      }
+      return
+    }
+    if (draft?.text) {
+      // Merely observing a failure must not turn a history preview into the
+      // user's draft by invalidating the unsent text behind it.
+      unshownFailures.current.set(key, { content, stamp })
+      return
+    }
+    handledFailures.current.set(key, stamp)
+    unshownFailures.current.delete(key)
+    restoredFailures.current.set(key, stamp)
+    rememberRestoredDraft(key, stamp, content)
+    updateComposerDrafts([key], (current) =>
+      writeComposerContent(current, key, { text: content, pastes: [] }),
+    )
+  }
+
+  function removeUntouchedRecovery(key: string, handed: string) {
+    const existing = composerDraftsRef.current[key]
+    if (!existing) {
+      return
+    }
+    const draft = durableComposerDraft(key, existing)
+    // A missing failure marker does not acknowledge an HTTP submission.
+    // Neither its restored text nor writing begun while it was in flight is
+    // owned by the old failure, even when the words happen to be identical.
+    if (
+      (draft.pendingSubmission && !draft.pendingSubmission.accepted) ||
+      draft.deliveryUncertain ||
+      draft.text !== handed
+    ) {
+      return
+    }
+    updateComposerDrafts([key], (current) =>
+      writeComposerContent(current, key, { text: '', pastes: [] }),
+    )
   }
 
   // A browser that was not listening when the send failed learns about it from
@@ -8759,13 +9725,7 @@ function App() {
         if (held !== undefined && held !== stamp) {
           const handed = restoredDraftContents.current[key]
           if (handed !== undefined) {
-            updateComposerDrafts([], (current) =>
-              current[key] === handed
-                ? Object.fromEntries(
-                    Object.entries(current).filter(([entry]) => entry !== key),
-                  )
-                : current,
-            )
+            removeUntouchedRecovery(key, handed)
           }
           forgetRestoredDraft(key)
           handledFailures.current.delete(key)
@@ -8800,18 +9760,9 @@ function App() {
       // the text that was handed over. Left on screen it reads as something
       // waiting to be sent, and sending it delivers the prompt a second time.
       // Anything the reader has written since is theirs and stays.
-      // Read now, not inside the updater: React runs that later, by which
-      // time the records below have already been cleared and the draft would
-      // be left on screen for good.
       const handed = restoredDraftContents.current[key]
       if (handed !== undefined) {
-        updateComposerDrafts([], (current) => {
-          if (current[key] !== handed) {
-            return current
-          }
-          const { [key]: _removed, ...remaining } = current
-          return remaining
-        })
+        removeUntouchedRecovery(key, handed)
       }
       handledFailures.current.delete(key)
       restoredFailures.current.delete(key)
@@ -8825,7 +9776,11 @@ function App() {
   // went on holding the queue.
   useEffect(() => {
     for (const [key, pending] of unshownFailures.current) {
-      if (composerDrafts[key]) {
+      const draft = composerDrafts[key]
+      if (draft && (
+        (draft.pendingSubmission && !draft.pendingSubmission.accepted) ||
+        durableComposerDraft(key, draft).text
+      )) {
         continue
       }
       handledFailures.current.delete(key)
@@ -8842,14 +9797,7 @@ function App() {
       ...restoredDraftContents.current,
       [key]: content,
     }
-    localStorage.setItem(
-      'agentic-remote:composer-draft-failures',
-      JSON.stringify(restoredDraftStamps.current),
-    )
-    localStorage.setItem(
-      'agentic-remote:composer-draft-recovered',
-      JSON.stringify(restoredDraftContents.current),
-    )
+    persistComposerRecoveryIdentity()
   }
 
   function forgetRestoredDraft(key: string) {
@@ -8861,67 +9809,118 @@ function App() {
       restoredDraftContents.current
     restoredDraftStamps.current = remainingStamps
     restoredDraftContents.current = remainingContents
-    localStorage.setItem(
-      'agentic-remote:composer-draft-failures',
-      JSON.stringify(remainingStamps),
-    )
-    localStorage.setItem(
-      'agentic-remote:composer-draft-recovered',
-      JSON.stringify(remainingContents),
-    )
+    persistComposerRecoveryIdentity()
+  }
+
+  function persistComposerRecoveryIdentity() {
+    // A failed identity write must not turn accepted delivery into a send
+    // failure. Keep its in-memory ownership and retry with the next draft save.
+    composerRecoveryStorageDirty.current = true
+    const persisted = persistComposerDrafts(composerDraftsRef.current)
+    if (persisted.ok) {
+      setComposerStorageError(undefined)
+    } else {
+      reportComposerStorageFailure(persisted.error)
+    }
   }
 
   /** Carries a recovery's identity to the session that replaced it. */
   function moveRestoredDraft(fromKey: string, toKey: string) {
     const stamp = restoredDraftStamps.current[fromKey]
-    if (stamp === undefined) {
-      return
+    if (stamp !== undefined) {
+      const content = restoredDraftContents.current[fromKey]
+      forgetRestoredDraft(fromKey)
+      if (restoredDraftStamps.current[toKey] === undefined) {
+        rememberRestoredDraft(toKey, stamp, content ?? '')
+      }
     }
-    const content = restoredDraftContents.current[fromKey]
-    forgetRestoredDraft(fromKey)
-    rememberRestoredDraft(toKey, stamp, content ?? '')
     const handled = handledFailures.current.get(fromKey)
     const restored = restoredFailures.current.get(fromKey)
     const unshown = unshownFailures.current.get(fromKey)
     handledFailures.current.delete(fromKey)
     restoredFailures.current.delete(fromKey)
     unshownFailures.current.delete(fromKey)
-    if (handled !== undefined) {
+    if (handled !== undefined && !handledFailures.current.has(toKey)) {
       handledFailures.current.set(toKey, handled)
     }
-    if (restored !== undefined) {
+    if (
+      restored !== undefined &&
+      restoredDraftStamps.current[toKey] === restored &&
+      !restoredFailures.current.has(toKey)
+    ) {
       restoredFailures.current.set(toKey, restored)
     }
-    if (unshown !== undefined) {
+    if (unshown !== undefined && !unshownFailures.current.has(toKey)) {
       unshownFailures.current.set(toKey, unshown)
     }
   }
 
   function updateComposerDrafts(
     invalidateKeys: string[],
-    update: (current: Record<string, string>) => Record<string, string>,
+    update: (current: ComposerDrafts) => ComposerDrafts,
+    requirePersistence = false,
   ) {
+    if (!composerMounted.current) {
+      return false
+    }
+    const current = composerDraftsRef.current
+    const next = update(current)
+    if (next === current) {
+      return false
+    }
+    const histories = invalidateKeys.map(
+      (key) => [key, composerHistoryRef.current[key]] as const,
+    )
     for (const key of invalidateKeys) {
       resetComposerHistory(key)
     }
-    setComposerDrafts(update)
+    const persisted = persistComposerDrafts(next)
+    if (!persisted.ok && requirePersistence) {
+      // Admission never owns the editor until every compatibility write has
+      // succeeded. Undo any partial disk write without pretending that this
+      // best-effort repair makes the rejected submission safe to dispatch.
+      for (const [key, history] of histories) {
+        if (history) {
+          composerHistoryRef.current[key] = history
+        }
+      }
+      const restored = persistComposerDrafts(current)
+      reportComposerStorageFailure(persisted.error, true, restored.ok)
+      return false
+    }
+    // Editing remains in memory even when storage is unavailable. Commit the
+    // ref and React state together so a failed save cannot split their text.
+    const committed = reconcileAcceptedComposerDrafts(
+      next,
+      composerAcceptanceReceipts.current,
+      persisted.ok,
+    )
+    composerDraftsRef.current = committed
+    setComposerDrafts(committed)
+    if (persisted.ok) {
+      setComposerStorageError(undefined)
+    } else {
+      reportComposerStorageFailure(persisted.error)
+    }
+    return persisted.ok
   }
 
   function setComposerForKey(
     rawTargetKey: string,
     value: string,
     fromHistory = false,
+    replacementPastes?: CollapsedPaste[],
   ) {
     // The key was taken before whatever this is finishing awaited. A clear
     // during that wait leaves it naming a session that is gone, and writing
     // there puts the text somewhere nothing will look for it again.
     const targetKey = followReplacementsRef.current(rawTargetKey)
     updateComposerDrafts(fromHistory ? [] : [targetKey], (current) => {
-      if (!value) {
-        const { [targetKey]: _removed, ...remaining } = current
-        return remaining
-      }
-      return { ...current, [targetKey]: value }
+      const existing = current[targetKey] || { text: '', pastes: [] }
+      return writeComposerContent(current, targetKey, {
+        text: value,
+        pastes: replacementPastes ?? (fromHistory ? existing.pastes : []),
+      })
     })
   }
 
@@ -8953,7 +9952,9 @@ function App() {
         : {
             messages,
             index: messages.length,
-            draft: composer,
+            draft: existing?.draft ?? composer,
+            draftPastes:
+              existing?.draftPastes ?? composerDrafts[selectedKey]?.pastes ?? [],
           }
     const nextIndex = Math.min(
       Math.max(history.index + direction, 0),
@@ -8963,7 +9964,12 @@ function App() {
     composerHistoryRef.current[selectedKey] = history
     const value =
       nextIndex === messages.length ? history.draft : messages[nextIndex] || ''
-    setComposerForKey(selectedKey, value, true)
+    setComposerForKey(
+      selectedKey,
+      value,
+      true,
+      nextIndex === messages.length ? history.draftPastes : [],
+    )
     window.requestAnimationFrame(() => {
       if (
         selectedRef.current &&
@@ -8977,18 +9983,21 @@ function App() {
     return true
   }
 
-  function prependComposerForKey(rawTargetKey: string, value: string) {
+  function restoreComposerSubmission(
+    rawTargetKey: string,
+    submission: ComposerSubmission,
+  ) {
     const targetKey = followReplacementsRef.current(rawTargetKey)
     updateComposerDrafts([targetKey], (current) => {
-      const existing = current[targetKey] || ''
-      const separator = existing
-        ? value.endsWith('\n')
-          ? '\n'
-          : '\n\n'
-        : ''
+      const existing = current[targetKey]
+      if (existing?.pendingSubmission?.id !== submission.id) {
+        return current
+      }
       return {
         ...current,
-        [targetKey]: `${value}${separator}${existing}`,
+        [targetKey]: recoverPendingComposerDraft(
+          durableComposerDraft(targetKey, existing),
+        ),
       }
     })
   }
@@ -9006,16 +10015,16 @@ function App() {
       ? followReplacementsRef.current(rawTargetKey)
       : rawTargetKey
     updateComposerDrafts([targetKey], (current) => {
-      const existing = current[targetKey] || ''
-      const separator = existing
-        ? existing.endsWith('\n')
+      const existing = current[targetKey] || { text: '', pastes: [] }
+      const separator = existing.text
+        ? existing.text.endsWith('\n')
           ? '\n'
           : '\n\n'
         : ''
-      return {
-        ...current,
-        [targetKey]: `${existing}${separator}${value}`,
-      }
+      return writeComposerContent(current, targetKey, {
+        text: `${existing.text}${separator}${value}`,
+        pastes: existing.pastes,
+      })
     })
   }
 
@@ -9023,27 +10032,39 @@ function App() {
     if (fromKey === toKey) {
       return
     }
-    // While the reader is walking back through what they sent, the composer
-    // shows an old message and their own unsent text is held in the history
-    // record. Resetting that record here and moving only what is displayed
-    // carried the recalled message across and lost the real draft for good.
-    const history = composerHistoryRef.current[fromKey]
-    const unsent = history ? history.draft : undefined
+    if (submissionsInFlight.current.delete(fromKey)) {
+      submissionsInFlight.current.add(toKey)
+    }
     updateComposerDrafts([fromKey, toKey], (current) => {
-      if (unsent !== undefined) {
-        const { [fromKey]: _recalled, ...remaining } = current
-        return current[toKey]
-          ? remaining
-          : { ...remaining, [toKey]: unsent }
+      const source = current[fromKey]
+        ? durableComposerDraft(fromKey, current[fromKey])
+        : undefined
+      const destination = current[toKey]
+        ? durableComposerDraft(toKey, current[toKey])
+        : undefined
+      if (!source) {
+        return current
       }
-      const value = current[fromKey]
       const { [fromKey]: _removed, ...remaining } = current
-      // Only into an empty destination. A browser that used the replacement
-      // before it learned what it replaced has newer writing there, and the
-      // ancestor's older draft must not be put on top of it.
-      return value && !current[toKey]
-        ? { ...remaining, [toKey]: value }
-        : remaining
+      if (destination) {
+        // A pending request belongs to its submission, not to the empty
+        // composer it left behind. Newer writing at the destination wins the
+        // draft, but cannot throw away a submission still awaiting acceptance.
+        const merged = source.deliveryUncertain
+          ? {
+              ...destination,
+              ...prependComposerContent(source, destination),
+              deliveryUncertain: true,
+            }
+          : destination
+        return {
+          ...remaining,
+          [toKey]: source.pendingSubmission
+            ? { ...merged, pendingSubmission: source.pendingSubmission }
+            : merged,
+        }
+      }
+      return { ...remaining, [toKey]: source }
     })
   }
 
@@ -9699,7 +10720,17 @@ function App() {
   }
 
   async function createRoot(computerId: string, path: string) {
+    const lifetime = knowledgeComputerLifetimes.current.get(computerId) || 0
     const root = await addKnowledgeRoot({ computerId, path })
+    // Adding a root is a round trip, and the computer can be unpaired while
+    // it is in flight. The hub drops the root in that case, so accepting this
+    // answer would put back something that no longer exists.
+    if (
+      forgottenComputers.current.has(computerId) ||
+      lifetime !== (knowledgeComputerLifetimes.current.get(computerId) || 0)
+    ) {
+      throw new Error('The computer pairing changed while adding this folder. Choose the computer again.')
+    }
     setRoots((current) =>
       current.some((entry) => entry.id === root.id)
         ? current
@@ -9708,6 +10739,82 @@ function App() {
     setAddRootOpen(false)
     setAddRootInitialLocation(undefined)
     await selectRoot(root.id)
+  }
+
+  function applyComputerSnapshot(
+    loaded: ComputerSummary[],
+    startedAtSequence: number,
+  ) {
+    const changedAt = (id: string) => Math.max(
+      computerEventSequenceRef.current.get(id) || 0,
+      computerRecordSequenceRef.current.get(id) || 0,
+    )
+    const accepted = loaded.filter((computer) =>
+      changedAt(computer.id) <= startedAtSequence,
+    )
+    for (const computer of accepted) {
+      forgottenComputers.current.delete(computer.id)
+    }
+    const listedIds = new Set(loaded.map((computer) => computer.id))
+    const knownIds = new Set([
+      ...computersRef.current.map((computer) => computer.id),
+      ...rootsRef.current.map((root) => root.computerId),
+    ])
+    for (const id of knownIds) {
+      if (
+        !listedIds.has(id) &&
+        changedAt(id) <= startedAtSequence &&
+        !forgottenComputers.current.has(id)
+      ) {
+        forgetComputerKnowledge(id)
+      }
+    }
+    let reconciled = accepted
+    for (const computer of computersRef.current) {
+      if (changedAt(computer.id) > startedAtSequence) {
+        reconciled = upsertComputer(reconciled, computer)
+      }
+    }
+    computersRef.current = reconciled
+    setComputers(reconciled)
+  }
+
+  /**
+   * Everything this browser holds for a computer that is no longer paired.
+   *
+   * Reached from the socket event and from the button that does the removing,
+   * because only one of those two arrives when the hub is the one being asked.
+   * Pending work is invalidated as well: a listing or a newly created root
+   * still on its way would otherwise land afterwards and put the computer's
+   * knowledge back.
+   */
+  function forgetComputerKnowledge(computerId: string) {
+    forgottenComputers.current.add(computerId)
+    knowledgeComputerLifetimes.current.set(
+      computerId,
+      (knowledgeComputerLifetimes.current.get(computerId) || 0) + 1,
+    )
+    knowledgeRequest.current += 1
+    // The invalidation above is deliberately blunt, and a read already in
+    // flight clears the spinner only when its own generation is still
+    // current. Left alone, that reader returns quietly and the panel spins
+    // for good, so the flag is put down here instead.
+    setKnowledgeLoading(false)
+    const orphaned = new Set(
+      rootsRef.current
+        .filter((root) => root.computerId === computerId)
+        .map((root) => root.id),
+    )
+    setRoots((current) =>
+      current.filter((root) => root.computerId !== computerId),
+    )
+    if (activeRootIdRef.current && orphaned.has(activeRootIdRef.current)) {
+      setActiveRootId(undefined)
+      setKnowledgeFolders({})
+      setExpandedKnowledge([])
+      setKnowledgePath(knowledgeRootPath)
+      setKnowledgeFile(undefined)
+    }
   }
 
   function selectSession(session: ManagedSession) {
@@ -9814,8 +10921,9 @@ function App() {
   }
 
   async function submitMessage(enqueue = false) {
-    const content = composer.trim()
-    if (!selected || !content || sending) {
+    const displayContent = composer
+    const trimmedDisplay = displayContent.trim()
+    if (!selected || !trimmedDisplay || sending) {
       return
     }
     // Sending is asking to see what happens next. A reader who had scrolled
@@ -9824,17 +10932,45 @@ function App() {
     // reply arriving -- all happened somewhere off screen.
     followLatest()
     const targetKey = sessionKey(selected)
+    const history = composerHistoryRef.current[targetKey]
+    const preview = history && history.index < history.messages.length
+      ? history
+      : undefined
+    const consumeLocalCommand = () => {
+      if (!preview) {
+        setComposer('')
+        return
+      }
+      const liveKey = followReplacementsRef.current(targetKey)
+      updateComposerDrafts([liveKey], (current) =>
+        writeComposerContent(current, liveKey, {
+          text: preview.draft,
+          pastes: preview.draftPastes,
+        }),
+      )
+    }
+    const submittedPastes = activeComposerPastes(
+      displayContent,
+      composerDrafts[targetKey]?.pastes || [],
+    )
+    const content = expandComposerPastes(displayContent, submittedPastes)
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
     // sent. The mark is cleared once the request settles.
     submissionsInFlight.current.add(targetKey)
     const settleSubmission = () => {
       submissionsInFlight.current.delete(targetKey)
+      submissionsInFlight.current.delete(followReplacementsRef.current(targetKey))
     }
 
-    const isCommand = content.startsWith('/')
+    // Asked of the text that is actually sent, not of what the composer shows.
+    // A pasted command longer than the threshold is shown as a placeholder, so
+    // reading the display meant it was never recognised as a command and went
+    // as an ordinary message.
+    const trimmedContent = content.trim()
+    const isCommand = trimmedContent.startsWith('/')
     const commandName = isCommand
-      ? content.slice(1).split(/\s+/, 1)[0].toLowerCase()
+      ? trimmedContent.slice(1).split(/\s+/, 1)[0].toLowerCase()
       : ''
     const command = isCommand
       ? commands.find(
@@ -9847,7 +10983,7 @@ function App() {
         )
       : undefined
     if (command?.name === 'statusline') {
-      const input = content.slice(commandName.length + 1).trim().toLowerCase()
+      const input = trimmedContent.slice(commandName.length + 1).trim().toLowerCase()
       if (input === 'off') {
         setStatusline((current) => ({ ...current, enabled: false }))
       } else if (input === 'on') {
@@ -9855,13 +10991,13 @@ function App() {
       } else {
         setStatuslineOpen(true)
       }
-      setComposer('')
+      consumeLocalCommand()
       settleSubmission()
       reofferFailedPrompt(targetKey)
       return
     }
     if (command?.name === 'clear') {
-      setComposer('')
+      consumeLocalCommand()
       // The session this became. Everything the recovery was carrying has just
       // moved here, and offering it against the key that is gone left the
       // replacement holding an empty, already-answered recovery while its
@@ -9873,7 +11009,7 @@ function App() {
       return
     }
     if (command?.name === 'restart') {
-      setComposer('')
+      consumeLocalCommand()
       await restartSelectedSession()
       focusComposer(targetKey)
       settleSubmission()
@@ -9882,9 +11018,9 @@ function App() {
     }
     if (
       commandName === 'cwd' &&
-      !content.slice(commandName.length + 1).trim()
+      !trimmedContent.slice(commandName.length + 1).trim()
     ) {
-      setComposer('')
+      consumeLocalCommand()
       setCwdOpen(true)
       settleSubmission()
       reofferFailedPrompt(targetKey)
@@ -9895,71 +11031,126 @@ function App() {
       (selected.status === 'running' &&
         isCommand &&
         !command?.allowDuringAgentExecution)
-    setSending(true)
     setError(undefined)
-    setComposer('')
+    const submission: ComposerSubmission = {
+      id: newCollapsedPasteKey(),
+      originKey: targetKey,
+      text: displayContent,
+      pastes: submittedPastes,
+      acknowledgesFailure: preview ? undefined : restoredFailures.current.get(targetKey),
+    }
     // Which failure this send is answering, so the recovery that runs after it
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
+    let admitted = false
     try {
+      admitted = updateComposerDrafts([targetKey], (current) => ({
+        ...current,
+        [targetKey]: {
+          // Sending a history preview does not submit the draft behind it.
+          text: preview?.draft || '',
+          pastes: preview?.draftPastes || [],
+          ...(preview && current[targetKey]?.deliveryUncertain
+            ? { deliveryUncertain: true }
+            : {}),
+          pendingSubmission: submission,
+        },
+      }), true)
+      if (!admitted) {
+        return
+      }
+      setSending(true)
       const updated = isCommand
         ? await executeCommand(selected.computerId, selected.id, {
             // A restored prompt can be a slash command, and it answers the
             // failure just as a message does.
-            acknowledgesFailure: restoredFailures.current.get(targetKey),
+            acknowledgesFailure: submission.acknowledgesFailure,
             command: content,
             enqueue: shouldEnqueue,
           })
         : await sendMessage(selected.computerId, selected.id, {
             // Whatever they were handed back is answered by this, whether
             // they sent it as it was, edited it, or replaced it outright.
-            acknowledgesFailure: restoredFailures.current.get(targetKey),
+            acknowledgesFailure: submission.acknowledgesFailure,
             content,
             enqueue: shouldEnqueue,
           })
-      const acknowledged = restoredFailures.current.get(targetKey)
+      if (!composerMounted.current) {
+        return
+      }
+      const liveKey = followReplacementsRef.current(targetKey)
+      updateComposerDrafts([], (current) => {
+        const draft = current[liveKey]
+        if (draft?.pendingSubmission?.id !== submission.id) {
+          return current
+        }
+        return {
+          ...current,
+          [liveKey]: {
+            ...draft,
+            pendingSubmission: { ...draft.pendingSubmission, accepted: true },
+          },
+        }
+      })
+      const acknowledged = submission.acknowledgesFailure
       acknowledgedStamp = acknowledged
-      restoredFailures.current.delete(targetKey)
-      forgetRestoredDraft(targetKey)
+      if (restoredFailures.current.get(liveKey) === acknowledged) {
+        restoredFailures.current.delete(liveKey)
+      }
+      if (restoredDraftStamps.current[liveKey] === acknowledged) {
+        forgetRestoredDraft(liveKey)
+      }
       // Only the failure this send was answering. A prompt that failed while
       // this one was in flight was held back precisely because the composer
       // was busy, and this answer is older than it: the session rejects the
       // stale record, so dropping the deferred text here left it invisible
       // for good, with the marker on the server still holding the queue.
-      const deferred = unshownFailures.current.get(targetKey)
+      const deferred = unshownFailures.current.get(liveKey)
       if (!deferred || deferred.stamp === acknowledged) {
-        unshownFailures.current.delete(targetKey)
+        unshownFailures.current.delete(liveKey)
       }
-      setSessions((current) => upsertSession(current, updated))
+      const updatedKey = sessionKey(updated)
+      if (
+        !removedSessions.current.has(updatedKey) &&
+        followReplacementsRef.current(updatedKey) === updatedKey
+      ) {
+        setSessions((current) => upsertSession(current, updated))
+      }
     } catch (caught) {
-      prependComposerForKey(targetKey, content)
+      if (!composerMounted.current) {
+        return
+      }
+      const liveKey = followReplacementsRef.current(targetKey)
+      if (!removedSessions.current.has(liveKey)) {
+        restoreComposerSubmission(targetKey, submission)
+      }
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      settleSubmission()
-      setSending(false)
-      // The composer is free again, so anything held back while it was busy
-      // is offered now. Waiting for the next draft change left a failure
-      // holding the queue with nothing on screen to answer it.
-      const stillDeferred = unshownFailures.current.get(targetKey)
-      if (stillDeferred) {
-        handledFailures.current.delete(targetKey)
-        restoreFailedPromptRef.current(
-          targetKey,
-          stillDeferred.content,
-          stillDeferred.stamp,
-        )
-      } else if (
-        // Only a failure this send did not answer. The session on hand may
-        // still be the one from before the send -- the answer can arrive
-        // before the event that clears the marker, and with the socket down it
-        // never arrives at all -- so offering whatever it still shows put the
-        // prompt that was just sent back in the composer, ready to go twice.
-        acknowledgedStamp === undefined ||
-        failureStampFor(targetKey) !== acknowledgedStamp
-      ) {
-        reofferFailedPrompt(targetKey)
+      if (composerMounted.current) {
+        settleSubmission()
+        setSending(false)
+        // The composer is free again, so anything held back while it was busy
+        // is offered now. Waiting for the next draft change left a failure
+        // holding the queue with nothing on screen to answer it.
+        const liveKey = followReplacementsRef.current(targetKey)
+        const stillDeferred = unshownFailures.current.get(liveKey)
+        if (admitted && stillDeferred) {
+          handledFailures.current.delete(liveKey)
+          restoreFailedPromptRef.current(
+            liveKey,
+            stillDeferred.content,
+            stillDeferred.stamp,
+          )
+        } else if (admitted && (
+          // A response can precede the event that clears its failure marker.
+          // Reoffering that same failure would put an accepted prompt back.
+          acknowledgedStamp === undefined ||
+          failureStampFor(liveKey) !== acknowledgedStamp
+        )) {
+          reofferFailedPrompt(liveKey)
+        }
+        focusComposer(liveKey)
       }
-      focusComposer(targetKey)
     }
   }
 
@@ -10200,7 +11391,7 @@ function App() {
       )
       setSessions((current) => upsertSession(current, result.session))
       if (edit) {
-        setComposer(result.prompt.content)
+        replaceComposer(result.prompt.content)
         window.requestAnimationFrame(() => composerRef.current?.focus())
       }
     } catch (caught) {
@@ -10277,6 +11468,15 @@ function App() {
       }
       return liveIsGone ? undefined : liveKey
     } catch (caught) {
+      if (
+        removedSessions.current.has(targetKey) &&
+        followReplacementsRef.current(targetKey) === targetKey
+      ) {
+        updateComposerDrafts([targetKey], (current) => {
+          const { [targetKey]: _removed, ...remaining } = current
+          return remaining
+        })
+      }
       setError(caught instanceof Error ? caught.message : String(caught))
       return sessionKey(target)
     } finally {
@@ -10376,6 +11576,61 @@ function App() {
     setSelectedCommandIndex(0)
   }
 
+  function composerPasted(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    if (!selectedKey) {
+      return
+    }
+    const content = event.clipboardData.getData('text/plain')
+    if (!content) {
+      return
+    }
+    const lineCount = pastedLineCount(content)
+    // Anything short is left to the textarea. Taking every paste over meant
+    // rebuilding the value by hand, which throws away the undo history the
+    // browser keeps for a paste it performed itself.
+    if (lineCount <= collapsedPasteLineThreshold) {
+      return
+    }
+    event.preventDefault()
+    const textarea = event.currentTarget
+    const value = textarea.value
+    const targetKey = followReplacementsRef.current(selectedKey)
+    const start = textarea.selectionStart ?? value.length
+    const end = textarea.selectionEnd ?? start
+    const longPaste = true
+    const currentPastes = composerDrafts[targetKey]?.pastes || []
+    const paste = longPaste
+      ? {
+          key: newCollapsedPasteKey(),
+          id: Math.max(0, ...currentPastes.map((entry) => entry.id)) + 1,
+          content,
+          lineCount,
+          start,
+        }
+      : undefined
+    const inserted = paste ? collapsedPasteLabel(paste) : content
+    updateComposerDrafts([targetKey], (current) => {
+      const existing = current[targetKey] || { text: value, pastes: [] }
+      const retained = composerPastesAfterRangeEdit(
+        existing.pastes,
+        start,
+        end,
+        inserted.length,
+      )
+      return writeComposerContent(current, targetKey, {
+        text: `${value.slice(0, start)}${inserted}${value.slice(end)}`,
+        pastes: paste ? [...retained, paste] : retained,
+      })
+    })
+    window.requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(
+        start + inserted.length,
+        start + inserted.length,
+      )
+    })
+  }
+
   function insertComposerNewline() {
     const textarea = composerRef.current
     const start = textarea?.selectionStart ?? composer.length
@@ -10400,6 +11655,15 @@ function App() {
       event.preventDefault()
       setCommandMenuDismissed(true)
       return
+    }
+    if (!event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.key.length === 1) {
+        rememberComposerEdit(event.currentTarget, 'insertText')
+      } else if (event.key === 'Backspace') {
+        rememberComposerEdit(event.currentTarget, 'deleteContentBackward')
+      } else if (event.key === 'Delete') {
+        rememberComposerEdit(event.currentTarget, 'deleteContentForward')
+      }
     }
     if (event.key === 'ArrowDown' && showCommandMenu) {
       event.preventDefault()
@@ -10580,7 +11844,15 @@ function App() {
     try {
       await deleteSession(selected.computerId, selected.id)
       const closedKey = sessionKey(selected)
-      setComposerForKey(closedKey, '')
+      removedSessions.current.add(closedKey)
+      updateComposerDrafts([closedKey], (current) => {
+        const { [closedKey]: _removed, ...remaining } = current
+        return remaining
+      })
+      forgetRestoredDraft(closedKey)
+      handledFailures.current.delete(closedKey)
+      restoredFailures.current.delete(closedKey)
+      unshownFailures.current.delete(closedKey)
       // Drafts are cleared for a closed session, and so is everything the
       // knowledge panel remembered about it.
       forgetKnowledgeSession(closedKey)
@@ -11270,6 +12542,15 @@ function App() {
           {selected?.pendingUserInput ? (
             <UserInputCard
               disabled={userInputBusy}
+              // The answer being composed belongs to this question on this
+              // session. Keying on it lets a new question start from a blank
+              // card, and keeps the card being filled in from being emptied
+              // by the session upserts that carry the same request through.
+              // The session is part of the key because a terminal request id
+              // describes the question, not the session, so the same question
+              // on two sessions would otherwise share one card -- and the
+              // answer typed into the first would appear in the second.
+              key={`${selected.computerId}:${selected.id}:${selected.pendingUserInput.requestId}`}
               onReply={(input) => void answerUserInput(input)}
               request={selected.pendingUserInput}
             />
@@ -11430,6 +12711,29 @@ function App() {
                 ))}
               </div>
             ) : null}
+            {selectedKey && composerDrafts[selectedKey]?.deliveryUncertain ? (
+              <div className="error-banner" id="composer-delivery-warning" role="status">
+                <span>
+                  Delivery could not be confirmed. Your message was restored; it may
+                  already have been sent or queued. Check the conversation and queue
+                  before sending again.
+                </span>
+              </div>
+            ) : null}
+            {composerStorageError ? (
+              <div className="error-banner" id="composer-storage-warning" role="alert">
+                <span>{composerStorageError}</span>
+              </div>
+            ) : null}
+            {acceptanceReceiptMissing ? (
+              <div className="error-banner" id="composer-acceptance-warning" role="status">
+                <span>
+                  This send was accepted, but the browser has no saved receipt.
+                  Keep this tab open. Reloading may restore the submitted text as
+                  unconfirmed; check the conversation before sending it again.
+                </span>
+              </div>
+            ) : null}
             <div
               className={`composer ${
                 selected.status === 'running' ? 'composer--running' : ''
@@ -11444,14 +12748,25 @@ function App() {
               <div className="composer-text-panel">
                 <textarea
                   aria-label="Message"
+                  aria-describedby={
+                    [
+                      selectedKey && composerDrafts[selectedKey]?.deliveryUncertain
+                        ? 'composer-delivery-warning'
+                        : undefined,
+                      composerStorageError ? 'composer-storage-warning' : undefined,
+                      acceptanceReceiptMissing ? 'composer-acceptance-warning' : undefined,
+                    ].filter(Boolean).join(' ') || undefined
+                  }
                   // A suspended session has nothing running to send to. The
                   // conversation stays here to be read; writing to it is what
                   // resuming is for.
-                  disabled={sending || selected.suspended === true}
+                  disabled={selected.suspended === true}
+                  onBeforeInput={composerBeforeInput}
                   onChange={(event) => {
-                    setComposer(event.target.value)
+                    composerChanged(event.target.value)
                   }}
                   onKeyDown={composerKeyDown}
+                  onPaste={composerPasted}
                   placeholder={
                     selected.suspended
                       ? 'Suspended · resume to send'
@@ -11759,14 +13074,25 @@ function App() {
       />
       <ComputersDialog
         computers={computers}
-        onAdded={(computer) =>
-          setComputers((current) => upsertComputer(current, computer))
-        }
+        onAdded={(computer) => {
+          // Pairing it again is authoritative, and the socket may not be the
+          // one that says so. Without this the mark set when it was removed
+          // would outlive it and go on discarding its answers.
+          forgottenComputers.current.delete(computer.id)
+          eventSequenceRef.current += 1
+          computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
+          computersRef.current = upsertComputer(computersRef.current, computer)
+          setComputers(computersRef.current)
+        }}
         onClose={() => setComputersOpen(false)}
         onRemoved={(computerId) => {
-          setComputers((current) =>
-            current.filter((computer) => computer.id !== computerId),
+          eventSequenceRef.current += 1
+          computerEventSequenceRef.current.set(computerId, eventSequenceRef.current)
+          computersRef.current = computersRef.current.filter(
+            (computer) => computer.id !== computerId,
           )
+          setComputers(computersRef.current)
+          forgetComputerKnowledge(computerId)
           setSessions((current) =>
             current.filter((session) => session.computerId !== computerId),
           )

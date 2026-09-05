@@ -98,9 +98,7 @@ afterEach(async () => {
 
 describe('SessionStore durability', () => {
   const changes: [string, (store: SessionStore) => Promise<unknown>][] = [
-    ['reorder', (store) => store.update('session', (stored) => {
-      stored.queuedPrompts!.reverse()
-    })],
+    ['reorder', (store) => store.reorderQueuedPrompts('session', ['second', 'first'])],
     ['enqueue', (store) => store.enqueuePrompt('session', prompt('third'))],
     ['queue removal', (store) => store.removeQueuedPrompt('session', 'first')],
     ['queue shift', (store) => store.shiftQueuedPrompt('session')],
@@ -170,7 +168,7 @@ describe('SessionStore durability', () => {
     const onDisk = await contents()
     const gate = holdWrite()
     const results = [
-      store.update('session', (stored) => stored.queuedPrompts!.reverse()),
+      store.reorderQueuedPrompts('session', ['second', 'first']),
       store.enqueuePrompt('session', prompt('third')),
       store.removeQueuedPrompt('session', 'first'),
     ]
@@ -186,7 +184,7 @@ describe('SessionStore durability', () => {
   it('rebases a later batch on committed state after an earlier write fails', async () => {
     const { store, contents } = await fixture()
     const first = holdWrite()
-    const reorder = store.update('session', (stored) => stored.queuedPrompts!.reverse())
+    const reorder = store.reorderQueuedPrompts('session', ['second', 'first'])
     const rejected = expect(reorder).rejects.toThrow('disk full')
     await first.started
     const second = holdWrite()

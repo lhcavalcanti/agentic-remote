@@ -744,9 +744,8 @@ describe('Provider queue persistence boundaries', () => {
     const events: ServerEvent[] = []
     service.on('event', (event) => events.push(event))
     await block()
-    await expect(store.update('session', (stored) => {
-      stored.queuedPrompts!.reverse()
-    })).rejects.toThrow('EISDIR')
+    await expect(service.reorderQueuedPrompts('session', ['second', 'first']))
+      .rejects.toThrow('EISDIR')
     await unblock()
     await (service as unknown as {
       drainTerminalQueue(id: string): Promise<void>
@@ -761,6 +760,40 @@ describe('Provider queue persistence boundaries', () => {
         queuedPrompts: [expect.objectContaining({ id: 'second' })],
       }),
     })])
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.get('session')?.queuedPrompts).toEqual(
+      service.getSession('session')?.queuedPrompts,
+    )
+  })
+
+  it('drains the committed Claude order after rejecting a real reorder', async () => {
+    const { store, directory, block, unblock } = await fixture()
+    const { service, query } = claude(store)
+    const events: ServerEvent[] = []
+    service.on('event', (incoming) => events.push(incoming))
+    await store.updateStatus('session', 'running')
+    const before = service.getSession('session')
+    await block()
+    await expect(service.reorderQueuedPrompts('session', ['second', 'first']))
+      .rejects.toThrow('EISDIR')
+    expect(events).toEqual([])
+    expect(service.getSession('session')).toEqual(before)
+    expect(query).not.toHaveBeenCalled()
+    await unblock()
+    await store.updateStatus('session', 'idle')
+    const internals = service as unknown as {
+      drainQueue(id: string): Promise<void>
+      dispatchQueued(id: string, content: string): Promise<unknown>
+    }
+    const dispatch = vi.spyOn(internals, 'dispatchQueued').mockImplementation(
+      async (id) => store.updateStatus(id, 'running'),
+    )
+    await internals.drainQueue('session')
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith('session', 'first', false, true)
+    expect(query).not.toHaveBeenCalled()
+    expect(service.getSession('session')?.queuedPrompts?.map(({ id }) => id))
+      .toEqual(['second'])
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
     expect(reloaded.get('session')?.queuedPrompts).toEqual(

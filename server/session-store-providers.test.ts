@@ -88,7 +88,10 @@ function copilot(store: SessionStore, history?: SessionEvent[]) {
     deleteSession: async () => {},
     createSession: resumeSession,
     resumeSession,
-    rpc: { commands: { list: async () => ({ commands: [] }) } },
+    rpc: {
+      commands: { list: async () => ({ commands: [] }) },
+      models: { list: async () => ({ models: [] }) },
+    },
   }
   const terminal = {
     has: vi.fn(async () => true),
@@ -207,6 +210,7 @@ function claude(store: SessionStore) {
 }
 
 beforeEach(() => {
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', tmpdir())
   vi.mocked(writeFile).mockReset().mockImplementation(disk.writeFile)
 })
 
@@ -218,6 +222,7 @@ afterEach(async () => {
       rm(directory, { recursive: true, force: true }),
     ),
   )
+  vi.unstubAllEnvs()
   vi.restoreAllMocks()
 })
 

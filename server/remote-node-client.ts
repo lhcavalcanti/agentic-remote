@@ -32,6 +32,7 @@ import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
  * computer, so the caller waits slightly longer than their sum before giving up.
  */
 const TRANSCRIPTION_TIMEOUT_MS = 13 * 60_000
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 function headerSafe(value: string): string {
   return value.replace(/[^\x20-\x7e]/g, '').slice(0, 200)
@@ -49,6 +50,16 @@ class RemoteNodeRequestError extends Error {
   ) {
     super(message)
     this.name = 'RemoteNodeRequestError'
+  }
+}
+
+class RemoteNodeRedirectError extends RemoteNodeRequestError {
+  constructor(computerName: string, status: number) {
+    super(
+      `${computerName} returned an HTTP ${status} redirect. Configure the final node URL; redirects are not followed.`,
+      502,
+    )
+    this.name = 'RemoteNodeRedirectError'
   }
 }
 
@@ -533,11 +544,22 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     try {
       response = await fetch(`${this.computer.baseUrl}${path}`, {
         ...init,
+        redirect: 'manual',
         headers,
         signal: init.signal
           ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
           : AbortSignal.timeout(timeoutMs),
       })
+      if (REDIRECT_STATUSES.has(response.status)) {
+        const refusal = new RemoteNodeRedirectError(this.computer.name, response.status)
+        try {
+          await response.body?.cancel()
+        } catch (error) {
+          // Keep the actionable refusal primary without hiding cleanup failure.
+          throw Object.assign(refusal, { cause: error })
+        }
+        throw refusal
+      }
     } catch (error) {
       // A poll that must not flap the online state, and a request the caller
       // abandoned, are both failures that say nothing about the node.

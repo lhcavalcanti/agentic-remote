@@ -7,6 +7,7 @@ import {
   inlineText,
   outlineFromMarkdown,
   resolveDocumentPath,
+  resolveDocumentLink,
   isExternalSource,
   pushNavigation,
   rememberScroll,
@@ -35,6 +36,14 @@ describe('headingSlug', () => {
 
   it('is stable when called repeatedly without tracking', () => {
     expect(headingSlug('Setup')).toBe(headingSlug('Setup'))
+  })
+
+  it('does not reuse a naturally suffixed or previously generated slug', () => {
+    const used = new Map<string, number>()
+    expect(headingSlug('Setup', used)).toBe('setup')
+    expect(headingSlug('Setup', used)).toBe('setup-1')
+    expect(headingSlug('Setup-1', used)).toBe('setup-1-1')
+    expect(headingSlug('Setup', used)).toBe('setup-2')
   })
 })
 
@@ -255,5 +264,31 @@ describe('isExternalSource', () => {
     expect(isExternalSource('//example.com/a.png')).toBe(true)
     expect(isExternalSource('./local.png')).toBe(false)
     expect(isExternalSource('img/local.png')).toBe(false)
+  })
+})
+
+describe('resolveDocumentLink', () => {
+  it('keeps encoded fragments and filenames scoped to the current document', () => {
+    expect(resolveDocumentLink('docs/start.md', '../guide%20one.md#r%C3%A9sum%C3%A9'))
+      .toEqual({ kind: 'document', path: 'guide one.md', fragment: 'r\u00e9sum\u00e9' })
+    expect(resolveDocumentLink('docs/start.md', '#install'))
+      .toEqual({ kind: 'document', path: 'docs/start.md', fragment: 'install' })
+    expect(resolveDocumentLink('docs/start.md', '#'))
+      .toEqual({ kind: 'document', path: 'docs/start.md', fragment: '' })
+  })
+
+  it('leaves external links to the browser and refuses invalid local links', () => {
+    expect(resolveDocumentLink('docs/start.md', 'https://example.test/guide'))
+      .toEqual({ kind: 'external' })
+    expect(resolveDocumentLink('docs/start.md', '//example.test/guide'))
+      .toEqual({ kind: 'external' })
+    expect(resolveDocumentLink('docs/start.md', 'mailto:reader@example.test'))
+      .toEqual({ kind: 'external' })
+    expect(resolveDocumentLink('docs/start.md', '../../outside.md').kind)
+      .toBe('invalid')
+    expect(resolveDocumentLink('docs/start.md', '/etc/passwd').kind)
+      .toBe('invalid')
+    expect(resolveDocumentLink('docs/start.md', '#%broken').kind)
+      .toBe('invalid')
   })
 })

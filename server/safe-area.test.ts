@@ -2,6 +2,13 @@ import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
 describe('mobile safe areas', () => {
+  it('keeps long reader titles out from under document navigation controls', async () => {
+    const css = await readFile(new URL('../src/index.css', import.meta.url), 'utf8')
+    expect(css).toMatch(
+      /\.workspace-preview__header strong,[^{]*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s,
+    )
+  })
+
   it('keeps top-level iOS surfaces below the Dynamic Island', async () => {
     const css = await readFile(new URL('../src/index.css', import.meta.url), 'utf8')
 

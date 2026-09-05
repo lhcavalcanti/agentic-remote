@@ -171,6 +171,7 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import { applyAccentIcon } from './accent-icon'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
   collapseKnowledgeFolder,
@@ -4914,58 +4915,109 @@ function PdfViewer({ file }: { file: WorkspaceFile }) {
 
 function AddKnowledgeRootDialog({
   computers,
+  initialComputerId,
+  initialPath,
   onClose,
   onCreate,
 }: {
   computers: ComputerSummary[]
+  initialComputerId?: string
+  initialPath?: string
   onClose: () => void
   onCreate: (computerId: string, path: string) => Promise<void>
 }) {
   const online = computers.filter((computer) => computer.online)
-  const [computerId, setComputerId] = useState(online[0]?.id || '')
+  const startingComputerId =
+    online.find((computer) => computer.id === initialComputerId)?.id ||
+    online[0]?.id ||
+    ''
+  const [computerId, setComputerId] = useState(startingComputerId)
+  const [computerSelectionRevision, setComputerSelectionRevision] = useState(0)
+  const [startingLocation] = useState({
+    computerId: startingComputerId,
+    path:
+      startingComputerId === initialComputerId && initialPath
+        ? initialPath
+        : '~',
+  })
   const [listing, setListing] = useState<DirectoryListing>()
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const directoryRequest = useRef(0)
 
   async function browse(path: string) {
     if (!computerId) {
       return
     }
+    const request = ++directoryRequest.current
     setLoading(true)
     setError(undefined)
     try {
-      setListing(await listDirectories(computerId, path, 'all'))
+      const next = await listDirectories(computerId, path, 'all')
+      if (request === directoryRequest.current) {
+        setListing(next)
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      if (request === directoryRequest.current) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
     } finally {
-      setLoading(false)
+      if (request === directoryRequest.current) {
+        setLoading(false)
+      }
     }
   }
 
   useEffect(() => {
     let active = true
+    const request = ++directoryRequest.current
+    const path =
+      computerSelectionRevision === 0 &&
+      startingLocation.computerId === computerId
+        ? startingLocation.path
+        : '~'
     setLoading(true)
-    void listDirectories(computerId, '~', 'all')
+    setListing(undefined)
+    setError(undefined)
+    void listDirectories(computerId, path, 'all')
+      .catch(async (caught: unknown) => {
+        if (
+          path === '~' ||
+          !active ||
+          request !== directoryRequest.current
+        ) {
+          throw caught
+        }
+        const fallback = await listDirectories(computerId, '~', 'all')
+        if (active && request === directoryRequest.current) {
+          const reason =
+            caught instanceof Error ? caught.message : String(caught)
+          setError(
+            `Could not open ${path}: ${reason}. Showing the home folder instead.`,
+          )
+        }
+        return fallback
+      })
       .then((next) => {
-        if (active) {
+        if (active && request === directoryRequest.current) {
           setListing(next)
         }
       })
       .catch((caught: unknown) => {
-        if (active) {
+        if (active && request === directoryRequest.current) {
           setError(caught instanceof Error ? caught.message : String(caught))
         }
       })
       .finally(() => {
-        if (active) {
+        if (active && request === directoryRequest.current) {
           setLoading(false)
         }
       })
     return () => {
       active = false
     }
-  }, [computerId])
+  }, [computerId, computerSelectionRevision, startingLocation])
 
   return (
     <DialogFrame
@@ -4978,7 +5030,14 @@ function AddKnowledgeRootDialog({
         <span>Computer</span>
         <select
           className="dialog-select"
-          onChange={(event) => setComputerId(event.target.value)}
+          onChange={(event) => {
+            directoryRequest.current += 1
+            setComputerSelectionRevision((current) => current + 1)
+            setComputerId(event.target.value)
+            setListing(undefined)
+            setLoading(true)
+            setError(undefined)
+          }}
           value={computerId}
         >
           {online.map((computer) => (
@@ -6096,6 +6155,7 @@ function App() {
   // a reserved key rather than being unreachable.
   const knowledgePanelKey = selectedKey || sessionlessKnowledgeKey
   const [roots, setRoots] = useState<KnowledgeRoot[]>([])
+  const [knowledgeRootsLoaded, setKnowledgeRootsLoaded] = useState(false)
   const [activeRootId, setActiveRootId] = useState<string | undefined>(() =>
     readStoredOrder<string | undefined>(
       'agentic-remote:knowledge-root',
@@ -6114,6 +6174,11 @@ function App() {
   const [knowledgeFragment, setKnowledgeFragment] = useState<string>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
+  const [addRootInitialLocation, setAddRootInitialLocation] = useState<{
+    computerId: string
+    path: string
+  }>()
+  const promptForEmptyKnowledgeRoot = useRef(false)
   // A single generation for every asynchronous knowledge operation. Anything
   // that changes what the panel should show bumps it once; every loader
   // captures it and checks it before writing. Three separate counters could
@@ -7503,6 +7568,7 @@ function App() {
     void listKnowledgeRoots()
       .then(async (loaded) => {
         setRoots(loaded)
+        setKnowledgeRootsLoaded(true)
         // Only the root is reopened here. Where a session was reading belongs
         // to that session, and this runs before one is known, so applying it
         // would show one session's document under another.
@@ -7670,6 +7736,11 @@ function App() {
     } catch {
       // A blocked storage quota should not stop this tab from changing color.
     }
+  }, [accentTheme])
+
+  useEffect(() => {
+    const theme = accentThemes.find((entry) => entry.id === accentTheme)
+    return applyAccentIcon((theme ?? accentThemes[0]).color)
   }, [accentTheme])
 
   useEffect(() => {
@@ -9183,8 +9254,37 @@ function App() {
   }
 
   function setKnowledgeMode(mode: KnowledgePanelMode) {
+    if (knowledgeMode === 'hidden' && mode !== 'hidden') {
+      promptForEmptyKnowledgeRoot.current = true
+    } else if (mode === 'hidden') {
+      promptForEmptyKnowledgeRoot.current = false
+    }
     setKnowledgeModeState(mode)
   }
+
+  useEffect(() => {
+    if (
+      !promptForEmptyKnowledgeRoot.current ||
+      knowledgeMode === 'hidden' ||
+      !knowledgeRootsLoaded
+    ) {
+      return
+    }
+    promptForEmptyKnowledgeRoot.current = false
+    const selectedComputerOnline =
+      selected &&
+      computers.some(
+        (computer) =>
+          computer.id === selected.computerId && computer.online,
+      )
+    if (roots.length === 0 && selected && selectedComputerOnline) {
+      setAddRootInitialLocation({
+        computerId: selected.computerId,
+        path: selected.cwd,
+      })
+      setAddRootOpen(true)
+    }
+  }, [computers, knowledgeMode, knowledgeRootsLoaded, roots.length, selected])
 
   /** Whether the sidebar is the drawer that slides over everything. */
   function drawerIsOverlay(): boolean {
@@ -9599,6 +9699,7 @@ function App() {
         : [root, ...current],
     )
     setAddRootOpen(false)
+    setAddRootInitialLocation(undefined)
     await selectRoot(root.id)
   }
 
@@ -10910,23 +11011,6 @@ function App() {
         ) : null}
         <div className="sidebar-settings">
           <button
-            aria-label="Add knowledge root"
-            className="sidebar-settings__button"
-            onClick={() => {
-              if (knowledgeMode === 'hidden') {
-                setKnowledgeMode('docked')
-              }
-              setAddRootOpen(true)
-            }}
-            type="button"
-          >
-            <Plus size={18} />
-            <span>
-              <strong>Add knowledge root</strong>
-              <small>Any folder on any computer</small>
-            </span>
-          </button>
-          <button
             aria-label="App settings"
             className="sidebar-settings__button"
             onClick={() => {
@@ -11575,7 +11659,11 @@ function App() {
           <button
             aria-label="New knowledge root"
             className="icon-button"
-            onClick={() => setAddRootOpen(true)}
+            onClick={() => {
+              promptForEmptyKnowledgeRoot.current = false
+              setAddRootInitialLocation(undefined)
+              setAddRootOpen(true)
+            }}
             type="button"
           >
             <Plus size={16} />
@@ -11795,7 +11883,13 @@ function App() {
       {addRootOpen ? (
         <AddKnowledgeRootDialog
           computers={computers}
-          onClose={() => setAddRootOpen(false)}
+          initialComputerId={addRootInitialLocation?.computerId}
+          initialPath={addRootInitialLocation?.path}
+          onClose={() => {
+            promptForEmptyKnowledgeRoot.current = false
+            setAddRootOpen(false)
+            setAddRootInitialLocation(undefined)
+          }}
           onCreate={createRoot}
         />
       ) : null}

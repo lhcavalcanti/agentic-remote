@@ -81,7 +81,7 @@ describe('background task adapter', () => {
           agentType: 'task',
           agentName: 'reviewer',
           agentDescription: 'Review the implementation',
-          model: 'gpt-5.6',
+          model: 'fixture-model',
         },
       },
       {

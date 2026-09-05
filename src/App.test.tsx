@@ -214,6 +214,15 @@ const secondSession: ManagedSession = {
   messages: [],
 }
 
+const knowledgeRoot = {
+  id: 'root-1',
+  computerId: computer.id,
+  computerName: computer.name,
+  path: '/home/tester/docs',
+  name: 'docs',
+  createdAt: '2026-08-01T00:00:00.000Z',
+}
+
 /**
  * Knowledge listings have to answer per path. A single fixed listing makes
  * every folder contain itself, so expanding one recurses until the stack is
@@ -426,15 +435,15 @@ describe('App', () => {
     vi.mocked(createSession).mockResolvedValue(session)
     vi.mocked(getRuntimeOptions).mockResolvedValue({
       current: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
       },
       models: [
         {
-          id: 'gpt-5.6-sol',
-          name: 'GPT-5.6 Sol',
+          id: 'fixture-model',
+          name: 'Fixture Model',
           reasoningEfforts: ['medium', 'high', 'xhigh'],
           contextTiers: ['default', 'long_context'],
           contextTokenLimits: {
@@ -450,8 +459,8 @@ describe('App', () => {
           provider === 'copilot'
             ? [
                 {
-                  id: 'gpt-5.6-sol',
-                  name: 'GPT-5.6 Sol',
+                  id: 'fixture-model',
+                  name: 'Fixture Model',
                   reasoningEfforts: ['medium', 'high', 'xhigh'],
                   contextTiers: ['default', 'long_context'],
                   contextTokenLimits: {
@@ -460,16 +469,16 @@ describe('App', () => {
                   },
                 },
                 {
-                  id: 'gpt-fast',
-                  name: 'GPT Fast',
+                  id: 'fixture-fast',
+                  name: 'Fast Model',
                   reasoningEfforts: ['low', 'medium'],
                   contextTiers: ['default'],
                 },
               ]
             : [
                 {
-                  id: 'sonnet',
-                  name: 'Sonnet',
+                  id: 'provider-model',
+                  name: 'Provider Model',
                   description: '**Efficient** for routine tasks',
                   reasoningEfforts: ['low', 'medium', 'high'],
                   contextTiers: ['default'],
@@ -672,7 +681,7 @@ describe('App', () => {
         {
           id: 'tool:skill-call',
           role: 'activity',
-          content: 'Skill (tool-model-catalog)',
+          content: 'Skill (service-inventory)',
           createdAt: '2026-07-22T00:00:00.000Z',
           activityStatus: 'completed',
           activityKind: 'skill',
@@ -680,7 +689,7 @@ describe('App', () => {
         {
           id: 'mcp-call',
           role: 'activity',
-          content: 'MCP · ecs-mcp-server · search_config',
+          content: 'MCP · configuration-service · search_config_keys',
           createdAt: '2026-07-22T00:00:00.500Z',
           activityStatus: 'completed',
           activityResult: '48 lines read',
@@ -710,16 +719,16 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    expect(screen.getByText('skill(tool-model-catalog)')).toBeInTheDocument()
-    expect(screen.getByText('search_config')).toBeInTheDocument()
-    expect(screen.getByText('(MCP: ecs-mcp-server)')).toBeInTheDocument()
+    expect(screen.getByText('skill(service-inventory)')).toBeInTheDocument()
+    expect(screen.getByText('search_config_keys')).toBeInTheDocument()
+    expect(screen.getByText('(MCP: configuration-service)')).toBeInTheDocument()
     expect(screen.getByText('48 lines read')).toBeInTheDocument()
     expect(screen.getByText('1.3s')).toBeInTheDocument()
     expect(screen.getByText('Error: file not found')).toBeInTheDocument()
     expect(screen.getByText('cache')).toBeInTheDocument()
     expect(document.querySelectorAll('.activity-message')).toHaveLength(4)
     expect(document.querySelector('.activity-group__children')).toHaveTextContent(
-      'search_config',
+      'search_config_keys',
     )
     expect(
       document.querySelector('.activity-message--pending'),
@@ -837,7 +846,7 @@ describe('App', () => {
         {
           id: 'skill-call',
           role: 'activity',
-          content: 'Skill (tool-model-catalog)',
+          content: 'Skill (service-inventory)',
           createdAt: '2026-07-22T00:00:00.000Z',
           activityStatus: 'running',
           activityKind: 'skill',
@@ -869,7 +878,7 @@ describe('App', () => {
       [...document.querySelectorAll('.activity-message__name')].map(
         (name) => name.textContent,
       ),
-    ).toEqual(['skill(tool-model-catalog)', 'Read', 'Search Repositories'])
+    ).toEqual(['skill(service-inventory)', 'Read', 'Search Repositories'])
     expect(document.querySelectorAll('.activity-group')).toHaveLength(0)
   })
 
@@ -887,9 +896,9 @@ describe('App', () => {
     expect(sidebarSettings).toContainElement(
       screen.getByRole('button', { name: 'App settings' }),
     )
-    expect(sidebarSettings).toContainElement(
-      screen.getByRole('button', { name: 'Add knowledge root' }),
-    )
+    expect(
+      screen.queryByRole('button', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
 
   it('persists the sidebar width from the final pointer position', async () => {
@@ -1265,12 +1274,33 @@ describe('App', () => {
 
     const shell = document.querySelector('.app-shell')
     expect(shell).toHaveAttribute('data-accent-theme', 'agentic')
+    const icon = () =>
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || ''
+    expect(decodeURIComponent(icon())).toContain('color="#b8f36b"')
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
     fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
 
     expect(shell).toHaveAttribute('data-accent-theme', 'violet')
     expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBe('violet')
     expect(localStorage.getItem('agentic-remote:accent-theme')).toBeNull()
+    expect(decodeURIComponent(icon())).toContain('color="#ad92ff"')
+    fireEvent.click(screen.getByRole('radio', { name: 'Teal accent' }))
+    expect(decodeURIComponent(icon())).toContain('color="#63d6c0"')
+    expect(document.querySelectorAll('link[rel="icon"]')).toHaveLength(1)
+  })
+
+  it('restores the tab icon from the saved accent on load', async () => {
+    sessionStorage.setItem('agentic-remote:accent-theme', 'rose')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelector('.app-shell')).toHaveAttribute(
+      'data-accent-theme',
+      'rose',
+    )
+    expect(decodeURIComponent(
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
+    )).toContain('color="#ff83b6"')
   })
 
   it('ignores an unknown stored accent', async () => {
@@ -1283,6 +1313,9 @@ describe('App', () => {
       'data-accent-theme',
       'agentic',
     )
+    expect(decodeURIComponent(
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
+    )).toContain('color="#b8f36b"')
   })
 
   it('falls back to blank runtime defaults when stored settings are null', async () => {
@@ -1309,10 +1342,10 @@ describe('App', () => {
       'copilot',
     )
     fireEvent.change(screen.getByLabelText('GitHub Copilot default model'), {
-      target: { value: 'gpt-5.6-sol' },
+      target: { value: 'fixture-model' },
     })
     fireEvent.change(screen.getByLabelText('Claude Agent default model'), {
-      target: { value: 'sonnet' },
+      target: { value: 'provider-model' },
     })
     expect(screen.getByText('Efficient').tagName).toBe('STRONG')
     fireEvent.change(
@@ -1332,12 +1365,12 @@ describe('App', () => {
       JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
     ).toEqual({
       copilot: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'xhigh',
         contextTier: 'long_context',
       },
       claude: {
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'low',
         contextTier: 'default',
       },
@@ -1354,7 +1387,7 @@ describe('App', () => {
         provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: true,
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'xhigh',
         contextTier: 'long_context',
       }),
@@ -1376,11 +1409,51 @@ describe('App', () => {
         provider: 'claude',
         terminalBacked: false,
         allowAllPermissions: true,
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'low',
         contextTier: 'default',
       }),
     )
+  })
+
+  it('refreshes both provider catalogs every time app settings is reopened', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const copilot = await screen.findByLabelText('GitHub Copilot default model')
+    await waitFor(() => expect(copilot).toBeEnabled())
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (_computerId, provider) => ({
+        models: [{
+          id: `${provider}-new-model`,
+          name: `New ${provider} model`,
+          reasoningEfforts: [],
+          contextTiers: ['default'],
+        }],
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(
+      await screen.findByRole('option', { name: 'New copilot model' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'New claude model' })).toBeInTheDocument()
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(4)
+    expect(screen.getByLabelText('GitHub Copilot default model')).toHaveValue('')
+    expect(screen.getByLabelText('Claude Agent default model')).toHaveValue('')
+    expect(configureRuntime).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    vi.mocked(getProviderRuntimeOptions).mockRejectedValue(
+      new Error('Catalog refresh failed'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(await screen.findAllByText('Catalog refresh failed')).toHaveLength(2)
+    expect(screen.queryByRole('option', { name: 'New copilot model' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'New claude model' })).toBeNull()
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(6)
   })
 
   it('preserves provider-managed defaults when app settings are opened', async () => {
@@ -1455,8 +1528,8 @@ describe('App', () => {
           provider === 'claude'
             ? [
                 {
-                  id: 'sonnet',
-                  name: 'Sonnet',
+                  id: 'provider-model',
+                  name: 'Provider Model',
                   reasoningEfforts: ['low', 'medium', 'high'],
                   contextTiers: ['default'],
                 },
@@ -1615,7 +1688,7 @@ describe('App', () => {
           contextTier: 'long_context',
         },
         claude: {
-          model: 'sonnet',
+          model: 'provider-model',
           reasoningEffort: 'max',
           contextTier: 'long_context',
         },
@@ -1635,7 +1708,7 @@ describe('App', () => {
         provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: true,
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'medium',
         contextTier: 'long_context',
       }),
@@ -1649,7 +1722,7 @@ describe('App', () => {
         contextTier: 'long_context',
       },
       claude: {
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'max',
         contextTier: 'long_context',
       },
@@ -3992,12 +4065,12 @@ describe('App', () => {
     fireEvent.keyDown(textarea, { key: 'Enter' })
     expect(textarea).toHaveValue('/model ')
 
-    fireEvent.change(textarea, { target: { value: '/model gpt-5.6-sol' } })
+    fireEvent.change(textarea, { target: { value: '/model fixture-model' } })
     expect(fireEvent.keyDown(textarea, { key: 'ArrowDown' })).toBe(true)
     fireEvent.keyDown(textarea, { key: 'Enter' })
     await waitFor(() => {
       expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
-        command: '/model gpt-5.6-sol',
+        command: '/model fixture-model',
         enqueue: false,
       })
     })
@@ -4039,11 +4112,11 @@ describe('App', () => {
       } as MessageEvent)
     })
     vi.mocked(executeCommand).mockClear()
-    fireEvent.change(textarea, { target: { value: '/model gpt-5.6-sol' } })
+    fireEvent.change(textarea, { target: { value: '/model fixture-model' } })
     fireEvent.keyDown(textarea, { key: 'Enter' })
     await waitFor(() => {
       expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
-        command: '/model gpt-5.6-sol',
+        command: '/model fixture-model',
         enqueue: true,
       })
     })
@@ -4101,11 +4174,62 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('refreshes the model panel on reopening and retries a failed refresh', async () => {
+    render(<App />)
+    const open = await screen.findByRole('button', {
+      name: 'Configure model, effort, and context',
+    })
+    fireEvent.click(open)
+    await screen.findByLabelText('Model')
+    expect(getRuntimeOptions).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getRuntimeOptions).mockRejectedValueOnce(
+      new Error('Catalog refresh failed'),
+    )
+    fireEvent.click(open)
+    expect(await screen.findByText('Catalog refresh failed')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Model')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getRuntimeOptions).mockResolvedValueOnce({
+      current: {},
+      status: 'idle',
+      models: [{
+        id: 'new-provider-model',
+        name: 'New Provider Model',
+        reasoningEfforts: ['high'],
+        contextTiers: ['default'],
+      }],
+    })
+    fireEvent.click(open)
+    const model = await screen.findByLabelText('Model')
+    expect(model).toHaveValue('new-provider-model')
+    expect(within(model).getAllByRole('option')).toHaveLength(1)
+    expect(getRuntimeOptions).toHaveBeenCalledTimes(3)
+    expect(getRuntimeOptions).toHaveBeenLastCalledWith('computer-1', 'session-1')
+    expect(configureRuntime).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply runtime settings' }))
+    await waitFor(() =>
+      expect(configureRuntime).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          model: 'new-provider-model',
+          reasoningEffort: 'high',
+          contextTier: 'default',
+          mode: 'interactive',
+        },
+      ),
+    )
+  })
+
   it('supports command abbreviations and configures the web status line', async () => {
       const runtimeSession = {
         ...session,
         runtime: {
-          model: 'gpt-5.6-sol',
+          model: 'fixture-model',
           reasoningEffort: 'high',
           contextTier: 'long_context',
           contextTokens: 200_000,
@@ -4121,7 +4245,7 @@ describe('App', () => {
       const textarea = await screen.findByLabelText('Message')
       expect(screen.getByTestId('web-statusline')).toBeInTheDocument()
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
-        'gpt-5.6-sol',
+        'fixture-model',
       )
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'effort high',
@@ -4133,7 +4257,7 @@ describe('App', () => {
         'ctx ~200k/922k (22%)',
       )
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
-        'gpt-5.6-sol',
+        'fixture-model',
       )
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
         'ctx ~200k/922k (22%)',
@@ -4171,7 +4295,7 @@ describe('App', () => {
           'computer-1',
           'session-1',
           {
-            model: 'gpt-5.6-sol',
+            model: 'fixture-model',
             reasoningEffort: 'xhigh',
             contextTier: 'default',
             mode: 'autopilot',
@@ -4244,7 +4368,7 @@ describe('App', () => {
       ...session,
       status: 'running' as const,
       runtime: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
@@ -4651,7 +4775,7 @@ describe('App', () => {
       ...session,
       status: 'running' as const,
       runtime: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
@@ -4664,8 +4788,8 @@ describe('App', () => {
       current: staleSession.runtime,
       models: [
         {
-          id: 'gpt-5.6-sol',
-          name: 'GPT-5.6 Sol',
+          id: 'fixture-model',
+          name: 'Fixture Model',
           reasoningEfforts: ['high'],
           contextTiers: ['default', 'long_context'],
         },
@@ -5483,12 +5607,19 @@ describe('App', () => {
 
   it('adds a knowledge root by picking a computer folder', async () => {
     vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => ({
+        path,
+        parent: path === '~' ? undefined : '~',
+        directories: [],
+      }),
+    )
     vi.mocked(addKnowledgeRoot).mockResolvedValue({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
-      path: '~/src',
-      name: 'src',
+      path: session.cwd,
+      name: 'project',
       createdAt: '2026-08-01T00:00:00.000Z',
     })
     vi.mocked(listKnowledgeEntries).mockResolvedValue({
@@ -5499,15 +5630,18 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
-    )
     // Sessions stay visible beside the panel, so the folder has to be picked
     // inside the dialog rather than anywhere on screen.
     const rootDialog = await screen.findByRole('dialog', {
       name: 'Add knowledge root',
     })
-    fireEvent.click(await within(rootDialog).findByRole('button', { name: /src/ }))
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        session.cwd,
+        'all',
+      ),
+    )
     const addFolder = within(rootDialog).getByRole('button', {
       name: 'Add this folder',
     })
@@ -5517,9 +5651,144 @@ describe('App', () => {
     await waitFor(() =>
       expect(addKnowledgeRoot).toHaveBeenCalledWith({
         computerId: computer.id,
-        path: '~/src',
+        path: session.cwd,
       }),
     )
+  })
+
+  it('falls back to home when the active session folder is unavailable', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => {
+        if (path === session.cwd) {
+          throw new Error('Folder does not exist')
+        }
+        return {
+          path: '~',
+          directories: [{ name: 'src', path: '~/src' }],
+        }
+      },
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenNthCalledWith(
+        2,
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+    expect(
+      within(rootDialog).getByText(
+        `Could not open ${session.cwd}: Folder does not exist. Showing the home folder instead.`,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(rootDialog).getByRole('button', { name: 'Add this folder' }),
+    ).toBeEnabled()
+  })
+
+  it('uses the session folder only before the root picker computer changes', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => ({ path, directories: [] }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    const computerSelect = within(rootDialog).getByLabelText('Computer')
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        session.cwd,
+        'all',
+      ),
+    )
+
+    fireEvent.change(computerSelect, {
+      target: { value: secondComputer.id },
+    })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        secondComputer.id,
+        '~',
+        'all',
+      ),
+    )
+    fireEvent.change(computerSelect, { target: { value: computer.id } })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenLastCalledWith(
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+  })
+
+  it('ignores a stale root browse after switching computers', async () => {
+    let finishStaleBrowse:
+      | ((listing: {
+          path: string
+          parent: string
+          directories: []
+        }) => void)
+      | undefined
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (computerId, path = '~') => {
+        if (computerId === computer.id && path === session.cwd) {
+          return {
+            path,
+            directories: [{ name: 'slow', path: `${path}/slow` }],
+          }
+        }
+        if (computerId === computer.id && path.endsWith('/slow')) {
+          return await new Promise((resolve) => {
+            finishStaleBrowse = resolve
+          })
+        }
+        return { path: '/home/worker', directories: [] }
+      },
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(
+      await within(rootDialog).findByRole('button', { name: 'slow' }),
+    )
+    fireEvent.change(within(rootDialog).getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    await within(rootDialog).findByText('/home/worker')
+
+    await act(async () => {
+      finishStaleBrowse?.({
+        path: `${session.cwd}/slow`,
+        parent: session.cwd,
+        directories: [],
+      })
+    })
+    expect(within(rootDialog).getByText('/home/worker')).toBeInTheDocument()
+    expect(
+      within(rootDialog).queryByText(`${session.cwd}/slow`),
+    ).not.toBeInTheDocument()
   })
   it('renders an image referenced from a workspace document', async () => {
     vi.mocked(readWorkspaceFile).mockImplementation(async (_c, _s, target) =>
@@ -5799,7 +6068,16 @@ describe('App', () => {
   })
 
   it('picks a knowledge root from anywhere on the computer', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-existing',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
     vi.mocked(listDirectories).mockResolvedValue({
       path: '/srv',
       parent: '/',
@@ -5817,23 +6095,107 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
+      await screen.findByRole('button', { name: 'New knowledge root' }),
     )
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
     // The picker walks the whole filesystem, not just the home directory.
     await waitFor(() =>
       expect(listDirectories).toHaveBeenCalledWith(computer.id, '~', 'all'),
     )
-    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Add this folder' }),
-    )
+    fireEvent.click(await within(rootDialog).findByRole('button', { name: /docs/ }))
+    const addFolder = within(rootDialog).getByRole('button', {
+      name: 'Add this folder',
+    })
+    await waitFor(() => expect(addFolder).toBeEnabled())
+    fireEvent.click(addFolder)
     await waitFor(() =>
       expect(addKnowledgeRoot).toHaveBeenCalledWith({
         computerId: computer.id,
         path: '/srv',
       }),
     )
+  })
+
+  it('keeps the general root picker available without a selected session', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findByText('No sessions here.')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(listKnowledgeRoots).toHaveBeenCalled())
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+    expect(
+      await screen.findByRole('dialog', { name: 'Add knowledge root' }),
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(computer.id, '~', 'all'),
+    )
+  })
+
+  it('does not choose another computer for an offline session knowledge root', async () => {
+    const offlineComputer = { ...computer, online: false }
+    const offlineSession = {
+      ...session,
+      computerName: offlineComputer.name,
+    }
+    vi.mocked(listComputers).mockResolvedValue([
+      offlineComputer,
+      secondComputer,
+    ])
+    vi.mocked(listSessions).mockResolvedValue([offlineSession])
+    vi.mocked(getSession).mockResolvedValue(offlineSession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(listKnowledgeRoots).toHaveBeenCalled())
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
+    expect(listDirectories).not.toHaveBeenCalledWith(
+      secondComputer.id,
+      '~',
+      'all',
+    )
+  })
+
+  it('does not reopen a cancelled root picker after root loading finishes', async () => {
+    let finishRoots: (() => void) | undefined
+    vi.mocked(listKnowledgeRoots).mockReturnValue(
+      new Promise((resolve) => {
+        finishRoots = () => resolve([])
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await act(async () => {
+      finishRoots?.()
+    })
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
 
   it('keeps knowledge open across sessions and follows the new one', async () => {
@@ -6315,7 +6677,7 @@ describe('App', () => {
     // One press puts away one thing, in the order they are stacked.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -6339,7 +6701,7 @@ describe('App', () => {
     // composer while the menu stayed exactly where it was.
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'clear',
@@ -6377,7 +6739,7 @@ describe('App', () => {
     // reader could not see, and left the thing they were looking at.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -6429,7 +6791,7 @@ describe('App', () => {
     // something invisible and left what was in front of the reader open.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
     const setWidth = (width: number) => {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,
@@ -6484,7 +6846,7 @@ describe('App', () => {
   it('drives sessions and the knowledge panel from the keyboard', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -8183,7 +8545,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
+      await screen.findByRole('button', { name: 'New knowledge root' }),
     )
     const rootDialog = await screen.findByRole('dialog', {
       name: 'Add knowledge root',
@@ -9280,8 +9642,8 @@ describe('App', () => {
     // Knowledge is a per-session panel now, closed until the session opens it.
     expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
     expect(
-      screen.getByRole('button', { name: 'Add knowledge root' }),
-    ).toBeInTheDocument()
+      screen.queryByRole('button', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
   it('keeps the remembered position when it cannot be restored', async () => {
     const remembered = {

@@ -1,6 +1,6 @@
 ---
 name: agentic-remote-navigation
-description: Use when working on the Agentic Remote application itself — locating UI or server behavior, understanding the hub/node and session model, changing Knowledge or workspace browsing, or validating and rolling out a change.
+description: Use when working on Agentic Remote — query its maintained Graphify code graph for architecture and relationships, locate UI or server behavior, understand hub/node and session ownership, change Knowledge or workspace browsing, and validate or roll out a change.
 ---
 
 # Agentic Remote navigation
@@ -11,6 +11,65 @@ validate a change in the Agentic Remote application repository.
 Agentic Remote is a mobile-first PWA for supervising GitHub Copilot and Claude
 Agent sessions across trusted computers. `docs/app-spec.md` is the normative
 product specification and wins over this skill whenever the two disagree.
+
+For UI/UX design, visual polish, or frontend implementation, also load the
+repository's `frontend-design` skill. It supplies design craft; this skill and
+the product specification retain ownership of behavioral and rollout rules.
+
+## Query the maintained code graph first
+
+For architecture, ownership, call chains, dependencies, and cross-file
+questions, start with the repository's `graphify/` snapshot rather than reading
+the whole application component or report.
+
+```bash
+python3 graphify/manage.py check
+python3 graphify/manage.py query "KnowledgeRoot KnowledgeReader"
+python3 graphify/manage.py explain "KnowledgeStore"
+python3 graphify/manage.py path "App.tsx" "KnowledgeReader"
+python3 graphify/manage.py affected "WorkspaceFile"
+```
+
+- Run from this checkout, not another worktree's graph. `check` compares
+  content hashes, including generator/tool versions and output hashes; a
+  different HEAD alone does not mean the graph is stale.
+- If the graph is stale or missing, run `python3 graphify/manage.py update`.
+  If the isolated tool is missing, run `python3 graphify/manage.py setup`
+  first (Python 3.12+). The generated report and graph JSON can be read without
+  setup; freshness checking uses only Python's standard library.
+- Queries are local with a target budget (`--budget 1500` by default).
+  Graphify can retain complete edge sets above that target and reports when
+  it does. Prefer precise questions. Use exact labels or qualified IDs when
+  a symbol is ambiguous, then inspect source ranges before changing behavior.
+- `EXTRACTED` means present in syntax; `INFERRED` means resolved by Graphify.
+  Neither proves dynamic HTTP routing or runtime reachability. External
+  package identifiers are not local source paths.
+- Code, including tests and installation scripts, is structurally extracted.
+  Docs/styles/media are inventoried, not semantically interpreted. Read the
+  normative docs directly for product intent.
+- For a simple edit to a known file, read that file directly. The graph is a
+  navigation aid, not a mandatory detour for every lookup.
+
+After relevant source changes, refresh before handing off the work:
+
+```bash
+# Stage only intended new source files; untracked files are never indexed.
+git add path/to/new-source.ts
+python3 graphify/manage.py update
+python3 graphify/manage.py check
+git add graphify/graph.json graphify/graph.html graphify/GRAPH_REPORT.md \
+  graphify/communities.json graphify/metadata.json
+```
+
+Keep generated changes with the source change. Never hand-edit graph data to
+hide staleness. Use the repository wrapper rather than native Graphify
+update/install commands: it enforces tracked-only inputs, no network or LLM
+calls during generation/query, offline HTML, and scoped writes. Do not install
+global hooks, a hosted graph service, or an automatic watcher.
+
+See `graphify/README.md` for scope, provenance, limitations, and tool upgrades.
+Open `graphify/graph.html` for an offline visual overview. Read
+`graphify/GRAPH_REPORT.md` only when a broad overview is actually needed.
 
 ## Authoritative documents
 
@@ -27,12 +86,12 @@ product specification and wins over this skill whenever the two disagree.
 
 ## Where behavior lives
 
-The frontend is one large component file; use these anchors instead of reading
-it end to end.
+Most workflow state lives in `src/App.tsx`. Use graph results and these
+landmarks rather than reading it end to end; source locations can change.
 
 | Concern | Location |
 |---|---|
-| Entire UI, all dialogs, all state | `src/App.tsx` (~5000 lines) |
+| Main UI, dialogs, workflow state | `src/App.tsx` |
 | Styling, safe areas, mobile breakpoints | `src/index.css` |
 | Browser API client | `src/api.ts` |
 | Shared request/response types | `shared/contracts.ts` |
@@ -46,7 +105,7 @@ it end to end.
 | Node routes (`/node-api`) | `server/node-routes.ts` |
 | Hub to node routing | `server/computer-manager.ts`, `server/remote-node-client.ts` |
 | Workspace listing, reading, search | `server/workspace-browser.ts` |
-| Knowledge bookmark persistence | `server/knowledge-store.ts` |
+| Knowledge root metadata | `server/knowledge-store.ts` |
 | Session cwd containment | `server/session-directory.ts` |
 | Folder picker containment | `server/directory-browser.ts` |
 | Audio transcription | `server/transcription-service.ts` |
@@ -54,7 +113,7 @@ it end to end.
 | Push notifications | `server/push-notification-service.ts`, `public/sw.js` |
 | Install and service management | `bin/agentic-remote` |
 
-Useful `src/App.tsx` landmarks: `WorkspaceDialog`, `KnowledgeDialog`,
+Useful `src/App.tsx` landmarks: `WorkspaceDialog`, `KnowledgeReader`, `AddKnowledgeRootDialog`,
 `UserInputCard`, `SortableSessionItem`, `SortableComputerGroup`,
 `upsertSession`, `orderedComputers`, `sessionsByComputer`.
 
@@ -83,22 +142,28 @@ This is the area most likely to be extended, so its current limits matter.
   and reached through `/api/computers/:computerId/sessions/:sessionId/workspace`.
 - Paths are relative and confined to the root. Absolute paths, `..`, hidden
   segments, and escaping symlinks are rejected by `resolveWorkspacePath`.
-- Previewable types are Markdown, PDF, images (`.png .jpg .jpeg .gif .webp
-  .svg`), and a text extension allowlist (`.csv .json .log .md .markdown .tsv
-  .txt .yaml .yml`). Anything else is refused with `415`.
-- Limits: 2 MiB text, 25 MiB PDF, 10 MiB image, 2000 directory entries; search
-  is bounded and skips `node_modules`, `dist`, `build`, `coverage`.
-- A refused path carries its reason: `400` for a path that is not allowed,
-  `403` for one outside the root, `404` for one that is not there, `413` for
-  one that is too large.
-- **Knowledge is metadata only.** A `KnowledgeRoot` stores
-  `(computerId, computerName, path, name)`; content never leaves the owning
-  computer. A root is browsed through `/api/knowledge/roots/:rootId/entries`
-  and read through `.../file`, both of which resolve on the owning computer.
-- A root is independent of any session, and `validateKnowledgeRoot` allows any
-  directory the user can read -- read-only browsing, unlike a session working
-  directory, which stays confined because an agent executes there.
-- Removing a computer removes the roots that named folders on it.
+- Previewable types include Markdown, PDF, supported images, and an allowed
+  set of text extensions. Read `server/workspace-browser.ts` for the current
+  allowlists and size limits rather than inferring support from an extension.
+- Markdown supports rendered/raw views, heading anchors, an outline, relative
+  document links, and supported relative images through the owning root.
+- Limits: 2 MiB text, 25 MiB PDF, 2000 directory entries; search is bounded and
+  skips `node_modules`, `dist`, `build`, `coverage`.
+- **Knowledge stores root metadata on the hub.** A root identifies an owning
+  computer and readable absolute folder and is browsable without a session.
+  Files remain on that computer and are read through its API.
+- Knowledge is a docked/expanded reading panel with a persistent lazy folder
+  tree. Panel mode belongs to the workspace; root/folder/document position
+  belongs to each session. Preserve those separate owners when changing UI
+  navigation, session switching, or clear/replacement handling.
+- Root creation starts in Knowledge. With no roots and an active session, its
+  initial picker uses that session's owning computer and working folder.
+- Refused paths carry their reason: `400` for a disallowed path, `403` for
+  escaping the root, `404` for a missing file, `413` for excessive size, and
+  `415` for an unsupported preview type.
+- `validateKnowledgeRoot` permits readable directories independently of session
+  execution roots. Removing a computer retires its Knowledge roots and
+  invalidates responses from the old pairing.
 
 ## Deployment topology
 
@@ -190,8 +255,8 @@ directly to `main`.**
 
    Use `Refs #11` for a partial slice that should leave the issue open.
 5. **Merge the PR**, then delete the branch.
-6. **Deploy and verify on development**, then ask before production
-   (see Rolling out).
+6. **Deploy and verify on development**, then follow the promotion policy in
+   `.github/copilot-instructions.md` (see Rolling out).
 7. **Close issues with evidence.** If a PR did not auto-close them, close each
    one with what changed, how it was verified, and any deliberate deviation
    from the issue's suggested fix. Record measurements where the issue was
@@ -249,15 +314,14 @@ unowned worktrees without explicit approval.
 The service runs from `~/.config/agentic-remote/releases/current`, not from the
 working tree, so uncommitted edits are never live.
 
-## Known gaps
+## Investigating gaps
 
-- The tmux-backed integration tests are timing-sensitive and fail roughly one
-  run in ten when the machine is busy (`active-sessions.test.ts`,
-  `terminal-session.test.ts`, `agent-service.test.ts`). Because local
-  validation is the whole promotion gate, re-run before concluding a change
-  broke something.
-- Markdown is rendered without heading anchors. The outline is matched to the
-  document by position among the rendered headings, so anything that renders a
-  heading has to be counted by `outlineFromMarkdown`.
-- A session can appear `idle` while its agent is running; the tmux-backed
-  status derivation described above is the place to investigate.
+Do not treat an older issue, graph, or skill note as proof a bug still exists.
+Check graph freshness, inspect the current implementation, and reproduce the
+behavior. For a session that appears idle while running, trace the event-log
+status derivation and live transcript watermarks described above; the graph
+locates the code but does not report the live state.
+
+Issue #169 tracks timing-sensitive tmux fixtures. Serialize real-tmux runs,
+scope discovery to fixture-owned processes, and investigate failures rather
+than repeatedly rerunning the promotion gate until it passes.

@@ -301,8 +301,12 @@ export async function registerHubRoutes(
       throw error
     }
     if (!registrationIsCurrent()) {
-      return reply.code(409).send({
-        error: 'Computer pairing changed while validating this folder. Choose the computer again.',
+      const registered = manager.listComputers()
+        .some((entry) => entry.id === input.computerId)
+      return reply.code(registered ? 409 : 404).send({
+        error: registered
+          ? 'Computer pairing changed while validating this folder. Choose the computer again.'
+          : 'Computer is not registered',
       })
     }
     const root = await knowledge.addRoot({

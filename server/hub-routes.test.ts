@@ -110,6 +110,7 @@ describe('hub routes', () => {
       {
         listComputers: () =>
           paired ? [{ id: 'worker', name: 'worker-node' }] : [],
+        captureComputerRegistration: () => () => paired,
         // Browsing the folder is a round trip to the other computer, and the
         // computer can be unpaired while it is in flight.
         listKnowledge: async () => {

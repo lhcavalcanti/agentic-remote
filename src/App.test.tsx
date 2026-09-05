@@ -3100,7 +3100,6 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Add knowledge root' }))
     const dialog = await screen.findByRole('dialog', { name: 'Add knowledge root' })
     fireEvent.change(within(dialog).getByLabelText('Computer'), {
       target: { value: secondComputer.id },

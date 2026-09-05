@@ -14,6 +14,8 @@ import type {
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
+  SessionSkillsSnapshot,
+  SessionMcpServersSnapshot,
   SlashCommand,
   UserInputReplyInput,
   WorkspaceFile,
@@ -21,6 +23,12 @@ import type {
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
 import type { SessionService } from './session-service.js'
+import {
+  readSessionSkills,
+  readSessionMcpServers,
+  safeResourceError,
+  SessionResourceError,
+} from './session-resources.js'
 
 interface ProviderSessionServiceEvents {
   event: [event: ServerEvent]
@@ -30,6 +38,9 @@ export class ProviderSessionService
   extends EventEmitter<ProviderSessionServiceEvents>
   implements SessionService
 {
+  private resourcesStopped = false
+  private resourceEpoch = 0
+
   constructor(
     private readonly copilot: SessionService,
     private readonly claude: SessionService,
@@ -44,6 +55,8 @@ export class ProviderSessionService
   }
 
   async start(): Promise<void> {
+    this.resourcesStopped = false
+    this.resourceEpoch += 1
     await this.copilot.start()
     try {
       await this.claude.start()
@@ -54,6 +67,8 @@ export class ProviderSessionService
   }
 
   async stop(): Promise<void> {
+    this.resourcesStopped = true
+    this.resourceEpoch += 1
     const results = await Promise.allSettled([
       this.claude.stop(),
       this.copilot.stop(),
@@ -234,6 +249,34 @@ export class ProviderSessionService
 
   listCommands(sessionId: string): Promise<SlashCommand[]> {
     return this.serviceFor(sessionId).listCommands(sessionId)
+  }
+
+  private async readResources<T>(
+    sessionId: string,
+    read: (service: SessionService, sessionId: string) => Promise<T>,
+  ): Promise<T> {
+    if (this.resourcesStopped) throw new SessionResourceError('stopped')
+    if (!this.getSession(sessionId)) throw new SessionResourceError('missing')
+    const service = this.serviceFor(sessionId)
+    const epoch = this.resourceEpoch
+    try {
+      const result = await read(service, sessionId)
+      if (this.resourcesStopped || epoch !== this.resourceEpoch) throw new SessionResourceError('stopped')
+      if (!service.getSession(sessionId) || this.serviceFor(sessionId) !== service) {
+        throw new SessionResourceError('changed')
+      }
+      return result
+    } catch (error) {
+      throw safeResourceError(error)
+    }
+  }
+
+  listSkills(sessionId: string): Promise<SessionSkillsSnapshot> {
+    return this.readResources(sessionId, readSessionSkills)
+  }
+
+  listMcpServers(sessionId: string): Promise<SessionMcpServersSnapshot> {
+    return this.readResources(sessionId, readSessionMcpServers)
   }
 
   executeCommand(

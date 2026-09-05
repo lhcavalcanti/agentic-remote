@@ -1,6 +1,6 @@
 # Provider compatibility
 
-Status: Current implementation study, 2026-08-17
+Status: Current implementation study, 2026-09-05
 
 Agentic Remote supports GitHub Copilot and Claude Agent as separate providers
 behind the same `SessionService` contract. They can run concurrently on one
@@ -23,6 +23,8 @@ history is not transferred between providers.
 | Cancel | SDK abort or terminal interrupt | Agent SDK abort controller | Compatible |
 | Background task monitoring | Experimental SDK task RPC; tmux `/tasks` event projection includes detached shells | Not exposed | Copilot-only |
 | Slash commands | Copilot command catalog plus web commands | Web commands only | Provider-specific |
+| Skills inspection | Existing SDK session metadata, or explicitly labelled folder discovery | Reported active-session skills and in-memory last-known metadata | Read-only; availability and scope are explicit |
+| MCP inspection | Existing SDK session status, or explicitly labelled configured servers | Active query status and in-memory last-known metadata | Read-only; no configuration or credential exposure |
 | tmux and SSH attachment | Supported for terminal-backed sessions | Not supported | Copilot-only |
 | External session discovery | Copilot SDK and active process discovery | Agentic Remote-created sessions only | Copilot-only |
 | Rename, clear, delete | Supported | Supported | Compatible |
@@ -49,6 +51,22 @@ history is not transferred between providers.
   query. Refreshing does not restart or reconfigure existing sessions.
 - Copilot supplies its native slash-command catalog. Claude exposes only the
   Agentic Remote web commands that have provider-neutral implementations.
+- The session menu provides **Skills** and **MCP servers**. `/skill`, `/skills`,
+  and `/mcp` open these read-only views; optional trailing text filters the list
+  locally. They do not invoke a provider command, send a prompt, or change MCP
+  or skill configuration.
+- Resource inspection never creates or resumes a provider session merely to
+  read metadata. Copilot terminal, suspended, and unloaded sessions use
+  server-scoped folder discovery when available. This shows configured defaults,
+  not ephemeral terminal overrides or live MCP connections.
+- Claude metadata comes from an already-active query and its reported skill
+  names. After that query ends, the app can show its clearly labelled in-memory
+  last-known snapshot. Before a report exists, or after a service restart, the
+  view is explicitly unavailable until normal session activity reports it.
+- Experimental resource RPCs are capability-gated. A valid empty catalog,
+  unsupported inspection, offline computer, and failed request are distinct
+  states. Raw MCP configs, environment values, headers, URLs, arguments, and
+  provider error details are not returned to the browser.
 - Restart has provider-specific meaning: Copilot reconnects or respawns its
   process; Claude clears transient error state and resumes lazily on the next
   turn.

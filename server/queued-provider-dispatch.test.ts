@@ -216,7 +216,7 @@ describe('provider queued delivery', () => {
     expect(store.get('session')?.messages.map((message) => message.role)).toEqual(['notice'])
   })
 
-  it.each(['/clear', '/wipe', '/statusline', '/not-a-command'])(
+  it.each(['/clear', '/wipe', '/statusline', '/not-a-command', '/skill', '/skills', '/MCP', '/mcp enable private'])(
     'rejects an app-only or unknown targeted command %s without a claim or provider side effect',
     async (content) => {
       const { service, sdk, store, terminal } = await copilotFixture()

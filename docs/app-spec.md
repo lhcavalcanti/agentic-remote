@@ -175,6 +175,31 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   computer. NFS MUST NOT be required for repositories, credentials, or Copilot
   session state.
 
+### 3.5 Read-only session resources
+
+- The selected session's action menu MUST expose **Skills** and **MCP servers**.
+  `/skill`, `/skills`, and `/mcp` MUST open the same web-native views, with optional
+  trailing text treated only as a local list filter.
+- Opening or refreshing these views MUST NOT send or queue a prompt, invoke a
+  provider command or MCP tool, change configuration, or create/resume a provider
+  session solely for inspection.
+- Catalogs MUST belong to the selected computer, session and provider. Existing
+  live metadata, configured workspace defaults, last-known reports, unsupported
+  inspection, genuine empty lists and fetch failures MUST be distinguished.
+  Last-known reports MUST retain their original capture time.
+- Copilot folder discovery MUST NOT be presented as live terminal configuration.
+  Claude sessions without reported metadata MUST be shown as unavailable rather
+  than starting a query or guessing from configuration files.
+- Only explicit resource summaries MAY cross the API boundary. Raw MCP configs,
+  environment values, headers, URLs, command arguments, account/credential
+  information and provider error strings MUST NOT be exposed.
+- Resource views MUST preserve hidden history drafts and collapsed pastes.
+  Queued rewrites MUST NOT execute these local view commands. A changed or retired
+  session/pairing MUST invalidate pending results and close its old view.
+- Lists MUST support filtering, refresh, keyboard tab navigation and phone-sized
+  layouts. Loading, empty, unavailable and error states MUST remain actionable;
+  viewing metadata MUST NOT dismiss an unanswered agent question or permission.
+
 ## 4. Conversation timeline
 
 - User messages, assistant messages, notices, and tool activity MUST remain in

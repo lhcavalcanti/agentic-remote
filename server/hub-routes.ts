@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { HubEvent } from '../shared/contracts.js'
 import { ComputerManager } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
+import { isSessionResourceRoute } from './session-resources.js'
 
 const addComputerSchema = z.object({
   baseUrl: z.string().trim().url().max(2048),
@@ -247,6 +248,7 @@ export async function registerHubRoutes(
 ): Promise<void> {
   const policy = originPolicy()
   app.addHook('onRequest', async (request, reply) => {
+    if (isSessionResourceRoute(request.routeOptions.url)) reply.header('cache-control', 'no-store')
     const origin = request.headers.origin
     // Routing decodes escaped segments; the wire spelling is not the API boundary.
     const isApiRoute =
@@ -477,6 +479,22 @@ export async function registerHubRoutes(
         request.params.sessionId,
       ),
     }),
+  )
+
+  app.get<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/skills',
+    async (request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return manager.listSkills(request.params.computerId, request.params.sessionId)
+    },
+  )
+
+  app.get<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/mcp',
+    async (request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return manager.listMcpServers(request.params.computerId, request.params.sessionId)
+    },
   )
 
   app.post<{ Params: { computerId: string } }>(

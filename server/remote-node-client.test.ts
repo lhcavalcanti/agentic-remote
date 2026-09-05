@@ -35,6 +35,61 @@ afterEach(async () => {
   }))
 })
 
+describe('read-only remote resource requests', () => {
+  const snapshot = {
+    sessionId: 'remote/session', provider: 'claude', scope: 'session', capturedAt: '2026-09-05T10:00:00.000Z',
+  }
+
+  it('encodes the session identity, authenticates GETs, and strips arbitrary metadata', async () => {
+    const requests: { path?: string; method?: string; authenticated: boolean }[] = []
+    const node = await listen((request, response) => {
+      requests.push({ path: request.url, method: request.method, authenticated: request.headers.authorization === 'Bearer fixture-node-token' })
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({
+        ...snapshot, computerId: 'PRIVATE_COMPUTER', env: { TOKEN: 'PRIVATE_ENV' },
+        host: { fullConfig: { command: 'PRIVATE_COMMAND' } }, message: 'PRIVATE_ERROR',
+        ...(request.url?.endsWith('/skills')
+          ? { skills: [{ name: 'review', path: 'PRIVATE_PATH', description: 'Safe summary' }] }
+          : { servers: [{ name: 'docs', status: 'failed', error: 'PRIVATE_ERROR', config: { url: 'PRIVATE_URL' } }] }),
+      }))
+    })
+    const remote = client(node)
+    const skills = await remote.listSkills('remote/session', 'claude')
+    const mcp = await remote.listMcpServers('remote/session', 'claude')
+    expect(JSON.stringify({ skills, mcp })).not.toContain('PRIVATE')
+    expect(skills.skills).toMatchObject([{ name: 'review', description: 'Safe summary' }])
+    expect(mcp.servers).toMatchObject([{ name: 'docs', status: 'failed' }])
+    expect(requests).toEqual([
+      { path: '/node-api/sessions/remote%2Fsession/skills', method: 'GET', authenticated: true },
+      { path: '/node-api/sessions/remote%2Fsession/mcp', method: 'GET', authenticated: true },
+    ])
+  })
+
+  it.each([401, 403, 404, 409, 500, 503])('never relays raw peer HTTP %i diagnostics', async (statusCode) => {
+    const node = await listen((_request, response) => {
+      response.writeHead(statusCode, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: 'PRIVATE_AUTH_HEADER_AND_URL' }))
+    })
+    const error = await client(node).listSkills('remote/session', 'claude').catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toContain('PRIVATE')
+  })
+
+  it('validates the returned provider and refuses all requests after stopping', async () => {
+    let requests = 0
+    const node = await listen((_request, response) => {
+      requests += 1
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ ...snapshot, provider: 'copilot', skills: [] }))
+    })
+    const remote = client(node)
+    await expect(remote.listSkills('remote/session', 'claude')).rejects.toMatchObject({ statusCode: 502 })
+    remote.stop()
+    await expect(remote.listMcpServers('remote/session', 'claude')).rejects.toMatchObject({ statusCode: 503 })
+    expect(requests).toBe(1)
+  })
+})
+
 describe('paired-node redirect isolation', () => {
   it.each([307, 308])('keeps redirected queued delivery unknown without touching the hub after HTTP %i', async (status) => {
     let localMutations = 0

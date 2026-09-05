@@ -2,6 +2,7 @@ import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import WebSocket from 'ws'
 import type {
+  AgentProvider,
   AudioTranscription,
   CreateSessionInput,
   ConfigureRuntimeInput,
@@ -19,6 +20,8 @@ import type {
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
+  SessionSkillsSnapshot,
+  SessionMcpServersSnapshot,
   SlashCommand,
   UserInputReplyInput,
   WorkspaceFile,
@@ -27,6 +30,12 @@ import type {
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
+import {
+  safeResourceError,
+  sanitizeSkillsSnapshot,
+  sanitizeMcpSnapshot,
+  SessionResourceError,
+} from './session-resources.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -204,6 +213,41 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       `/node-api/sessions/${encodeURIComponent(sessionId)}/commands`,
     )
     return response.commands
+  }
+
+  private async readResource<T>(
+    sessionId: string,
+    endpoint: 'skills' | 'mcp',
+    normalize: (raw: unknown) => T,
+  ): Promise<T> {
+    if (this.stopped) throw new SessionResourceError('stopped')
+    try {
+      const raw = await this.request<unknown>(
+        `/node-api/sessions/${encodeURIComponent(sessionId)}/${endpoint}`,
+        { cache: 'no-store' },
+      )
+      if (this.stopped) throw new SessionResourceError('stopped')
+      return normalize(raw)
+    } catch (error) {
+      if (error instanceof RemoteNodeRequestError) {
+        throw new SessionResourceError(
+          error.statusCode === 404 ? 'missing' :
+            error.statusCode === 409 ? 'changed' :
+              error.statusCode === 503 ? 'stopped' : 'failed',
+        )
+      }
+      throw safeResourceError(error)
+    }
+  }
+
+  listSkills(sessionId: string, provider: AgentProvider): Promise<SessionSkillsSnapshot> {
+    return this.readResource(sessionId, 'skills', (raw) =>
+      sanitizeSkillsSnapshot(raw, sessionId, provider))
+  }
+
+  listMcpServers(sessionId: string, provider: AgentProvider): Promise<SessionMcpServersSnapshot> {
+    return this.readResource(sessionId, 'mcp', (raw) =>
+      sanitizeMcpSnapshot(raw, sessionId, provider))
   }
 
   async createSession(input: CreateSessionInput): Promise<SessionDetail> {

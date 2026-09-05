@@ -71,6 +71,7 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Plug,
   RefreshCw,
   Search,
   Settings,
@@ -89,6 +90,13 @@ import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import { KnowledgeRootSelector } from './KnowledgeRootSelector'
 import { SessionActions } from './SessionActions'
+import { SessionResources } from './SessionResources'
+import {
+  isSessionResourceCommandName,
+  sessionResourceCommand,
+  sessionResourceCommands,
+  type SessionResourceTab,
+} from './session-resource-commands'
 import { SessionNavigation } from './SessionNavigation'
 import {
   computerTone,
@@ -1435,6 +1443,7 @@ const webCommands: SlashCommand[] = [
     description: 'Restart Copilot while preserving this conversation',
     allowDuringAgentExecution: false,
   },
+  ...sessionResourceCommands,
 ]
 
 function sortSessions(sessions: ManagedSession[]): ManagedSession[] {
@@ -1675,6 +1684,59 @@ function DialogFrame({
         {children}
       </section>
     </div>
+  )
+}
+
+interface SessionResourcesView {
+  id: number
+  ownerKey: string
+  computerId: string
+  provider: AgentProvider
+  lifetime: number
+  tab: SessionResourceTab
+  filter: string
+}
+
+function SessionResourcesDialog({
+  view,
+  session,
+  lifetime,
+  online,
+  supported,
+  onClose,
+}: {
+  view?: SessionResourcesView
+  session?: ManagedSession
+  lifetime: number
+  online: boolean
+  supported: boolean
+  onClose: () => void
+}) {
+  const sameOwner = Boolean(view && session &&
+    view.ownerKey === sessionKey(session) &&
+    view.provider === (session.provider || 'copilot') &&
+    view.lifetime === lifetime)
+  useEffect(() => {
+    if (view && !sameOwner) onClose()
+  }, [view, sameOwner, onClose])
+  if (!view || !session || !sameOwner) return null
+  return (
+    <DialogFrame
+      className="session-resources-dialog"
+      eyebrow={session.title}
+      key={view.id}
+      onClose={onClose}
+      title="Skills and MCP servers"
+    >
+      <SessionResources
+        initialFilter={view.filter}
+        initialTab={view.tab}
+        key={view.id}
+        online={online}
+        session={session}
+        supported={supported}
+      />
+    </DialogFrame>
   )
 }
 
@@ -6773,6 +6835,9 @@ function App() {
   >(undefined)
   const [renameOpen, setRenameOpen] = useState(false)
   const [runtimeOpen, setRuntimeOpen] = useState(false)
+  const [resourcesView, setResourcesView] = useState<SessionResourcesView>()
+  const resourcesViewId = useRef(0)
+  const closeSessionResources = useCallback(() => setResourcesView(undefined), [])
   const [cwdOpen, setCwdOpen] = useState(false)
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
   const [workspaceInitialPath, setWorkspaceInitialPath] = useState<string>()
@@ -7483,6 +7548,7 @@ function App() {
     statuslineOpen ||
     settingsOpen ||
     runtimeOpen ||
+    Boolean(resourcesView) ||
     (renameOpen && Boolean(selected)) ||
     (cwdOpen && Boolean(selected)) ||
     (workspaceOpen && Boolean(selected)) ||
@@ -8873,15 +8939,15 @@ function App() {
     }
     if (selected?.suspended) {
       // A suspended session has no runtime to ask, and asking would start the
-      // one that suspending put down. It offers no commands at all until it is
-      // resumed.
+      // one that suspending put down. Only local read-only resource views are
+      // offered until it is resumed.
       //
       // The flag is a dependency on purpose. Resuming is meant to bring the
       // session back the way reopening the CLI does, so the runtime coming up
       // on resume is the feature rather than a side effect of this read: the
       // list is only knowable from a live runtime, and a resumed session that
       // offered no commands until its first message would be the bug.
-      setCommands([])
+      setCommands(sessionResourceCommands)
       setCommandsKey(selectedKey)
       return
     }
@@ -8889,14 +8955,20 @@ function App() {
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
         if (active) {
+          const nativeCommands = availableCommands
+            .filter((command) => !isSessionResourceCommandName(command.name))
+            .map((command) => ({
+              ...command,
+              aliases: command.aliases?.filter((alias) => !isSessionResourceCommandName(alias)),
+            }))
           setCommandsKey(selectedKey)
           setCommands([
-            ...availableCommands,
+            ...nativeCommands,
             ...webCommands.filter(
               (webCommand) =>
                 (selected?.provider !== 'claude' ||
                   webCommand.name !== 'cwd') &&
-                !availableCommands.some(
+                !nativeCommands.some(
                   (command) => command.name === webCommand.name,
                 ),
             ),
@@ -10346,6 +10418,10 @@ function App() {
       setAddRootOpen(false)
       return true
     }
+    if (resourcesView) {
+      closeSessionResources()
+      return true
+    }
     const dialogs: [boolean, () => void][] = [
       [newSessionOpen, () => setNewSessionOpen(false)],
       [computersOpen, () => setComputersOpen(false)],
@@ -10829,6 +10905,7 @@ function App() {
    * knowledge back.
    */
   function forgetComputerKnowledge(computerId: string) {
+    setResourcesView((current) => current?.computerId === computerId ? undefined : current)
     forgottenComputers.current.add(computerId)
     knowledgeComputerLifetimes.current.set(
       computerId,
@@ -10862,6 +10939,22 @@ function App() {
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
     setError(undefined)
+  }
+
+  function openSessionResources(tab: SessionResourceTab, filter = '') {
+    if (!selected || !stillListed(selected)) {
+      setError('Choose an available session before inspecting its resources.')
+      return
+    }
+    setResourcesView({
+      id: ++resourcesViewId.current,
+      ownerKey: sessionKey(selected),
+      computerId: selected.computerId,
+      provider: selected.provider || 'copilot',
+      lifetime: knowledgeComputerLifetimes.current.get(selected.computerId) || 0,
+      tab,
+      filter,
+    })
   }
 
   function openBackgroundTasks() {
@@ -11020,6 +11113,14 @@ function App() {
     const commandName = isCommand
       ? trimmedContent.slice(1).split(/\s+/, 1)[0].toLowerCase()
       : ''
+    const resourceCommand = sessionResourceCommand(content)
+    if (resourceCommand) {
+      consumeLocalCommand()
+      settleSubmission()
+      reofferFailedPrompt(targetKey)
+      openSessionResources(resourceCommand.tab, resourceCommand.filter)
+      return
+    }
     const command = isCommand
       ? commands.find(
           (candidate) =>
@@ -11483,6 +11584,10 @@ function App() {
     : undefined
   const queuedEditUnconfirmed = Boolean(selectedKey && editingQueuedPromptId &&
     unconfirmedQueuedPrompts[selectedKey] === editingQueuedPromptId)
+  const selectedComposerPastes = selectedKey ? composerDrafts[selectedKey]?.pastes : undefined
+  const readonlyResourceCommand = useMemo(() => editingQueuedPromptId ? undefined : sessionResourceCommand(
+    expandComposerPastes(composer, activeComposerPastes(composer, selectedComposerPastes || [])),
+  ), [composer, selectedComposerPastes, editingQueuedPromptId])
 
   function forgetQueuedEdit(key: string, promptId: string) {
     updateComposerDrafts([], (current) => {
@@ -12363,13 +12468,13 @@ function App() {
       commandSuggestions[
         Math.min(selectedCommandIndex, commandSuggestions.length - 1)
       ]
-    const exactCommand =
-      selectedSuggestion && composer === `/${selectedSuggestion.name}`
+    const exactCommand = Boolean(sessionResourceCommand(composer)) ||
+      (selectedSuggestion && composer === `/${selectedSuggestion.name}`)
     if (
       (event.key === 'Tab' ||
         (event.key === 'Enter' && !exactCommand)) &&
       selectedSuggestion &&
-      !composer.slice(1).includes(' ')
+      !/\s/.test(composer.slice(1))
     ) {
       event.preventDefault()
       selectCommand(selectedSuggestion)
@@ -13033,6 +13138,25 @@ function App() {
           {selected ? (
             <SessionActions key={selectedKey}>
               <button
+                aria-label="View session skills"
+                className="session-action"
+                onClick={() => openSessionResources('skills')}
+                type="button"
+              >
+                <Command aria-hidden="true" size={17} />
+                <span>Skills</span>
+              </button>
+              <button
+                aria-label="View session MCP servers"
+                className="session-action"
+                onClick={() => openSessionResources('mcp')}
+                type="button"
+              >
+                <Plug aria-hidden="true" size={17} />
+                <span>MCP servers</span>
+              </button>
+              <hr className="session-actions__separator" />
+              <button
                 aria-label="Rename session"
                 className="session-action"
                 disabled={!selectedComputerOnline}
@@ -13572,21 +13696,26 @@ function App() {
                   ) : null}
                   <button
                     aria-label={
-                      editingQueuedPromptId
+                      readonlyResourceCommand
+                        ? readonlyResourceCommand.tab === 'skills' ? 'Open skills' : 'Open MCP servers'
+                        : editingQueuedPromptId
                         ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
                           ? 'Send edited message'
                           : 'Put this back in the queue'
                         : 'Send message'
                     }
                     className="send-button"
-                    disabled={!composer.trim() || sending || Boolean(queueActionId) ||
-                      Boolean(selected.queuedDispatch) || queuedEditUnconfirmed || selected.suspended === true ||
+                    disabled={!composer.trim() || sending || (!readonlyResourceCommand && (
+                      Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
+                      queuedEditUnconfirmed || selected.suspended === true ||
                       Boolean(editingQueuedPromptId &&
                         selectedProviderCapability?.supportsQueuedPromptDispatch === true &&
-                        (selected.status === 'running' || selected.status === 'waiting'))}
+                        (selected.status === 'running' || selected.status === 'waiting'))))}
                     onClick={() => void submitMessage()}
                     title={
-                      editingQueuedPromptId
+                      readonlyResourceCommand
+                        ? 'Open the read-only resource view without sending a prompt'
+                        : editingQueuedPromptId
                         ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
                           ? 'Send this queued message now'
                           : 'Put this back in the queue'
@@ -13594,9 +13723,9 @@ function App() {
                     }
                     type="button"
                   >
-                    <ArrowUp size={19} strokeWidth={2.4} />
+                    {readonlyResourceCommand ? <Search size={19} /> : <ArrowUp size={19} strokeWidth={2.4} />}
                     <span className="send-button__label">
-                      {editingQueuedPromptId
+                      {readonlyResourceCommand ? 'View' : editingQueuedPromptId
                         ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
                           ? 'Send now'
                           : 'Save'
@@ -13969,6 +14098,14 @@ function App() {
           session={selected}
         />
       ) : null}
+      <SessionResourcesDialog
+        lifetime={resourcesView ? knowledgeComputerLifetimes.current.get(resourcesView.computerId) || 0 : 0}
+        onClose={closeSessionResources}
+        online={selectedComputerOnline}
+        session={selected}
+        supported={selectedProviderCapability?.supportsSessionResources === true}
+        view={resourcesView}
+      />
       {addRootOpen ? (
         <AddKnowledgeRootDialog
           computers={computers}

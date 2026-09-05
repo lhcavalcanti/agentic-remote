@@ -211,6 +211,9 @@ matrix.
 - **Runtime**: configure supported model, effort, context, and mode options.
 - **Background tasks**: inspect live task progress, output, errors, timestamps,
   and cancel supported tasks from the session header.
+- **Skills / MCP servers**: use **Session actions** or `/skill`, `/skills`, and
+  `/mcp` to inspect resource metadata without sending a prompt or changing
+  configuration. Optional text after the command filters the list.
 - **App settings**: configure separate default model IDs for Copilot and Claude.
 - **Session files**: browse, search, preview, and save Knowledge paths.
 - **Knowledge**: a per-session panel that docks beside the conversation or
@@ -227,6 +230,13 @@ tmux attach
 ```
 
 Claude Agent sessions are SDK-only.
+
+Resource views distinguish live session reports, configured folder defaults,
+and last-known metadata. Unsupported or not-yet-reported data is labelled
+explicitly; opening the view never starts a provider turn just to inspect it.
+MCP credentials, configuration values, URLs and raw connection errors are not
+shown. See [Provider compatibility](docs/provider-compatibility.md) for the
+provider-specific inspection boundaries.
 
 ## Service operations
 

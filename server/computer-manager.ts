@@ -39,6 +39,24 @@ interface ComputerManagerEvents {
   event: [event: HubEvent]
 }
 
+interface RemoteSessionListing {
+  sessions: ManagedSession[]
+  previous: ManagedSession[]
+  authoritative: boolean
+  token: symbol
+}
+
+interface RemoteSessionRead {
+  client: RemoteNodeClient
+  changes: Map<string, ManagedSession | undefined>
+  promise: Promise<RemoteSessionListing>
+}
+
+interface RemoteResync {
+  client: RemoteNodeClient
+  taskEvents: Set<string>
+}
+
 function managedSession(
   session: SessionDetail,
   computer: Pick<ComputerSummary, 'id' | 'name'>,
@@ -50,9 +68,21 @@ function managedSession(
   }
 }
 
+function sessionAtLeastAsNew(
+  incoming: ManagedSession,
+  current: ManagedSession | undefined,
+): boolean {
+  return incoming.revision === undefined ||
+    current?.revision === undefined ||
+    incoming.revision >= current.revision
+}
+
 export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   private readonly clients = new Map<string, RemoteNodeClient>()
   private readonly sessionCache = new Map<string, ManagedSession[]>()
+  private readonly sessionReads = new Map<string, RemoteSessionRead>()
+  private readonly snapshotTokens = new Map<string, symbol>()
+  private readonly remoteResyncs = new Map<string, RemoteResync>()
 
   constructor(
     private readonly localService: SessionService,
@@ -73,10 +103,14 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   }
 
   stop(): void {
-    for (const client of this.clients.values()) {
+    const clients = [...this.clients.values()]
+    this.clients.clear()
+    this.sessionReads.clear()
+    this.snapshotTokens.clear()
+    this.remoteResyncs.clear()
+    for (const client of clients) {
       client.stop()
     }
-    this.clients.clear()
   }
 
   listComputers(): ComputerSummary[] {
@@ -117,7 +151,10 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       token,
     }
     await this.registry.upsert(computer)
-    this.clients.get(computer.id)?.stop()
+    const previous = this.clients.get(computer.id)
+    this.clients.delete(computer.id)
+    this.invalidateRemoteReads(computer.id)
+    previous?.stop()
     this.addClient(computer)
     const summary = this.computerSummary(computer)
     this.emit('event', { type: 'computer.updated', computer: summary })
@@ -128,8 +165,10 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     if (id === this.identity.info.id) {
       throw new Error('The local hub cannot be removed')
     }
-    this.clients.get(id)?.stop()
+    const client = this.clients.get(id)
     this.clients.delete(id)
+    this.invalidateRemoteReads(id)
+    client?.stop()
     this.sessionCache.delete(id)
     await this.registry.remove(id)
     this.emit('event', { type: 'computer.removed', computerId: id })
@@ -163,12 +202,11 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
           return this.sessionCache.get(computer.id) ?? []
         }
         try {
-          const sessions = (await client.listSessions()).map((session) =>
-            managedSession(session, computer),
-          )
-          this.sessionCache.set(computer.id, sessions)
-          answered.push(computer.id)
-          return sessions
+          const listing = await this.readRemoteSessions(computer, client)
+          if (listing.authoritative) {
+            answered.push(computer.id)
+          }
+          return listing.sessions
         } catch {
           return this.sessionCache.get(computer.id) ?? []
         }
@@ -615,6 +653,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     sessionId: string,
   ): Promise<BackgroundTaskSnapshot> {
     this.requireComputer(computerId)
+    this.remoteResyncs.get(computerId)?.taskEvents.add(sessionId)
     return computerId === this.identity.info.id
       ? this.localService.listBackgroundTasks(sessionId)
       : this.requireClient(computerId).listBackgroundTasks(sessionId)
@@ -626,6 +665,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     taskId: string,
   ): Promise<BackgroundTaskSnapshot> {
     this.requireComputer(computerId)
+    this.remoteResyncs.get(computerId)?.taskEvents.add(sessionId)
     return computerId === this.identity.info.id
       ? this.localService.cancelBackgroundTask(sessionId, taskId)
       : this.requireClient(computerId).cancelBackgroundTask(sessionId, taskId)
@@ -682,97 +722,170 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   private addClient(computer: RegisteredComputer): RemoteNodeClient {
     const client = new RemoteNodeClient(computer)
     this.clients.set(computer.id, client)
-    client.on('event', (event) => this.emitNodeEvent(computer, event))
+    const reportError = (error: unknown) => {
+      if (this.clients.get(computer.id) === client) {
+        this.emit('event', {
+          type: 'error',
+          computerId: computer.id,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    client.on('event', (event) => {
+      if (this.clients.get(computer.id) === client) {
+        this.emitNodeEvent(computer, event)
+      }
+    })
     client.on('status', (online) => {
+      if (this.clients.get(computer.id) !== client) {
+        return
+      }
+      if (!online) {
+        this.invalidateRemoteReads(computer.id)
+      }
       this.emit('event', {
         type: 'computer.updated',
         computer: this.computerSummary(computer),
       })
       if (online) {
-        void this.resyncRemoteComputer(computer, client).catch((error: unknown) =>
-          this.emit('event', {
-            type: 'error',
-            computerId: computer.id,
-            message: error instanceof Error ? error.message : String(error),
-          }),
-        )
+        void this.resyncRemoteComputer(computer, client).catch(reportError)
       }
     })
     client.connect()
     void client.getInfo().then(() => {
+      if (this.clients.get(computer.id) !== client) {
+        return
+      }
       this.emit('event', {
         type: 'computer.updated',
         computer: this.computerSummary(computer),
       })
-      return this.resyncRemoteComputer(computer, client).catch(
-        (error: unknown) => {
-          this.emit('event', {
-            type: 'error',
-            computerId: computer.id,
-            message: error instanceof Error ? error.message : String(error),
-          })
-        },
-      )
+      return this.resyncRemoteComputer(computer, client).catch(reportError)
     }).catch(() => undefined)
     return client
+  }
+
+  private invalidateRemoteReads(computerId: string): void {
+    this.sessionReads.delete(computerId)
+    this.snapshotTokens.delete(computerId)
+    this.remoteResyncs.delete(computerId)
+  }
+
+  private readRemoteSessions(
+    computer: RegisteredComputer,
+    client: RemoteNodeClient,
+  ): Promise<RemoteSessionListing> {
+    const pending = this.sessionReads.get(computer.id)
+    if (pending?.client === client) {
+      return pending.promise
+    }
+    const token = Symbol()
+    const read: RemoteSessionRead = {
+      client,
+      changes: new Map(),
+      promise: Promise.resolve().then(async () => {
+        const sessions = await client.listSessions()
+        if (
+          this.clients.get(computer.id) !== client ||
+          this.sessionReads.get(computer.id) !== read
+        ) {
+          return {
+            sessions: this.sessionCache.get(computer.id) ?? [],
+            previous: [],
+            authoritative: false,
+            token,
+          }
+        }
+        const merged = new Map(
+          sessions.map((session) => [session.id, managedSession(session, computer)]),
+        )
+        // Reconcile in-flight events without erasing deletions. An explicitly
+        // newer snapshot revision still wins over an earlier event.
+        for (const [id, session] of read.changes) {
+          if (session) {
+            if (sessionAtLeastAsNew(session, merged.get(id))) {
+              merged.set(id, session)
+            }
+          } else {
+            merged.delete(id)
+          }
+        }
+        const previous = this.sessionCache.get(computer.id) ?? []
+        const latest = [...merged.values()]
+        this.sessionCache.set(computer.id, latest)
+        this.snapshotTokens.set(computer.id, token)
+        return { sessions: latest, previous, authoritative: true, token }
+      }).finally(() => {
+        if (this.sessionReads.get(computer.id) === read) {
+          this.sessionReads.delete(computer.id)
+        }
+      }),
+    }
+    this.sessionReads.set(computer.id, read)
+    return read.promise
   }
 
   private async resyncRemoteComputer(
     computer: RegisteredComputer,
     client: RemoteNodeClient,
   ): Promise<void> {
-    const sessions = (await client.listSessions()).map((session) =>
-      managedSession(session, computer),
-    )
-    const previous = this.sessionCache.get(computer.id) || []
-    this.sessionCache.set(computer.id, sessions)
-    for (const session of sessions) {
-      this.emit('event', { type: 'session.upserted', session })
-    }
-    // A session deleted while the node was unreachable is simply absent from
-    // the refreshed list. Without this it would keep its place in every
-    // browser, along with whatever task state it had when the node dropped.
-    const live = new Set(sessions.map((session) => session.id))
-    for (const session of previous) {
-      if (!live.has(session.id)) {
-        this.emit('event', {
-          type: 'session.removed',
-          computerId: computer.id,
-          sessionId: session.id,
-        })
+    const resync: RemoteResync = { client, taskEvents: new Set() }
+    this.remoteResyncs.set(computer.id, resync)
+    try {
+      const listing = await this.readRemoteSessions(computer, client)
+      const current = () =>
+        this.clients.get(computer.id) === client &&
+        this.remoteResyncs.get(computer.id) === resync &&
+        this.snapshotTokens.get(computer.id) === listing.token
+      if (!listing.authoritative || !current()) {
+        return
       }
-    }
-    if (
-      !client.providers.some(
-        (provider) => provider.supportsBackgroundTasks === true,
-      )
-    ) {
-      // A node that came back without task support may have been rolled back
-      // while clients still show what it last reported. Saying so explicitly
-      // clears those counts and controls instead of leaving them frozen.
-      for (const session of sessions) {
-        this.emit('event', {
-          type: 'session.tasks.updated',
-          computerId: computer.id,
-          sessionId: session.id,
-          tasks: [],
-          runningCount: 0,
-          supported: false,
-        })
+      for (const session of listing.sessions) {
+        this.emit('event', { type: 'session.upserted', session })
       }
-      return
-    }
-    await Promise.all(
-      sessions.map(async (session) => {
+      const live = new Set(listing.sessions.map((session) => session.id))
+      for (const session of listing.previous) {
+        if (!live.has(session.id)) {
+          this.emit('event', {
+            type: 'session.removed',
+            computerId: computer.id,
+            sessionId: session.id,
+          })
+        }
+      }
+      if (!client.providers.some((provider) => provider.supportsBackgroundTasks === true)) {
+        for (const session of listing.sessions) {
+          this.emit('event', {
+            type: 'session.tasks.updated',
+            computerId: computer.id,
+            sessionId: session.id,
+            tasks: [],
+            runningCount: 0,
+            supported: false,
+          })
+        }
+        return
+      }
+      await Promise.all(listing.sessions.map(async (session) => {
         const snapshot = await client.listBackgroundTasks(session.id)
+        if (
+          !current() || resync.taskEvents.has(session.id) ||
+          !this.sessionCache.get(computer.id)?.some((entry) => entry.id === session.id)
+        ) {
+          return
+        }
         this.emit('event', {
           type: 'session.tasks.updated',
           computerId: computer.id,
           sessionId: session.id,
           ...snapshot,
         })
-      }),
-    )
+      }))
+    } finally {
+      if (this.remoteResyncs.get(computer.id) === resync) {
+        this.remoteResyncs.delete(computer.id)
+      }
+    }
   }
 
   private emitNodeEvent(
@@ -783,6 +896,10 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       const session = managedSession(event.session, computer)
       if (computer.id !== this.identity.info.id) {
         const cached = this.sessionCache.get(computer.id) ?? []
+        if (!sessionAtLeastAsNew(session, cached.find((entry) => entry.id === session.id))) {
+          return
+        }
+        this.sessionReads.get(computer.id)?.changes.set(session.id, session)
         this.sessionCache.set(computer.id, [
           session,
           ...cached.filter((entry) => entry.id !== session.id),
@@ -796,6 +913,8 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     }
     if (event.type === 'session.removed') {
       if (computer.id !== this.identity.info.id) {
+        this.sessionReads.get(computer.id)?.changes.set(event.sessionId, undefined)
+        this.remoteResyncs.get(computer.id)?.taskEvents.add(event.sessionId)
         this.sessionCache.set(
           computer.id,
           (this.sessionCache.get(computer.id) ?? []).filter(
@@ -812,6 +931,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       return
     }
     if (event.type === 'session.tasks.updated') {
+      this.remoteResyncs.get(computer.id)?.taskEvents.add(event.sessionId)
       this.emit('event', {
         ...event,
         computerId: computer.id,

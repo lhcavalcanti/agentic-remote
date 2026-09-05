@@ -43,6 +43,10 @@ history is not transferred between providers.
   attachable to a tmux pane.
 - Claude model and effort changes apply to the next turn. Claude controls its
   context window, so it does not advertise a long-context tier.
+- Opening Model and context or App settings reloads the owning provider's model
+  catalog. Copilot uses the CLI `models.list` RPC rather than the SDK's
+  lifetime-cached `listModels()` helper; Claude uses a fresh `supportedModels()`
+  query. Refreshing does not restart or reconfigure existing sessions.
 - Copilot supplies its native slash-command catalog. Claude exposes only the
   Agentic Remote web commands that have provider-neutral implementations.
 - Restart has provider-specific meaning: Copilot reconnects or respawns its

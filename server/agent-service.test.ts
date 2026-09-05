@@ -28,6 +28,7 @@ import type {
   CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
+import { parseTerminalPermission } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId = 'active-session'
@@ -49,7 +50,7 @@ class DeferredSession implements CopilotSessionLike {
     reasoningEffort?: string
     contextTier?: 'default' | 'long_context'
   } = {
-    modelId: 'gpt-default',
+    modelId: 'fixture-default',
     reasoningEffort: 'medium',
     contextTier: 'default' as const,
   }
@@ -210,6 +211,15 @@ class FakeCopilotClient implements CopilotClientLike {
     commands: {
       list: async () => this.session.rpc.commands.list(),
     },
+    models: {
+      list: vi.fn(async () => {
+        this.listModelsCalls += 1
+        if (this.listModelsError) {
+          throw this.listModelsError
+        }
+        return { models: this.models }
+      }),
+    },
   }
 
   async start() {}
@@ -252,10 +262,10 @@ const directories: string[] = []
 
 function configurableModel(): ModelInfo {
   return {
-    id: 'gpt-configurable',
-    name: 'GPT Configurable',
+    id: 'fixture-configurable',
+    name: 'Configurable Model',
     capabilities: {
-      family: 'gpt-configurable',
+      family: 'fixture-configurable',
       limits: {
         max_prompt_tokens: 100_000,
         max_context_window_tokens: 120_000,
@@ -264,7 +274,7 @@ function configurableModel(): ModelInfo {
         vision: false,
         reasoningEffort: true,
       },
-      tokenizer: 'o200k_base',
+      tokenizer: 'fixture-tokenizer',
       type: 'chat',
     },
     billing: {
@@ -554,7 +564,7 @@ describe('AgentService deletion', () => {
         "data":{
           "toolCallId":"skill-call",
           "toolName":"skill",
-          "arguments":{"skill":"tool-model-catalog"}
+          "arguments":{"skill":"service-inventory"}
         }
       },
       {
@@ -565,9 +575,9 @@ describe('AgentService deletion', () => {
         "data":{
           "toolCallId":"mcp-call",
           "parentToolCallId":"skill-call",
-          "toolName":"mcp:ecs-mcp-server-search_config",
-          "mcpServerName":"ecs-mcp-server",
-          "mcpToolName":"search_config",
+          "toolName":"mcp:configuration-service-search_config_keys",
+          "mcpServerName":"configuration-service",
+          "mcpToolName":"search_config_keys",
           "arguments":{"query":"cache"}
         }
       },
@@ -592,6 +602,7 @@ describe('AgentService deletion', () => {
       expect.objectContaining({
         id: 'tool:mcp-call',
         activityKind: 'tool',
+        content: expect.stringContaining('MCP · Configuration Service · Search Config Keys'),
         activityGroupId: 'tool:skill-call',
         activityResult: 'Error: 404 operation not found',
         activityDurationMs: 2_500,
@@ -666,7 +677,7 @@ describe('AgentService deletion', () => {
         "data":{
           "toolCallId":"skill-call",
           "toolName":"skill",
-          "arguments":{"skill":"tool-model-catalog"}
+          "arguments":{"skill":"service-inventory"}
         }
       },
       {
@@ -1716,7 +1727,7 @@ describe('AgentService deletion', () => {
         "parentId":null,
         "timestamp":"2026-07-22T00:00:00.000Z",
         "data":{
-          "selectedModel":"gpt-test",
+          "selectedModel":"fixture-test",
           "reasoningEffort":"medium",
           "contextTier":"long_context"
         }
@@ -1727,7 +1738,7 @@ describe('AgentService deletion', () => {
         "parentId":"resume",
         "timestamp":"2026-07-22T00:00:01.000Z",
         "data":{
-          "newModel":"gpt-test",
+          "newModel":"fixture-test",
           "reasoningEffort":"high",
           "contextTier":"long_context"
         }
@@ -1787,13 +1798,13 @@ describe('AgentService deletion', () => {
         undefined,
         new Map([
           [
-            'gpt-test',
+            'fixture-test',
             { default: 1_000, long: 2_000, maximum: 3_000 },
           ],
         ]),
       ),
     ).toEqual({
-      model: 'gpt-test',
+      model: 'fixture-test',
       reasoningEffort: 'high',
       contextTier: 'long_context',
       contextTokens: 552,
@@ -1806,7 +1817,7 @@ describe('AgentService deletion', () => {
 
   it('preserves exact usage limits across later runtime events', () => {
       const previous = {
-        model: 'gpt-test',
+        model: 'fixture-test',
         contextTokens: 700,
         contextTokenLimit: 1_050,
         contextEstimated: false,
@@ -1817,7 +1828,7 @@ describe('AgentService deletion', () => {
           "id":"assistant",
           "parentId":null,
           "timestamp":"2026-07-22T00:00:00.000Z",
-          "data":{"messageId":"assistant","content":"Done","model":"gpt-test"}
+          "data":{"messageId":"assistant","content":"Done","model":"fixture-test"}
         }
       ]`) as SessionEvent[]
 
@@ -1826,7 +1837,7 @@ describe('AgentService deletion', () => {
           events,
           previous,
           new Map([
-            ['gpt-test', { default: 800, long: 900, maximum: 1_000 }],
+            ['fixture-test', { default: 800, long: 900, maximum: 1_000 }],
           ]),
           false,
         ),
@@ -1850,7 +1861,7 @@ describe('AgentService deletion', () => {
             "producer":"copilot-agent",
             "copilotVersion":"1.0.75",
             "startTime":"2026-07-22T00:00:00.000Z",
-            "selectedModel":"gpt-fresh",
+            "selectedModel":"fixture-fresh",
             "reasoningEffort":"medium",
             "contextTier":"default",
             "context":{"cwd":"/tmp"}
@@ -1861,7 +1872,7 @@ describe('AgentService deletion', () => {
       expect(
         runtimeInfoFromEvents(events, undefined, new Map(), false),
       ).toMatchObject({
-        model: 'gpt-fresh',
+        model: 'fixture-fresh',
         reasoningEffort: 'medium',
         contextTier: 'default',
       })
@@ -1890,7 +1901,7 @@ describe('AgentService deletion', () => {
       client.models = [configurableModel()]
       const created = await service.createSession(directory)
       await expect(service.runtimeOptions(created.id)).resolves.toMatchObject({
-        models: [expect.objectContaining({ id: 'gpt-configurable' })],
+        models: [expect.objectContaining({ id: 'fixture-configurable' })],
       })
       expect(client.listModelsCalls).toBe(2)
       warning.mockRestore()
@@ -2469,18 +2480,18 @@ describe('AgentService deletion', () => {
       false,
       true,
       'copilot',
-      'gpt-configurable',
+      'fixture-configurable',
       'high',
       'long_context',
     )
 
     expect(client.createdConfigs.at(-1)).toMatchObject({
-      model: 'gpt-configurable',
+      model: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
     })
     expect(created.runtime).toMatchObject({
-      model: 'gpt-configurable',
+      model: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
       contextTokenLimit: 100_000,
@@ -2495,8 +2506,8 @@ describe('AgentService deletion', () => {
     client.models = [
       {
         ...configurableModel(),
-        id: 'gpt-no-effort',
-        name: 'GPT No Effort',
+        id: 'fixture-no-effort',
+        name: 'Model Without Effort',
         supportedReasoningEfforts: undefined,
         defaultReasoningEffort: undefined,
         capabilities: {
@@ -2519,7 +2530,7 @@ describe('AgentService deletion', () => {
     await expect(service.providerRuntimeOptions('copilot')).resolves.toEqual({
       models: [
         expect.objectContaining({
-          id: 'gpt-no-effort',
+          id: 'fixture-no-effort',
           reasoningEfforts: [],
         }),
       ],
@@ -2529,10 +2540,10 @@ describe('AgentService deletion', () => {
       false,
       true,
       'copilot',
-      'gpt-no-effort',
+      'fixture-no-effort',
     )
     expect(client.createdConfigs.at(-1)).toMatchObject({
-      model: 'gpt-no-effort',
+      model: 'fixture-no-effort',
       contextTier: 'default',
     })
     expect(client.createdConfigs.at(-1)).not.toHaveProperty('reasoningEffort')
@@ -2540,9 +2551,132 @@ describe('AgentService deletion', () => {
 
     client.models = [configurableModel()]
     await expect(service.providerRuntimeOptions('copilot')).resolves.toEqual({
-      models: [expect.objectContaining({ id: 'gpt-configurable' })],
+      models: [expect.objectContaining({ id: 'fixture-configurable' })],
     })
     await service.stop()
+  })
+
+  it('bypasses the SDK model cache for provider and session runtime options', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const cachedList = vi.spyOn(client, 'listModels').mockResolvedValue([
+      configurableModel(),
+    ])
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    try {
+      const created = await service.createSession(directory)
+      const originalRuntime = { ...created.runtime }
+      client.models = [{
+        ...configurableModel(),
+        id: 'new-provider-model',
+        name: 'New Provider Model',
+      }]
+      const refreshed = {
+        models: [expect.objectContaining({ id: 'new-provider-model' })],
+      }
+      await expect(service.providerRuntimeOptions('copilot')).resolves.toMatchObject(
+        refreshed,
+      )
+      await expect(service.runtimeOptions(created.id)).resolves.toMatchObject(
+        refreshed,
+      )
+      expect(client.rpc.models.list).toHaveBeenCalledTimes(3)
+      expect(client.rpc.models.list).toHaveBeenLastCalledWith({})
+      expect(cachedList).not.toHaveBeenCalled()
+      expect(service.getSession(created.id)?.runtime).toEqual(originalRuntime)
+      expect(client.session.disconnectCount).toBe(0)
+
+      await service.configureRuntime(created.id, {
+        model: 'new-provider-model',
+        reasoningEffort: 'high',
+        contextTier: 'default',
+      })
+      expect(client.session.runtimeSwitches.at(-1)?.modelId).toBe(
+        'new-provider-model',
+      )
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('surfaces a failed or empty catalog refresh and retries without stale fallback', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    try {
+      const created = await service.createSession(directory)
+      client.listModelsError = new Error('Temporary provider failure')
+      await expect(service.providerRuntimeOptions('copilot')).rejects.toThrow(
+        'Runtime models are temporarily unavailable. Try again.',
+      )
+      client.listModelsError = undefined
+      client.models = []
+      await expect(service.runtimeOptions(created.id)).rejects.toThrow(
+        'Runtime models are temporarily unavailable. Try again.',
+      )
+      client.models = [{
+        ...configurableModel(),
+        id: 'recovered-provider-model',
+      }]
+      await expect(service.runtimeOptions(created.id)).resolves.toMatchObject({
+        models: [expect.objectContaining({ id: 'recovered-provider-model' })],
+      })
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('coalesces concurrent catalog requests but refreshes the next request', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+
+    try {
+      const created = await service.createSession(directory)
+      let resolveModels!: (result: { models: ModelInfo[] }) => void
+      client.rpc.models.list.mockImplementationOnce(
+        () => new Promise((resolve) => { resolveModels = resolve }),
+      )
+      const providerOptions = service.providerRuntimeOptions('copilot')
+      const sessionOptions = service.runtimeOptions(created.id)
+      await vi.waitFor(() =>
+        expect(client.rpc.models.list).toHaveBeenCalledTimes(2),
+      )
+      resolveModels({ models: [configurableModel()] })
+      await Promise.all([providerOptions, sessionOptions])
+      expect(client.rpc.models.list).toHaveBeenCalledTimes(2)
+
+      await service.providerRuntimeOptions('copilot')
+      expect(client.rpc.models.list).toHaveBeenCalledTimes(3)
+    } finally {
+      await service.stop()
+    }
   })
 
   it('does not restore a stale transcript after clearing', async () => {
@@ -2759,7 +2893,7 @@ describe('AgentService deletion', () => {
       true,
       true,
       'copilot',
-      'gpt-configurable',
+      'fixture-configurable',
       'high',
       'long_context',
     )
@@ -2769,7 +2903,7 @@ describe('AgentService deletion', () => {
       path.basename(directory),
       true,
       {
-        model: 'gpt-configurable',
+        model: 'fixture-configurable',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         contextTokenLimit: 100_000,
@@ -2777,7 +2911,7 @@ describe('AgentService deletion', () => {
       },
     )
     expect(modelSession.runtime).toMatchObject({
-      model: 'gpt-configurable',
+      model: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
     })
@@ -2795,19 +2929,19 @@ describe('AgentService deletion', () => {
       'Renamed terminal',
     )
     const configured = await service.configureRuntime(created.id, {
-      model: 'gpt-configurable',
+      model: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
       mode: 'autopilot',
     })
     expect(terminal.configure).toHaveBeenCalledWith(created.id, directory, {
-      model: 'gpt-configurable',
+      model: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
       mode: 'autopilot',
     })
     expect(configured.runtime).toMatchObject({
-      model: 'gpt-configurable',
+      model: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
       contextTokenLimit: 100_000,
@@ -2830,7 +2964,7 @@ describe('AgentService deletion', () => {
       cleared.id,
       directory,
       {
-        model: 'gpt-configurable',
+        model: 'fixture-configurable',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'autopilot',
@@ -2905,7 +3039,7 @@ describe('AgentService deletion', () => {
         messages: [],
         runtime: {
           allowAllPermissions: false,
-          model: 'gpt-configurable',
+          model: 'fixture-configurable',
           reasoningEffort: 'high',
           contextTier: 'long_context',
           mode: 'autopilot',
@@ -2964,7 +3098,7 @@ describe('AgentService deletion', () => {
       'Recovered terminal',
       false,
       expect.objectContaining({
-        model: 'gpt-configurable',
+        model: 'fixture-configurable',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'autopilot',
@@ -3128,7 +3262,7 @@ describe('AgentService deletion', () => {
     expect(renamed.title).toBe('Renamed SDK')
     const options = await service.runtimeOptions(created.id)
     expect(options.models[0]).toMatchObject({
-      id: 'gpt-configurable',
+      id: 'fixture-configurable',
       reasoningEfforts: ['medium', 'high'],
       contextTiers: ['default', 'long_context'],
       contextTokenLimits: {
@@ -3137,39 +3271,39 @@ describe('AgentService deletion', () => {
       },
     })
     const configured = await service.configureRuntime(created.id, {
-      model: 'gpt-configurable',
+      model: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
       mode: 'plan',
     })
     expect(client.session.runtimeSwitches).toEqual([
       {
-        modelId: 'gpt-configurable',
+        modelId: 'fixture-configurable',
         reasoningEffort: 'high',
         contextTier: 'long_context',
       },
     ])
     expect(client.session.modeSwitches).toEqual(['plan'])
-    expect(configured.runtime?.model).toBe('gpt-configurable')
+    expect(configured.runtime?.model).toBe('fixture-configurable')
     expect(configured.runtime?.mode).toBe('plan')
 
     client.session.modeSetError = new Error('Mode unavailable')
     await expect(
       service.configureRuntime(created.id, {
-        model: 'gpt-configurable',
+        model: 'fixture-configurable',
         reasoningEffort: 'medium',
         contextTier: 'default',
         mode: 'autopilot',
       }),
     ).rejects.toThrow('Mode unavailable')
     expect(service.store.get(created.id)?.runtime).toMatchObject({
-      model: 'gpt-configurable',
+      model: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
       mode: 'plan',
     })
     expect(client.session.runtimeSwitches.at(-1)).toEqual({
-      modelId: 'gpt-configurable',
+      modelId: 'fixture-configurable',
       reasoningEffort: 'high',
       contextTier: 'long_context',
     })
@@ -3193,7 +3327,7 @@ describe('AgentService deletion', () => {
 
     await expect(
       service.configureRuntime(created.id, {
-        model: 'gpt-configurable',
+        model: 'fixture-configurable',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'autopilot',
@@ -3202,12 +3336,12 @@ describe('AgentService deletion', () => {
 
     expect(client.session.runtimeSwitches).toEqual([
       {
-        modelId: 'gpt-configurable',
+        modelId: 'fixture-configurable',
         reasoningEffort: 'high',
         contextTier: 'long_context',
       },
       {
-        modelId: 'gpt-default',
+        modelId: 'fixture-default',
         reasoningEffort: 'medium',
         contextTier: 'default',
       },
@@ -3958,7 +4092,7 @@ describe('AgentService deletion', () => {
     await service.sendMessage(client.session.sessionId, 'working')
 
     await expect(
-      service.executeCommand(client.session.sessionId, '/model gpt-5.6-sol'),
+      service.executeCommand(client.session.sessionId, '/model fixture-model'),
     ).rejects.toThrow('must be queued')
     await service.executeCommand(client.session.sessionId, '/usage')
     const planned = await service.executeCommand(
@@ -5404,7 +5538,7 @@ describe('AgentService deletion', () => {
     await service.start()
 
     await expect(
-      service.sendMessage(client.session.sessionId, 'Deploy the engine'),
+      service.sendMessage(client.session.sessionId, 'Deploy the service'),
     ).rejects.toMatchObject({
       message: expect.stringContaining('full-screen view'),
       // Without a status the reason is reported as a generic server error and
@@ -5417,6 +5551,53 @@ describe('AgentService deletion', () => {
     expect(terminal.send).not.toHaveBeenCalled()
     await service.stop()
   })
+
+  it.each(['transcript', 'composer'])(
+    'sends a prompt when keyboard hints are only quoted in the %s',
+    async (location) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-hints-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      client.models = [configurableModel()]
+      const hints = 'enter select · esc cancel'
+      const pane = [
+        location === 'transcript' ? `The picker says ${hints}` : 'Ready',
+        '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+        location === 'composer' ? `┃ Explain ${hints}` : '┃',
+        '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+        ' ← open sidebar · / commands · tab next tab',
+      ].join('\n')
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        cancel: vi.fn(async () => true),
+        capture: vi.fn(async () => pane),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        client,
+        async () => [{
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        }],
+        async () => undefined,
+        async () => [],
+        async () => 'events-1',
+        terminal,
+      )
+      await service.start()
+      try {
+        await service.sendMessage(client.session.sessionId, 'Continue reviewing')
+        expect(terminal.send).toHaveBeenCalledWith(
+          client.session.sessionId, 'Continue reviewing', false,
+        )
+      } finally {
+        await service.stop()
+      }
+    },
+  )
 
   it('says so when a terminal slash command opens a full-screen view', async () => {
     const directory = await mkdtemp(
@@ -5761,8 +5942,8 @@ describe('AgentService deletion', () => {
         // the keyboard for its own search box.
         pane = [
           ' Select a model',
-          ' > claude-sonnet-4.6',
-          '   gpt-5.6-sol',
+          ' > alternate-provider-model',
+          '   fixture-model',
           ' esc close \u00b7 enter select',
         ].join('\n')
         return true
@@ -5968,7 +6149,7 @@ describe('AgentService deletion', () => {
         sessionId: client.session.sessionId,
         startTime: new Date(),
         modifiedTime: new Date(),
-        summary: 'Create T4 Engine Configuration',
+        summary: 'Create Staging Service Configuration',
         isRemote: false,
         context: { workingDirectory: directory },
       },
@@ -5992,17 +6173,17 @@ describe('AgentService deletion', () => {
           "toolName":"ask_user",
           "toolTitle":"Asking user",
           "arguments":{
-            "message":"The T4 engine is published and the replacement payload is prepared, but I have not submitted the Control Plane batch.",
+            "message":"The service release is published and the replacement payload is prepared, but I have not submitted the deployment batch.",
             "requestedSchema":{
               "properties":{
-                "deleteNimbusBootstrap":{
+                "deleteTemporaryBootstrap":{
                   "type":"boolean",
-                  "title":"Delete temporary Nimbus bootstrap",
+                  "title":"Delete temporary service bootstrap",
                   "default":true
                 },
                 "confirmReplacement":{
                   "type":"boolean",
-                  "title":"Authorize the T4 Control Plane replacement",
+                  "title":"Authorize the staging service replacement",
                   "default":false
                 }
               }
@@ -6018,7 +6199,7 @@ describe('AgentService deletion', () => {
         {
           id: client.session.sessionId,
           cwd: directory,
-          title: 'Create T4 Engine Configuration',
+          title: 'Create Staging Service Configuration',
           updatedAt: new Date().toISOString(),
         },
       ],
@@ -6035,11 +6216,11 @@ describe('AgentService deletion', () => {
       pendingUserInput: {
         requestId: 'persisted-user-input:ask-call',
         question:
-          'The T4 engine is published and the replacement payload is prepared, but I have not submitted the Control Plane batch.',
+          'The service release is published and the replacement payload is prepared, but I have not submitted the deployment batch.',
         form: {
           fields: [
             {
-              name: 'deleteNimbusBootstrap',
+              name: 'deleteTemporaryBootstrap',
               type: 'boolean',
               default: true,
             },
@@ -6088,7 +6269,7 @@ describe('AgentService deletion', () => {
                   "title":"Scope",
                   "oneOf":[
                     {"const":"arm_only","title":"ARM only"},
-                    {"const":"new_dev_model","title":"New dev model"}
+                    {"const":"new_dev_service","title":"New dev service"}
                   ]
                 },
                 "confirmDeployment":{"type":"boolean","title":"Confirm","default":false}
@@ -6105,7 +6286,7 @@ describe('AgentService deletion', () => {
         {
           id: client.session.sessionId,
           cwd: directory,
-          title: 'Deploy the engine',
+          title: 'Deploy the service',
           updatedAt: new Date().toISOString(),
         },
       ],
@@ -6120,8 +6301,8 @@ describe('AgentService deletion', () => {
     expect(service.store.get(sessionId)?.pendingUserInput).toBeDefined()
 
     const values = {
-      deploymentName: 'swec-gpt55-chat-cache-engine-treatment',
-      catalogScope: 'new_dev_model',
+      deploymentName: 'staging-web-service-candidate',
+      catalogScope: 'new_dev_service',
       confirmDeployment: true,
     }
     const answered = await service.replyUserInput(
@@ -6137,7 +6318,7 @@ describe('AgentService deletion', () => {
     expect(terminal.fillUserInputForm).toHaveBeenCalledWith(
       sessionId,
       [
-        { kind: 'text', value: 'swec-gpt55-chat-cache-engine-treatment' },
+        { kind: 'text', value: 'staging-web-service-candidate' },
         { kind: 'select', optionCount: 3, index: 1 },
         { kind: 'select', optionCount: 3, index: 0 },
       ],
@@ -6205,7 +6386,7 @@ describe('AgentService deletion', () => {
         {
           id: client.session.sessionId,
           cwd: directory,
-          title: 'Deploy the engine',
+          title: 'Deploy the service',
           updatedAt: new Date().toISOString(),
         },
       ],
@@ -6280,7 +6461,7 @@ describe('AgentService deletion', () => {
         {
           id: client.session.sessionId,
           cwd: directory,
-          title: 'Deploy the engine',
+          title: 'Deploy the service',
           updatedAt: new Date().toISOString(),
         },
       ],
@@ -6300,12 +6481,114 @@ describe('AgentService deletion', () => {
         wasFreeform: false,
         values,
       }),
-    ).rejects.toThrow('still showing its prompt')
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('still showing its prompt'),
+      statusCode: 409,
+    })
 
     // Typing now would land in the open form and submit every other field at
     // its default, which is the corruption this path exists to avoid.
     expect(terminal.send).not.toHaveBeenCalled()
     await service.stop()
+  })
+
+  it.each([
+    ['cancel', 'closed'],
+    ['decline', 'closed'],
+    ['cancel', 'mismatch'],
+    ['cancel', 'unconfirmed'],
+    ['cancel', 'already-complete'],
+  ] as const)('handles %s of a persisted terminal question when %s', async (action, outcome) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-question-cancel-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const events: SessionEvent[] = [{
+      type: 'tool.execution_start',
+      id: 'question-start',
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      data: {
+        toolCallId: 'question-call',
+        toolName: 'ask_user',
+        arguments: {
+          message: 'Confirm the repository setup.',
+          requestedSchema: {
+            properties: {
+              confirmed: { type: 'boolean', title: 'Confirmed', default: true },
+            },
+          },
+        },
+      },
+    }]
+    const complete = () => events.push({
+      type: 'tool.execution_complete',
+      id: 'question-end',
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      data: { toolCallId: 'question-call', success: true },
+    })
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      dismissUserInput: vi.fn(async () => {
+        if (outcome === 'closed') {
+          complete()
+        }
+        return outcome !== 'mismatch'
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'Question reproduction',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => events,
+      async () => `cancel-events-${events.length}`,
+      terminal,
+    )
+    await service.start()
+    try {
+      const sessionId = client.session.sessionId
+      const pending = service.getSession(sessionId)?.pendingUserInput
+      expect(pending).toBeDefined()
+      if (outcome === 'already-complete') {
+        complete()
+      }
+      const reply = service.replyUserInput(sessionId, 'persisted-user-input:question-call', {
+        action,
+        answer: '',
+        wasFreeform: false,
+      })
+      if (outcome === 'mismatch' || outcome === 'unconfirmed') {
+        await expect(reply).rejects.toMatchObject({
+          statusCode: 409,
+          message: expect.stringContaining('not dismissed'),
+        })
+        await service.refreshTranscripts()
+        expect(service.getSession(sessionId)?.pendingUserInput).toEqual(pending)
+        expect(service.getSession(sessionId)?.status).toBe('waiting')
+      } else {
+        expect((await reply).pendingUserInput).toBeUndefined()
+      }
+      if (outcome === 'already-complete') {
+        expect(terminal.dismissUserInput).not.toHaveBeenCalled()
+      } else {
+        expect(terminal.dismissUserInput).toHaveBeenCalledWith(sessionId, {
+          question: 'Confirm the repository setup.',
+          fields: ['Confirmed'],
+        }, action)
+      }
+      expect(terminal.send).not.toHaveBeenCalled()
+    } finally {
+      await service.stop()
+    }
   })
 
   it('drops a reply to a request the agent already finished', async () => {
@@ -6358,7 +6641,7 @@ describe('AgentService deletion', () => {
         {
           id: client.session.sessionId,
           cwd: directory,
-          title: 'Deploy the engine',
+          title: 'Deploy the service',
           updatedAt: new Date().toISOString(),
         },
       ],
@@ -6406,7 +6689,7 @@ describe('AgentService deletion', () => {
           required: false,
           options: [
             { value: 'arm_only', label: 'ARM only' },
-            { value: 'new_dev_model', label: 'New dev model' },
+            { value: 'new_dev_service', label: 'New dev service' },
           ],
         },
         { name: 'confirm', title: 'Confirm', type: 'boolean', required: false },
@@ -6415,7 +6698,7 @@ describe('AgentService deletion', () => {
     expect(
       terminalFormSteps(form, {
         name: 'swec',
-        scope: 'new_dev_model',
+        scope: 'new_dev_service',
         confirm: false,
       }),
     ).toEqual([
@@ -6633,6 +6916,71 @@ describe('AgentService deletion', () => {
     await service.refreshTranscripts()
     expect(service.store.get(sessionId)?.pendingUserInput).toBeUndefined()
     await service.stop()
+  })
+
+  it('surfaces session-use confirmation and sends only after an explicit resume', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-session-use-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let pane = [
+      'Session in use',
+      'This session appears to be in use by another CLI or application.',
+      '❯ 1. Resume anyway',
+      '  2. Go back (Esc)',
+      '↑/↓ to navigate · enter to select · esc to cancel',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+      pendingPermission: vi.fn(async () => parseTerminalPermission(pane)),
+      replyPermission: vi.fn(async () => {
+        pane = '╻▄▄▄▄▄▄▄▄\n┃\n╹▀▀▀▀▀▀▀▀\n / commands'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [{
+        id: client.session.sessionId,
+        cwd: directory,
+        title: 'Resumed session',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    try {
+      const sessionId = client.session.sessionId
+      const request = service.getSession(sessionId)?.pendingPermission
+      if (!request) throw new Error('Resume permission was not exposed')
+      expect(service.getSession(sessionId)?.status).toBe('waiting')
+      expect(request.options.map((option) => option.name)).toEqual([
+        'Resume anyway', 'Go back',
+      ])
+      await expect(service.sendMessage(sessionId, 'Continue')).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('Choose Resume anyway or Go back'),
+      })
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(terminal.replyPermission).not.toHaveBeenCalled()
+
+      const updated = await service.replyPermission(sessionId, request.requestId, 'terminal:allow')
+      expect(updated.pendingPermission).toBeUndefined()
+      expect(terminal.replyPermission).toHaveBeenCalledWith(
+        sessionId, request, 'terminal:allow',
+      )
+      await service.sendMessage(sessionId, 'Continue')
+      expect(terminal.send).toHaveBeenCalledWith(sessionId, 'Continue', false)
+    } finally {
+      await service.stop()
+    }
   })
 
   it('detects and answers terminal permission requests', async () => {

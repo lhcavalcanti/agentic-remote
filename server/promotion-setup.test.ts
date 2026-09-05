@@ -13,6 +13,10 @@ describe('reproducible promotion setup', () => {
     )
 
     expect(script).toContain('AGENTIC_REMOTE_MONITOR_PROFILE')
+    // A private remote authenticates through the GitHub CLI's credential
+    // helper, which is Git authentication and not hosted CI.
+    expect(script).toContain('AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR')
+    expect(script).not.toContain('gh run')
     expect(script).toContain('git -C "$DEV_ROOT" pull --ff-only')
     expect(script).toContain('running validation tests')
     // Validation belongs somewhere of its own: the development checkout can

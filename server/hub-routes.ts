@@ -240,8 +240,12 @@ export async function registerHubRoutes(
   const policy = originPolicy()
   app.addHook('onRequest', async (request, reply) => {
     const origin = request.headers.origin
+    // Routing decodes escaped segments; the wire spelling is not the API boundary.
+    const isApiRoute =
+      request.routeOptions.url?.startsWith('/api/') ||
+      request.url.startsWith('/api/')
     if (
-      request.url.startsWith('/api/') &&
+      isApiRoute &&
       (!hostAllowed(request.headers.host, policy) ||
         (origin && !originAllowed(origin, request.headers.host, policy)))
     ) {

@@ -171,6 +171,7 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import { applyAccentIcon } from './accent-icon'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
   collapseKnowledgeFolder,
@@ -7735,6 +7736,11 @@ function App() {
     } catch {
       // A blocked storage quota should not stop this tab from changing color.
     }
+  }, [accentTheme])
+
+  useEffect(() => {
+    const theme = accentThemes.find((entry) => entry.id === accentTheme)
+    return applyAccentIcon((theme ?? accentThemes[0]).color)
   }, [accentTheme])
 
   useEffect(() => {

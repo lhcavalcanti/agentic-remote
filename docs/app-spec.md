@@ -378,6 +378,13 @@ switches, failed sends, and clear replacement IDs.
   success.
 - Provider-specific capabilities MUST be derived from advertised runtime
   options rather than assuming Copilot and Claude have identical controls.
+- Model IDs, names, and capabilities MUST come from Copilot CLI or Claude
+  discovery, not an embedded model list. Documentation examples and test
+  fixtures MUST use neutral synthetic models rather than named offerings.
+- Opening Model and context or App settings MUST request a fresh catalog from
+  the owning providers, bypassing browser and SDK lifetime caches without
+  restarting sessions. Concurrent discovery requests MAY share one in-flight
+  request; a subsequent opening MUST trigger another discovery request.
 - A transient provider-authentication failure during startup MUST NOT leave the
   runtime model catalog permanently empty; model discovery MUST retry when
   runtime options are requested.
@@ -395,6 +402,8 @@ switches, failed sends, and clear replacement IDs.
   original Agentic green.
 - The selected accent MUST apply to primary actions, focus states, activity
   indicators, and other non-semantic accent treatments.
+- The browser-tab icon MUST track the selected accent immediately and after
+  reload, without changing other tabs or the shared installed-app icons.
 - Warning, error, computer-identity, and background-task colors MUST retain
   their semantic meaning.
 - The accent choice MUST be scoped to the current browser tab, persist across

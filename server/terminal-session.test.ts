@@ -510,7 +510,7 @@ Permission request (1 remaining)
       'Project workspace',
       true,
       {
-        model: 'gpt-boot',
+        model: 'fixture-boot',
         reasoningEffort: 'medium',
         contextTier: 'default',
         mode: 'plan',
@@ -530,16 +530,16 @@ Permission request (1 remaining)
         (await readFile(`/proc/${initialPanePid}/cmdline`, 'utf8'))
           .replaceAll('\0', ' ')
           .trim(),
-      (line) => line.includes('--model gpt-boot'),
+      (line) => line.includes('--model fixture-boot'),
     )
-    expect(initialCommandLine).toContain('--model gpt-boot')
+    expect(initialCommandLine).toContain('--model fixture-boot')
     expect(initialCommandLine).toContain('--effort medium')
     expect(initialCommandLine).toContain('--context default')
     expect(initialCommandLine).toContain('--mode plan')
     expect(await controller.rename(sessionId, 'Renamed project')).toBe(true)
     expect(
       await controller.configure(sessionId, directory, {
-        model: 'gpt-test',
+        model: 'fixture-test',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'autopilot',
@@ -580,13 +580,13 @@ Permission request (1 remaining)
       .replaceAll('\0', ' ')
       .trim()
     expect(commandLine).toContain('--yolo')
-    expect(commandLine).toContain('--model gpt-test')
+    expect(commandLine).toContain('--model fixture-test')
     expect(commandLine).toContain('--effort high')
     expect(commandLine).toContain('--context long_context')
     expect(commandLine).toContain('--mode autopilot')
     await expect(
       controller.configure(sessionId, path.join(directory, 'missing'), {
-        model: 'gpt-broken',
+        model: 'fixture-broken',
         reasoningEffort: 'low',
         contextTier: 'default',
         mode: 'interactive',
@@ -602,7 +602,7 @@ Permission request (1 remaining)
         replacementId,
         directory,
         {
-          model: 'gpt-test',
+          model: 'fixture-test',
           reasoningEffort: 'high',
           contextTier: 'long_context',
           mode: 'plan',
@@ -950,7 +950,7 @@ describe('paneShowsText', () => {
   })
 
   it('does not claim an empty prompt is showing the message', () => {
-    expect(paneShowsText('> \n', 'Deploy the treatment engine')).toBe(false)
+    expect(paneShowsText('> \n', 'Deploy the staging service')).toBe(false)
   })
 
   it('treats a message of only whitespace as already shown', () => {
@@ -982,7 +982,7 @@ describe('terminal update notice', () => {
       ' \u25cf Ready',
       composer,
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -1009,7 +1009,7 @@ describe('terminal update notice', () => {
       ' ~/src/project',
       composer,
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -1044,7 +1044,7 @@ describe('terminal update notice', () => {
       '\u2503 v9.9.9 available \u00b7 run /update',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -1067,7 +1067,7 @@ describe('terminal slash command output', () => {
     '┃',
     '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
     ' ← open sidebar · / commands · ? help · tab next tab',
-    ' GPT-5.6 Sol · High · 1.1M context (0%)',
+    ' Fixture Model · High · 1.1M context (0%)',
   ].join('\n')
 
   it('reports the response a command printed', () => {
@@ -1106,7 +1106,7 @@ describe('terminal slash command output', () => {
       '┃',
       '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
       ' Changes    +0 -0',
-      ' GPT-5.6 Sol · High · 1.1M context (0%)',
+      ' Fixture Model · High · 1.1M context (0%)',
     ].join('\n')
     const after = [
       ' ● Tip: /plugin',
@@ -1114,7 +1114,7 @@ describe('terminal slash command output', () => {
       '┃',
       '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
       ' Changes    +12 -3',
-      ' GPT-5.6 Sol · High · 1.1M context (7%)',
+      ' Fixture Model · High · 1.1M context (7%)',
     ].join('\n')
 
     expect(terminalCommandOutput(before, after, '/config')).toBeUndefined()
@@ -1211,7 +1211,7 @@ describe('terminal slash command output', () => {
       '\u2503',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u25c9 Working - autopilot \u00b7 132.7 KiB esc interrupt',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (18%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (18%)',
     ].join('\n')
 
     expect(isTerminalAgentWorking(working)).toBe(true)
@@ -1224,7 +1224,7 @@ describe('terminal slash command output', () => {
       '\u2503',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(isTerminalAgentWorking(idle)).toBe(false)

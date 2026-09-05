@@ -74,6 +74,10 @@ authentication to the hub or another node.
 - A failed node request marks that computer offline.
 - WebSocket connections retry with backoff.
 - Last-known remote session summaries remain visible while a node is offline.
+- Overlapping remote session reads share a snapshot and reconcile live events
+  received while it was loading. Replies from removed or replaced clients
+  cannot repopulate the cache, and reconnect task reads cannot overwrite newer
+  task events or explicit task reads.
 - Commands against an offline node fail explicitly; they are not queued.
 - The systemd user service restarts after failure and starts at boot when user
   lingering is enabled.

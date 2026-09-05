@@ -278,6 +278,7 @@ export async function getProviderRuntimeOptions(
 ): Promise<ProviderRuntimeOptions> {
   return request<ProviderRuntimeOptions>(
     `/api/computers/${encodeURIComponent(computerId)}/providers/${encodeURIComponent(provider)}/runtime`,
+    { cache: 'no-store' },
   )
 }
 
@@ -339,6 +340,7 @@ export async function getRuntimeOptions(
 ): Promise<RuntimeOptions> {
   return request<RuntimeOptions>(
     `${sessionPath(computerId, sessionId)}/runtime`,
+    { cache: 'no-store' },
   )
 }
 

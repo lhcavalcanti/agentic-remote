@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelBackgroundTask,
+  getProviderRuntimeOptions,
+  getRuntimeOptions,
   listBackgroundTasks,
   removeQueuedPrompt,
   sendMessage,
@@ -15,6 +17,25 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('requests fresh provider and session model catalogs without browser caching', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ models: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getProviderRuntimeOptions('computer', 'copilot')
+    await getRuntimeOptions('computer', 'session')
+
+    expect(fetchMock.mock.calls).toEqual([
+      [
+        '/api/computers/computer/providers/copilot/runtime',
+        expect.objectContaining({ cache: 'no-store' }),
+      ],
+      [
+        '/api/computers/computer/sessions/session/runtime',
+        expect.objectContaining({ cache: 'no-store' }),
+      ],
+    ])
+  })
+
   it('does not mark a bodyless queue DELETE as JSON', async () => {
     const fetchMock = vi.fn(async (_path: string, init?: RequestInit) => {
       expect(init?.method).toBe('DELETE')

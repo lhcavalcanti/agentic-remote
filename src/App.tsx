@@ -1164,7 +1164,9 @@ function NewSessionDialog({
     if (initialized.current) {
       return
     }
-    const initialComputerId = defaultComputerId || available[0]?.id || ''
+    const initialComputerId =
+      available.find((computer) => computer.id === defaultComputerId)?.id ||
+      available[0]?.id || ''
     // Opening before the first computer snapshot has landed leaves nothing to
     // choose. Marking the dialog filled in at that point stranded it: the
     // computers arrived, this returned at the guard above, and Create stayed
@@ -1200,18 +1202,16 @@ function NewSessionDialog({
     if (!open || !initialized.current) {
       return
     }
-    // Nothing chosen yet means the pass above has just chosen one and its
-    // state has not landed. Reconciling against the empty value it can still
-    // see here would replace the default computer with whichever happened to
-    // be first.
-    if (!computerId) {
-      return
-    }
     if (available.some((computer) => computer.id === computerId)) {
       return
     }
-    setComputerId(available[0]?.id || '')
-  }, [open, computerId, available])
+    const nextComputerId =
+      available.find((computer) => computer.id === defaultComputerId)?.id ||
+      available[0]?.id || ''
+    directoryRequest.current += 1
+    setComputerId(nextComputerId)
+    setHistoryKey('')
+  }, [open, computerId, available, defaultComputerId])
 
   useEffect(() => {
     if (!open || mode !== 'new' || !computerId) {
@@ -1350,7 +1350,11 @@ function NewSessionDialog({
         setCwd('')
       } else {
         const previous = history.find(
-          (session) => sessionKey(session) === historyKey,
+          (session) =>
+            sessionKey(session) === historyKey &&
+            session.computerId === computerId &&
+            available.some((computer) => computer.id === session.computerId) &&
+            !session.isOpen,
         )
         if (!previous) {
           throw new Error('Choose a previous session')
@@ -1592,7 +1596,9 @@ function NewSessionDialog({
             Boolean(defaultModel && runtimeLoading) ||
             Boolean(defaultModel && runtimeError) ||
             (mode === 'new' && !selectedProvider?.available) ||
-            (mode === 'new' ? !cwd.trim() : !historyKey)
+            (mode === 'new'
+              ? !cwd.trim()
+              : !previousSessions.some((session) => sessionKey(session) === historyKey))
           }
           type="submit"
         >
@@ -6207,6 +6213,7 @@ function App() {
   // Computers this browser has been told to forget. Held so an answer still
   // on its way can be discarded rather than restoring what was removed.
   const forgottenComputers = useRef(new Set<string>())
+  const knowledgeComputerLifetimes = useRef(new Map<string, number>())
   useEffect(() => {
     rootsRef.current = roots
   }, [roots])
@@ -7603,6 +7610,7 @@ function App() {
   }, [selectedKey])
 
   useEffect(() => {
+    const lifetimes = new Map(knowledgeComputerLifetimes.current)
     void listKnowledgeRoots()
       .then(async (loaded) => {
         // This answer was asked for before any computer could be unpaired,
@@ -7610,7 +7618,10 @@ function App() {
         // it as it stands would put back the roots of a computer forgotten
         // while it was on its way.
         const live = loaded.filter(
-          (entry) => !forgottenComputers.current.has(entry.computerId),
+          (entry) =>
+            !forgottenComputers.current.has(entry.computerId) &&
+            (lifetimes.get(entry.computerId) || 0) ===
+              (knowledgeComputerLifetimes.current.get(entry.computerId) || 0),
         )
         setRoots(live)
         // Only the root is reopened here. Where a session was reading belongs
@@ -7883,8 +7894,7 @@ function App() {
         // without it a deep link to its ancestor has no way through.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(reconciled)
-        rememberComputers(loadedComputers)
-        setComputers(loadedComputers)
+        applyComputerSnapshot(loadedComputers, startedAtSequence)
         // A live removal can arrive before this list does, so the address may
         // name a session that has already been replaced, possibly more than
         // once. Falling through to `sessions[0]` would open something the
@@ -8153,14 +8163,6 @@ function App() {
           (computerEventSequenceRef.current.get(session.computerId) || 0) <=
             startedAtSequence,
       )
-      const snapshotComputers = loadedComputers.filter(
-        (computer) =>
-          (computerRecordSequenceRef.current.get(computer.id) || 0) <=
-          startedAtSequence &&
-          (computerEventSequenceRef.current.get(computer.id) || 0) <=
-          startedAtSequence,
-      )
-      rememberComputers(snapshotComputers)
       const answeredFor = new Set(listing.answeredComputerIds)
       if (!claim.whole) {
         // Only the computers this answer reached that the newer one did not.
@@ -8282,43 +8284,7 @@ function App() {
       // first. Selection is only set when nothing has been chosen yet, so
       // this never moves a reader who is already somewhere.
       applyInitialSelection(reconciledForClaim, answeredFor)
-      // A reconnect may be the first notice of an unpairing. The complete
-      // computer list owns that absence, unless a newer event superseded it.
-      const listedComputerIds = new Set(loadedComputers.map((computer) => computer.id))
-      const knownComputerIds = new Set([
-        ...computersRef.current.map((computer) => computer.id),
-        ...rootsRef.current.map((root) => root.computerId),
-      ])
-      for (const id of knownComputerIds) {
-        const changedAt = Math.max(
-          computerEventSequenceRef.current.get(id) || 0,
-          computerRecordSequenceRef.current.get(id) || 0,
-        )
-        if (
-          !listedComputerIds.has(id) && changedAt <= startedAtSequence &&
-          !forgottenComputers.current.has(id)
-        ) {
-          forgetComputerKnowledge(id)
-        }
-      }
-      setComputers((current) => {
-        let reconciled = snapshotComputers
-        for (const existing of current) {
-          // Both watermarks: a removal speaks for the computer's sessions, an
-          // ordinary update speaks only for the record. Reading one when
-          // filtering and the other when preserving dropped a computer that
-          // was merely updated while the refresh was in flight, taking its
-          // whole session group with it.
-          const changedAt = Math.max(
-            computerEventSequenceRef.current.get(existing.id) || 0,
-            computerRecordSequenceRef.current.get(existing.id) || 0,
-          )
-          if (changedAt > startedAtSequence) {
-            reconciled = upsertComputer(reconciled, existing)
-          }
-        }
-        return reconciled
-      })
+      applyComputerSnapshot(loadedComputers, startedAtSequence)
       // A session that changed while the refresh was in flight is described
       // more recently by the event than by the snapshot, exactly as the two
       // reconciliations above assume. A clear moves the mute to a replacement
@@ -8509,7 +8475,8 @@ function App() {
             event.computer.id,
             eventSequenceRef.current,
           )
-          setComputers((current) => upsertComputer(current, event.computer))
+          computersRef.current = upsertComputer(computersRef.current, event.computer)
+          setComputers(computersRef.current)
         } else if (event.type === 'computer.removed') {
           eventSequenceRef.current += 1
           computerEventSequenceRef.current.set(
@@ -8527,9 +8494,10 @@ function App() {
               unshownFailures.current.delete(key)
             }
           }
-          setComputers((current) =>
-            current.filter((computer) => computer.id !== event.computerId),
+          computersRef.current = computersRef.current.filter(
+            (computer) => computer.id !== event.computerId,
           )
+          setComputers(computersRef.current)
           // A root names a folder on a computer. The hub drops the roots of a
           // computer that has been unpaired, so a tab still listing one would
           // offer a document it can no longer fetch.
@@ -9725,12 +9693,16 @@ function App() {
   }
 
   async function createRoot(computerId: string, path: string) {
+    const lifetime = knowledgeComputerLifetimes.current.get(computerId) || 0
     const root = await addKnowledgeRoot({ computerId, path })
     // Adding a root is a round trip, and the computer can be unpaired while
     // it is in flight. The hub drops the root in that case, so accepting this
     // answer would put back something that no longer exists.
-    if (forgottenComputers.current.has(computerId)) {
-      return
+    if (
+      forgottenComputers.current.has(computerId) ||
+      lifetime !== (knowledgeComputerLifetimes.current.get(computerId) || 0)
+    ) {
+      throw new Error('The computer pairing changed while adding this folder. Choose the computer again.')
     }
     setRoots((current) =>
       current.some((entry) => entry.id === root.id)
@@ -9741,21 +9713,42 @@ function App() {
     await selectRoot(root.id)
   }
 
-  /**
-   * A computer named by an authoritative list is paired again, whatever the
-   * socket did or did not say. Without this the mark left by removing it
-   * outlives the computer and goes on discarding its answers.
-   *
-   * Deliberately not driven by `computer.updated`. A client that is being
-   * torn down can still emit one after its computer has gone, and clearing
-   * the mark on that would let the answers it was set to discard through.
-   * Pairing again, and the lists the hub answers with, are the things that
-   * say a computer is really there.
-   */
-  function rememberComputers(present: readonly { id: string }[]) {
-    for (const computer of present) {
+  function applyComputerSnapshot(
+    loaded: ComputerSummary[],
+    startedAtSequence: number,
+  ) {
+    const changedAt = (id: string) => Math.max(
+      computerEventSequenceRef.current.get(id) || 0,
+      computerRecordSequenceRef.current.get(id) || 0,
+    )
+    const accepted = loaded.filter((computer) =>
+      changedAt(computer.id) <= startedAtSequence,
+    )
+    for (const computer of accepted) {
       forgottenComputers.current.delete(computer.id)
     }
+    const listedIds = new Set(loaded.map((computer) => computer.id))
+    const knownIds = new Set([
+      ...computersRef.current.map((computer) => computer.id),
+      ...rootsRef.current.map((root) => root.computerId),
+    ])
+    for (const id of knownIds) {
+      if (
+        !listedIds.has(id) &&
+        changedAt(id) <= startedAtSequence &&
+        !forgottenComputers.current.has(id)
+      ) {
+        forgetComputerKnowledge(id)
+      }
+    }
+    let reconciled = accepted
+    for (const computer of computersRef.current) {
+      if (changedAt(computer.id) > startedAtSequence) {
+        reconciled = upsertComputer(reconciled, computer)
+      }
+    }
+    computersRef.current = reconciled
+    setComputers(reconciled)
   }
 
   /**
@@ -9769,6 +9762,10 @@ function App() {
    */
   function forgetComputerKnowledge(computerId: string) {
     forgottenComputers.current.add(computerId)
+    knowledgeComputerLifetimes.current.set(
+      computerId,
+      (knowledgeComputerLifetimes.current.get(computerId) || 0) + 1,
+    )
     knowledgeRequest.current += 1
     // The invalidation above is deliberately blunt, and a read already in
     // flight clears the spinner only when its own generation is still
@@ -11859,13 +11856,23 @@ function App() {
           // one that says so. Without this the mark set when it was removed
           // would outlive it and go on discarding its answers.
           forgottenComputers.current.delete(computer.id)
-          setComputers((current) => upsertComputer(current, computer))
+          knowledgeComputerLifetimes.current.set(
+            computer.id,
+            (knowledgeComputerLifetimes.current.get(computer.id) || 0) + 1,
+          )
+          eventSequenceRef.current += 1
+          computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
+          computersRef.current = upsertComputer(computersRef.current, computer)
+          setComputers(computersRef.current)
         }}
         onClose={() => setComputersOpen(false)}
         onRemoved={(computerId) => {
-          setComputers((current) =>
-            current.filter((computer) => computer.id !== computerId),
+          eventSequenceRef.current += 1
+          computerEventSequenceRef.current.set(computerId, eventSequenceRef.current)
+          computersRef.current = computersRef.current.filter(
+            (computer) => computer.id !== computerId,
           )
+          setComputers(computersRef.current)
           forgetComputerKnowledge(computerId)
           setSessions((current) =>
             current.filter((session) => session.computerId !== computerId),

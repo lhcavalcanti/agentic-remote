@@ -280,6 +280,7 @@ export async function registerHubRoutes(
     if (!computer) {
       return reply.code(404).send({ error: 'Computer is not registered' })
     }
+    const registrationIsCurrent = manager.captureComputerRegistration(input.computerId)
     // Browse the folder first so an unreachable or refused root is reported
     // before it is stored, and so the owning computer resolves it.
     let listing
@@ -294,6 +295,11 @@ export async function registerHubRoutes(
         })
       }
       throw error
+    }
+    if (!registrationIsCurrent()) {
+      return reply.code(409).send({
+        error: 'Computer pairing changed while validating this folder. Choose the computer again.',
+      })
     }
     const root = await knowledge.addRoot({
       computerId: input.computerId,

@@ -233,6 +233,15 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : this.requireClient(computerId).listKnowledge(root, path)
   }
 
+  captureComputerRegistration(computerId: string): () => boolean {
+    this.requireComputer(computerId)
+    if (computerId === this.identity.info.id) {
+      return () => true
+    }
+    const client = this.requireClient(computerId)
+    return () => this.clients.get(computerId) === client
+  }
+
   async readKnowledgeFile(
     computerId: string,
     root: string,

@@ -2899,6 +2899,216 @@ describe('App', () => {
     expect(screen.queryByRole('heading', { name: 'Remote guide' })).not.toBeInTheDocument()
   })
 
+  it('does not let the initial computer snapshot revive removed Knowledge', async () => {
+    let finishComputers!: (value: ComputerSummary[]) => void
+    let finishRoots!: (value: Awaited<ReturnType<typeof listKnowledgeRoots>>) => void
+    vi.mocked(listComputers).mockReturnValue(new Promise((resolve) => {
+      finishComputers = resolve
+    }))
+    vi.mocked(listKnowledgeRoots).mockReturnValue(new Promise((resolve) => {
+      finishRoots = resolve
+    }))
+    render(<App />)
+    await waitFor(() => expect(MockWebSocket.instances[0]?.onmessage).toBeTruthy())
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+      } as MessageEvent)
+    })
+    await act(async () => { finishComputers([computer, secondComputer]) })
+    await screen.findAllByText('Project chat')
+    await act(async () => {
+      finishRoots([{
+        id: 'removed-root', computerId: secondComputer.id,
+        computerName: secondComputer.name, path: '/home/tester/docs',
+        name: 'Removed worker docs', createdAt: '2026-09-05T00:00:00.000Z',
+      }])
+    })
+    expect(screen.queryByText('Removed worker docs')).not.toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    expect(within(screen.getByLabelText('Computer')).queryByRole('option', {
+      name: secondComputer.name,
+    })).not.toBeInTheDocument()
+  })
+
+  it('preserves newer computer records over the initial snapshot', async () => {
+    let finishComputers!: (value: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValue(new Promise((resolve) => {
+      finishComputers = resolve
+    }))
+    render(<App />)
+    await waitFor(() => expect(MockWebSocket.instances[0]?.onmessage).toBeTruthy())
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'computer.updated',
+          computer: { ...secondComputer, name: 'Current worker name' },
+        }),
+      } as MessageEvent)
+    })
+    await act(async () => { finishComputers([computer, secondComputer]) })
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    expect(within(screen.getByLabelText('Computer')).getByRole('option', {
+      name: 'Current worker name',
+    })).toBeInTheDocument()
+    expect(within(screen.getByLabelText('Computer')).queryByRole('option', {
+      name: secondComputer.name,
+    })).not.toBeInTheDocument()
+  })
+
+  it('does not revive old Knowledge after the same computer is paired again', async () => {
+    let finishRoots!: (value: Awaited<ReturnType<typeof listKnowledgeRoots>>) => void
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockReturnValue(new Promise((resolve) => {
+      finishRoots = resolve
+    }))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+      } as MessageEvent)
+    })
+    await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(listComputers).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      finishRoots([{
+        id: 'old-pairing-root', computerId: secondComputer.id,
+        computerName: secondComputer.name, path: '/home/tester/docs',
+        name: 'Old pairing docs', createdAt: '2026-09-05T00:00:00.000Z',
+      }])
+    })
+    expect(screen.queryByText('Old pairing docs')).not.toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    expect(within(screen.getByLabelText('Computer')).getByRole('option', {
+      name: secondComputer.name,
+    })).toBeInTheDocument()
+  })
+
+  it('ignores an older partial computer list after a newer removal snapshot', async () => {
+    let finishOlderComputers!: (value: ComputerSummary[]) => void
+    let finishRoots!: (value: Awaited<ReturnType<typeof listKnowledgeRoots>>) => void
+    vi.mocked(listComputers)
+      .mockResolvedValueOnce([computer, secondComputer])
+      .mockReturnValueOnce(new Promise((resolve) => { finishOlderComputers = resolve }))
+      .mockResolvedValue([computer])
+    vi.mocked(listSessionListing)
+      .mockResolvedValueOnce({ sessions: [session], answeredComputerIds: [computer.id, secondComputer.id] })
+      .mockResolvedValueOnce({ sessions: [session], answeredComputerIds: [secondComputer.id] })
+      .mockResolvedValue({ sessions: [session], answeredComputerIds: [computer.id] })
+    vi.mocked(listKnowledgeRoots).mockReturnValue(new Promise((resolve) => {
+      finishRoots = resolve
+    }))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    act(() => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(listComputers).toHaveBeenCalledTimes(2))
+    await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(listComputers).toHaveBeenCalledTimes(3))
+    await act(async () => { finishOlderComputers([computer, secondComputer]) })
+    await act(async () => {
+      finishRoots([{
+        id: 'old-snapshot-root', computerId: secondComputer.id,
+        computerName: secondComputer.name, path: '/home/tester/docs',
+        name: 'Old snapshot docs', createdAt: '2026-09-05T00:00:00.000Z',
+      }])
+    })
+    expect(screen.queryByText('Old snapshot docs')).not.toBeInTheDocument()
+  })
+
+  it('rejects a root creation response from an earlier pairing lifetime', async () => {
+    let finishRoot!: (value: Awaited<ReturnType<typeof addKnowledgeRoot>>) => void
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(addKnowledgeRoot).mockReturnValue(new Promise((resolve) => {
+      finishRoot = resolve
+    }))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add knowledge root' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+    fireEvent.change(within(dialog).getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    const add = within(dialog).getByRole('button', { name: 'Add this folder' })
+    await waitFor(() => expect(add).toBeEnabled())
+    fireEvent.click(add)
+    await waitFor(() => expect(addKnowledgeRoot).toHaveBeenCalledOnce())
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+      } as MessageEvent)
+    })
+    await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(listComputers).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      finishRoot({
+        id: 'stale-created-root', computerId: secondComputer.id,
+        computerName: secondComputer.name, path: '/home/tester/docs',
+        name: 'Stale created docs', createdAt: '2026-09-05T00:00:00.000Z',
+      })
+    })
+    expect(await screen.findByText(/pairing changed while adding this folder/)).toBeInTheDocument()
+    expect(screen.queryByText('Stale created docs')).not.toBeInTheDocument()
+    expect(dialog).toBeInTheDocument()
+  })
+
+  it('recovers an empty computer selection without reopening the session dialog', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    await waitFor(() => expect(screen.getByLabelText('Computer')).toHaveValue(computer.id))
+    fireEvent.change(screen.getByLabelText('Agent provider'), { target: { value: 'claude' } })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, online: false } }),
+      } as MessageEvent)
+    })
+    await waitFor(() => expect(screen.getByLabelText('Computer')).toHaveProperty('value', ''))
+    expect(screen.getByRole('button', { name: 'Create session' })).toBeDisabled()
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer }),
+      } as MessageEvent)
+    })
+    await waitFor(() => expect(screen.getByLabelText('Computer')).toHaveValue(computer.id))
+    expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
+    expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled()
+  })
+
+  it('requires a new historical selection when the chosen computer disappears', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listHistory).mockResolvedValue([
+      historicalSession,
+      { ...historicalSession, computerId: secondComputer.id, computerName: secondComputer.name },
+    ])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+    fireEvent.click(screen.getByRole('tab', { name: 'Open previous' }))
+    await waitFor(() => expect(screen.getByLabelText('Previous session')).toBeEnabled())
+    fireEvent.change(screen.getByLabelText('Previous session'), {
+      target: { value: `${computer.id}:${historicalSession.id}` },
+    })
+    expect(screen.getByRole('button', { name: 'Open session' })).toBeEnabled()
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, online: false } }),
+      } as MessageEvent)
+    })
+    await waitFor(() => expect(screen.getByLabelText('Computer')).toHaveValue(secondComputer.id))
+    expect(screen.getByLabelText('Previous session')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Open session' })).toBeDisabled()
+    expect(activateSession).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Previous session'), {
+      target: { value: `${secondComputer.id}:${historicalSession.id}` },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Open session' }))
+    await waitFor(() => expect(activateSession).toHaveBeenCalledWith(secondComputer.id, historicalSession.id))
+  })
+
   it('takes the focus it claims and gives it back on Escape', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

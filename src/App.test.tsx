@@ -2761,6 +2761,35 @@ describe('App', () => {
     expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
   })
 
+  it('opens with the computer the reader is already on', async () => {
+    const remote: ComputerSummary = {
+      ...computer,
+      id: 'computer-2',
+      name: 'worker-node',
+      isLocal: false,
+    }
+    const remoteSession: ManagedSession = {
+      ...session,
+      id: 'session-remote',
+      computerId: remote.id,
+      computerName: remote.name,
+      title: 'Worker chat',
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockResolvedValue(remoteSession)
+    render(<App />)
+    fireEvent.click((await screen.findAllByText('Worker chat'))[0])
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+
+    // The default is the computer being worked on, not whichever happens to
+    // be first in the list.
+    await waitFor(() =>
+      expect(screen.getByLabelText('Computer')).toHaveValue(remote.id),
+    )
+  })
+
   it('leaves the focus in the field a dialog opened for', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

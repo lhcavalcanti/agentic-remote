@@ -1053,6 +1053,16 @@ function DialogFrame({
       const first = reachable[0]
       const last = reachable[reachable.length - 1]
       const active = document.activeElement
+      // The control that had the focus can be removed or disabled while the
+      // dialog is open -- a button that stops applying, a field that goes
+      // away with the mode it belonged to. The focus falls to the body, and
+      // Tab from there walks the page behind a dialog that says it is out of
+      // reach, so it is brought back in.
+      if (!(active instanceof HTMLElement && dialog.current.contains(active))) {
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+        return
+      }
       if (event.shiftKey && (active === first || active === dialog.current)) {
         event.preventDefault()
         last.focus()
@@ -1190,7 +1200,14 @@ function NewSessionDialog({
     if (!open || !initialized.current) {
       return
     }
-    if (computerId && available.some((computer) => computer.id === computerId)) {
+    // Nothing chosen yet means the pass above has just chosen one and its
+    // state has not landed. Reconciling against the empty value it can still
+    // see here would replace the default computer with whichever happened to
+    // be first.
+    if (!computerId) {
+      return
+    }
+    if (available.some((computer) => computer.id === computerId)) {
       return
     }
     setComputerId(available[0]?.id || '')
@@ -8473,8 +8490,6 @@ function App() {
             event.computer.id,
             eventSequenceRef.current,
           )
-          // Paired again, so answers about it are wanted again.
-          forgottenComputers.current.delete(event.computer.id)
           setComputers((current) => upsertComputer(current, event.computer))
         } else if (event.type === 'computer.removed') {
           eventSequenceRef.current += 1
@@ -9711,6 +9726,12 @@ function App() {
    * A computer named by an authoritative list is paired again, whatever the
    * socket did or did not say. Without this the mark left by removing it
    * outlives the computer and goes on discarding its answers.
+   *
+   * Deliberately not driven by `computer.updated`. A client that is being
+   * torn down can still emit one after its computer has gone, and clearing
+   * the mark on that would let the answers it was set to discard through.
+   * Pairing again, and the lists the hub answers with, are the things that
+   * say a computer is really there.
    */
   function rememberComputers(present: readonly { id: string }[]) {
     for (const computer of present) {

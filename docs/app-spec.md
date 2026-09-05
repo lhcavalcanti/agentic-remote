@@ -209,6 +209,16 @@ Questions and permissions are the highest-priority UI state.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
   Such input MUST be left untouched with an actionable conflict, not cleared,
   duplicated, or submitted automatically.
+- A working terminal composer MUST accept native queued messages and slash
+  commands whose catalog explicitly allows execution during a turn. Other
+  immediate messages MUST wait. These delivery modes MUST still reject
+  startup screens, dialogs, non-composer frames, and existing drafts.
+- Losing a paste acknowledgement MUST report uncertain delivery rather than
+  authorize an automatic retry. Readiness MUST be checked again after owner
+  validation and before the paste.
+- Form identity MUST preserve word boundaries. Terminal form reads MUST use
+  tmux's joined soft-wrap capture instead of guessing whether a line break
+  separated words or split an identifier.
 
 - Full-screen send protection MUST recognize active terminal dialogs, including
   single-field questions, without treating keyboard hints quoted in transcript

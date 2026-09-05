@@ -98,24 +98,74 @@ assert_clean() {
 }
 
 rollback_runtime() {
-  local restore_commit="$1" restore_release="$2" link
+  local restore_commit="$1" restore_release="$2" link source_restored=0 attempt
   log "rolling back the production runtime to $restore_commit"
-  git -C "$PROD_ROOT" switch --detach "$restore_commit" ||
+  if ! git -C "$PROD_ROOT" switch --detach "$restore_commit"; then
     log "WARNING: could not restore $PROD_ROOT to $restore_commit"
-  if [[ -n "$restore_release" && -d "$restore_release" ]]; then
+    source_restored=1
+  fi
+  if [[ -n "$restore_release" && -d "$restore_release" &&
+    ! -e "$restore_release/.promotion-failed" ]]; then
     link="$RELEASE_ROOT/.current-rollback-$$"
-    rm -f -- "$link"
-    if ln -s "$restore_release" "$link" && mv -Tf "$link" "$RELEASE_ROOT/current"; then
+    if rm -f -- "$link" &&
+      ln -s "$restore_release" "$link" &&
+      mv -Tf "$link" "$RELEASE_ROOT/current" &&
+      [[ "$(readlink -f -- "$RELEASE_ROOT/current")" == "$restore_release" ]]; then
       log "restored release $(basename "$restore_release")"
     else
-      rm -f -- "$link"
+      rm -f -- "$link" || true
       log "WARNING: could not restore the previous release pointer"
+      return 1
     fi
   else
-    log "WARNING: no previous release to restore"
+    log "WARNING: no previous healthy release to restore"
+    return 1
   fi
-  systemctl --user restart "$SERVICE_NAME" ||
+  if ! systemctl --user restart "$SERVICE_NAME"; then
     log "WARNING: could not restart $SERVICE_NAME"
+    return 1
+  fi
+  for attempt in $(seq 1 "$READY_ATTEMPTS"); do
+    if systemctl --user is-active --quiet "$SERVICE_NAME" &&
+      curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
+      return "$source_restored"
+    fi
+    sleep "$READY_INTERVAL"
+  done
+  log "WARNING: the restored runtime did not pass its health check"
+  return 1
+}
+
+remove_failed_release() {
+  local failed_release="$1" restore_release="$2"
+  # Recheck both paths after restarting: never remove a release that is still
+  # current, or a replacement symlink that no longer names the failed candidate.
+  if [[ "$failed_release" != "$restore_release" &&
+    -d "$restore_release" &&
+    "$(readlink -f -- "$RELEASE_ROOT/current")" == "$restore_release" &&
+    -d "$failed_release" && ! -L "$failed_release" &&
+    "$(readlink -f -- "$failed_release")" == "$failed_release" ]] &&
+    rm -rf -- "$failed_release"; then
+    log "removed rejected release $(basename "$failed_release")"
+    return 0
+  fi
+  log "WARNING: could not safely remove rejected release $failed_release"
+  return 1
+}
+
+quarantine_failed_release() {
+  local failed_release="$1" restore_release="$2" quarantine_root target
+  [[ "$failed_release" != "$restore_release" &&
+    "$(readlink -f -- "$RELEASE_ROOT/current")" == "$restore_release" &&
+    -d "$failed_release" && ! -L "$failed_release" &&
+    "$(readlink -f -- "$failed_release")" == "$failed_release" ]] || return 1
+  quarantine_root="$(resolve_path "$RELEASE_ROOT").rejected"
+  [[ ! -L "$quarantine_root" ]] || return 1
+  mkdir -p -- "$quarantine_root" || return 1
+  target="$quarantine_root/$(basename -- "$failed_release")"
+  [[ ! -e "$target" && ! -L "$target" ]] || return 1
+  mv -T -- "$failed_release" "$target" || return 1
+  log "quarantined rejected release at $target"
 }
 
 # Second promotion phase. Values reach a remote bash through printf %q so a
@@ -637,10 +687,23 @@ run() {
     die "production runtime checkout changed to a branch during validation"
 
   log "graduating $candidate_commit to the production runtime source"
-  local previous_release=""
+  local previous_release="" existing_releases="" release_root publication_id
+  release_root="$(resolve_path "$RELEASE_ROOT")"
+  [[ "$release_root" == "$(resolve_path "$USER_HOME/.config/agentic-remote/releases")" ]] ||
+    die "the release root must match the application CLI release directory"
+  publication_id="$(date -u +%Y%m%dT%H%M%SZ)-${candidate_commit:0:12}-$$-${RANDOM}"
+  local candidate_release="$release_root/$publication_id"
+  [[ ! -e "$candidate_release" && ! -L "$candidate_release" ]] ||
+    die "the candidate release path already exists"
+  if [[ -d "$RELEASE_ROOT" ]]; then
+    existing_releases="$(find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')" ||
+      die "could not read the release inventory before graduation"
+  fi
   if [[ -L "$RELEASE_ROOT/current" ]]; then
     previous_release="$(readlink -f -- "$RELEASE_ROOT/current" || true)"
   fi
+  [[ -z "$previous_release" || ! -e "$previous_release/.promotion-failed" ]] ||
+    die "the current release was rejected; restore a healthy release before retrying promotion"
   # Publishing prunes by directory mtime. Keep the known-good rollback target
   # newer than older failed candidates so setup cannot delete it before health
   # validation decides whether the new release is safe.
@@ -661,6 +724,7 @@ run() {
   [[ -z "$PRODUCTION_PORT" ]] || setup_arguments+=(--port "$PRODUCTION_PORT")
   [[ -z "$PRODUCTION_ROLE" ]] || setup_arguments+=(--role "$PRODUCTION_ROLE")
   [[ -z "$PRODUCTION_NAME" ]] || setup_arguments+=(--name "$PRODUCTION_NAME")
+  setup_arguments+=(--release-id "$publication_id")
 
   # Everything below has already replaced the running service, so each failure
   # must restore the previous commit and release instead of leaving the failed
@@ -673,6 +737,18 @@ run() {
     "${setup_environment[@]}" \
     "$PROD_ROOT/bin/agentic-remote" setup "${setup_arguments[@]}" ||
     failure="setup failed for $candidate_commit"
+
+  if [[ -z "$failure" ]]; then
+    local installed_commit installed_branch installed_changes
+    if ! installed_commit="$(git -C "$PROD_ROOT" rev-parse HEAD)" ||
+      ! installed_branch="$(git -C "$PROD_ROOT" branch --show-current)" ||
+      ! installed_changes="$(git -C "$PROD_ROOT" status --porcelain)"; then
+      failure="production runtime source could not be read after setup"
+    elif [[ "$installed_commit" != "$candidate_commit" ||
+      -n "$installed_branch" || -n "$installed_changes" ]]; then
+      failure="production runtime source changed during setup"
+    fi
+  fi
 
   if [[ -z "$failure" ]]; then
     local attempt healthy=0
@@ -688,8 +764,10 @@ run() {
       failure="production runtime health check failed after graduation"
   fi
 
-  if [[ -z "$failure" && ! -L "$RELEASE_ROOT/current" ]]; then
-    failure="production release pointer is missing: $RELEASE_ROOT/current"
+  if [[ -z "$failure" ]] &&
+    { [[ ! -L "$RELEASE_ROOT/current" ]] ||
+      [[ "$(readlink -f -- "$RELEASE_ROOT/current")" != "$candidate_release" ]]; }; then
+    failure="production release pointer does not identify this candidate"
   fi
 
   if [[ -z "$failure" && -n "$EXTERNAL_URL" ]]; then
@@ -710,8 +788,33 @@ run() {
 
   if [[ -n "$failure" ]]; then
     log "ERROR: $failure"
-    rollback_runtime "$prod_commit" "$previous_release"
-    die "graduation failed and the previous runtime was restored"
+    local failed_release=""
+    if [[ -n "$candidate_release" &&
+      "$candidate_release" != "$previous_release" &&
+      "$(dirname -- "$candidate_release")" == "$release_root" &&
+      -d "$candidate_release" && ! -L "$candidate_release" ]] &&
+      ! grep -Fxq -- "$(basename "$candidate_release")" <<<"$existing_releases"; then
+      failed_release="$candidate_release"
+      # A rollback failure must not make this candidate eligible for a later
+      # ordinary rollback. Keep this marker if restoration or removal fails.
+      printf '%s\n' "$candidate_commit" >"$failed_release/.promotion-failed" ||
+        log "WARNING: could not mark rejected release $failed_release"
+    fi
+    if rollback_runtime "$prod_commit" "$previous_release"; then
+      if [[ -n "$failed_release" ]] &&
+        ! remove_failed_release "$failed_release" "$previous_release"; then
+        if ! quarantine_failed_release "$failed_release" "$previous_release"; then
+          die "graduation failed; the previous runtime was restored but the rejected release was retained"
+        fi
+      fi
+      die "graduation failed and the previous runtime was restored"
+    fi
+    if [[ -n "$failed_release" ]] &&
+      [[ "$(readlink -f -- "$RELEASE_ROOT/current")" == "$previous_release" ]]; then
+      quarantine_failed_release "$failed_release" "$previous_release" ||
+        log "WARNING: could not quarantine the inactive rejected release"
+    fi
+    die "graduation failed; could not fully restore the previous runtime; the rejected release was retained"
   fi
 
   # Downstream hosts are promoted before the success marker advances, so a
@@ -729,6 +832,8 @@ run() {
     printf 'tested_commit=%s\n' "$candidate_commit"
     printf 'promoted_commit=%s\n' "$candidate_commit"
     printf 'previous_runtime_commit=%s\n' "$prod_commit"
+    printf 'promoted_release=%s\n' "$candidate_release"
+    printf 'previous_release=%s\n' "$previous_release"
     printf 'promoted_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } >"$temporary_record"
   chmod 0600 "$temporary_record"

@@ -4185,12 +4185,14 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       '/allow-all on',
       false,
+      { allowDuringAgentExecution: true },
     )
     expect(terminal.send).toHaveBeenNthCalledWith(
       3,
       client.session.sessionId,
       '/usage',
       false,
+      { allowDuringAgentExecution: true },
     )
     expect(sent).toMatchObject({
       activity: 'Sent to terminal',
@@ -5259,7 +5261,20 @@ describe('AgentService deletion', () => {
     )
 
     expect(terminal.capture).not.toHaveBeenCalled()
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      '/usage',
+      false,
+      { allowDuringAgentExecution: true },
+    )
     expect(result.messages.at(-1)?.content).toBe('/usage')
+    await expect(
+      service.executeCommand(client.session.sessionId, '/model fixture-model'),
+    ).rejects.toThrow('must be queued')
+    await expect(
+      service.executeCommand(client.session.sessionId, '/unlisted-command'),
+    ).rejects.toThrow('must be queued')
+    expect(terminal.send).toHaveBeenCalledTimes(1)
     await service.stop()
   })
 
@@ -5621,6 +5636,7 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       '/usage',
       false,
+      { allowDuringAgentExecution: true },
     )
     await service.stop()
   })

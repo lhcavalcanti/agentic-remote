@@ -4243,6 +4243,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         canonicalCommand,
         nativeEnqueue,
+        ...(commandInfo?.allowDuringAgentExecution
+          ? [{ allowDuringAgentExecution: true }]
+          : []),
       )
     ) {
       const feedback = await this.terminalCommandFeedback(

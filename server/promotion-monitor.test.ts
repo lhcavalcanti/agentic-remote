@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 const run = promisify(execFile)
 const MONITOR = new URL('../bin/agentic-remote-promotion-monitor', import.meta.url)
   .pathname
+const AGENTIC_REMOTE = new URL('../bin/agentic-remote', import.meta.url).pathname
 
 const fixtures: string[] = []
 
@@ -57,7 +58,7 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
   const origin = path.join(root, 'origin.git')
   const dev = path.join(root, 'dev')
   const runtime = path.join(root, 'runtime')
-  const releases = path.join(root, 'releases')
+  const releases = path.join(root, '.config', 'agentic-remote', 'releases')
   const bin = path.join(root, 'bin')
   const state = path.join(root, 'state')
   const callLog = path.join(root, 'calls.log')
@@ -83,11 +84,18 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       'printf \'%s\\n\' "agentic-remote $*" >>"$CALL_LOG"',
       'if [[ "${REQUIRE_COPILOT:-0}" == 1 ]]; then copilot_path="$(command -v copilot)" || exit 127; printf \'copilot-path %s\\n\' "$copilot_path" >>"$CALL_LOG"; fi',
       '[[ "${SETUP_EXIT:-0}" == 0 ]] || exit "$SETUP_EXIT"',
-      '[[ -z "${SETUP_CHECKOUT:-}" ]] || git checkout --detach "$SETUP_CHECKOUT" >/dev/null 2>&1',
-      'release="$RELEASE_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-$$"',
+      'setup_root="$(cd -- "$(dirname "$0")/.." && pwd -P)"',
+      'if [[ -n "${SETUP_CHECKOUT:-}" && ( -z "${SETUP_CHECKOUT_ROOT:-}" || "$SETUP_CHECKOUT_ROOT" == "$setup_root" ) ]]; then git -C "$setup_root" checkout --detach "$SETUP_CHECKOUT" >/dev/null 2>&1; fi',
+      'release_id=""',
+      'while (($#)); do if [[ "$1" == "--release-id" ]]; then release_id="$2"; shift 2; else shift; fi; done',
+      'release="$RELEASE_ROOT/${release_id:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"',
       'mkdir -p "$release"',
+      'printf candidate >"$release/fixture-candidate"',
+      '[[ "${SETUP_AFTER_PUBLISH_EXIT:-0}" == 0 ]] || exit "$SETUP_AFTER_PUBLISH_EXIT"',
+      '[[ "${SETUP_SKIP_ACTIVATION:-0}" == 0 ]] || exit 0',
       'ln -sfn "$release" "$RELEASE_ROOT/.tmp-$$"',
       'mv -Tf "$RELEASE_ROOT/.tmp-$$" "$RELEASE_ROOT/current"',
+      'find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -exec test -e "{}/.promotion-failed" \\; -printf "%T@ %p\\n" | sort -nr | tail -n +4 | cut -d" " -f2- | while IFS= read -r old; do rm -rf -- "$old"; done',
     ].join('\n'),
   )
   await chmod(path.join(dev, 'bin', 'agentic-remote'), 0o755)
@@ -151,9 +159,22 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
   await stub(
     bin,
     'systemctl',
-    'case "$*" in *"is-active"*) exit "${SERVICE_ACTIVE:-0}";; esac\nexit 0',
+    'case "$*" in *"is-active"*) exit "${SERVICE_ACTIVE:-0}";; *"restart"*) exit "${SERVICE_RESTART_EXIT:-0}";; esac\nexit 0',
   )
-  await stub(bin, 'curl', 'exit "${CURL_EXIT:-0}"')
+  await stub(
+    bin,
+    'curl',
+    'if [[ "${FAIL_CANDIDATE_HEALTH:-0}" == 1 && -f "$RELEASE_ROOT/current/fixture-candidate" ]]; then exit 7; fi\nexit "${CURL_EXIT:-0}"',
+  )
+  const realMv = (await run('sh', ['-c', 'command -v mv'])).stdout.trim()
+  await stub(
+    bin,
+    'mv',
+    [
+      'if [[ "${FAIL_POINTER_RESTORE:-0}" == 1 && "$*" == *".current-rollback-"* ]]; then exit 1; fi',
+      `exec ${JSON.stringify(realMv)} "$@"`,
+    ].join('\n'),
+  )
   // sshd evaluates the command through the remote user's shell. Avoid starting
   // a second login shell here because host profiles may replace the fixture
   // PATH and bypass the stubbed remote tools.
@@ -267,6 +288,33 @@ async function advanceMain(context: Fixture): Promise<string> {
   await git(context.dev, 'commit', '-m', 'next')
   await git(context.dev, 'push', 'origin', 'main')
   return git(context.dev, 'rev-parse', 'HEAD')
+}
+
+async function healthyReleaseFixture(): Promise<{
+  context: Fixture
+  previous: string
+  fallback: string
+  state: string
+  record: string
+}> {
+  const context = await fixture({ AGENTIC_REMOTE_MONITOR_READY_INTERVAL: '0' })
+  const previous = path.join(context.releases, 'previous-healthy')
+  const fallback = path.join(context.releases, 'older-healthy')
+  await mkdir(previous)
+  await mkdir(fallback)
+  await writeFile(path.join(previous, 'identity'), 'previous healthy release')
+  await writeFile(path.join(fallback, 'identity'), 'older healthy release')
+  await utimes(fallback, 1, 1)
+  await utimes(previous, 2, 2)
+  await symlink(previous, path.join(context.releases, 'current'))
+  const commit = await git(context.runtime, 'rev-parse', 'HEAD')
+  const state = `${commit}\n`
+  const record = `promoted_commit=${commit}\nprevious_release=${fallback}\n`
+  await mkdir(path.join(context.root, 'state'), { recursive: true })
+  await writeFile(path.join(context.root, 'state', 'last-graduated-commit'), state)
+  await writeFile(path.join(context.root, 'state', 'promotion-state'), record)
+  await advanceMain(context)
+  return { context, previous, fallback, state, record }
 }
 
 describe('promotion monitor', () => {
@@ -777,7 +825,7 @@ describe('promotion monitor', () => {
     const setup = (await calls(context)).find((line) =>
       line.startsWith('agentic-remote setup'),
     )
-    expect(setup).toBe('agentic-remote setup')
+    expect(setup).toMatch(/^agentic-remote setup --release-id [A-Za-z0-9-]+$/)
   })
 
   it('includes the user-local bin directory when installing a candidate', async () => {
@@ -807,7 +855,7 @@ describe('promotion monitor', () => {
     const setup = (await calls(context)).find((line) =>
       line.startsWith('agentic-remote setup'),
     )
-    expect(setup).toBe('agentic-remote setup --role node --name worker')
+    expect(setup).toMatch(/^agentic-remote setup --role node --name worker --release-id [A-Za-z0-9-]+$/)
   })
 
   it('refuses a local main that is ahead of origin', async () => {
@@ -856,6 +904,91 @@ describe('promotion monitor', () => {
     expect(existsSync(path.join(context.root, 'state', 'promotion-state'))).toBe(
       false,
     )
+  })
+
+  it('removes only the failed candidate after healthy restoration and preserves ordinary rollback', async () => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture()
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await monitor(context, { FAIL_CANDIDATE_HEALTH: '1' })
+      expect(result.code).not.toBe(0)
+      expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+      expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
+      const inventory = (await readdir(context.releases, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort()
+      expect(inventory).toEqual(['older-healthy', 'previous-healthy'])
+    }
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+    await run(AGENTIC_REMOTE, ['rollback'], { env: context.env })
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(fallback)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+  })
+
+  it.each([
+    ['pointer restoration fails', { FAIL_CANDIDATE_HEALTH: '1', FAIL_POINTER_RESTORE: '1' }],
+    ['restored health cannot be verified', { CURL_EXIT: '7' }],
+    ['the restored service cannot restart', { FAIL_CANDIDATE_HEALTH: '1', SERVICE_RESTART_EXIT: '1' }],
+  ])('retains and excludes the failed candidate when %s', async (_reason, failure) => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture()
+    const result = await monitor(context, failure)
+    expect(result.code).not.toBe(0)
+    const inventory = (await readdir(context.releases, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(context.releases, entry.name))
+    const retained = inventory.find((release) => release !== previous && release !== fallback)
+    const quarantined = 'FAIL_POINTER_RESTORE' in failure
+      ? []
+      : (await readdir(`${context.releases}.rejected`))
+        .map((name) => path.join(`${context.releases}.rejected`, name))
+    const failed = retained || quarantined[0]
+    expect(failed).toBeDefined()
+    expect(existsSync(path.join(failed!, 'fixture-candidate'))).toBe(true)
+    expect(existsSync(path.join(failed!, '.promotion-failed'))).toBe(true)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(
+      'FAIL_POINTER_RESTORE' in failure ? failed : previous,
+    )
+    expect(result.output).toContain('could not fully restore the previous runtime')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+    await run(AGENTIC_REMOTE, ['rollback'], { env: context.env })
+    if ('FAIL_POINTER_RESTORE' in failure) {
+      expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+      await run(AGENTIC_REMOTE, ['rollback'], { env: context.env })
+    }
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(fallback)
+    expect(existsSync(failed!)).toBe(true)
+  })
+
+  it.each([
+    ['fails after publication', { SETUP_AFTER_PUBLISH_EXIT: '1' }],
+    ['returns success without activating its candidate', { SETUP_SKIP_ACTIVATION: '1' }],
+  ])('removes its unactivated candidate when setup %s', async (_name, failure) => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture()
+    const result = await monitor(context, failure)
+    expect(result.code).not.toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    const inventory = (await readdir(context.releases, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort()
+    expect(inventory).toEqual(['older-healthy', 'previous-healthy'])
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+    await run(AGENTIC_REMOTE, ['rollback'], { env: context.env })
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(fallback)
+  })
+
+  it('does not mark or remove a healthy release when setup fails before publication', async () => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture()
+    const result = await monitor(context, { SETUP_EXIT: '1' })
+    expect(result.code).not.toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    expect(existsSync(path.join(previous, '.promotion-failed'))).toBe(false)
+    expect(existsSync(path.join(fallback, '.promotion-failed'))).toBe(false)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
   })
 
   it('lets an environment variable override the profile', async () => {
@@ -920,7 +1053,10 @@ describe('promotion monitor', () => {
 
     // Emulate the race the assertion defends against: the host ends up on a
     // different commit than the one that was validated.
-    const result = await monitor(context, { SETUP_CHECKOUT: base })
+    const result = await monitor(context, {
+      SETUP_CHECKOUT: base,
+      SETUP_CHECKOUT_ROOT: context.remote,
+    })
 
     expect(result.code).not.toBe(0)
     expect(result.output).toContain('not the validated')

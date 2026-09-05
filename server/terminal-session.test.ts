@@ -68,6 +68,79 @@ const folderTrustPane = [
   '╰────────────────────────────────────────────────────────────────────────╯',
 ].join('\n')
 
+function readyComposer(text = '', working = false): string {
+  return [
+    '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+    `┃ ${text}`,
+    '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+    working ? ' ◉ Working · esc interrupt' : ' / commands',
+  ].join('\n')
+}
+
+const shellReadyComposer =
+  "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
+
+async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?: string) {
+  const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
+  directories.push(directory)
+  const executable = path.join(directory, 'copilot-delivery.mjs')
+  const output = path.join(directory, 'received.json')
+  const sessionId = randomUUID()
+  await writeFile(output, '')
+  await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+let input = ''
+let pasted
+const received = { pastes: [], submits: [] }
+const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
+const composer = ${readyComposer.toString()}
+const repaint = ${JSON.stringify(repaintPane)}
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.stdin.on('data', (data) => {
+  if (repaint !== undefined && data.includes(29)) {
+    draw(repaint)
+    return
+  }
+  input += data.toString()
+  const end = input.indexOf('\\x1b[201~')
+  if (pasted === undefined && end >= 0) {
+    pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
+    input = input.slice(end + 6)
+    received.pastes.push(pasted)
+    writeFileSync(${JSON.stringify(output)}, JSON.stringify(received))
+    draw(composer(pasted, ${working}))
+  }
+  if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
+    received.submits.push(input.includes('\\x11') ? 'queue' : 'enter')
+    writeFileSync(${JSON.stringify(output)}, JSON.stringify(received))
+    input = ''
+    pasted = undefined
+    draw(${JSON.stringify(nextPane)} ?? composer('', ${working}))
+  }
+})
+draw(composer('', ${working}))
+`)
+  const tmuxSession = `agentic-delivery-${process.pid}`
+  tmuxSessions.push(tmuxSession)
+  await execFileAsync('tmux', [
+    'new-session', '-d', '-s', tmuxSession,
+    process.execPath, executable, '--session-id', sessionId,
+  ])
+  const panePid = (await execFileAsync('tmux', [
+    'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+  ])).stdout.trim()
+  await waitForProcessCommand(Number(panePid), [executable])
+  const copilotHome = path.join(directory, 'copilot-home')
+  const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+  await mkdir(sessionDirectory, { recursive: true })
+  await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+  vi.stubEnv('COPILOT_HOME', copilotHome)
+  const controller = new TmuxTerminalSessionController()
+  await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('╹')))
+  return { controller, sessionId, output, directory, tmuxSession }
+}
+
 beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
   vi.stubEnv('HOME', tmuxRoot)
@@ -185,7 +258,104 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
       const received = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
       expect(JSON.parse(received)).toEqual({ content, enters: 1, queued: enqueue })
     }
-  })
+  }, 15_000)
+
+  it.each([
+    ['queued prompt', 'Continue after this turn', true, undefined, 'queue'],
+    ['permitted slash command', '/usage', false, { allowDuringAgentExecution: true }, 'enter'],
+  ] as const)('delivers a %s to a working composer exactly once', async (_name, content, enqueue, options, key) => {
+    const { controller, sessionId, output } = await deliveryFixture(true)
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    await expect(controller.send(sessionId, content, enqueue, options)).resolves.toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({ pastes: [content], submits: [key] })
+  }, 15_000)
+
+  it.each([
+    ['ordinary message while working', readyComposer('', true), 'Do not interrupt', false, undefined],
+    ['unapproved slash command while working', readyComposer('', true), '/model', false, undefined],
+    ['ordinary text with a command allowance', readyComposer('', true), 'Do not interrupt', false, { allowDuringAgentExecution: true }],
+    ['an existing draft', readyComposer('unfinished draft', true), 'Queue this', true, undefined],
+    ['an uncertain paste', readyComposer('[Paste #1 - 32 lines]', true), '/usage', false, { allowDuringAgentExecution: true }],
+    ['a settings overlay', 'Settings\n↑/↓ navigate · enter edit · esc close', 'Queue this', true, undefined],
+    ['a session-use confirmation', sessionInUsePane, '/usage', false, { allowDuringAgentExecution: true }],
+    ['a folder-trust confirmation', folderTrustPane, 'Queue this', true, undefined],
+    ['a structured form', 'Copilot needs information.\nWhich target?\nTarget:\n╭────────╮\n│        │\n╰────────╯\nenter accept · esc cancel', '/usage', false, { allowDuringAgentExecution: true }],
+    ['a startup screen without a composer', 'Starting Copilot…', 'Queue this', true, undefined],
+    ['a non-composer frame', '╭────────╮\n│        │\n╰────────╯', 'Queue this', true, undefined],
+    ['an incomplete composer frame', '╻▄▄▄▄\n┃', 'Queue this', true, undefined],
+    ['a replaced composer', `${readyComposer()}\nLoading a new view…`, '/usage', false, { allowDuringAgentExecution: true }],
+    ['working hints without a composer', 'Working\nesc interrupt', 'Queue this', true, undefined],
+  ] as const)('does not paste into %s after a previously ready send', async (_name, pane, content, enqueue, options) => {
+    const { controller, sessionId, output } = await deliveryFixture(false, pane)
+    await expect(controller.send(sessionId, 'Warmup', true)).resolves.toBe(true)
+    await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    const before = await readFile(output, 'utf8')
+    const captured = await controller.capture(sessionId)
+    await expect(controller.send(sessionId, content, enqueue, options))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await readFile(output, 'utf8')).toBe(before)
+    expect(await controller.capture(sessionId)).toBe(captured)
+  }, 15_000)
+
+  it('rechecks the composer after awaited owner validation', async () => {
+    const overlay = 'Settings\n↑/↓ navigate · enter edit · esc close'
+    const { controller, sessionId, output, tmuxSession } = await deliveryFixture(false, undefined, overlay)
+    await controller.send(sessionId, 'Warmup', true)
+    await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length))
+    const before = await readFile(output, 'utf8')
+    const internals = controller as unknown as {
+      owner(id: string, target?: string, refresh?: boolean): Promise<{ pid: number; target: string } | undefined>
+    }
+    const original = internals.owner.bind(controller)
+    let repainted = false
+    vi.spyOn(internals, 'owner').mockImplementation(async (id, target, refresh) => {
+      const owner = await original(id, target, refresh)
+      if (refresh && !repainted) {
+        repainted = true
+        await execFileAsync('tmux', ['send-keys', '-t', tmuxSession, 'C-]'])
+        await eventually(
+          async () => (await execFileAsync('tmux', ['capture-pane', '-p', '-t', tmuxSession])).stdout,
+          (pane) => pane.includes('Settings'),
+        )
+      }
+      return owner
+    })
+    await expect(controller.send(sessionId, 'Must not reach the overlay', true))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(repainted).toBe(true)
+    expect(await readFile(output, 'utf8')).toBe(before)
+  }, 15_000)
+
+  it('reports a lost paste acknowledgement as uncertain and does not paste again', async () => {
+    const { controller, sessionId, output, directory } = await deliveryFixture(false)
+    const realTmux = (await execFileAsync('sh', ['-c', 'command -v tmux'])).stdout.trim()
+    const bin = path.join(directory, 'bin')
+    await mkdir(bin)
+    const wrapper = path.join(bin, 'tmux')
+    await writeFile(wrapper, [
+      '#!/usr/bin/env bash',
+      '"$REAL_TMUX" "$@" || exit "$?"',
+      'if [[ "$1" == paste-buffer ]]; then echo "acknowledgement lost after paste" >&2; exit 1; fi',
+    ].join('\n'))
+    await chmod(wrapper, 0o755)
+    vi.stubEnv('REAL_TMUX', realTmux)
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH}`)
+    await expect(controller.send(sessionId, 'One possibly delivered paste', false))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: true })
+    const received = await eventually(() => readFile(output, 'utf8'), (value) => value.length > 0)
+    expect(JSON.parse(received)).toEqual({ pastes: ['One possibly delivered paste'], submits: [] })
+    await expect(controller.send(sessionId, 'Do not append a duplicate', false))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await readFile(output, 'utf8')).toBe(received)
+  }, 15_000)
 
   it('exposes session-use warnings without approving a concurrent takeover', () => {
     const permission = parseTerminalPermission(sessionInUsePane)
@@ -1178,7 +1348,7 @@ Permission request (1 remaining)
       ),
     ).toBe(true)
     expect(cleared).toBe(true)
-  })
+  }, 20_000)
 
   it('reauthorizes the restored owner when reset fails', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
@@ -1414,9 +1584,10 @@ Permission request (1 remaining)
         "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
         'IFS= read -r -n 1 answer',
         '[[ "$answer" == n ]] || exit 2',
-        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
+        shellReadyComposer,
         'IFS= read -r line',
         `printf '%s' "$line" >"${output}"`,
+        shellReadyComposer,
         'sleep 60',
       ].join('\n'),
     )
@@ -1664,7 +1835,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nprintf '╻▄▄▄▄\\n┃\\n'\nIFS= read -r line\nprintf '%s' "$line" >"${output}"\nsleep 0.5\nprintf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'\nsleep 60\n`,
+      `#!/usr/bin/env bash\n${shellReadyComposer}\nIFS= read -r line\nprintf '%s' "$line" >"${output}"\nsleep 0.5\n${shellReadyComposer}\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = `agentic-test-${process.pid}`
@@ -1752,7 +1923,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-concurrent-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nprintf '╻▄▄▄▄\\n┃\\n'\nIFS= read -r first\nIFS= read -r second\nprintf '%s\\n%s' "$first" "$second" >"${output}"\nsleep 60\n`,
+      `#!/usr/bin/env bash\n${shellReadyComposer}\nIFS= read -r first\n${shellReadyComposer}\nIFS= read -r second\nprintf '%s\\n%s' "$first" "$second" >"${output}"\n${shellReadyComposer}\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = `agentic-concurrent-${process.pid}`
@@ -1814,9 +1985,9 @@ Permission request (1 remaining)
       executable,
       [
         '#!/usr/bin/env bash',
-        "printf '╻▄▄▄▄\\n┃\\n'",
+        shellReadyComposer,
         'IFS= read -r line',
-        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
+        shellReadyComposer,
         'sleep 60',
       ].join('\n'),
     )
@@ -2071,7 +2242,9 @@ describe('paneShowsText', () => {
     // Only a send too large to echo can account for a placeholder.
     const huge = 'a very long message '.repeat(60)
     expect(paneShowsText('> [Pasted text #1 +40 lines]', huge)).toBe(true)
-    expect(paneShowsText('> [Paste #1 - 24 lines]', huge)).toBe(true)
+    const multiline = Array.from({ length: 24 }, () => 'a long message').join('\n')
+    expect(paneShowsText('> [Paste #1 - 24 lines]', multiline)).toBe(true)
+    expect(paneShowsText('> [Paste #1 - 24 lines]', huge)).toBe(false)
     expect(paneShowsText('> [Paste recipe]', huge)).toBe(false)
   })
 
@@ -2085,7 +2258,7 @@ describe('paneShowsText', () => {
       paneShowsText('> [Pasted text #1 +40 lines]', 'ok', 0, content),
     ).toBe(true)
     expect(
-      paneShowsText('> [Paste #1 - 24 lines]', 'ok', 0, content),
+      paneShowsText('> [Paste #1 - 2 lines]', 'ok', 0, content),
     ).toBe(true)
   })
 
@@ -2751,13 +2924,16 @@ describe('single field forms', () => {
     expect(parseTerminalFormActiveField(pane, wrappedForm)).toBeUndefined()
   })
 
-  it('recognises a question wrapped inside a word and across blank paragraphs', () => {
+  it('requires a joined capture for a wrap inside a word', () => {
     const pane = wrappedPane.replace(
       'authentication. Please complete the sign-in\n prompt',
       'authentica\n tion.\n\n Please complete the sign-in\n prompt',
     )
-    expect(terminalFormShowsFields(pane, wrappedForm)).toBe(true)
-    expect(parseTerminalFormActiveField(pane, wrappedForm)).toBe(0)
+    expect(terminalFormShowsFields(pane, wrappedForm)).toBe(false)
+    expect(parseTerminalFormActiveField(pane, wrappedForm)).toBeUndefined()
+    const joined = pane.replace('authentica\n tion.', 'authentication.')
+    expect(terminalFormShowsFields(joined, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(joined, wrappedForm)).toBe(0)
   })
 
   it('requires the whole wrapped question, not a prefix or text in a field', () => {
@@ -3266,7 +3442,7 @@ describe('composerHoldsOtherText', () => {
       composerHoldsOtherText(
         framed(['│ >  │']),
         framed(['│ > [Paste #1 - 24 lines] │']),
-        'a very long message '.repeat(60),
+        Array.from({ length: 24 }, () => 'a very long message').join('\n'),
       ),
     ).toBe(false)
   })

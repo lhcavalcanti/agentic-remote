@@ -27,6 +27,7 @@ const execFileAsync = promisify(execFile)
 const directories: string[] = []
 const tmuxSessions: string[] = []
 let tmuxRoot = ''
+let stubbedServerPid: number | undefined
 
 beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
@@ -41,14 +42,26 @@ beforeEach(async () => {
 
 afterEach(async () => {
   tmuxSessions.splice(0)
-  await stopIsolatedTmuxServer(tmuxRoot)
+  // Restore PATH before teardown: its failure stub cannot kill the server.
+  // Otherwise cleanup unlinks a live socket and leaves discovery indeterminate.
   vi.unstubAllEnvs()
-  await Promise.all(
-    directories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
-  )
-})
+  try {
+    await stopIsolatedTmuxServer(tmuxRoot)
+    if (stubbedServerPid !== undefined) {
+      const pid = stubbedServerPid
+      expect(
+        await eventually(() => processExists(pid), (running) => !running),
+      ).toBe(false)
+    }
+  } finally {
+    stubbedServerPid = undefined
+    await Promise.all(
+      directories.splice(0).map((directory) =>
+        rm(directory, { recursive: true, force: true }),
+      ),
+    )
+  }
+}, 30_000)
 
 describe('active Copilot processes', () => {
   it('ignores Copilot-shaped descendants owned by the server', async () => {
@@ -543,6 +556,11 @@ describe('active Copilot processes', () => {
     await mkdir(sessionDirectory, { recursive: true })
     await writeFile(path.join(sessionDirectory, `inuse.${pid}.lock`), `${pid}\n`)
     vi.stubEnv('COPILOT_HOME', copilotHome)
+    stubbedServerPid = Number.parseInt(
+      (await execFileAsync('tmux', ['display-message', '-p', '#{pid}'])).stdout,
+      10,
+    )
+    expect(stubbedServerPid).toBeGreaterThan(0)
     await stubTmux(
       directory,
       'echo "error connecting to /tmp/tmux-1000/default (permission denied)" >&2\nexit 1\n',

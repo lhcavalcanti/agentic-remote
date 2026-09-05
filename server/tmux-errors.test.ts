@@ -217,6 +217,17 @@ describe('tmux absence evidence', () => {
     expect(await noTmuxServer(missing())).toBe(false)
   })
 
+  it('fails closed when an unrelated live server lost its socket directory', async () => {
+    server('/owned/removed/socket')
+    vi.mocked(realpath).mockImplementation(async (file) => {
+      if (String(file).startsWith('/owned/removed')) {
+        throw errno('ENOENT')
+      }
+      return String(file)
+    })
+    expect(await noTmuxServer(missing())).toBe(false)
+  })
+
   it.each([
     null,
     undefined,

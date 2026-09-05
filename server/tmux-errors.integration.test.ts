@@ -250,7 +250,10 @@ async function createHub(
     resumeSession: vi.fn(forbidden),
     deleteSession: vi.fn(forbidden),
     listSessions: vi.fn(async () => []),
-    rpc: { commands: { list: vi.fn(async () => ({ commands: [] })) } },
+    rpc: {
+      commands: { list: vi.fn(async () => ({ commands: [] })) },
+      models: { list: vi.fn(async () => ({ models: [] })) },
+    },
   } satisfies CopilotClientLike
   const store = new SessionStore(directory)
   await store.initialize()

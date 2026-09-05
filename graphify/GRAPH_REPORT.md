@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `03cd69533ea7abff5fd25dfa285485187152815546bddf66d73c6a01038ef2f0`
+Snapshot: `de75918eef6591a0a5ad228c380c6a5e3068a27b8fd60efdf1a71ef597d1b575`
 
-Source checkout: `a208bc0430578a49a67b5cd19246249bda655de6`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `e2449964c12b615c94015cc39ec3e6c882cc8c9d`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -441,7 +441,18 @@ _Questions this graph is uniquely positioned to answer:_
 - `.github/skills/frontend-design/LICENSE.txt`
 - `.github/skills/frontend-design/SKILL.md`
 - `.github/skills/frontend-design/SOURCE.md`
+- `.github/skills/frontend-design/UI-SKILLS.md`
+- `.github/skills/frontend-design/licenses/antfu-skills-MIT.txt`
+- `.github/skills/frontend-design/licenses/better-ui-MIT.txt`
+- `.github/skills/frontend-design/licenses/frontend-ui-engineering-MIT.txt`
+- `.github/skills/frontend-design/licenses/improve-ui-MIT.txt`
+- `.github/skills/frontend-design/licenses/interface-design-MIT.txt`
+- `.github/skills/frontend-design/licenses/vercel-guidelines-MIT.txt`
+- `.github/skills/frontend-design/references/accessibility-and-input.md`
 - `.github/skills/frontend-design/references/agentic-remote.md`
+- `.github/skills/frontend-design/references/evidence-and-review.md`
+- `.github/skills/frontend-design/references/motion-and-performance.md`
+- `.github/skills/frontend-design/references/product-workspaces.md`
 - `.gitignore`
 - `LICENSE`
 - `README.md`

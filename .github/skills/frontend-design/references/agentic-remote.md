@@ -19,6 +19,10 @@ The user's explicit direction and product specification win over generic
 style advice. A deliberate existing choice, such as Agentic green, is not
 grounds for a redesign simply because a similar palette can be overused.
 
+Use the [task-to-reference table](../SKILL.md) to load only relevant
+companion guidance. The [selection decisions](../UI-SKILLS.md) record
+source conflicts that must not silently override this product.
+
 ## Preserve the behavioral contracts
 
 - Keep every computer discoverable and each session owned by its computer.

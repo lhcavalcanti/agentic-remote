@@ -216,7 +216,9 @@ Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
 Recalling history MUST preserve the unsent draft durably; a reload restores that
 draft, not the historical preview. Sending a preview MUST NOT discard the draft
-behind it.
+behind it or acknowledge a failed prompt owned by that hidden draft. This also
+applies to local `/statusline`, `/clear`, `/restart`, and argumentless `/cwd`
+previews, including any replacement session created by clearing.
 
 A pending submission MUST retain its complete text and paste metadata until its
 request is accepted, independently of anything written in the meantime. Reloads
@@ -237,6 +239,25 @@ save clears the storage warning but MUST NOT automatically send anything.
 Storage failures after confirmed acceptance MUST NOT restore the accepted
 message over newer writing. Unsaved recovery-identity changes are retried with
 the next composer save.
+
+Successful requests MUST record acceptance by submission identity before
+retiring pending browser state. The generation marker reserves space for at
+most 64 receipts containing the original computer/session key and submission
+ID, not message contents. Receipts MUST survive failed draft cleanup, including
+reload, and MUST NOT acknowledge another session's submission. Retirement writes
+the legacy copy before removing the pending identity from the versioned copy;
+only receipts no longer referenced there may be pruned. Newer legacy edits
+still take precedence over an old snapshot.
+
+If acceptance evidence cannot be written, the tab MUST retain the accepted
+submission and newer editable draft in memory and explicitly warn that its
+confirmation is not saved. A reload may then restore the submission as
+unconfirmed; it MUST NOT be automatically resent or presented as definitely
+unsent. Definitive recovery when all browser writes are denied requires server
+support: a client request ID bound to the payload and logical session lineage,
+durable acceptance recorded with the operation, and a receipt lookup or
+idempotent retry that cannot submit it twice. The client-only fallback does not
+provide that server guarantee.
 
 Pastes longer than 20 lines MUST appear in the composer as
 `[Paste #N - L lines]`, numbered within the current session draft. The exact

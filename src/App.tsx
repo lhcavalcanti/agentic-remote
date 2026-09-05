@@ -384,8 +384,12 @@ type ComposerContent = {
 
 type ComposerSubmission = ComposerContent & {
   id: string
+  originKey?: string
   acknowledgesFailure?: string
+  accepted?: boolean
 }
+
+type ComposerAcceptanceReceipt = { key: string; id: string }
 
 type ComposerDraft = ComposerContent & {
   pendingSubmission?: ComposerSubmission
@@ -402,6 +406,7 @@ const composerDraftsStorageKey = 'agentic-remote:composer-drafts-v2'
 // Set the first time this build persists, and never cleared. Its presence is
 // what tells a first upgrade from a return to one.
 const composerDraftsGenerationKey = 'agentic-remote:composer-drafts-generation'
+const composerAcceptanceReceiptLimit = 64
 // Whether a legacy paste payload could not be matched to its label. Its key is
 // then kept, because it holds the only copy of that text.
 const unmigratedComposerPastes = { current: false }
@@ -410,6 +415,64 @@ let collapsedPasteKeySequence = 0
 function newCollapsedPasteKey(): string {
   collapsedPasteKeySequence += 1
   return `${Date.now().toString(36)}-${collapsedPasteKeySequence.toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+function readComposerAcceptanceReceipts(): ComposerAcceptanceReceipt[] {
+  const stored = readStoredOrder<unknown>(composerDraftsGenerationKey, 1)
+  if (!stored || typeof stored !== 'object' || !('accepted' in stored)) {
+    return []
+  }
+  return Array.isArray(stored.accepted)
+    ? stored.accepted.filter((entry): entry is ComposerAcceptanceReceipt =>
+        entry !== null &&
+        typeof entry === 'object' &&
+        typeof entry.key === 'string' &&
+        entry.key.length > 0 &&
+        typeof entry.id === 'string' &&
+        entry.id.length > 0,
+      )
+    : []
+}
+
+function hasComposerAcceptanceReceipt(
+  receipts: ComposerAcceptanceReceipt[],
+  key: string,
+  submission: ComposerSubmission,
+): boolean {
+  return receipts.some((receipt) =>
+    receipt.key === (submission.originKey || key) && receipt.id === submission.id,
+  )
+}
+
+function reconcileAcceptedComposerDrafts(
+  drafts: ComposerDrafts,
+  receipts: ComposerAcceptanceReceipt[],
+  retire: boolean,
+): ComposerDrafts {
+  let result = drafts
+  for (const [key, draft] of Object.entries(drafts)) {
+    const pending = draft.pendingSubmission
+    if (!pending || (!pending.accepted && !hasComposerAcceptanceReceipt(receipts, key, pending))) {
+      continue
+    }
+    if (retire) {
+      const { pendingSubmission: _accepted, ...remaining } = draft
+      if (result === drafts) {
+        result = { ...drafts }
+      }
+      if (remaining.text) {
+        result[key] = remaining
+      } else {
+        delete result[key]
+      }
+    } else if (!pending.accepted) {
+      result = {
+        ...result,
+        [key]: { ...draft, pendingSubmission: { ...pending, accepted: true } },
+      }
+    }
+  }
+  return result
 }
 
 function collapsedPasteLabel(paste: CollapsedPaste): string {
@@ -507,6 +570,9 @@ function prependComposerContent(
 
 function recoverPendingComposerDraft(draft: ComposerDraft): ComposerDraft {
   const { pendingSubmission, ...remaining } = draft
+  if (pendingSubmission?.accepted) {
+    return remaining
+  }
   return pendingSubmission
     ? {
         ...remaining,
@@ -538,6 +604,8 @@ function readComposerDrafts(): ComposerDrafts {
     return readLegacyComposerDrafts()
   }
   const result: ComposerDrafts = {}
+  const receipts = readComposerAcceptanceReceipts()
+  const acceptedLegacySnapshots: Record<string, string> = {}
   for (const [key, value] of Object.entries(stored)) {
     if (
       !value ||
@@ -565,6 +633,7 @@ function readComposerDrafts(): ComposerDrafts {
     ) {
       draft.pendingSubmission = {
         id: pending.id,
+        ...(typeof pending.originKey === 'string' ? { originKey: pending.originKey } : {}),
         text: pending.text,
         pastes: validComposerPastes(pending.text, pending.pastes),
         ...(typeof pending.acknowledgesFailure === 'string'
@@ -572,8 +641,18 @@ function readComposerDrafts(): ComposerDrafts {
           : {}),
       }
     }
-    const recovered = recoverPendingComposerDraft(draft)
-    if (recovered.text) {
+    if (draft.pendingSubmission && hasComposerAcceptanceReceipt(receipts, key, draft.pendingSubmission)) {
+      const beforeAcceptance = recoverPendingComposerDraft(draft)
+      acceptedLegacySnapshots[key] = expandComposerPastes(
+        beforeAcceptance.text,
+        beforeAcceptance.pastes,
+      )
+      draft.pendingSubmission.accepted = true
+    }
+    const recovered = draft.pendingSubmission?.accepted
+      ? draft
+      : recoverPendingComposerDraft(draft)
+    if (recovered.text || recovered.pendingSubmission?.accepted) {
       result[key] = recovered
     }
   }
@@ -600,6 +679,12 @@ function readComposerDrafts(): ComposerDrafts {
   }
   for (const [key, draft] of Object.entries(legacy)) {
     const mine = result[key]
+    // The legacy copy may still contain the accepted submission if cleanup
+    // stopped between writes. Only this exact old snapshot is superseded;
+    // writing from an older build still wins when it differs.
+    if (mine?.pendingSubmission?.accepted && acceptedLegacySnapshots[key] === draft.text) {
+      continue
+    }
     if (!mine || expandComposerPastes(mine.text, mine.pastes) !== draft.text) {
       result[key] = draft
     }
@@ -6422,6 +6507,7 @@ function App() {
     useState<ComposerDrafts>(readComposerDrafts)
   const [composerStorageError, setComposerStorageError] = useState<string>()
   const composerDraftsRef = useRef(composerDrafts)
+  const composerAcceptanceReceipts = useRef(readComposerAcceptanceReceipts())
   const composerMounted = useRef(true)
   const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const composerEditRef = useRef<
@@ -7076,6 +7162,15 @@ function App() {
   const selectedRunningBackgroundTasks =
     selectedBackgroundTasks?.runningCount || 0
   const composer = selectedKey ? composerDrafts[selectedKey]?.text || '' : ''
+  const selectedSubmission = selectedKey
+    ? composerDrafts[selectedKey]?.pendingSubmission
+    : undefined
+  const acceptanceReceiptMissing = selectedKey && selectedSubmission?.accepted &&
+    !hasComposerAcceptanceReceipt(
+      composerAcceptanceReceipts.current,
+      selectedKey,
+      selectedSubmission,
+    )
   // What each shortcut answers to now: its default unless the reader has
   // changed it.
   const shortcuts = shortcutDefaults.map((entry) => ({
@@ -8039,6 +8134,57 @@ function App() {
 
   function persistComposerDrafts(drafts: ComposerDrafts): ComposerPersistenceResult {
     try {
+      let receipts = readComposerAcceptanceReceipts()
+      composerAcceptanceReceipts.current = [...receipts]
+      if (receipts.length > 0) {
+        const stored = readStoredOrder<ComposerDrafts>(composerDraftsStorageKey, {}) || {}
+        receipts = receipts.filter((receipt) =>
+          Object.entries(stored).some(([key, draft]) =>
+            draft?.pendingSubmission &&
+            hasComposerAcceptanceReceipt([receipt], key, draft.pendingSubmission),
+          ),
+        )
+      }
+      for (const [key, draft] of [
+        ...Object.entries(composerDraftsRef.current),
+        ...Object.entries(drafts),
+      ]) {
+        const pending = draft.pendingSubmission
+        if (!pending?.accepted) {
+          continue
+        }
+        // A preview has no acknowledgement: its hidden recovery still owns
+        // that token. An accepted recovery detaches it even if storage fails.
+        const acknowledged = pending.acknowledgesFailure
+        if (acknowledged !== undefined) {
+          if (restoredFailures.current.get(key) === acknowledged) {
+            restoredFailures.current.delete(key)
+          }
+          if (restoredDraftStamps.current[key] === acknowledged) {
+            const { [key]: _stamp, ...stamps } = restoredDraftStamps.current
+            const { [key]: _content, ...contents } = restoredDraftContents.current
+            restoredDraftStamps.current = stamps
+            restoredDraftContents.current = contents
+            composerRecoveryStorageDirty.current = true
+          }
+        }
+        if (!hasComposerAcceptanceReceipt(receipts, key, pending)) {
+          if (receipts.length >= composerAcceptanceReceiptLimit) {
+            throw new Error('Browser acceptance receipt storage is full; keep this tab open')
+          }
+          receipts.push({ key: pending.originKey || key, id: pending.id })
+        }
+      }
+      // The existing generation marker remains non-null and is still "1"
+      // when empty. Receipts contain only bounded identities, never payloads.
+      if (receipts.length > composerAcceptanceReceiptLimit) {
+        throw new Error('Browser acceptance receipt storage is full; keep this tab open')
+      }
+      localStorage.setItem(
+        composerDraftsGenerationKey,
+        receipts.length > 0 ? JSON.stringify({ version: 1, accepted: receipts }) : '1',
+      )
+      composerAcceptanceReceipts.current = receipts
       if (composerRecoveryStorageDirty.current) {
         localStorage.setItem(
           'agentic-remote:composer-draft-failures',
@@ -8050,29 +8196,34 @@ function App() {
         )
         composerRecoveryStorageDirty.current = false
       }
-      const durable = Object.fromEntries(
-        Object.entries(drafts).map(([key, draft]) => [
-          key,
-          durableComposerDraft(key, draft),
-        ]),
+      const durable = reconcileAcceptedComposerDrafts(
+        Object.fromEntries(
+          Object.entries(drafts).map(([key, draft]) => [
+            key,
+            durableComposerDraft(key, draft),
+          ]),
+        ),
+        receipts,
+        true,
       )
-      localStorage.setItem(composerDraftsGenerationKey, '1')
-      localStorage.setItem(
-        composerDraftsStorageKey,
-        JSON.stringify(durable),
-      )
-      localStorage.setItem(
-        'agentic-remote:composer-drafts',
-        JSON.stringify(
-          Object.fromEntries(
-            // Older builds need the expanded text, not just paste labels.
-            Object.entries(durable).map(([key, draft]) => {
-              const recoverable = recoverPendingComposerDraft(draft)
-              return [key, expandComposerPastes(recoverable.text, recoverable.pastes)]
-            }),
-          ),
+      const legacy = JSON.stringify(
+        Object.fromEntries(
+          Object.entries(durable).map(([key, draft]) => {
+            const recoverable = recoverPendingComposerDraft(draft)
+            return [key, expandComposerPastes(recoverable.text, recoverable.pastes)]
+          }),
         ),
       )
+      // During retirement, keep the pending identity in v2 until its legacy
+      // copy is clean. Otherwise a failed legacy write would resurrect an
+      // accepted payload with no pending identity left to match to its receipt.
+      if (receipts.length > 0) {
+        localStorage.setItem('agentic-remote:composer-drafts', legacy)
+        localStorage.setItem(composerDraftsStorageKey, JSON.stringify(durable))
+      } else {
+        localStorage.setItem(composerDraftsStorageKey, JSON.stringify(durable))
+        localStorage.setItem('agentic-remote:composer-drafts', legacy)
+      }
       // Remove legacy payloads only after all three compatibility writes
       // succeed and none of the old payloads is still awaiting migration.
       if (!unmigratedComposerPastes.current) {
@@ -8105,12 +8256,7 @@ function App() {
 
   useEffect(() => {
     composerMounted.current = true
-    const persisted = persistComposerDrafts(composerDraftsRef.current)
-    if (persisted.ok) {
-      setComposerStorageError(undefined)
-    } else {
-      reportComposerStorageFailure(persisted.error)
-    }
+    updateComposerDrafts([], (current) => ({ ...current }))
     return () => { composerMounted.current = false }
   }, [])
 
@@ -9136,7 +9282,8 @@ function App() {
     // Only the response to that request can release its ownership.
     if (
       submissionsInFlight.current.has(key) ||
-      composerDraftsRef.current[key]?.pendingSubmission
+      (composerDraftsRef.current[key]?.pendingSubmission &&
+        !composerDraftsRef.current[key]?.pendingSubmission?.accepted)
     ) {
       // Kept rather than dropped: if that submission then fails, nothing else
       // comes back to this, and the text would stay invisible while its
@@ -9184,7 +9331,11 @@ function App() {
     // A missing failure marker does not acknowledge an HTTP submission.
     // Neither its restored text nor writing begun while it was in flight is
     // owned by the old failure, even when the words happen to be identical.
-    if (draft.pendingSubmission || draft.deliveryUncertain || draft.text !== handed) {
+    if (
+      (draft.pendingSubmission && !draft.pendingSubmission.accepted) ||
+      draft.deliveryUncertain ||
+      draft.text !== handed
+    ) {
       return
     }
     updateComposerDrafts([key], (current) =>
@@ -9261,7 +9412,10 @@ function App() {
   useEffect(() => {
     for (const [key, pending] of unshownFailures.current) {
       const draft = composerDrafts[key]
-      if (draft && (draft.pendingSubmission || durableComposerDraft(key, draft).text)) {
+      if (draft && (
+        (draft.pendingSubmission && !draft.pendingSubmission.accepted) ||
+        durableComposerDraft(key, draft).text
+      )) {
         continue
       }
       handledFailures.current.delete(key)
@@ -9371,8 +9525,13 @@ function App() {
     }
     // Editing remains in memory even when storage is unavailable. Commit the
     // ref and React state together so a failed save cannot split their text.
-    composerDraftsRef.current = next
-    setComposerDrafts(next)
+    const committed = reconcileAcceptedComposerDrafts(
+      next,
+      composerAcceptanceReceipts.current,
+      persisted.ok,
+    )
+    composerDraftsRef.current = committed
+    setComposerDrafts(committed)
     if (persisted.ok) {
       setComposerStorageError(undefined)
     } else {
@@ -10290,6 +10449,23 @@ function App() {
     // reply arriving -- all happened somewhere off screen.
     followLatest()
     const targetKey = sessionKey(selected)
+    const history = composerHistoryRef.current[targetKey]
+    const preview = history && history.index < history.messages.length
+      ? history
+      : undefined
+    const consumeLocalCommand = () => {
+      if (!preview) {
+        setComposer('')
+        return
+      }
+      const liveKey = followReplacementsRef.current(targetKey)
+      updateComposerDrafts([liveKey], (current) =>
+        writeComposerContent(current, liveKey, {
+          text: preview.draft,
+          pastes: preview.draftPastes,
+        }),
+      )
+    }
     const submittedPastes = activeComposerPastes(
       displayContent,
       composerDrafts[targetKey]?.pastes || [],
@@ -10332,13 +10508,13 @@ function App() {
       } else {
         setStatuslineOpen(true)
       }
-      setComposer('')
+      consumeLocalCommand()
       settleSubmission()
       reofferFailedPrompt(targetKey)
       return
     }
     if (command?.name === 'clear') {
-      setComposer('')
+      consumeLocalCommand()
       // The session this became. Everything the recovery was carrying has just
       // moved here, and offering it against the key that is gone left the
       // replacement holding an empty, already-answered recovery while its
@@ -10350,7 +10526,7 @@ function App() {
       return
     }
     if (command?.name === 'restart') {
-      setComposer('')
+      consumeLocalCommand()
       await restartSelectedSession()
       focusComposer(targetKey)
       settleSubmission()
@@ -10361,7 +10537,7 @@ function App() {
       commandName === 'cwd' &&
       !trimmedContent.slice(commandName.length + 1).trim()
     ) {
-      setComposer('')
+      consumeLocalCommand()
       setCwdOpen(true)
       settleSubmission()
       reofferFailedPrompt(targetKey)
@@ -10375,14 +10551,11 @@ function App() {
     setError(undefined)
     const submission: ComposerSubmission = {
       id: newCollapsedPasteKey(),
+      originKey: targetKey,
       text: displayContent,
       pastes: submittedPastes,
-      acknowledgesFailure: restoredFailures.current.get(targetKey),
+      acknowledgesFailure: preview ? undefined : restoredFailures.current.get(targetKey),
     }
-    const history = composerHistoryRef.current[targetKey]
-    const preview = history && history.index < history.messages.length
-      ? history
-      : undefined
     // Which failure this send is answering, so the recovery that runs after it
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
@@ -10423,6 +10596,19 @@ function App() {
         return
       }
       const liveKey = followReplacementsRef.current(targetKey)
+      updateComposerDrafts([], (current) => {
+        const draft = current[liveKey]
+        if (draft?.pendingSubmission?.id !== submission.id) {
+          return current
+        }
+        return {
+          ...current,
+          [liveKey]: {
+            ...draft,
+            pendingSubmission: { ...draft.pendingSubmission, accepted: true },
+          },
+        }
+      })
       const acknowledged = submission.acknowledgesFailure
       acknowledgedStamp = acknowledged
       if (restoredFailures.current.get(liveKey) === acknowledged) {
@@ -10440,18 +10626,6 @@ function App() {
       if (!deferred || deferred.stamp === acknowledged) {
         unshownFailures.current.delete(liveKey)
       }
-      updateComposerDrafts([], (current) => {
-        const draft = current[liveKey]
-        if (draft?.pendingSubmission?.id !== submission.id) {
-          return current
-        }
-        const { pendingSubmission: _accepted, ...remaining } = draft
-        return writeComposerContent(
-          { ...current, [liveKey]: remaining },
-          liveKey,
-          remaining,
-        )
-      })
       const updatedKey = sessionKey(updated)
       if (
         !removedSessions.current.has(updatedKey) &&
@@ -12072,6 +12246,15 @@ function App() {
                 <span>{composerStorageError}</span>
               </div>
             ) : null}
+            {acceptanceReceiptMissing ? (
+              <div className="error-banner" id="composer-acceptance-warning" role="status">
+                <span>
+                  This send was accepted, but the browser has no saved receipt.
+                  Keep this tab open. Reloading may restore the submitted text as
+                  unconfirmed; check the conversation before sending it again.
+                </span>
+              </div>
+            ) : null}
             <div
               className={`composer ${
                 selected.status === 'running' ? 'composer--running' : ''
@@ -12092,6 +12275,7 @@ function App() {
                         ? 'composer-delivery-warning'
                         : undefined,
                       composerStorageError ? 'composer-storage-warning' : undefined,
+                      acceptanceReceiptMissing ? 'composer-acceptance-warning' : undefined,
                     ].filter(Boolean).join(' ') || undefined
                   }
                   // A suspended session has nothing running to send to. The

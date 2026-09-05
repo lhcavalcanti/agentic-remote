@@ -2746,6 +2746,406 @@ describe('App', () => {
     }
   })
 
+  it.each(['agentic-remote:composer-drafts-v2', 'agentic-remote:composer-drafts'])(
+    'reloads only the newer draft when accepted cleanup at %s fails',
+    async (failingKey) => {
+      const submitted = Array.from({ length: 21 }, (_, index) => `accepted ${index}`).join('\r\n')
+      const newer = Array.from({ length: 22 }, (_, index) => `newer ${index}`).join('\n')
+      let accept: ((value: ManagedSession) => void) | undefined
+      vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => { accept = resolve }))
+      let rendered = render(<App />)
+      let textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+      fireEvent.paste(textarea, { clipboardData: { getData: () => submitted } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+      fireEvent.change(textarea, { target: { value: 'Newer ' } })
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+      fireEvent.paste(textarea, { clipboardData: { getData: () => newer } })
+      const display = 'Newer [Paste #1 - 22 lines]'
+      expect(JSON.parse(
+        localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+      )['computer-1:session-1'].text).toBe(display)
+      const setItem = Storage.prototype.setItem
+      let blocked = true
+      const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
+        function (this: Storage, key, value) {
+          if (this === localStorage && blocked && key === failingKey) {
+            throw new DOMException('Cleanup write refused', 'QuotaExceededError')
+          }
+          setItem.call(this, key, value)
+        },
+      )
+      try {
+        await act(async () => { accept?.(session) })
+        expect(textarea).toHaveValue(display)
+        expect(screen.getByText(/could not be saved/)).toBeInTheDocument()
+        for (let reload = 0; reload < 2; reload += 1) {
+          rendered.unmount()
+          rendered = render(<App />)
+          textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+          await act(async () => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'session.upserted', session }),
+            } as MessageEvent)
+          })
+          expect(textarea).toHaveValue(display)
+          expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
+          expect(sendMessage).toHaveBeenCalledOnce()
+        }
+        blocked = false
+        fireEvent.change(textarea, { target: { value: `${display} edited` } })
+        rendered.unmount()
+        render(<App />)
+        expect(await screen.findByLabelText('Message')).toHaveValue(`${display} edited`)
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+        await waitFor(() =>
+          expect(sendMessage).toHaveBeenLastCalledWith('computer-1', 'session-1', {
+            content: `Newer ${newer} edited`,
+            enqueue: false,
+          }),
+        )
+      } finally {
+        storage.mockRestore()
+      }
+    },
+  )
+
+  it.each(['accepted', 'refused'])(
+    'keeps the hidden failure token when a history preview is %s',
+    async (outcome) => {
+      const pasted = Array.from({ length: 21 }, (_, index) => `recovery ${index}`).join('\n')
+      const failed = {
+        ...session,
+        messages: [{ ...session.messages[0]!, content: 'Unrelated history preview' }],
+        failedPrompt: {
+          content: 'Original failed prompt',
+          failedAt: '2026-09-05T00:00:00.000Z',
+        },
+      }
+      vi.mocked(listSessions).mockResolvedValue([failed])
+      vi.mocked(getSession).mockResolvedValue(failed)
+      if (outcome === 'accepted') {
+        vi.mocked(sendMessage).mockResolvedValueOnce(failed)
+      } else {
+        vi.mocked(sendMessage).mockRejectedValueOnce(new Error('Preview refused'))
+      }
+      const rendered = render(<App />)
+      const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+      await waitFor(() => expect(textarea).toHaveValue(failed.failedPrompt.content))
+      textarea.setSelectionRange(0, textarea.value.length)
+      fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+      fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+      expect(textarea).toHaveValue('Unrelated history preview')
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+      expect(vi.mocked(sendMessage).mock.calls[0]?.[2].acknowledgesFailure).toBeUndefined()
+      await waitFor(() =>
+        expect(textarea).toHaveValue(outcome === 'accepted'
+          ? '[Paste #1 - 21 lines]'
+          : 'Unrelated history preview\n\n[Paste #1 - 21 lines]'),
+      )
+      expect(JSON.parse(
+        localStorage.getItem('agentic-remote:composer-draft-failures') || '{}',
+      )['computer-1:session-1']).toBe(failed.failedPrompt.failedAt)
+      if (outcome === 'refused') {
+        fireEvent.change(textarea, { target: { value: '[Paste #1 - 21 lines]' } })
+      }
+      fireEvent.change(textarea, { target: { value: '[Paste #1 - 21 lines] continued' } })
+      rendered.unmount()
+      vi.mocked(sendMessage).mockResolvedValueOnce({ ...failed, failedPrompt: undefined })
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue('[Paste #1 - 21 lines] continued')
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() =>
+        expect(sendMessage).toHaveBeenLastCalledWith('computer-1', 'session-1', {
+          content: `${pasted} continued`,
+          enqueue: false,
+          acknowledgesFailure: failed.failedPrompt.failedAt,
+        }),
+      )
+    },
+  )
+
+  it.each(['/statusline off', '/clear', '/restart', '/cwd'])(
+    'keeps the hidden paste for local command preview %s',
+    async (command) => {
+      const pasted = Array.from({ length: 21 }, (_, index) => `draft ${index}`).join('\n')
+      const history = {
+        ...session,
+        messages: [{ ...session.messages[0]!, content: command }],
+      }
+      const replacement = { ...session, id: 'cleared-session', messages: [] }
+      vi.mocked(listSessions).mockResolvedValue([history])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === replacement.id ? replacement : history,
+      )
+      vi.mocked(clearConversation).mockResolvedValue(replacement)
+      const rendered = render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+      fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+      expect(textarea).toHaveValue(command)
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(textarea).toHaveValue('[Paste #1 - 21 lines]'))
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+      if (command === '/clear') {
+        await waitFor(() => expect(window.location.search).toContain('session=cleared-session'))
+      }
+      rendered.unmount()
+      const target = command === '/clear' ? replacement : history
+      vi.mocked(listSessions).mockResolvedValue([target])
+      vi.mocked(getSession).mockResolvedValue(target)
+      vi.mocked(sendMessage).mockResolvedValueOnce(target)
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue('[Paste #1 - 21 lines]')
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() =>
+        expect(sendMessage).toHaveBeenCalledWith('computer-1', target.id, {
+          content: pasted,
+          enqueue: false,
+        }),
+      )
+    },
+  )
+
+  it('warns honestly when an accepted send cannot save any receipt before reload', async () => {
+    let accept: ((value: ManagedSession) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => { accept = resolve }))
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Accepted but unrecorded' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    fireEvent.change(textarea, { target: { value: 'Newer saved draft' } })
+    const setItem = Storage.prototype.setItem
+    let blocked = true
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
+      function (this: Storage, key, value) {
+        if (this === localStorage && blocked) {
+          throw new DOMException('All writes denied', 'SecurityError')
+        }
+        setItem.call(this, key, value)
+      },
+    )
+    try {
+      await act(async () => { accept?.(session) })
+      expect(textarea).toHaveValue('Newer saved draft')
+      expect(screen.getByText(/This send was accepted, but the browser has no saved receipt/)).toBeInTheDocument()
+      expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await screen.findByText(/Message was not sent/)
+      expect(sendMessage).toHaveBeenCalledOnce()
+      expect(textarea).toHaveValue('Newer saved draft')
+      rendered.unmount()
+      blocked = false
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue(
+        'Accepted but unrecorded\n\nNewer saved draft',
+      )
+      expect(screen.getByText(/Delivery could not be confirmed/)).toBeInTheDocument()
+      expect(screen.queryByText(/This send was accepted/)).not.toBeInTheDocument()
+      expect(sendMessage).toHaveBeenCalledOnce()
+    } finally {
+      storage.mockRestore()
+    }
+  })
+
+  it('bounds acceptance receipts without evicting unresolved submission identities', async () => {
+    let accept: ((value: ManagedSession) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => { accept = resolve }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Current submission' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    fireEvent.change(textarea, { target: { value: 'Newer draft' } })
+    const stored = JSON.parse(
+      localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+    )
+    const receipts = Array.from({ length: 64 }, (_, index) => ({
+      key: `computer-1:held-${index}`,
+      id: `held-id-${index}`,
+    }))
+    for (const receipt of receipts) {
+      stored[receipt.key] = {
+        text: '', pastes: [],
+        pendingSubmission: {
+          id: receipt.id, originKey: receipt.key, text: 'Held payload', pastes: [],
+        },
+      }
+    }
+    localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify(stored))
+    const marker = JSON.stringify({ version: 1, accepted: receipts })
+    localStorage.setItem('agentic-remote:composer-drafts-generation', marker)
+    await act(async () => { accept?.(session) })
+    expect(textarea).toHaveValue('Newer draft')
+    expect(screen.getByText(/Browser acceptance receipt storage is full/)).toBeInTheDocument()
+    expect(screen.getByText(/browser has no saved receipt/)).toBeInTheDocument()
+    expect(localStorage.getItem('agentic-remote:composer-drafts-generation')).toBe(marker)
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('scopes acceptance receipts to the originating session through replacement IDs', async () => {
+    const remote = {
+      ...session,
+      computerId: secondComputer.id,
+      computerName: secondComputer.name,
+      title: 'Other computer draft',
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remote])
+    vi.mocked(getSession).mockImplementation(async (computerId) =>
+      computerId === computer.id ? session : remote,
+    )
+    const originalKey = 'computer-1:before-two-clears'
+    localStorage.setItem('agentic-remote:composer-drafts-generation', JSON.stringify({
+      version: 1,
+      accepted: [{ key: originalKey, id: 'same-local-id' }],
+    }))
+    localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+      'computer-1:session-1': {
+        text: 'Local newer draft',
+        pastes: [],
+        pendingSubmission: {
+          id: 'same-local-id', originKey: originalKey, text: 'Local accepted', pastes: [],
+        },
+      },
+      'computer-2:session-1': {
+        text: 'Remote newer draft',
+        pastes: [],
+        pendingSubmission: {
+          id: 'same-local-id', originKey: 'computer-2:session-1', text: 'Remote unconfirmed', pastes: [],
+        },
+      },
+    }))
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+      'computer-1:session-1': 'Local accepted\n\nLocal newer draft',
+      'computer-2:session-1': 'Remote unconfirmed\n\nRemote newer draft',
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    expect(textarea).toHaveValue('Local newer draft')
+    expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('Other computer draft').closest('button')!)
+    expect(textarea).toHaveValue('Remote unconfirmed\n\nRemote newer draft')
+    expect(screen.getByText(/Delivery could not be confirmed/)).toBeInTheDocument()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it.each(['', 'Written in an older build'])(
+    'honors a newer legacy draft after an acceptance receipt: %s',
+    async (legacyText) => {
+      localStorage.setItem('agentic-remote:composer-drafts-generation', JSON.stringify({
+        version: 1,
+        accepted: [{ key: 'computer-1:session-1', id: 'accepted-id' }],
+      }))
+      localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+        'computer-1:session-1': {
+          text: '',
+          pastes: [],
+          pendingSubmission: {
+            id: 'accepted-id', originKey: 'computer-1:session-1', text: 'Already accepted', pastes: [],
+          },
+        },
+      }))
+      localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify(
+        legacyText ? { 'computer-1:session-1': legacyText } : {},
+      ))
+      const rendered = render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue(legacyText)
+      rendered.unmount()
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue(legacyText)
+      expect(localStorage.getItem('agentic-remote:composer-drafts-generation')).toBe('1')
+      expect(sendMessage).not.toHaveBeenCalled()
+    },
+  )
+
+  it('retires an accepted receipt with no newer text instead of falling back to the legacy payload', async () => {
+    localStorage.setItem('agentic-remote:composer-drafts-generation', JSON.stringify({
+      version: 1,
+      accepted: [{ key: 'computer-1:session-1', id: 'accepted-id' }],
+    }))
+    localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+      'computer-1:session-1': {
+        text: '', pastes: [],
+        pendingSubmission: {
+          id: 'accepted-id', text: 'Already accepted', pastes: [],
+        },
+      },
+    }))
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+      'computer-1:session-1': 'Already accepted',
+    }))
+    const rendered = render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('')
+    expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('')
+    expect(localStorage.getItem('agentic-remote:composer-drafts-generation')).toBe('1')
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('preserves a local clear preview draft through two replacements and later typing', async () => {
+    const pasted = Array.from({ length: 21 }, (_, index) => `draft ${index}`).join('\n')
+    const history = {
+      ...session,
+      messages: [{ ...session.messages[0]!, content: '/clear' }],
+    }
+    const middle = { ...session, id: 'replacement-b', messages: [] }
+    const final = {
+      ...session,
+      id: 'replacement-c',
+      messages: [],
+      replacedSessionIds: ['replacement-b', 'session-1'],
+    }
+    let finishClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockReturnValueOnce(new Promise((resolve) => { finishClear = resolve }))
+    vi.mocked(listSessions).mockResolvedValue([history])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === session.id ? history : final,
+    )
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+    fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(clearConversation).toHaveBeenCalledOnce())
+    await act(async () => {
+      for (const [from, to] of [['session-1', middle.id], [middle.id, final.id]]) {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.removed', computerId: computer.id,
+            sessionId: from, replacedBy: to,
+          }),
+        } as MessageEvent)
+      }
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: final }),
+      } as MessageEvent)
+    })
+    expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+    fireEvent.change(textarea, { target: { value: '[Paste #1 - 21 lines] later' } })
+    await act(async () => { finishClear?.(middle) })
+    expect(textarea).toHaveValue('[Paste #1 - 21 lines] later')
+    expect(window.location.search).toContain('session=replacement-c')
+    expect(sendMessage).not.toHaveBeenCalled()
+    rendered.unmount()
+    vi.mocked(listSessions).mockResolvedValue([final])
+    vi.mocked(getSession).mockResolvedValue(final)
+    vi.mocked(sendMessage).mockResolvedValueOnce(final)
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('[Paste #1 - 21 lines] later')
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', final.id, {
+        content: `${pasted} later`, enqueue: false,
+      }),
+    )
+  })
+
   it('reloads the unsent collapsed-paste draft rather than its history preview', async () => {
     const pasted = Array.from({ length: 21 }, (_, index) => `  line ${index}\r`)
       .join('\n')

@@ -74,6 +74,95 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it('answers a wrapped boolean question in its own pane without accepting the default', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-form-test-'))
+    directories.push(directory)
+    const output = path.join(directory, 'answer.json')
+    const executable = path.join(directory, 'copilot-form.mjs')
+    const sessionId = randomUUID()
+    const question =
+      'The repository clone is waiting in the credential manager for authentication. ' +
+      'Please complete the sign-in prompt so the clone can continue.'
+    const field = 'Repository authentication completed'
+    const pane = [
+      ' Copilot needs information.',
+      ' The repository clone is waiting in the credential manager for authentication. Please complete the sign-in',
+      ' prompt so the clone can continue.',
+      '',
+      ` ${field}:`,
+      ' Confirm after completing the sign-in window.',
+    ]
+    await writeFile(output, '')
+    await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+let selected = 0
+let pending = ''
+function draw() {
+  process.stdout.write('\\x1b[2J\\x1b[H' + [
+    ...${JSON.stringify(pane)},
+    ...['Yes', 'No', 'Other (type your answer)'].map((label, index) =>
+      (index === selected ? ' ❯ ' : '   ') + label),
+    '',
+    ' ↑/↓ select · enter accept · ctrl+d decline · esc cancel',
+  ].join('\\r\\n'))
+}
+process.stdin.setRawMode(true)
+process.stdin.on('data', (data) => {
+  pending += data.toString()
+  while (pending) {
+    if (pending[0] === '\\x1b') {
+      if (pending.length < 3) return
+      selected = pending[2] === 'A' ? Math.max(0, selected - 1) : Math.min(2, selected + 1)
+      pending = pending.slice(3)
+      draw()
+    } else if (pending[0] === '\\r' || pending[0] === '\\n') {
+      pending = pending.slice(1)
+      writeFileSync(${JSON.stringify(output)}, JSON.stringify({ accepted: selected === 0 }))
+      process.stdout.write('\\x1b[2J\\x1b[HAccepted\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
+    } else {
+      throw new Error('Unexpected input into form')
+    }
+  }
+})
+draw()
+`)
+    const tmuxSession = `agentic-form-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session', '-d', '-s', tmuxSession,
+      process.execPath, executable, '--session-id', sessionId,
+    ])
+    const panePid = (
+      await execFileAsync('tmux', [
+        'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+      ])
+    ).stdout.trim()
+    await waitForProcessCommand(Number(panePid), [executable])
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    const controller = new TmuxTerminalSessionController()
+    const identity = { question, fields: [field] }
+    expect(await eventually(
+      () => controller.capture(sessionId),
+      (captured) => Boolean(captured && terminalFormShowsFields(captured, identity)),
+    )).toContain('Copilot needs information.')
+
+    const steps = [{ kind: 'select' as const, optionCount: 3, index: 1 }]
+    expect(await controller.fillUserInputForm(sessionId, steps, {
+      ...identity, question: 'An unrelated request',
+    })).toBe(false)
+    expect(await controller.dismissUserInput(sessionId, {
+      ...identity, question: 'An unrelated request',
+    })).toBe(false)
+    expect(await readFile(output, 'utf8')).toBe('')
+    expect(await controller.fillUserInputForm(sessionId, steps, identity)).toBe(true)
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ accepted: false })
+    expect(parseTerminalFormPrompt(await controller.capture(sessionId) || '')).toBe(false)
+  })
+
   it('detects the Copilot session-in-use startup dialog', () => {
     expect(
       isTerminalSessionInUsePrompt(`
@@ -954,6 +1043,43 @@ describe('terminal slash command output', () => {
 
     expect(isTerminalOverlay(pane)).toBe(false)
   })
+
+  it('ignores keyboard hints quoted immediately above the composer', () => {
+    const pane = [
+      ' The picker says enter select and esc cancel.',
+      composer,
+    ].join('\n')
+
+    expect(isTerminalOverlay(pane)).toBe(false)
+  })
+
+  it('ignores keyboard hints typed inside the composer', () => {
+    const pane = [
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃ Explain enter select and esc cancel.',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n')
+
+    expect(isTerminalOverlay(pane)).toBe(false)
+  })
+
+  it('recognises a real overlay after an older composer in scrollback', () => {
+    const pane = [
+      composer,
+      ' Settings',
+      ' ❯ allowedUrls',
+      ' ↑/↓ navigate · enter edit · esc close',
+      ...Array<string>(12).fill(''),
+    ].join('\n')
+
+    expect(isTerminalOverlay(pane)).toBe(true)
+  })
+
+  it('recognises a single-field form that has no tab navigation hint', () => {
+    expect(isTerminalOverlay(singleFieldPane)).toBe(true)
+    expect(isTerminalOverlay([singleFieldPane, composer].join('\n'))).toBe(false)
+  })
 })
 
 // Captured from a real Copilot CLI form: a text field focused, with the tabs
@@ -1076,6 +1202,94 @@ describe('single field forms', () => {
         fields: ['Rows to retain'],
       }),
     ).toBe(false)
+  })
+
+  const wrappedQuestion =
+    'The repository clone is waiting in the credential manager for authentication. ' +
+    'Please complete the sign-in prompt so the clone can continue.'
+  const wrappedForm = {
+    question: wrappedQuestion,
+    fields: ['Repository authentication completed'],
+  }
+  const wrappedPane = [
+    ' Copilot needs information.',
+    ' The repository clone is waiting in the credential manager for authentication. Please complete the sign-in',
+    ' prompt so the clone can continue.',
+    '',
+    ' Repository authentication completed:',
+    ' Confirm after completing the sign-in window.',
+    ' ❯ Yes',
+    '   No',
+    '   Other (type your answer)',
+    '',
+    ' ↑/↓ select · enter accept · ctrl+d decline · esc cancel',
+  ].join('\n')
+
+  it('recognises the complete question across wrapped terminal lines', () => {
+    expect(parseTerminalFormPrompt(wrappedPane)).toBe(true)
+    expect(terminalFormShowsFields(wrappedPane, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(wrappedPane, wrappedForm)).toBe(0)
+  })
+
+  it('ignores a completed form left in scrollback above the current composer', () => {
+    const pane = [
+      wrappedPane,
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n')
+    expect(parseTerminalFormPrompt(pane)).toBe(false)
+    expect(terminalFormShowsFields(pane, wrappedForm)).toBe(false)
+    expect(parseTerminalFormActiveField(pane, wrappedForm)).toBeUndefined()
+  })
+
+  it('recognises a question wrapped inside a word and across blank paragraphs', () => {
+    const pane = wrappedPane.replace(
+      'authentication. Please complete the sign-in\n prompt',
+      'authentica\n tion.\n\n Please complete the sign-in\n prompt',
+    )
+    expect(terminalFormShowsFields(pane, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, wrappedForm)).toBe(0)
+  })
+
+  it('requires the whole wrapped question, not a prefix or text in a field', () => {
+    expect(terminalFormShowsFields(wrappedPane, {
+      ...wrappedForm,
+      question: wrappedPane.split('\n')[1].trim(),
+    })).toBe(false)
+    expect(terminalFormShowsFields(wrappedPane, {
+      ...wrappedForm,
+      question: wrappedQuestion.slice(0, -10),
+    })).toBe(false)
+    expect(terminalFormShowsFields(
+      wrappedPane.replace('prompt so the clone', 'prompt before the clone'),
+      wrappedForm,
+    )).toBe(false)
+    expect(terminalFormShowsFields(
+      wrappedPane.replace('Confirm after completing the sign-in window.', 'Unrelated question'),
+      { ...wrappedForm, question: 'Unrelated question' },
+    )).toBe(false)
+  })
+
+  it('does not erase spaces within a question line when comparing identities', () => {
+    expect(terminalFormShowsFields(
+      wrappedPane.replace('credential manager', 'credentialmanager'),
+      wrappedForm,
+    )).toBe(false)
+  })
+
+  it('recognises wrapped questions above multi-field tabs without changing focus', () => {
+    const pane = formPaneLastField.replace(
+      ' Configure the deployment request.',
+      wrappedPane.split('\n').slice(1, 3).join('\n'),
+    )
+    const form = {
+      question: wrappedQuestion,
+      fields: ['Deployment name', 'Catalog scope', 'Confirm deployment'],
+    }
+    expect(terminalFormShowsFields(pane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, form)).toBe(2)
   })
 })
 

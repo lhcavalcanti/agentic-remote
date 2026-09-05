@@ -1302,11 +1302,28 @@ function stripTerminalStatus(pane: string): string[] {
   return lines
 }
 
+function terminalControlLines(pane: string): string[] {
+  const lines = pane.split('\n')
+  while (lines.length > 0 && !lines[lines.length - 1].trim()) {
+    lines.pop()
+  }
+  // The bottom of the CLI composer separates transcript/draft text from the
+  // controls that own the keyboard. Rounded dialog borders are not composers.
+  const composer = lines.findLastIndex((line) =>
+    /^\s*╹[\u2580-\u259f\u2500-\u257f]*\s*$/u.test(line),
+  )
+  return lines.slice(composer + 1)
+}
+
 // A full-screen view replaces the transcript and is driven by keystrokes, so
 // there is nothing useful to copy into the conversation. Its footer advertises
 // the keys it accepts, which is the most reliable signal available.
 export function isTerminalOverlay(pane: string): boolean {
-  const tail = pane.split('\n').slice(-6).join(' ')
+  const controls = terminalControlLines(pane)
+  if (parseTerminalFormPrompt(controls.join('\n'))) {
+    return true
+  }
+  const tail = controls.slice(-6).join(' ')
   // Footers phrase these as either "esc close" or "esc to cancel", so the
   // connecting word is optional.
   const hints = [
@@ -1426,7 +1443,7 @@ export async function submitTerminalForm(
 }
 
 export function parseTerminalFormPrompt(pane: string): boolean {
-  const lines = pane.split('\n').map(cleanDialogLine)
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
   const header = lines.findLastIndex((line) =>
     /^Copilot needs information\.?$/i.test(line),
   )
@@ -1436,6 +1453,37 @@ export function parseTerminalFormPrompt(pane: string): boolean {
   return lines
     .slice(header)
     .some((line) => /enter accept/i.test(line) && /cancel/i.test(line))
+}
+
+function terminalFormQuestionEnd(
+  lines: string[],
+  header: number,
+  question: string,
+): number {
+  const expected = question.replace(/\s+/gu, ' ').trim()
+  if (!expected) {
+    return header
+  }
+  let offset = 0
+  for (let index = header + 1; index < lines.length; index += 1) {
+    const line = lines[index].replace(/\s+/gu, ' ').trim()
+    if (!line) {
+      continue
+    }
+    // Wrapping may split at whitespace or inside a word. Only the break is
+    // flexible; spaces within each rendered line remain part of its identity.
+    if (expected[offset] === ' ') {
+      offset += 1
+    }
+    if (!expected.startsWith(line, offset)) {
+      return -1
+    }
+    offset += line.length
+    if (offset === expected.length) {
+      return index
+    }
+  }
+  return -1
 }
 
 /**
@@ -1459,62 +1507,29 @@ function terminalFormTabsIndex(
   }
   // The CLI prints the request's own question between the header and the tabs.
   // Two requests can share a schema, so the question is what separates them.
-  const question = form.question.trim()
-  if (question && !lines.slice(header + 1).includes(question)) {
+  const questionAt = terminalFormQuestionEnd(lines, header, form.question)
+  if (questionAt < 0) {
     return -1
   }
-  const rows = lines
-    .slice(header + 1)
-    // Tabs sit on one line separated by runs of spaces, so a title containing
-    // a single space stays intact.
-    .map((line) => line.split(/\s{2,}/).filter(Boolean))
-  // A form of more than one field prints them as a row of tabs, directly under
-  // the question and above the focused field's own content. So it is the first
-  // line with anything on it -- not any line that happens to hold a run of
-  // spaces, which is what a prefilled value like `ACME  Corp` looks like
-  // further down, and which used to make a perfectly ordinary single-field
-  // form impossible to answer.
-  const questionAt = question
-    ? lines.findIndex(
-        (line, index) => index > header && line.trim() === question,
-      )
-    : header
-  const firstContent = rows.find(
-    (tabs, position) => header + 1 + position > questionAt && tabs.length > 0,
+  // The first content after the complete question must be its tabs (or the
+  // lone field heading). Searching further could match a title in a value or
+  // accept only a prefix of a longer, different question.
+  const index = lines.findIndex(
+    (line, position) => position > questionAt && line.trim().length > 0,
   )
-  const printsTabRow = (firstContent?.length ?? 0) > 1
-  for (let position = 0; position < rows.length; position += 1) {
-    const tabs = rows[position]
-    const index = header + 1 + position
-    if (form.fields.length === 1) {
-      // A form of one field prints no row of tabs: the field's own heading is
-      // all there is, and the CLI writes a heading with a colon after it.
-      // Reading that heading as the tab is what lets a single question be
-      // recognised.
-      //
-      // Only in a pane that prints no tab row at all. Every line was a
-      // candidate before, so a single-field identity could match a lone
-      // heading inside a form of several fields -- and answering it submitted
-      // that whole form, the other fields left at their defaults.
-      if (printsTabRow || tabs.length !== 1) {
-        continue
-      }
-      // Only the trailing colon the heading is printed with: taking one off
-      // every tab stopped a field whose own title ends in a colon from ever
-      // matching the row it is printed in.
-      if (tabs[0].replace(/:$/, '') === form.fields[0]) {
-        return index
-      }
-      continue
-    }
-    if (
-      tabs.length === form.fields.length &&
-      tabs.every((tab, slot) => tab === form.fields[slot])
-    ) {
-      return index
-    }
+  if (index < 0) {
+    return -1
   }
-  return -1
+  const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
+  if (form.fields.length === 1) {
+    return tabs.length === 1 && tabs[0].replace(/:$/, '') === form.fields[0]
+      ? index
+      : -1
+  }
+  return tabs.length === form.fields.length &&
+    tabs.every((tab, slot) => tab === form.fields[slot])
+    ? index
+    : -1
 }
 
 /**
@@ -1554,7 +1569,7 @@ export function terminalFormShowsFields(
   pane: string,
   form: TerminalFormIdentity,
 ): boolean {
-  return terminalFormTabsIndex(pane.split('\n').map(cleanDialogLine), form) >= 0
+  return terminalFormTabsIndex(terminalControlLines(pane).map(cleanDialogLine), form) >= 0
 }
 
 /**
@@ -1572,7 +1587,7 @@ export function parseTerminalFormActiveField(
   if (new Set(form.fields).size !== form.fields.length) {
     return undefined
   }
-  const lines = pane.split('\n').map(cleanDialogLine)
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
   const tabs = terminalFormTabsIndex(lines, form)
   if (tabs < 0) {
     return undefined

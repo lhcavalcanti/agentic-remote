@@ -177,6 +177,10 @@ Questions and permissions are the highest-priority UI state.
   runtimes.
 - Terminal ask-user and permission dialogs MUST be parsed from the live pane.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
+- Question identity matching MUST tolerate terminal line wrapping, including
+  breaks within words, while still requiring the complete question and field
+  headings. A failed match MUST preserve the pending request and surface an
+  actionable error instead of typing into an unverified dialog.
 - Safe Yes/choice and Stop actions MUST be available.
 - Pending SDK questions MUST be reconstructed from persisted tool events after
   a service restart, including structured ask-user forms.
@@ -186,6 +190,10 @@ Questions and permissions are the highest-priority UI state.
 - Entering a session that is already waiting MUST scroll to the action card.
 
 ## 6. Composer and prompt delivery
+
+- Full-screen send protection MUST recognize active terminal dialogs, including
+  single-field questions, without treating keyboard hints quoted in transcript
+  or composer text as an open dialog.
 
 ### 6.1 Layout
 

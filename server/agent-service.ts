@@ -4424,8 +4424,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // avoid, so nothing is sent unless the form is known to have closed.
         if (request.form && !closed) {
           this.answeredPersistedInputs.delete(sessionId)
-          throw new Error(
-            'The agent is still showing its prompt, so the answer was not sent. Try again.',
+          throw Object.assign(
+            new Error(
+              'The agent is still showing its prompt, so the answer was not sent. Try again.',
+            ),
+            { statusCode: 409 },
           )
         }
       }

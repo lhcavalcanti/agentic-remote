@@ -60,6 +60,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - The Sessions drawer MUST show all configured computers.
 - Selecting, creating, or opening a session MUST NOT hide other computers.
+- Sessions MUST offer metadata search and All, Needs you, and Working filters.
+  Filtering MUST keep every configured computer visible and MUST NOT change
+  the selected session, its draft, or its Knowledge position. Reordering MUST
+  be disabled while filtered so hidden sessions are not reordered implicitly.
+- Needs you MUST include pending questions, permissions, waiting sessions, and
+  errors. Pending actions MUST take precedence over passive runtime status.
+  Working MUST include running background tasks, but MUST NOT represent a
+  disconnected computer's last-known activity as live work.
 - The New session provider selector MUST show the selected computer's available
   and unavailable providers before creation.
 - Computer-group headers MUST NOT show provider tags; provider identity belongs
@@ -120,6 +128,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 ### 3.3 Rename, restart, clear, and delete
 
+- Secondary session actions MAY live in a labeled disclosure rather than
+  crowding the conversation header. They MUST remain keyboard- and
+  touch-accessible, retain their confirmations and disabled states, and close
+  independently of the Knowledge panel. Knowledge and the current-folder
+  entry point MUST remain directly reachable.
 - Rename MUST update the web state and owning tmux/Copilot session when
   supported.
 - Restart MUST preserve session ID, title, working folder, transcript, queue,
@@ -366,6 +379,12 @@ switches, failed sends, and clear replacement IDs.
   depth, and support ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, and End.
 - Knowledge stores root metadata on the hub; file content MUST remain on the
   owning computer.
+- Ask agent about file MUST append a root-qualified file reference to the
+  selected session's existing draft without sending it. It MUST be disabled
+  with an explanation when there is no session, the session belongs to
+  another computer, or the owning computer is offline. This action MUST reveal
+  the composer (docked reading on desktop, conversation on phone), retaining
+  the document for reopening.
 
 
 ## 9. Runtime configuration
@@ -550,6 +569,8 @@ Every material release SHOULD preserve:
 | Concern | Primary location |
 | --- | --- |
 | UI, composer, workspace, Knowledge | `src/App.tsx`, `src/index.css` |
+| Session search, filters, and state labels | `src/SessionNavigation.tsx`, `src/session-presentation.ts` |
+| Session-actions disclosure | `src/SessionActions.tsx` |
 | Browser API client | `src/api.ts` |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |

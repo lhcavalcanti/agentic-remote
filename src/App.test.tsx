@@ -237,6 +237,24 @@ function knowledgeListings(
 
 let restoreScrollTop: (() => void) | undefined
 
+function openSessionActions() {
+  const trigger = screen.getByRole('button', { name: 'Session actions' })
+  if (trigger.getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(trigger)
+  }
+}
+
+function sessionAction(name: string) {
+  openSessionActions()
+  return screen.getByRole('button', { name })
+}
+
+async function findSessionAction(name: string) {
+  await screen.findByRole('button', { name: 'Session actions' })
+  openSessionActions()
+  return screen.findByRole('button', { name })
+}
+
 describe('App', () => {
   afterEach(() => {
     restoreScrollTop?.()
@@ -2646,7 +2664,7 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mute session notifications' }),
+      sessionAction('Mute session notifications'),
     )
 
     await waitFor(() =>
@@ -2657,7 +2675,7 @@ describe('App', () => {
       ),
     )
     expect(
-      screen.getByRole('button', { name: 'Unmute session notifications' }),
+      sessionAction('Unmute session notifications'),
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -2888,7 +2906,7 @@ describe('App', () => {
       ),
     )
     expect(
-      screen.getByText('Tap ↑ to send · Return adds a line'),
+      screen.getByText('Tap Send · Return adds a line'),
     ).toBeInTheDocument()
     expect(
       screen.getByText('SDK', { selector: '.session-mode-badge' }),
@@ -2919,7 +2937,7 @@ describe('App', () => {
   it('renames the selected session from the conversation header', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+    fireEvent.click(sessionAction('Rename session'))
     fireEvent.change(screen.getByLabelText('Session name'), {
       target: { value: 'Renamed project' },
     })
@@ -3520,7 +3538,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+    fireEvent.click(sessionAction('Close session'))
 
     await waitFor(() => {
       expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1')
@@ -3535,7 +3553,7 @@ describe('App', () => {
     fireEvent.change(textarea, { target: { value: 'Keep this draft' } })
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Clear conversation' }),
+      sessionAction('Clear conversation'),
     )
     await waitFor(() =>
       expect(clearConversation).toHaveBeenCalledWith(
@@ -3561,7 +3579,7 @@ describe('App', () => {
     render(<App />)
     await screen.findByText('Hello agent')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Restart session' }))
+    fireEvent.click(sessionAction('Restart session'))
     await waitFor(() =>
       expect(restartSession).toHaveBeenCalledWith(
         'computer-1',
@@ -3597,9 +3615,9 @@ describe('App', () => {
 
     render(<App />)
 
-    await screen.findByRole('button', { name: 'Move session to tmux' })
+    await findSessionAction('Move session to tmux')
     fireEvent.click(
-      screen.getByRole('button', { name: 'Move session to tmux' }),
+      sessionAction('Move session to tmux'),
     )
 
     await waitFor(() =>
@@ -3608,6 +3626,7 @@ describe('App', () => {
         'session-1',
       ),
     )
+    openSessionActions()
     expect(
       screen.queryByRole('button', { name: 'Move session to tmux' }),
     ).not.toBeInTheDocument()
@@ -3630,6 +3649,7 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByLabelText('Message')
+    openSessionActions()
     expect(
       screen.queryByRole('button', { name: 'Move session to tmux' }),
     ).not.toBeInTheDocument()
@@ -5086,6 +5106,134 @@ describe('App', () => {
       ).toBe(240),
     )
   })
+  describe('Knowledge-to-agent handoff', () => {
+    const note: WorkspaceFile = {
+      name: 'guide.md',
+      path: 'guide.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 80,
+      content: '# Workspace guide\n\nKeep the agent and its context together.',
+    }
+
+    beforeEach(() => {
+      vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+      vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: note.name, path: note.path, kind: 'markdown', size: note.size }],
+        },
+      }))
+      vi.mocked(readKnowledgeFile).mockResolvedValue(note)
+    })
+
+    async function openNote() {
+      fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+      const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+      fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+      await screen.findByRole('heading', { name: 'Workspace guide' })
+      return screen.getByRole('button', { name: 'Ask agent about file' })
+    }
+
+    it('appends the owning-root path to the existing draft without sending', async () => {
+      render(<App />)
+      const composer = await screen.findByLabelText('Message')
+      fireEvent.change(composer, { target: { value: 'My existing question' } })
+      const ask = await openNote()
+      fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+      fireEvent.click(ask)
+      expect(composer).toHaveValue(
+        'My existing question\n\nPlease review `/home/tester/docs/guide.md` and help me with it.',
+      )
+      expect(document.querySelector('.workspace')).toHaveClass('workspace--docked')
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      await waitFor(() => expect(composer).toHaveFocus())
+    })
+
+    it('reveals the phone conversation while keeping the document available to reopen', async () => {
+      const originalWidth = window.innerWidth
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+      try {
+        render(<App />)
+        const ask = await openNote()
+        fireEvent.click(ask)
+        expect(document.querySelector('.workspace')).toHaveClass('workspace--hidden')
+        expect(screen.getByLabelText('Message')).toHaveValue(
+          'Please review `/home/tester/docs/guide.md` and help me with it.',
+        )
+        expect(sendMessage).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+        expect(await screen.findByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+      }
+    })
+
+    it('does not give a session a path on a different computer', async () => {
+      vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+      vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+        ...knowledgeRoot, computerId: secondComputer.id, computerName: secondComputer.name,
+      }])
+      render(<App />)
+      const composer = await screen.findByLabelText('Message')
+      fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+      const ask = await openNote()
+      expect(ask).toBeDisabled()
+      expect(screen.getByText('Open a session on worker-node to ask about this file.')).toBeVisible()
+      fireEvent.click(ask)
+      expect(composer).toHaveValue('Keep this draft')
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not offer an agent handoff when the owning computer is offline', async () => {
+      vi.mocked(listComputers).mockResolvedValue([{ ...computer, online: false }])
+      render(<App />)
+      const ask = await openNote()
+      expect(ask).toBeDisabled()
+      expect(screen.getByText('Reconnect development to ask about this file.')).toBeVisible()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('opens Knowledge directly from the sessionless welcome screen', async () => {
+      vi.mocked(listSessions).mockResolvedValue([])
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Open Knowledge' }))
+      const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+      fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+      expect(await screen.findByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Ask agent about file' })).toBeDisabled()
+      expect(createSession).not.toHaveBeenCalled()
+    })
+  })
+
+  it('keeps search arrows from recalling a prompt or changing the selected session', async () => {
+    render(<App />)
+    const composer = await screen.findByLabelText('Message')
+    fireEvent.change(composer, { target: { value: 'Keep my draft' } })
+    const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+    search.focus()
+    fireEvent.change(search, { target: { value: 'Project' } })
+    fireEvent.keyDown(search, { key: 'ArrowUp' })
+    expect(composer).toHaveValue('Keep my draft')
+    expect(search).toHaveFocus()
+    expect(window.location.search).toBe('?computer=computer-1&session=session-1')
+  })
+
+  it('dismisses session actions before the open Knowledge panel on Escape', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const action = sessionAction('Rename session')
+    action.focus()
+    fireEvent.keyDown(action, { key: 'Escape' })
+    expect(screen.queryByRole('group', { name: 'Session actions' })).toBeNull()
+    expect(document.querySelector('.workspace')).toHaveClass('workspace--docked')
+    expect(screen.getByRole('button', { name: 'Session actions' })).toHaveFocus()
+  })
+
   it('moves the session to a folder browsed in Knowledge', async () => {
     vi.mocked(executeCommand).mockImplementation(
       async (_computerId, _sessionId, input) => ({
@@ -6061,9 +6209,7 @@ describe('App', () => {
     })
 
     expect(
-      await screen.findByRole('button', {
-        name: 'Unmute session notifications',
-      }),
+      await findSessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
   })
 
@@ -7136,7 +7282,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+    fireEvent.click(sessionAction('Close session'))
 
     await waitFor(() =>
       expect(
@@ -7235,13 +7381,11 @@ describe('App', () => {
     await waitFor(() => expect(answerSettings).toBeDefined())
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mute session notifications' }),
+      sessionAction('Mute session notifications'),
     )
-    await screen.findByRole('button', {
-      name: 'Unmute session notifications',
-    })
+    await findSessionAction('Unmute session notifications')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     act(() => {
       MockWebSocket.instances[0]?.onmessage?.({
         data: JSON.stringify({
@@ -7260,9 +7404,7 @@ describe('App', () => {
     })
 
     expect(
-      await screen.findByRole('button', {
-        name: 'Unmute session notifications',
-      }),
+      await findSessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
     confirmSpy.mockRestore()
   })
@@ -8033,7 +8175,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(answerClear).toBeDefined())
 
     await act(async () => {
@@ -8098,7 +8240,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(answerClear).toBeDefined())
 
     // B is cleared into C before A's answer names B. Moving the draft into B
@@ -8429,7 +8571,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
 
     // Clearing gives the session a new id, so its reading position has to
     // travel with it rather than being stranded under the old one.
@@ -9169,7 +9311,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(releaseClear).toBeDefined())
 
     // The server removes the old session and creates a replacement, and the
@@ -9349,7 +9491,7 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: 'Unmute session notifications' }),
+        sessionAction('Unmute session notifications'),
       ).toBeInTheDocument(),
     )
 
@@ -9383,7 +9525,7 @@ describe('App', () => {
       ),
     )
     expect(
-      screen.getByRole('button', { name: 'Unmute session notifications' }),
+      sessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
   })
 
@@ -9474,7 +9616,7 @@ describe('App', () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
     fireEvent.change(textarea, { target: { value: 'Draft worth keeping' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(releaseClear).toBeDefined())
 
     // A node on an older build sends no replacement link, so the removal
@@ -9505,7 +9647,7 @@ describe('App', () => {
     )
     expect(screen.getByLabelText('Message')).toHaveValue('Draft worth keeping')
     expect(
-      screen.getByRole('button', { name: 'Unmute session notifications' }),
+      sessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
     confirmSpy.mockRestore()
   })
@@ -9522,9 +9664,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Project chat')
-    await screen.findByRole('button', {
-      name: 'Unmute session notifications',
-    })
+    await findSessionAction('Unmute session notifications')
 
     let answerSettings: (() => void) | undefined
     vi.mocked(getPushSettings).mockImplementation(
@@ -9564,9 +9704,7 @@ describe('App', () => {
     // The reply predates the clear, so it must not unmute the replacement the
     // mute was just moved to.
     expect(
-      await screen.findByRole('button', {
-        name: 'Unmute session notifications',
-      }),
+      await findSessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
   })
 

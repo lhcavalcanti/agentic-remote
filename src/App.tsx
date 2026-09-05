@@ -32,12 +32,8 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core'
 import {
   arrayMove,
-  SortableContext,
   sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import {
   ArrowUp,
   Bell,
@@ -56,7 +52,6 @@ import {
   FolderOpen,
   File as FileIcon,
   FileText,
-  GripVertical,
   History,
   List,
   LoaderCircle,
@@ -68,9 +63,7 @@ import {
   Mic,
   MonitorCog,
   Paperclip,
-  Pause,
   Pencil,
-  Play,
   Plus,
   RefreshCw,
   Search,
@@ -85,6 +78,16 @@ import {
   XCircle,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { SessionActions } from './SessionActions'
+import { SessionNavigation } from './SessionNavigation'
+import {
+  computerTone,
+  executionModeName,
+  providerName,
+  sessionKey,
+  shortPath,
+  taskSnapshot,
+} from './session-presentation'
 import { MermaidDiagram } from './MermaidDiagram.js'
 import {
   breadcrumbSegments,
@@ -211,10 +214,6 @@ import {
   type SessionNotificationState,
 } from './shell-notifications'
 
-function sessionKey(session: Pick<ManagedSession, 'computerId' | 'id'>): string {
-  return `${session.computerId}:${session.id}`
-}
-
 function isAudioFile(file: File): boolean {
   return (
     file.type.startsWith('audio/') ||
@@ -246,14 +245,6 @@ function phoneEnterCreatesNewline(): boolean {
     window.matchMedia?.('(pointer: coarse)').matches ||
     window.innerWidth <= 960
   )
-}
-
-function computerTone(computerId: string): number {
-  let hash = 0
-  for (const character of computerId) {
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0
-  }
-  return hash % 6
 }
 
 function slashShortcut(value: string): string {
@@ -869,27 +860,6 @@ function upsertComputer(
   ].sort((left, right) => Number(right.isLocal) - Number(left.isLocal))
 }
 
-function shortPath(value: string): string {
-  if (value.startsWith('/home/')) {
-    return `~/${value.split('/').slice(3).join('/')}`
-  }
-  return value
-}
-
-function providerName(provider: AgentProvider | undefined): string {
-  return provider === 'claude' ? 'Claude Agent' : 'GitHub Copilot'
-}
-
-function executionModeName(
-  executionMode: ManagedSession['executionMode'],
-): string | undefined {
-  return executionMode === 'tmux'
-    ? 'tmux'
-    : executionMode === 'sdk'
-      ? 'SDK'
-      : undefined
-}
-
 function supportsBackgroundTasks(
   computer: ComputerSummary | undefined,
   provider: AgentProvider | undefined,
@@ -901,13 +871,6 @@ function supportsBackgroundTasks(
     (candidate) => candidate.id === (provider || 'copilot'),
   )
   return capability?.supportsBackgroundTasks === true
-}
-
-function taskSnapshot(
-  snapshots: Record<string, BackgroundTaskSnapshot>,
-  session: Pick<ManagedSession, 'computerId' | 'id'>,
-): BackgroundTaskSnapshot | undefined {
-  return snapshots[sessionKey(session)]
 }
 
 function taskStatusLabel(status: BackgroundTask['status']): string {
@@ -1470,6 +1433,13 @@ function workspaceAbsolutePath(cwd: string, relativePath: string): string {
     return cwd
   }
   return `${cwd === '/' ? '' : cwd.replace(/\/+$/, '')}/${relativePath}`
+}
+
+function workspaceFilePrompt(root: string, path: string, ask: boolean): string {
+  const absolutePath = workspaceAbsolutePath(root, path)
+  return ask
+    ? `Please review \`${absolutePath}\` and help me with it.`
+    : `File: \`${absolutePath}\``
 }
 
 function ChangeDirectoryDialog({
@@ -3990,250 +3960,33 @@ const ConversationMessages = memo(function ConversationMessages({
   return <div className="message-stack">{rendered}</div>
 })
 
-function EmptyConversation({ onCreate }: { onCreate: () => void }) {
+function EmptyConversation({ onCreate, onKnowledge }: {
+  onCreate: () => void
+  onKnowledge: () => void
+}) {
   return (
     <div className="empty-state">
       <span className="empty-state__icon">
         <MessageSquare size={26} />
       </span>
-      <h2>Your agents, within reach.</h2>
-      <p>Choose a computer and continue a Copilot or Claude Agent conversation.</p>
-      <button className="primary-button" onClick={onCreate} type="button">
-        <Plus size={17} />
-        New session
-      </button>
-    </div>
-  )
-}
-
-function SortableSessionItem({
-  session,
-  selected,
-  backgroundTasks,
-  onSelect,
-  onOpenTasks,
-  onToggleSuspended,
-  suspending,
-}: {
-  session: ManagedSession
-  selected: boolean
-  backgroundTasks?: BackgroundTaskSnapshot
-  onSelect: () => void
-  onOpenTasks?: () => void
-  onToggleSuspended?: () => void
-  suspending?: boolean
-}) {
-  const sortableId = `session:${sessionKey(session)}`
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: sortableId })
-  const runningBackgroundTasks = backgroundTasks?.runningCount || 0
-  const foregroundStatusAllowsTaskTreatment =
-    session.status === 'idle' || session.status === 'running'
-  const backgroundTaskActive =
-    runningBackgroundTasks > 0 &&
-    foregroundStatusAllowsTaskTreatment
-  // Opening the session and putting it down are two different actions, so they
-  // are two buttons side by side rather than one inside the other. Nesting
-  // them stopped a screen reader offering the second at all.
-  const suspendUnavailable =
-    Boolean(suspending) || (!session.suspended && session.status !== 'idle')
-  return (
-    <div
-      className={`session-item session-item--tone-${computerTone(
-        session.computerId,
-      )} ${backgroundTaskActive ? 'session-item--background-running' : ''} ${
-        session.suspended ? 'session-item--suspended' : ''
-      } ${
-        selected ? 'session-item--active' : ''
-      } ${
-        isDragging ? 'sortable-dragging' : ''
-      }`}
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-      }}
-    >
-      <span
-        aria-label={`Reorder ${session.title}`}
-        className="drag-handle"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={16} />
-      </span>
-      <button
-        aria-current={selected ? 'page' : undefined}
-        className="session-item__open"
-        onClick={onSelect}
-        type="button"
-      >
-      <span className={`status-dot status-dot--${session.status}`} />
-      <span className="session-item__text">
-        <span className="session-item__badges">
-          <em className="provider-badge">
-            {session.provider === 'claude' ? 'Claude' : 'Copilot'}
-          </em>
-          {executionModeName(session.executionMode) ? (
-            <em className="provider-badge session-mode-badge">
-              {executionModeName(session.executionMode)}
-            </em>
-          ) : null}
-        </span>
-        <strong>
-          {session.title}
-        </strong>
-        <small className="session-item__where">
-          <span className="session-item__cwd">{shortPath(session.cwd)}</span>
-        </small>
-      </span>
-      </button>
-      {runningBackgroundTasks > 0 ? (
-        // A button of its own, beside the row's rather than inside it: nested
-        // inside, it was invalid interactive nesting and assistive technology
-        // offered neither as an action. It stays reachable by touch, which a
-        // keyboard shortcut is not.
-        <button
-          aria-label={
-            onOpenTasks
-              ? `View background tasks for ${session.title}`
-              : undefined
-          }
-          className={`session-item__tasks ${
-            onOpenTasks ? 'session-item__tasks--interactive' : ''
-          }`}
-          disabled={!onOpenTasks}
-          onClick={onOpenTasks}
-          type="button"
-        >
-          {`${runningBackgroundTasks} task${
-            runningBackgroundTasks === 1 ? '' : 's'
-          }`}
+      <span className="empty-state__eyebrow">A workspace, wherever you are</span>
+      <h2>Your agents. Your knowledge.</h2>
+      <p>
+        Start an agent on a trusted computer, or pick up your notes.
+        Keep the conversation and its context side by side.
+      </p>
+      <div className="empty-state__actions">
+        <button className="primary-button" onClick={onCreate} type="button">
+          <Plus size={17} />
+          New session
         </button>
-      ) : null}
-      {onToggleSuspended ? (
-        // Beside the conversation it belongs to, because putting a session
-        // down is something a reader does while looking at the list rather
-        // than after opening the one they meant to stop.
-        <button
-          aria-label={
-            session.suspended
-              ? `Resume ${session.title}`
-              : `Suspend ${session.title}`
-          }
-          aria-pressed={session.suspended ? true : undefined}
-          className={`session-item__suspend${
-            session.suspended ? ' session-item__suspend--active' : ''
-          }`}
-          // Refused rather than silently ignored: a control that looks
-          // available and does nothing is worse than one that says it cannot.
-          disabled={suspendUnavailable}
-          onClick={onToggleSuspended}
-          title={
-            session.suspended
-              ? 'Start this session up again'
-              : suspendUnavailable
-                ? 'Wait for the session to finish before suspending it'
-                : 'Keep this session but stop what is running for it'
-          }
-          type="button"
-        >
-          {session.suspended ? <Play size={13} /> : <Pause size={13} />}
+        <button className="secondary-button" onClick={onKnowledge} type="button">
+          <BookOpen size={17} />
+          Open Knowledge
         </button>
-      ) : null}
+      </div>
+      <small>Copilot or Claude Agent. Files stay on their owning computer.</small>
     </div>
-  )
-}
-
-function SortableComputerGroup({
-  computer,
-  sessions,
-  backgroundTasks,
-  selectedKey,
-  showComputerHandle,
-  onSelectSession,
-  onOpenSessionTasks,
-  onToggleSessionSuspended,
-  suspending,
-}: {
-  computer: ComputerSummary
-  sessions: ManagedSession[]
-  backgroundTasks: Record<string, BackgroundTaskSnapshot>
-  selectedKey?: string
-  showComputerHandle: boolean
-  onToggleSessionSuspended?: (session: ManagedSession) => void
-  suspending?: boolean
-  onSelectSession: (session: ManagedSession) => void
-  onOpenSessionTasks: (session: ManagedSession) => void
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: `computer:${computer.id}` })
-  return (
-    <section
-      className={`computer-session-group computer-session-group--tone-${computerTone(
-        computer.id,
-      )} ${isDragging ? 'sortable-dragging' : ''}`}
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-      }}
-    >
-      <header className="computer-session-group__header">
-        {showComputerHandle ? (
-          <span
-            aria-label={`Reorder ${computer.name}`}
-            className="drag-handle"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical size={14} />
-          </span>
-        ) : null}
-        <span
-          className={`computer-session-group__status ${
-            computer.online ? 'computer-session-group__status--online' : ''
-          }`}
-        />
-        <strong>{computer.name}</strong>
-        <small>{sessions.length}</small>
-      </header>
-      <SortableContext
-        items={sessions.map((session) => `session:${sessionKey(session)}`)}
-        strategy={verticalListSortingStrategy}
-      >
-        <div className="computer-session-group__sessions">
-          {sessions.map((session) => (
-            <SortableSessionItem
-              key={sessionKey(session)}
-              backgroundTasks={taskSnapshot(backgroundTasks, session)}
-              onOpenTasks={() => onOpenSessionTasks(session)}
-              onSelect={() => onSelectSession(session)}
-              onToggleSuspended={
-                onToggleSessionSuspended
-                  ? () => onToggleSessionSuspended(session)
-                  : undefined
-              }
-              selected={sessionKey(session) === selectedKey}
-              session={session}
-              suspending={suspending}
-            />
-          ))}
-        </div>
-      </SortableContext>
-    </section>
   )
 }
 
@@ -5329,6 +5082,8 @@ function KnowledgeReader({
   onOpenFolder,
   onOpenFile,
   onLoadAsset,
+  onAsk,
+  askUnavailableReason,
 }: {
   file?: WorkspaceFile
   fragment?: string
@@ -5338,6 +5093,8 @@ function KnowledgeReader({
   onOpenFolder: (path: string) => void
   onOpenFile: (path: string, fragment?: string) => void
   onLoadAsset: MarkdownImageLoader
+  onAsk: (file: WorkspaceFile) => void
+  askUnavailableReason?: string
 }) {
   const [raw, setRaw] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
@@ -5374,10 +5131,11 @@ function KnowledgeReader({
     return (
       <div className="knowledge-reader knowledge-reader--empty">
         <BookOpen size={26} />
+        <h3>{loading ? 'Opening your knowledge' : 'Room for your next idea'}</h3>
         <p>
           {loading
-            ? 'Loading…'
-            : 'Select a Markdown, text, or PDF file to read it here.'}
+            ? 'Loading...'
+            : 'Choose a Markdown, text, image, or PDF file from the tree. Your conversation stays beside it.'}
         </p>
       </div>
     )
@@ -5388,8 +5146,8 @@ function KnowledgeReader({
       <div className="workspace-preview__header">
         <div>
           <strong title={file.name}>{file.name}</strong>
-          <small>
-            {root.computerName} · {root.path}/{file.path}
+          <small title={workspaceAbsolutePath(root.path, file.path)}>
+            {root.computerName} · {file.kind === 'markdown' ? 'Markdown document' : file.kind.toUpperCase()}
           </small>
         </div>
         {outline.length > 1 ? (
@@ -5482,6 +5240,25 @@ function KnowledgeReader({
         ) : (
           <pre>{file.content}</pre>
         )}
+      </div>
+      <div className="knowledge-reader__context">
+        <div>
+          <span className="knowledge-reader__read-only">Read-only</span>
+          <p className="knowledge-reader__hint" id="knowledge-ask-hint">
+            {askUnavailableReason || 'Adds to your draft. You choose when to send.'}
+          </p>
+        </div>
+        <button
+          aria-describedby="knowledge-ask-hint"
+          aria-label="Ask agent about file"
+          disabled={loading || Boolean(askUnavailableReason)}
+          onClick={() => onAsk(file)}
+          title={askUnavailableReason || 'Add a file reference to your draft without sending'}
+          type="button"
+        >
+          <MessageSquare size={14} />
+          Ask agent
+        </button>
       </div>
     </div>
   )
@@ -9178,6 +8955,15 @@ function App() {
   }
 
   const activeRoot = roots.find((root) => root.id === activeRootId)
+  const knowledgeAskUnavailableReason = activeRoot
+    ? !selected || selected.computerId !== activeRoot.computerId
+      ? `Open a session on ${activeRoot.computerName} to ask about this file.`
+      : !computers.some(
+          (computer) => computer.id === activeRoot.computerId && computer.online,
+        )
+        ? `Reconnect ${activeRoot.computerName} to ask about this file.`
+        : undefined
+    : undefined
 
   /**
    * Where the Knowledge panel is browsing, on the computer that owns it. The
@@ -10161,12 +9947,9 @@ function App() {
   function insertWorkspaceFile(file: WorkspaceFile, ask: boolean) {
     if (!selected) return
     const targetKey = sessionKey(selected)
-    const absolutePath = `${selected.cwd.replace(/\/$/, '')}/${file.path}`
     appendComposerForKey(
       targetKey,
-      ask
-        ? `Please review \`${absolutePath}\` and help me with it.`
-        : `File: \`${absolutePath}\``,
+      workspaceFilePrompt(selected.cwd, file.path, ask),
     )
     setWorkspaceOpen(false)
     setWorkspaceInitialPath(undefined)
@@ -10174,6 +9957,23 @@ function App() {
     window.requestAnimationFrame(() => focusComposer(targetKey))
   }
 
+  function askAboutKnowledgeFile(file: WorkspaceFile) {
+    if (!selected || !activeRoot || knowledgeAskUnavailableReason || knowledgeLoading) {
+      setError(
+        knowledgeAskUnavailableReason ||
+          'Wait for the file to finish opening in this session before asking about it.',
+      )
+      return
+    }
+    const targetKey = sessionKey(selected)
+    appendComposerForKey(
+      targetKey,
+      workspaceFilePrompt(activeRoot.path, file.path, true),
+    )
+    setKnowledgeMode(drawerIsOverlay() ? 'hidden' : 'docked')
+    setSidebarOpen(false)
+    window.requestAnimationFrame(() => focusComposer(targetKey))
+  }
 
 
 
@@ -10479,6 +10279,7 @@ function App() {
       event.metaKey ||
       event.shiftKey ||
       hasBlockingUi ||
+      isEditableTarget(event.target) ||
       sortableDragActiveRef.current
     ) {
       return
@@ -10487,7 +10288,7 @@ function App() {
     if (
       target instanceof Element &&
       target.closest(
-        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle, .knowledge-panel, .sidebar-knowledge',
+        '[role="dialog"], .composer, .user-input-card, .permission-card, .drag-handle, .knowledge-panel, .sidebar-knowledge, .session-actions',
       )
     ) {
       return
@@ -10717,7 +10518,7 @@ function App() {
           </span>
           <div>
             <strong>Agentic Remote</strong>
-            <span>Multi-computer agent hub</span>
+            <span>Agents &amp; knowledge, together</span>
           </div>
           <button
             aria-label="Close sessions"
@@ -10749,13 +10550,6 @@ function App() {
         </div>
 
         <div className="sidebar__body">
-
-          <nav aria-label="Sessions" className="session-list">
-            <p className="sidebar-label">Recent</p>
-            {loading ? <p className="sidebar-message">Loading sessions…</p> : null}
-            {!loading && sessions.length === 0 ? (
-              <p className="sidebar-message">No sessions here.</p>
-            ) : null}
             <DndContext
               collisionDetection={closestCenter}
               onDragCancel={() => {
@@ -10770,36 +10564,28 @@ function App() {
               }}
               sensors={sensors}
             >
-              <SortableContext
-                items={orderedComputers.map(
-                  (computer) => `computer:${computer.id}`,
-                )}
-                strategy={verticalListSortingStrategy}
-              >
-                <div className="computer-session-groups">
-                  {orderedComputers.map((computer) => (
-                    <SortableComputerGroup
-                      computer={computer}
-                      backgroundTasks={backgroundTaskSnapshots}
-                      key={computer.id}
-                      onOpenSessionTasks={openTasksForSession}
-                      onSelectSession={selectSession}
-                      onToggleSessionSuspended={(session) =>
-                        void toggleSelectedSessionSuspended(session)
-                      }
-                      selectedKey={selectedKey}
-                      sessions={sessionsByComputer.get(computer.id) || []}
-                      showComputerHandle
-                      suspending={suspending}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
+              <SessionNavigation
+                backgroundTasks={backgroundTaskSnapshots}
+                computers={orderedComputers}
+                loading={loading}
+                onOpenSessionTasks={openTasksForSession}
+                onSelectSession={selectSession}
+                onToggleSessionSuspended={(session) =>
+                  void toggleSelectedSessionSuspended(session)
+                }
+                selectedKey={selectedKey}
+                sessionsByComputer={sessionsByComputer}
+                suspending={suspending}
+              />
             </DndContext>
-          </nav>
         </div>
         {knowledgeMode !== 'hidden' ? (
           <div className="sidebar-knowledge">
+          <div className="sidebar-knowledge__heading">
+            <BookOpen aria-hidden="true" size={14} />
+            <strong>Knowledge</strong>
+            <span>Read-only</span>
+          </div>
           <nav aria-label="Knowledge" className="knowledge-tree" ref={knowledgeTreeRef}>
             {roots.length === 0 ? (
               <p className="sidebar-message">
@@ -11087,7 +10873,7 @@ function App() {
           <button
             aria-label="Session knowledge"
             aria-pressed={knowledgeMode !== 'hidden'}
-            className={`icon-button ${
+            className={`icon-button knowledge-toggle ${
               knowledgeMode !== 'hidden' ? 'icon-button--active' : ''
             }`}
             onClick={toggleKnowledgePanel}
@@ -11099,101 +10885,8 @@ function App() {
             type="button"
           >
             <BookOpen size={18} />
+            <span className="header-action-label">Knowledge</span>
           </button>
-          {selected?.provider !== 'claude' &&
-          selected?.executionMode === 'sdk' &&
-          selectedProviderCapability?.supportsTmuxMigration === true ? (
-            <button
-              aria-label="Move session to tmux"
-              className="icon-button"
-              disabled={
-                movingToTmux ||
-                selected.status !== 'idle' ||
-                // Migrating builds a live terminal owner, which is the one
-                // thing a suspended session is not supposed to have.
-                selected.suspended === true ||
-                suspending
-              }
-              onClick={() => void moveSelectedSessionToTmux()}
-              title={
-                selected.suspended
-                  ? 'Resume the session before moving it to tmux'
-                  : 'Move this Copilot session to tmux'
-              }
-              type="button"
-            >
-              <SquareTerminal size={18} />
-            </button>
-          ) : null}
-          {selected ? (
-            <button
-              aria-label="Restart session"
-              className="icon-button"
-              disabled={
-                restarting || selected.suspended || selected.status !== 'idle'
-              }
-              onClick={() => void restartSelectedSession()}
-              type="button"
-            >
-              <RefreshCw size={17} />
-            </button>
-          ) : null}
-          {selected ? (
-            <button
-              aria-label="Clear conversation"
-              className="icon-button"
-              disabled={
-                clearing || selected.suspended || selected.status !== 'idle'
-              }
-              onClick={() => void clearSelectedConversation()}
-              type="button"
-            >
-              <Eraser size={17} />
-            </button>
-          ) : null}
-          {selected ? (
-            <button
-              aria-label="Rename session"
-              className="icon-button"
-              onClick={() => setRenameOpen(true)}
-              type="button"
-            >
-              <Pencil size={17} />
-            </button>
-          ) : null}
-          {selected ? (
-            <button
-              aria-label="Close session"
-              className="icon-button icon-button--danger"
-              disabled={deleting}
-              onClick={() => void closeSelectedSession()}
-              type="button"
-            >
-              <Trash2 size={18} />
-            </button>
-          ) : null}
-          {selected ? (
-            <button
-              aria-label={
-                selectedNotificationsMuted
-                  ? 'Unmute session notifications'
-                  : 'Mute session notifications'
-              }
-              aria-pressed={selectedNotificationsMuted}
-              className={`icon-button ${
-                selectedNotificationsMuted ? 'icon-button--active' : ''
-              }`}
-              disabled={mutingSession}
-              onClick={() => void toggleSelectedSessionMute()}
-              type="button"
-            >
-              {selectedNotificationsMuted ? (
-                <BellOff size={18} />
-              ) : (
-                <Bell size={18} />
-              )}
-            </button>
-          ) : null}
           <button
             aria-label="New session"
             className="icon-button"
@@ -11202,6 +10895,103 @@ function App() {
           >
             <Plus size={21} />
           </button>
+          {selected ? (
+            <SessionActions key={selectedKey}>
+              <button
+                aria-label="Rename session"
+                className="session-action"
+                onClick={() => setRenameOpen(true)}
+                type="button"
+              >
+                <Pencil size={17} />
+                <span>Rename session</span>
+              </button>
+              <button
+                aria-label={
+                  selectedNotificationsMuted
+                    ? 'Unmute session notifications'
+                    : 'Mute session notifications'
+                }
+                aria-pressed={selectedNotificationsMuted}
+                className={`session-action ${
+                  selectedNotificationsMuted ? 'session-action--active' : ''
+                }`}
+                disabled={mutingSession}
+                onClick={() => void toggleSelectedSessionMute()}
+                type="button"
+              >
+                {selectedNotificationsMuted ? (
+                  <BellOff size={18} />
+                ) : (
+                  <Bell size={18} />
+                )}
+                <span>
+                  {selectedNotificationsMuted
+                    ? 'Unmute notifications'
+                    : 'Mute notifications'}
+                </span>
+              </button>
+              {selected.provider !== 'claude' &&
+              selected.executionMode === 'sdk' &&
+              selectedProviderCapability?.supportsTmuxMigration === true ? (
+                <button
+                  aria-label="Move session to tmux"
+                  className="session-action"
+                  disabled={
+                    movingToTmux ||
+                    selected.status !== 'idle' ||
+                    selected.suspended === true ||
+                    suspending
+                  }
+                  onClick={() => void moveSelectedSessionToTmux()}
+                  title={
+                    selected.suspended
+                      ? 'Resume the session before moving it to tmux'
+                      : 'Move this Copilot session to tmux'
+                  }
+                  type="button"
+                >
+                  <SquareTerminal size={18} />
+                  <span>Move session to tmux</span>
+                </button>
+              ) : null}
+              <button
+                aria-label="Restart session"
+                className="session-action"
+                disabled={
+                  restarting || selected.suspended || selected.status !== 'idle'
+                }
+                onClick={() => void restartSelectedSession()}
+                type="button"
+              >
+                <RefreshCw size={17} />
+                <span>Restart session</span>
+              </button>
+              <hr className="session-actions__separator" />
+              <button
+                aria-label="Clear conversation"
+                className="session-action session-action--danger"
+                disabled={
+                  clearing || selected.suspended || selected.status !== 'idle'
+                }
+                onClick={() => void clearSelectedConversation()}
+                type="button"
+              >
+                <Eraser size={17} />
+                <span>Clear conversation</span>
+              </button>
+              <button
+                aria-label="Close session"
+                className="session-action session-action--danger"
+                disabled={deleting}
+                onClick={() => void closeSelectedSession()}
+                type="button"
+              >
+                <Trash2 size={18} />
+                <span>Close session</span>
+              </button>
+            </SessionActions>
+          ) : null}
         </header>
 
         {error ? (
@@ -11215,7 +11005,10 @@ function App() {
 
         <div className="timeline" onScroll={timelineScrolled} ref={timelineRef}>
           {!selected ? (
-            <EmptyConversation onCreate={() => setNewSessionOpen(true)} />
+            <EmptyConversation
+              onCreate={() => setNewSessionOpen(true)}
+              onKnowledge={() => setKnowledgeMode('docked')}
+            />
           ) : loadingTranscript && selected.messages.length === 0 ? (
             <div className="empty-chat">
               <span className="typing-indicator" aria-label="Loading conversation">
@@ -11538,6 +11331,7 @@ function App() {
                     type="button"
                   >
                     <ArrowUp size={19} strokeWidth={2.4} />
+                    <span className="send-button__label">Send</span>
                   </button>
                   {selected.status === 'running' ? (
                     <button
@@ -11621,7 +11415,7 @@ function App() {
                         Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue
                       </span>
                       <span className="composer-hint__mobile">
-                        Tap ↑ to send · Return adds a line
+                        Tap Send · Return adds a line
                       </span>
                     </>
                   )}
@@ -11641,10 +11435,10 @@ function App() {
         <header className="knowledge-panel__header">
           <BookOpen aria-hidden="true" size={16} />
           <div className="knowledge-panel__title">
-            <strong>{activeRoot?.name || 'Knowledge'}</strong>
-            <small>
+            <strong>Knowledge</strong>
+            <small title={activeRoot?.path}>
               {activeRoot
-                ? `${activeRoot.computerName} · ${activeRoot.path}`
+                ? `${activeRoot.name} · ${activeRoot.computerName}`
                 : 'Add a root to read files beside this session'}
             </small>
           </div>
@@ -11710,12 +11504,14 @@ function App() {
           <div className="knowledge-panel__reader">
             {activeRoot ? (
               <KnowledgeReader
+                askUnavailableReason={knowledgeAskUnavailableReason}
                 file={knowledgeFile}
                 fragment={knowledgeFragment}
                 key={`${activeRoot.id}:${knowledgeFile?.path || '.'}`}
                 listing={knowledgeListing}
                 loading={knowledgeLoading}
                 onLoadAsset={loadKnowledgeAsset}
+                onAsk={askAboutKnowledgeFile}
                 onOpenFolder={(path) => void openKnowledgeFolder(path)}
                 onOpenFile={(path, fragment) =>
                   void openKnowledgeFile(path, undefined, false, fragment)

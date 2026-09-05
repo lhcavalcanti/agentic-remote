@@ -27,8 +27,18 @@ function atRule(css: string, prelude: RegExp): string {
 
 // The inline layout lives in a container query nested inside a pointer media
 // query, so both levels are unwrapped before a rule is read.
+function composerPointerBlock(css: string): string {
+  for (const match of css.matchAll(/@media \(hover: hover\)/g)) {
+    const block = atRule(css.slice(match.index), /^@media \(hover: hover\)/)
+    if (/@container composer \(min-width: 620px\)/.test(block)) {
+      return block
+    }
+  }
+  throw new Error('missing pointer media block containing the composer query')
+}
+
 function pointerLayout(css: string): string {
-  const pointer = atRule(css, /@media \(hover: hover\)/)
+  const pointer = composerPointerBlock(css)
   return atRule(pointer, /@container composer \(min-width: 620px\)/)
 }
 
@@ -72,7 +82,7 @@ describe('desktop composer layout', () => {
     expect(declaration(css, '.composer-area', 'container')).toBe(
       'composer / inline-size',
     )
-    const pointer = atRule(css, /@media \(hover: hover\)/)
+    const pointer = composerPointerBlock(css)
     expect(pointer).toContain('@container composer (min-width: 620px)')
     // A viewport gate on the prelude would ignore the sidebar entirely.
     expect(css).toContain('@media (hover: hover) {')

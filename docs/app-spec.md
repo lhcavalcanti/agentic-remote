@@ -392,6 +392,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Markdown MUST support rendered and raw views.
 - Markdown readers MUST label those views Preview and Source. Their outline
   MUST remain keyboard-accessible without pushing document content away.
+  Repeated headings, colliding slugs, and reference headings MUST navigate to
+  their own rendered positions in both Knowledge and session-file outlines.
   Copying a code fence MUST require an explicit action, retain its exact text,
   and report clipboard failure rather than claiming success.
 - Relative Markdown document links MUST open through the owning workspace or
@@ -478,6 +480,9 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Refreshing a folder MUST preserve the open document. Failed refreshes MUST
   remain visible beside their branch, with existing loaded entries retained
   and a reachable retry action.
+  A superseded load MUST reject stale contents and release only its own loading
+  state, without clearing a newer request's state across file, session, root,
+  or pairing changes.
 - Expanded folders MUST be remembered per root, and reopening a remembered
   document MUST open the folders above it.
 - A folder that cannot be read MUST report the failure on its own branch and

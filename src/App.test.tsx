@@ -7956,6 +7956,56 @@ describe('App', () => {
     }
 
     it.each(['knowledge', 'workspace'] as const)(
+      'navigates each repeated, colliding and reference heading in the %s outline',
+      async (source) => {
+        const content = [
+          '# Workspace guide',
+          '## Repeat',
+          '## Repeat',
+          '## Repeat-1',
+          '#',
+          '## Section',
+          '## [Repeat][known]',
+          '## [Unknown][missing]',
+          '[known]: https://example.invalid/reference',
+        ].join('\n\n')
+        vi.mocked(readKnowledgeFile).mockResolvedValue({ ...note, content })
+        vi.mocked(readWorkspaceFile).mockResolvedValue({
+          ...note, name: 'README.md', path: 'README.md', content,
+        })
+        render(<App />)
+        const composer = await screen.findByLabelText('Message')
+        fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+        if (source === 'knowledge') {
+          await openNote()
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: 'Browse current session folder' }))
+          fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+          await screen.findByRole('heading', { name: 'Workspace guide' })
+        }
+        const document = window.document.querySelector('.workspace-preview__content')!
+        const headings = [...document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
+        expect(headings.map((heading) => heading.id)).toEqual([
+          'workspace-guide', 'repeat', 'repeat-1', 'repeat-1-1',
+          'section', 'section-1', 'repeat-2', 'unknownmissing',
+        ])
+        const location = window.location.href
+        for (const [entry, index] of [0, 1, 2, 3, 5, 6, 7].entries()) {
+          fireEvent.click(screen.getByRole('button', { name: 'Document outline' }))
+          const outline = screen.getByRole('navigation', { name: 'Document outline' })
+          const buttons = within(outline).getAllByRole('button')
+            .filter((button) => button.classList.contains('document-outline__item'))
+          expect(buttons).toHaveLength(7)
+          fireEvent.click(buttons[entry])
+          expect(headings[index]).toHaveFocus()
+        }
+        expect(composer).toHaveValue('Keep this draft')
+        expect(window.location.href).toBe(location)
+        expect(sendMessage).not.toHaveBeenCalled()
+      },
+    )
+
+    it.each(['knowledge', 'workspace'] as const)(
       'appends %s references to the hidden recovery draft, not its history preview',
       async (source) => {
         const pasted = Array.from({ length: 21 }, (_, index) => `recovered ${index}`).join('\r\n')
@@ -8408,6 +8458,205 @@ describe('App', () => {
       await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
       expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
       expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      { navigation: 'file', failure: false },
+      { navigation: 'file', failure: true },
+      { navigation: 'session', failure: false },
+      { navigation: 'session', failure: true },
+    ])(
+      'releases only a stale refresh after $navigation navigation (failure=$failure)',
+      async ({ navigation, failure }) => {
+        vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+        vi.mocked(getSession).mockImplementation(async (_computer, id) =>
+          id === secondSession.id ? secondSession : session,
+        )
+        localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+          'computer-1:session-2': { rootId: knowledgeRoot.id, path: '.', file: note.path },
+        }))
+        render(<App />)
+        await openNote()
+        const savedDraft = localStorage.getItem('agentic-remote:composer-drafts-v2')
+        let resolve!: (listing: WorkspaceListing) => void
+        let reject!: (error: Error) => void
+        vi.mocked(listKnowledgeEntries).mockReturnValueOnce(new Promise((accept, refuse) => {
+          resolve = accept
+          reject = refuse
+        }))
+        const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
+        fireEvent.click(refresh)
+        expect(refresh).toBeDisabled()
+        if (navigation === 'file') {
+          fireEvent.click(screen.getByRole('treeitem', { name: note.name }))
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+        }
+        await waitFor(() => expect(readKnowledgeFile).toHaveBeenCalledTimes(2))
+        await act(async () => {
+          if (failure) reject(new Error('Stale refresh failed'))
+          else resolve({ path: '.', entries: [{ name: 'stale.md', path: 'stale.md', kind: 'markdown' }] })
+        })
+        await waitFor(() => expect(refresh).toBeEnabled())
+        expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+        expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
+        expect(screen.queryByText('stale.md')).toBeNull()
+        expect(screen.queryByText('Stale refresh failed')).toBeNull()
+        expect(screen.queryByText('Refreshing folder...')).toBeNull()
+        expect(localStorage.getItem('agentic-remote:composer-drafts-v2')).toBe(savedDraft)
+        fireEvent.click(refresh)
+        await waitFor(() => expect(refresh).toBeEnabled())
+        expect(sendMessage).not.toHaveBeenCalled()
+      },
+    )
+
+    it.each([
+      { newerFirst: false, failure: false },
+      { newerFirst: false, failure: true },
+      { newerFirst: true, failure: false },
+      { newerFirst: true, failure: true },
+    ])(
+      'preserves the newer refresh owner (newerFirst=$newerFirst, failure=$failure)',
+      async ({ newerFirst, failure }) => {
+        render(<App />)
+        await openNote()
+        let resolveOld!: (listing: WorkspaceListing) => void
+        let rejectOld!: (error: Error) => void
+        let resolveNew!: (listing: WorkspaceListing) => void
+        vi.mocked(listKnowledgeEntries)
+          .mockReturnValueOnce(new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject }))
+          .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve }))
+        const before = vi.mocked(listKnowledgeEntries).mock.calls.length
+        const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
+        act(() => {
+          fireEvent.click(refresh)
+          fireEvent.click(refresh)
+        })
+        expect(vi.mocked(listKnowledgeEntries).mock.calls.length).toBe(before + 2)
+        const fresh: WorkspaceListing = {
+          path: '.', entries: [{ name: 'fresh.md', path: 'fresh.md', kind: 'markdown' }],
+        }
+        if (newerFirst) {
+          await act(async () => resolveNew(fresh))
+          expect(refresh).toBeEnabled()
+        }
+        await act(async () => {
+          if (failure) rejectOld(new Error('Superseded refresh failed'))
+          else resolveOld({ path: '.', entries: [{ name: 'stale.md', path: 'stale.md', kind: 'markdown' }] })
+        })
+        expect(screen.queryByText('stale.md')).toBeNull()
+        expect(screen.queryByText('Superseded refresh failed')).toBeNull()
+        if (!newerFirst) {
+          expect(refresh).toBeDisabled()
+          expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
+          await act(async () => resolveNew(fresh))
+        }
+        expect(refresh).toBeEnabled()
+        expect(screen.getByRole('treeitem', { name: 'fresh.md' })).toBeVisible()
+        expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+        expect(screen.queryByText('Refreshing folder...')).toBeNull()
+      },
+    )
+
+    it.each(['root', 'root-return', 'pairing'] as const)(
+      'does not clear another %s lifetime loading the same folder path',
+      async (change) => {
+        const originalRoot = {
+          ...knowledgeRoot, computerId: secondComputer.id, computerName: secondComputer.name,
+        }
+        const otherRoot = { ...knowledgeRoot, id: 'root-other', name: 'Other docs' }
+        vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+        vi.mocked(listKnowledgeRoots).mockResolvedValue([originalRoot, otherRoot])
+        const listing: WorkspaceListing = {
+          path: '.', entries: [{ name: note.name, path: note.path, kind: 'markdown' }],
+        }
+        render(<App />)
+        await openNote()
+        let resolveOld!: (listing: WorkspaceListing) => void
+        let resolveNew!: (listing: WorkspaceListing) => void
+        vi.mocked(listKnowledgeEntries).mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh current folder' }))
+        if (change === 'pairing') {
+          act(() => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+            } as MessageEvent)
+          })
+          await waitFor(() => expect(screen.getByRole('combobox', { name: 'Knowledge root' })).toHaveValue(''))
+          fireEvent.change(screen.getByRole('combobox', { name: 'Knowledge root' }), {
+            target: { value: otherRoot.id },
+          })
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh current folder' })).toBeEnabled())
+          act(() => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }),
+            } as MessageEvent)
+          })
+        } else if (change === 'root-return') {
+          fireEvent.change(screen.getByRole('combobox', { name: 'Knowledge root' }), {
+            target: { value: otherRoot.id },
+          })
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh current folder' })).toBeEnabled())
+        }
+        vi.mocked(listKnowledgeEntries).mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve }))
+        if (change === 'pairing') {
+          vi.mocked(addKnowledgeRoot).mockResolvedValue({ ...originalRoot, name: 'Repaired docs' })
+          fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+          const dialog = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+          fireEvent.change(within(dialog).getByLabelText('Computer'), {
+            target: { value: secondComputer.id },
+          })
+          const add = within(dialog).getByRole('button', { name: 'Add this folder' })
+          await waitFor(() => expect(add).toBeEnabled())
+          fireEvent.click(add)
+          await screen.findByRole('option', { name: /Repaired docs/ })
+        } else {
+          fireEvent.change(screen.getByRole('combobox', { name: 'Knowledge root' }), {
+            target: { value: change === 'root' ? otherRoot.id : originalRoot.id },
+          })
+        }
+        await waitFor(() => expect(resolveNew).toBeDefined())
+        const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
+        expect(refresh).toBeDisabled()
+        await act(async () => resolveOld({
+          path: '.', entries: [{ name: 'retired.md', path: 'retired.md', kind: 'markdown' }],
+        }))
+        expect(refresh).toBeDisabled()
+        expect(screen.queryByText('retired.md')).toBeNull()
+        await act(async () => resolveNew(listing))
+        await waitFor(() => expect(refresh).toBeEnabled())
+        expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
+        expect(screen.queryByText('retired.md')).toBeNull()
+        expect(sendMessage).not.toHaveBeenCalled()
+      },
+    )
+
+    it('retains the newest refresh error and retry when an older refresh succeeds late', async () => {
+      render(<App />)
+      await openNote()
+      let resolveOld!: (listing: WorkspaceListing) => void
+      let rejectNew!: (error: Error) => void
+      vi.mocked(listKnowledgeEntries)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+        .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectNew = reject }))
+      const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
+      act(() => {
+        fireEvent.click(refresh)
+        fireEvent.click(refresh)
+      })
+      await act(async () => rejectNew(new Error('Newest refresh failed')))
+      await act(async () => resolveOld({
+        path: '.', entries: [{ name: 'stale.md', path: 'stale.md', kind: 'markdown' }],
+      }))
+      expect(screen.getByRole('alert')).toHaveTextContent('Newest refresh failed')
+      expect(screen.queryByText('stale.md')).toBeNull()
+      const retry = screen.getByRole('button', { name: 'Retry loading root folder' })
+      expect(retry).toBeEnabled()
+      fireEvent.click(retry)
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+      expect(refresh).toBeEnabled()
+      expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
+      expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
     })
   })
 

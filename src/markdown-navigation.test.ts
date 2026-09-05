@@ -192,6 +192,26 @@ describe('outlineFromMarkdown edge cases', () => {
   it('keeps repeated headings addressable by position', () => {
     const outline = outlineFromMarkdown('## Setup\n\n## Setup\n')
     expect(outline.map((entry) => entry.index)).toEqual([0, 1])
+    expect(outline.map((entry) => entry.id)).toEqual(['setup', 'setup-1'])
+  })
+
+  it('reserves unique outline IDs for empty, repeated, suffixed and reference headings', () => {
+    const outline = outlineFromMarkdown([
+      '#',
+      '# Section',
+      '## Setup',
+      '## Setup',
+      '## Setup-1',
+      '## [Setup][reference]',
+      '[reference]: /guide',
+    ].join('\n\n'))
+    expect(outline.map(({ id, index }) => ({ id, index }))).toEqual([
+      { id: 'section-1', index: 1 },
+      { id: 'setup', index: 2 },
+      { id: 'setup-1', index: 3 },
+      { id: 'setup-1-1', index: 4 },
+      { id: 'setup-2', index: 5 },
+    ])
   })
 
   it('does not close a longer fence with a shorter one', () => {

@@ -104,6 +104,7 @@ import {
   resolveDocumentLink,
   rehypeDocumentHeadings,
   scrollToDocumentFragment,
+  scrollToDocumentHeading,
   isExternalSource,
   pushNavigation,
   rememberScroll,
@@ -5854,7 +5855,7 @@ function KnowledgeReader({
           markdown={file.kind === 'markdown'}
           onRawChange={setRaw}
           onSelectHeading={(heading) => {
-            if (!scrollToDocumentFragment(contentRef.current, heading.id)) {
+            if (!scrollToDocumentHeading(contentRef.current, heading.index)) {
               setLinkError(missingDocumentFragment(heading.id))
             }
           }}
@@ -6491,7 +6492,7 @@ function WorkspaceDialog({
                   markdown={file.kind === 'markdown'}
                   onRawChange={setRaw}
                   onSelectHeading={(heading) => {
-                    if (!scrollToDocumentFragment(previewContentRef.current, heading.id)) {
+                    if (!scrollToDocumentHeading(previewContentRef.current, heading.index)) {
                       setError(missingDocumentFragment(heading.id))
                     }
                   }}
@@ -6668,6 +6669,10 @@ function App() {
   // be bumped in different combinations, and each wrong combination was a
   // race.
   const knowledgeRequest = useRef(0)
+  // A view generation can contain several refreshes of the same branch.
+  // Only the latest request owns its payload and loading indicator.
+  const knowledgeFolderRequestId = useRef(0)
+  const knowledgeFolderLoads = useRef(new Map<string, number>())
   const knowledgeRestoredKey = useRef<string>(undefined)
   const knowledgeOwnerKey = useRef<string>(undefined)
   // The session whose content the panel is actually showing.
@@ -6747,7 +6752,8 @@ function App() {
   // not mention. Absence and removal are different things.
   const removedSessions = useRef(new Set<string>())
   const loadKnowledgeFolderRef = useRef<
-    (rootId: string, path: string) => Promise<unknown>
+    (rootId: string, path: string, generation?: number, throwOnError?: boolean) =>
+      Promise<WorkspaceListing | undefined>
   >(async () => undefined)
   // Replacements announced by a removal but not yet delivered by their upsert.
   // The fallback below must not treat one as a missing session and select
@@ -8120,13 +8126,12 @@ function App() {
         const generation = request
         const folder = knowledgeRootPath
         try {
-          const listing = await listKnowledgeEntries(root.id, folder).catch(
-            () => listKnowledgeEntries(root.id, knowledgeRootPath),
+          const listing = await loadKnowledgeFolderRef.current(root.id, folder, generation, true).catch(
+            () => loadKnowledgeFolderRef.current(root.id, knowledgeRootPath, generation, true),
           )
-          if (request !== knowledgeRequest.current) {
+          if (request !== knowledgeRequest.current || !listing) {
             return
           }
-          setKnowledgeFolders({ [folder]: { listing } })
           setKnowledgePath(folder)
           // The remembered folder may sit deep in the tree, so everything
           // above it opens with it and the branch is visible on arrival.
@@ -10212,37 +10217,66 @@ function App() {
     rootId: string,
     path: string,
     generation = knowledgeRequest.current,
+    throwOnError = false,
   ): Promise<WorkspaceListing | undefined> {
+    if (generation !== knowledgeRequest.current) return undefined
+    const requestId = ++knowledgeFolderRequestId.current
+    knowledgeFolderLoads.current.set(path, requestId)
+    if (path === knowledgeRootPath) {
+      knowledgeRootLoadGeneration.current = generation
+    }
+    const currentRequest = () =>
+      generation === knowledgeRequest.current &&
+      knowledgeFolderLoads.current.get(path) === requestId
+    const ownsLoading = (folders: KnowledgeFolders) => {
+      const latest = knowledgeFolderLoads.current.get(path)
+      return folders[path]?.loadingRequest === requestId &&
+        (latest === undefined || latest === requestId)
+    }
     setKnowledgeFolders((current) => ({
       ...current,
-      [path]: { ...current[path], loading: true, error: undefined },
+      [path]: { ...current[path], loading: true, loadingRequest: requestId, error: undefined },
     }))
     try {
       const listing = await listKnowledgeEntries(rootId, path)
       // Switching roots invalidates every folder in flight, so a late reply
       // cannot graft one root's entries onto another root's tree.
-      if (generation !== knowledgeRequest.current) {
+      if (!currentRequest()) {
         return undefined
       }
-      setKnowledgeFolders((current) => ({
-        ...current,
-        [path]: { listing, loading: false },
-      }))
+      setKnowledgeFolders((current) => {
+        if (generation !== knowledgeRequest.current || !ownsLoading(current)) return current
+        return { ...current, [path]: { listing, loading: false } }
+      })
       return listing
     } catch (caught) {
-      if (generation === knowledgeRequest.current) {
+      if (currentRequest()) {
         // Kept beside the folder that failed: one unreachable branch must not
         // blank the rest of the tree.
-        setKnowledgeFolders((current) => ({
-          ...current,
-          [path]: {
-            ...current[path],
-            loading: false,
-            error: caught instanceof Error ? caught.message : String(caught),
-          },
-        }))
+        setKnowledgeFolders((current) => {
+          if (generation !== knowledgeRequest.current || !ownsLoading(current)) return current
+          return {
+            ...current,
+            [path]: {
+              ...current[path],
+              error: caught instanceof Error ? caught.message : String(caught),
+            },
+          }
+        })
+        if (throwOnError) throw caught
       }
       return undefined
+    } finally {
+      // View changes reject the payload, but do not leave this request's
+      // cached branch busy. A newer request or root owns its own flag.
+      if (knowledgeFolderLoads.current.get(path) === requestId) {
+        knowledgeFolderLoads.current.delete(path)
+        setKnowledgeFolders((current) => {
+          if (!ownsLoading(current)) return current
+          const { loadingRequest: _request, ...folder } = current[path]
+          return { ...current, [path]: { ...folder, loading: false } }
+        })
+      }
     }
   }
 

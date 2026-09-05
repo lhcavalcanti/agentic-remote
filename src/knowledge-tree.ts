@@ -11,6 +11,8 @@ export const knowledgeRootPath = '.'
 export interface KnowledgeFolderState {
   listing?: WorkspaceListing
   loading?: boolean
+  /** Transient owner of the loading flag; never persisted with root metadata. */
+  loadingRequest?: number
   error?: string
 }
 

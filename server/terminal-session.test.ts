@@ -41,6 +41,33 @@ const directories: string[] = []
 const tmuxSessions: string[] = []
 let tmuxRoot = ''
 
+const sessionInUsePane = [
+  '╭──────────────────────────────────────────────────────────────────────╮',
+  '│ Session in use                                                       │',
+  '│ This session was last active just now and appears to be in use by     │',
+  '│ another CLI or application. Resuming it here may cause conflicts.     │',
+  '│ ❯ 1. Resume anyway                                                   │',
+  '│   2. Go back (Esc)                                                    │',
+  '│ ↑/↓ to navigate · enter to select · esc to cancel                     │',
+  '╰──────────────────────────────────────────────────────────────────────╯',
+].join('\n')
+
+const folderTrustPane = [
+  '╭────────────────────────────────────────────────────────────────────────╮',
+  '│ Confirm folder trust                                                   │',
+  '│ ────────────────────────────────────────────────────────────────────── │',
+  '│ ╭────────────────────────────────────────────────────────────────────╮ │',
+  '│ │ /work/checkout                                                     │ │',
+  '│ ╰────────────────────────────────────────────────────────────────────╯ │',
+  '│ Copilot can read files in this folder with your permission.             │',
+  '│ Do you trust the files in this folder?                                 │',
+  '│ ❯ 1. Yes                                                              │',
+  '│   2. Yes, and remember this folder for future sessions                  │',
+  '│   3. No (Esc)                                                         │',
+  '│ ↑/↓ to navigate · enter to select · esc to cancel                      │',
+  '╰────────────────────────────────────────────────────────────────────────╯',
+].join('\n')
+
 beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
   vi.stubEnv('HOME', tmuxRoot)
@@ -76,6 +103,347 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it.each([
+    ['current', 0, false],
+    ['current', 2400, false],
+    ['current', 0, true],
+    ['legacy', 0, false],
+    ['clipped', 0, false],
+    ['previous-send-clearing', 0, false],
+    ['existing-draft', 0, false],
+  ] as const)('handles %s paste rendering after %dms (queue=%s) without duplicate input', async (format, delay, enqueue) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'paste-receipt-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-paste.mjs')
+    const output = path.join(directory, 'received.json')
+    const sessionId = randomUUID()
+    const content = format === 'legacy'
+      ? 'legacy text '.repeat(100)
+      : format === 'clipped'
+        ? 'prefix-' + 'content-'.repeat(160) + '-distinct-tail'
+        : Array.from({ length: 32 }, (_, index) => `line ${index}`).join('\n')
+    await writeFile(output, '')
+    await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+let input = ''
+let pasted
+let enters = 0
+function draw(text) {
+  process.stdout.write('\\x1b[2J\\x1b[H╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\\r\\n┃ ' +
+    text + '\\r\\n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\\r\\n / commands')
+}
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.stdin.on('data', (data) => {
+  input += data.toString()
+  const end = input.indexOf('\\x1b[201~')
+  if (pasted === undefined && end >= 0) {
+    pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
+    input = input.slice(end + 6)
+    setTimeout(() => draw(${JSON.stringify(format)} === 'clipped'
+      ? pasted.slice(-200)
+      : ${JSON.stringify(format)} === 'legacy'
+        ? '[Pasted text #1 +32 lines]'
+        : '[Paste #1 - 32 lines]'), ${delay})
+  }
+  if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
+    enters += 1
+    writeFileSync(${JSON.stringify(output)}, JSON.stringify({ content: pasted, enters, queued: input.includes('\\x11') }))
+    input = ''
+    draw('')
+  }
+})
+draw(${JSON.stringify(format === 'existing-draft' ? '[Paste #1 - 32 lines][Paste #2 - 32 lines]' : format === 'previous-send-clearing' ? 'Previously submitted prompt' : '')})
+if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => draw(''), 200)
+`)
+    const tmuxSession = `agentic-paste-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session', '-d', '-s', tmuxSession,
+      process.execPath, executable, '--session-id', sessionId,
+    ])
+    const panePid = (await execFileAsync('tmux', [
+      'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+    ])).stdout.trim()
+    await waitForProcessCommand(Number(panePid), [executable])
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    const controller = new TmuxTerminalSessionController()
+    await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('╹')))
+    if (format === 'existing-draft') {
+      await expect(controller.send(sessionId, content, enqueue)).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('already has unsent text'),
+      })
+      expect(await readFile(output, 'utf8')).toBe('')
+      expect(await controller.capture(sessionId)).toContain('[Paste #1 - 32 lines][Paste #2 - 32 lines]')
+    } else {
+      expect(await controller.send(sessionId, content, enqueue)).toBe(true)
+      const received = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
+      expect(JSON.parse(received)).toEqual({ content, enters: 1, queued: enqueue })
+    }
+  })
+
+  it('exposes session-use warnings without approving a concurrent takeover', () => {
+    const permission = parseTerminalPermission(sessionInUsePane)
+    expect(permission).toMatchObject({
+      title: expect.stringContaining('may conflict'),
+      choiceCount: 2,
+      options: [
+        { optionId: 'terminal:allow', name: 'Resume anyway', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Go back', kind: 'reject_once' },
+      ],
+    })
+    expect(isTerminalSessionInUsePrompt(sessionInUsePane)).toBe(true)
+    expect(parseTerminalPermission(sessionInUsePane
+      .replace('just now', 'a minute ago')
+      .replace('❯ 1.', '  1.')
+      .replace('  2.', '❯ 2.'))?.requestId).toBe(permission?.requestId)
+    expect(parseTerminalPermission(
+      sessionInUsePane.replace('1. Resume anyway', '1. Delete session'),
+    )).toBeUndefined()
+  })
+
+  it('ignores a prior session-use confirmation above the active composer', () => {
+    const pane = [
+      sessionInUsePane,
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃ Unsaved draft',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n')
+    expect(isTerminalSessionInUsePrompt(pane)).toBe(false)
+    expect(parseTerminalPermission(pane)).toBeUndefined()
+    expect(isTerminalOverlay(pane)).toBe(false)
+  })
+
+  it.each(['terminal:allow', 'terminal:stop'])(
+    'delivers only the explicit %s decision to the session-use confirmation',
+    async (optionId) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'session-use-test-'))
+      directories.push(directory)
+      const executable = path.join(directory, 'copilot-confirm.mjs')
+      const output = path.join(directory, 'decision.json')
+      const sessionId = randomUUID()
+      await writeFile(output, '')
+      await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+let selected = 1
+let pending = ''
+function finish(decision) {
+  writeFileSync(${JSON.stringify(output)}, JSON.stringify({ decision }))
+  process.stdout.write('\\x1b[2J\\x1b[HReady\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
+}
+process.stdin.setRawMode(true)
+process.stdin.on('data', (data) => {
+  pending += data.toString()
+  while (pending) {
+    if (pending[0] === '\\x1b') {
+      if (pending.length < 3) {
+        setTimeout(() => {
+          if (pending === '\\x1b') { pending = ''; finish('back') }
+        }, 25)
+        return
+      }
+      selected = pending[2] === 'A' ? Math.max(0, selected - 1) : Math.min(1, selected + 1)
+      pending = pending.slice(3)
+    } else if (pending[0] === '\\r' || pending[0] === '\\n') {
+      pending = pending.slice(1)
+      finish(selected === 0 ? 'resume' : 'back')
+    } else {
+      finish('unexpected text')
+      pending = ''
+    }
+  }
+})
+process.stdout.write(${JSON.stringify(sessionInUsePane.replace('❯ 1.', '  1.').replace('  2.', '❯ 2.'))}.replaceAll('\\n', '\\r\\n'))
+`)
+      const tmuxSession = `agentic-session-use-${process.pid}`
+      tmuxSessions.push(tmuxSession)
+      await execFileAsync('tmux', [
+        'new-session', '-d', '-s', tmuxSession,
+        process.execPath, executable, '--session-id', sessionId,
+      ])
+      const panePid = (await execFileAsync('tmux', [
+        'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+      ])).stdout.trim()
+      await waitForProcessCommand(Number(panePid), [executable])
+      const copilotHome = path.join(directory, 'copilot-home')
+      const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+      await mkdir(sessionDirectory, { recursive: true })
+      await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+      vi.stubEnv('COPILOT_HOME', copilotHome)
+      const controller = new TmuxTerminalSessionController()
+      const request = await eventually(
+        () => controller.pendingPermission(sessionId),
+        (value) => Boolean(value),
+      )
+      if (!request) throw new Error('Session-use prompt was not detected')
+      await expect(controller.send(sessionId, 'Do not paste this', false))
+        .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('confirmation') })
+      expect(await readFile(output, 'utf8')).toBe('')
+      await expect(controller.replyPermission(
+        sessionId, { ...request, requestId: 'stale-request' }, optionId,
+      )).rejects.toThrow('no longer active')
+      expect(await readFile(output, 'utf8')).toBe('')
+
+      expect(await controller.replyPermission(sessionId, request, optionId)).toBe(true)
+      const decision = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
+      expect(JSON.parse(decision)).toEqual({
+        decision: optionId === 'terminal:allow' ? 'resume' : 'back',
+      })
+      expect(isTerminalSessionInUsePrompt(await controller.capture(sessionId) || '')).toBe(false)
+    },
+  )
+
+  it('exposes the folder-trust prompt as an explicit one-session permission', () => {
+    const permission = parseTerminalPermission(folderTrustPane)
+    expect(permission).toMatchObject({
+      title: 'Trust folder for this session: /work/checkout',
+      kind: 'terminal',
+      choiceCount: 3,
+      options: [
+        { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+      ],
+    })
+    expect(isTerminalOverlay(folderTrustPane)).toBe(true)
+    expect(parseTerminalPermission(
+      folderTrustPane.replace('❯ 1.', '  1.').replace('  2.', '❯ 2.'),
+    )?.requestId).toBe(permission?.requestId)
+    expect(parseTerminalPermission(
+      folderTrustPane.replace('/work/checkout', '/work/other'),
+    )?.requestId).not.toBe(permission?.requestId)
+  })
+
+  it('does not trust a changed option layout or a folder prompt in scrollback', () => {
+    expect(parseTerminalPermission(
+      folderTrustPane.replace('1. Yes', '1. Yes, permanently'),
+    )).toBeUndefined()
+    expect(parseTerminalPermission([
+      folderTrustPane,
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n'))).toBeUndefined()
+  })
+
+  it.each(['accept', 'cancel', 'decline'] as const)(
+    '%s a wrapped boolean question in its own pane without accepting the default',
+    async (action) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-form-test-'))
+    directories.push(directory)
+    const output = path.join(directory, 'answer.json')
+    const executable = path.join(directory, 'copilot-form.mjs')
+    const sessionId = randomUUID()
+    const question =
+      'The repository clone is waiting in the credential manager for authentication. ' +
+      'Please complete the sign-in prompt so the clone can continue.'
+    const field = 'Repository authentication completed'
+    const pane = [
+      ' Copilot needs information.',
+      ' The repository clone is waiting in the credential manager for authentication. Please complete the sign-in',
+      ' prompt so the clone can continue.',
+      '',
+      ` ${field}:`,
+      ' Confirm after completing the sign-in window.',
+    ]
+    await writeFile(output, '')
+    await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+let selected = 0
+let pending = ''
+function finish(action) {
+  writeFileSync(${JSON.stringify(output)}, JSON.stringify(
+    action === 'accept' ? { accepted: selected === 0 } : { action }))
+  process.stdout.write('\\x1b[2J\\x1b[HFinished\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
+}
+function draw() {
+  process.stdout.write('\\x1b[2J\\x1b[H' + [
+    ...${JSON.stringify(pane)},
+    ...['Yes', 'No', 'Other (type your answer)'].map((label, index) =>
+      (index === selected ? ' ❯ ' : '   ') + label),
+    '',
+    ' ↑/↓ select · enter accept · ctrl+d decline · esc cancel',
+  ].join('\\r\\n'))
+}
+process.stdin.setRawMode(true)
+process.stdin.on('data', (data) => {
+  pending += data.toString()
+  while (pending) {
+    if (pending[0] === '\\x1b') {
+      if (pending.length < 3) {
+        setTimeout(() => {
+          if (pending === '\\x1b') {
+            pending = ''
+            finish('cancel')
+          }
+        }, 25)
+        return
+      }
+      selected = pending[2] === 'A' ? Math.max(0, selected - 1) : Math.min(2, selected + 1)
+      pending = pending.slice(3)
+      draw()
+    } else if (pending[0] === '\\r' || pending[0] === '\\n') {
+      pending = pending.slice(1)
+      finish('accept')
+    } else if (pending[0] === '\\x04') {
+      pending = pending.slice(1)
+      finish('decline')
+    } else {
+      throw new Error('Unexpected input into form')
+    }
+  }
+})
+draw()
+`)
+    const tmuxSession = `agentic-form-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session', '-d', '-s', tmuxSession,
+      process.execPath, executable, '--session-id', sessionId,
+    ])
+    const panePid = (
+      await execFileAsync('tmux', [
+        'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+      ])
+    ).stdout.trim()
+    await waitForProcessCommand(Number(panePid), [executable])
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    const controller = new TmuxTerminalSessionController()
+    const identity = { question, fields: [field] }
+    expect(await eventually(
+      () => controller.capture(sessionId),
+      (captured) => Boolean(captured && terminalFormShowsFields(captured, identity)),
+    )).toContain('Copilot needs information.')
+
+    const steps = [{ kind: 'select' as const, optionCount: 3, index: 1 }]
+    expect(await controller.fillUserInputForm(sessionId, steps, {
+      ...identity, question: 'An unrelated request',
+    })).toBe(false)
+    expect(await controller.dismissUserInput(sessionId, {
+      ...identity, question: 'An unrelated request',
+    })).toBe(false)
+    expect(await readFile(output, 'utf8')).toBe('')
+    if (action === 'accept') {
+      expect(await controller.fillUserInputForm(sessionId, steps, identity)).toBe(true)
+    } else {
+      expect(await controller.dismissUserInput(sessionId, identity, action)).toBe(true)
+    }
+    const answer = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
+    expect(JSON.parse(answer)).toEqual(action === 'accept' ? { accepted: false } : { action })
+    expect(parseTerminalFormPrompt(await controller.capture(sessionId) || '')).toBe(false)
+    },
+  )
+
   it('detects the Copilot session-in-use startup dialog', () => {
     expect(
       isTerminalSessionInUsePrompt(`
@@ -534,6 +902,8 @@ Permission request (1 remaining)
       parseTerminalPermission(`
 ╭────────────────────────────────────────────────────────────╮
 │ Confirm folder trust                                       │
+│ /home/user/project                                         │
+│ ────────────────────────────────────────────────────────── │
 │ Do you trust the files in this                             │
 │ folder?                                                    │
 │ ❯ 1. Yes                                                   │
@@ -544,10 +914,9 @@ Permission request (1 remaining)
 ╰────────────────────────────────────────────────────────────╯
       `),
     ).toMatchObject({
-      kind: 'folder-trust',
+      kind: 'terminal',
       options: [
-        { optionId: 'terminal:trust-once' },
-        { optionId: 'terminal:trust-always' },
+        { optionId: 'terminal:allow' },
         { optionId: 'terminal:stop' },
       ],
     })
@@ -555,6 +924,8 @@ Permission request (1 remaining)
       parseTerminalPermission(`
 ╭────────────────────────────────────╮
 │ Confirm folder trust               │
+│ /work/checkout                     │
+│ ────────────────────────────────── │
 │ Do you trust the files in this     │
 │ folder?                            │
 │ ❯ 1. Yes                           │
@@ -565,7 +936,7 @@ Permission request (1 remaining)
 │ select · esc to cancel             │
 ╰────────────────────────────────────╯
       `),
-    ).toMatchObject({ kind: 'folder-trust' })
+    ).toMatchObject({ kind: 'terminal', title: 'Trust folder for this session: /work/checkout' })
     expect(
       parseTerminalPermission(`
 ────────────────────────────────────────────────────────────
@@ -635,23 +1006,18 @@ Permission request (1 remaining)
       `),
     ).toMatchObject({
       requestId: expect.stringMatching(/^terminal-permission:/),
-      title: 'Confirm folder trust',
-      kind: 'folder-trust',
+      title: 'Trust folder for this session: /home/user/project',
+      kind: 'terminal',
       choiceCount: 3,
       options: [
         {
-          optionId: 'terminal:trust-once',
-          name: 'Trust once',
+          optionId: 'terminal:allow',
+          name: 'Trust for this session',
           kind: 'allow_once',
         },
         {
-          optionId: 'terminal:trust-always',
-          name: 'Trust and remember',
-          kind: 'allow_always',
-        },
-        {
           optionId: 'terminal:stop',
-          name: 'Do not trust',
+          name: 'Stop',
           kind: 'reject_once',
         },
       ],
@@ -709,7 +1075,7 @@ Permission request (1 remaining)
       'Project workspace',
       true,
       {
-        model: 'gpt-boot',
+        model: 'fixture-boot',
         reasoningEffort: 'medium',
         contextTier: 'default',
         mode: 'plan',
@@ -729,16 +1095,16 @@ Permission request (1 remaining)
         (await readFile(`/proc/${initialPanePid}/cmdline`, 'utf8'))
           .replaceAll('\0', ' ')
           .trim(),
-      (line) => line.includes('--model gpt-boot'),
+      (line) => line.includes('--model fixture-boot'),
     )
-    expect(initialCommandLine).toContain('--model gpt-boot')
+    expect(initialCommandLine).toContain('--model fixture-boot')
     expect(initialCommandLine).toContain('--effort medium')
     expect(initialCommandLine).toContain('--context default')
     expect(initialCommandLine).toContain('--mode plan')
     expect(await controller.rename(sessionId, 'Renamed project')).toBe(true)
     expect(
       await controller.configure(sessionId, directory, {
-        model: 'gpt-test',
+        model: 'fixture-test',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'autopilot',
@@ -779,13 +1145,13 @@ Permission request (1 remaining)
       .replaceAll('\0', ' ')
       .trim()
     expect(commandLine).toContain('--yolo')
-    expect(commandLine).toContain('--model gpt-test')
+    expect(commandLine).toContain('--model fixture-test')
     expect(commandLine).toContain('--effort high')
     expect(commandLine).toContain('--context long_context')
     expect(commandLine).toContain('--mode autopilot')
     await expect(
       controller.configure(sessionId, path.join(directory, 'missing'), {
-        model: 'gpt-broken',
+        model: 'fixture-broken',
         reasoningEffort: 'low',
         contextTier: 'default',
         mode: 'interactive',
@@ -801,7 +1167,7 @@ Permission request (1 remaining)
         replacementId,
         directory,
         {
-          model: 'gpt-test',
+          model: 'fixture-test',
           reasoningEffort: 'high',
           contextTier: 'long_context',
           mode: 'plan',
@@ -1817,7 +2183,7 @@ describe('paneShowsText', () => {
   })
 
   it('does not claim an empty prompt is showing the message', () => {
-    expect(paneShowsText('> \n', 'Deploy the treatment engine')).toBe(false)
+    expect(paneShowsText('> \n', 'Deploy the staging service')).toBe(false)
   })
 
   it('treats a message of only whitespace as already shown', () => {
@@ -1849,7 +2215,7 @@ describe('terminal update notice', () => {
       ' \u25cf Ready',
       composer,
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -1876,7 +2242,7 @@ describe('terminal update notice', () => {
       ' ~/src/project',
       composer,
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -1911,7 +2277,7 @@ describe('terminal update notice', () => {
       '\u2503 v9.9.9 available \u00b7 run /update',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -1934,7 +2300,7 @@ describe('terminal slash command output', () => {
     '┃',
     '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
     ' ← open sidebar · / commands · ? help · tab next tab',
-    ' GPT-5.6 Sol · High · 1.1M context (0%)',
+    ' Fixture Model · High · 1.1M context (0%)',
   ].join('\n')
 
   it('reports the response a command printed', () => {
@@ -1973,7 +2339,7 @@ describe('terminal slash command output', () => {
       '┃',
       '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
       ' Changes    +0 -0',
-      ' GPT-5.6 Sol · High · 1.1M context (0%)',
+      ' Fixture Model · High · 1.1M context (0%)',
     ].join('\n')
     const after = [
       ' ● Tip: /plugin',
@@ -1981,7 +2347,7 @@ describe('terminal slash command output', () => {
       '┃',
       '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
       ' Changes    +12 -3',
-      ' GPT-5.6 Sol · High · 1.1M context (7%)',
+      ' Fixture Model · High · 1.1M context (7%)',
     ].join('\n')
 
     expect(terminalCommandOutput(before, after, '/config')).toBeUndefined()
@@ -2078,7 +2444,7 @@ describe('terminal slash command output', () => {
       '\u2503',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u25c9 Working - autopilot \u00b7 132.7 KiB esc interrupt',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (18%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (18%)',
     ].join('\n')
 
     expect(isTerminalAgentWorking(working)).toBe(true)
@@ -2091,7 +2457,7 @@ describe('terminal slash command output', () => {
       '\u2503',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(isTerminalAgentWorking(idle)).toBe(false)
@@ -2104,6 +2470,43 @@ describe('terminal slash command output', () => {
     ].join('\n')
 
     expect(isTerminalOverlay(pane)).toBe(false)
+  })
+
+  it('ignores keyboard hints quoted immediately above the composer', () => {
+    const pane = [
+      ' The picker says enter select and esc cancel.',
+      composer,
+    ].join('\n')
+
+    expect(isTerminalOverlay(pane)).toBe(false)
+  })
+
+  it('ignores keyboard hints typed inside the composer', () => {
+    const pane = [
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃ Explain enter select and esc cancel.',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n')
+
+    expect(isTerminalOverlay(pane)).toBe(false)
+  })
+
+  it('recognises a real overlay after an older composer in scrollback', () => {
+    const pane = [
+      composer,
+      ' Settings',
+      ' ❯ allowedUrls',
+      ' ↑/↓ navigate · enter edit · esc close',
+      ...Array<string>(12).fill(''),
+    ].join('\n')
+
+    expect(isTerminalOverlay(pane)).toBe(true)
+  })
+
+  it('recognises a single-field form that has no tab navigation hint', () => {
+    expect(isTerminalOverlay(singleFieldPane)).toBe(true)
+    expect(isTerminalOverlay([singleFieldPane, composer].join('\n'))).toBe(false)
   })
 })
 
@@ -2153,6 +2556,85 @@ const singleFieldPane = [
   '',
   ' \u2191/\u2193 select \u00B7 enter accept \u00B7 ctrl+d decline \u00B7 esc cancel',
 ].join('\n')
+
+// A neutral reproduction of a CLI form whose focused tab is bracketed.
+const bracketedTabPane = [
+  ' Copilot needs information.',
+  ' Choose how to handle the unpublished work.',
+  '',
+  ' [Active project]  Service configuration   App changes',
+  '',
+  ' Active project:',
+  ' \u276F Preserve local changes (Recommended)',
+  '   Commit and push the project changes',
+  '   Other (type your answer)',
+  '',
+  ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+].join('\n')
+
+describe('forms whose focused tab is marked', () => {
+  const form = {
+    question: 'Choose how to handle the unpublished work.',
+    fields: [
+      'Active project',
+      'Service configuration',
+      'App changes',
+    ],
+  }
+
+  it('reads the tab name from under its marking', () => {
+    expect(terminalFormShowsFields(bracketedTabPane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(bracketedTabPane, form)).toBe(0)
+  })
+
+  it('keeps wrapped-question matching with bracketed focus tabs', () => {
+    const pane = bracketedTabPane.replace(
+      'Choose how to handle the unpublished work.',
+      'Choose how to handle the\n unpublished work.',
+    )
+    expect(terminalFormShowsFields(pane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, form)).toBe(0)
+    expect(terminalFormShowsFields(pane, {
+      ...form, question: 'Choose how to handle the',
+    })).toBe(false)
+  })
+
+  it('keeps a title that is written in brackets of its own', () => {
+    const pane = [
+      ' Copilot needs information.',
+      ' Configure the run.',
+      '',
+      ' [Environment]  Region',
+      '',
+      ' [Environment]:',
+      ' \u276F Production',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+    ].join('\n')
+
+    // The brackets belong to the name here, not to the marking, and the two
+    // are written identically.
+    expect(
+      terminalFormShowsFields(pane, {
+        question: 'Configure the run.',
+        fields: ['[Environment]', 'Region'],
+      }),
+    ).toBe(true)
+  })
+
+  it('still refuses a marked form belonging to another question', () => {
+    expect(
+      terminalFormShowsFields(bracketedTabPane, {
+        question: 'Something else entirely?',
+        fields: [
+          'Active project',
+          'Service configuration',
+          'App changes',
+        ],
+      }),
+    ).toBe(false)
+  })
+})
 
 describe('single field forms', () => {
   const form = {
@@ -2227,6 +2709,94 @@ describe('single field forms', () => {
         fields: ['Rows to retain'],
       }),
     ).toBe(false)
+  })
+
+  const wrappedQuestion =
+    'The repository clone is waiting in the credential manager for authentication. ' +
+    'Please complete the sign-in prompt so the clone can continue.'
+  const wrappedForm = {
+    question: wrappedQuestion,
+    fields: ['Repository authentication completed'],
+  }
+  const wrappedPane = [
+    ' Copilot needs information.',
+    ' The repository clone is waiting in the credential manager for authentication. Please complete the sign-in',
+    ' prompt so the clone can continue.',
+    '',
+    ' Repository authentication completed:',
+    ' Confirm after completing the sign-in window.',
+    ' ❯ Yes',
+    '   No',
+    '   Other (type your answer)',
+    '',
+    ' ↑/↓ select · enter accept · ctrl+d decline · esc cancel',
+  ].join('\n')
+
+  it('recognises the complete question across wrapped terminal lines', () => {
+    expect(parseTerminalFormPrompt(wrappedPane)).toBe(true)
+    expect(terminalFormShowsFields(wrappedPane, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(wrappedPane, wrappedForm)).toBe(0)
+  })
+
+  it('ignores a completed form left in scrollback above the current composer', () => {
+    const pane = [
+      wrappedPane,
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n')
+    expect(parseTerminalFormPrompt(pane)).toBe(false)
+    expect(terminalFormShowsFields(pane, wrappedForm)).toBe(false)
+    expect(parseTerminalFormActiveField(pane, wrappedForm)).toBeUndefined()
+  })
+
+  it('recognises a question wrapped inside a word and across blank paragraphs', () => {
+    const pane = wrappedPane.replace(
+      'authentication. Please complete the sign-in\n prompt',
+      'authentica\n tion.\n\n Please complete the sign-in\n prompt',
+    )
+    expect(terminalFormShowsFields(pane, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, wrappedForm)).toBe(0)
+  })
+
+  it('requires the whole wrapped question, not a prefix or text in a field', () => {
+    expect(terminalFormShowsFields(wrappedPane, {
+      ...wrappedForm,
+      question: wrappedPane.split('\n')[1].trim(),
+    })).toBe(false)
+    expect(terminalFormShowsFields(wrappedPane, {
+      ...wrappedForm,
+      question: wrappedQuestion.slice(0, -10),
+    })).toBe(false)
+    expect(terminalFormShowsFields(
+      wrappedPane.replace('prompt so the clone', 'prompt before the clone'),
+      wrappedForm,
+    )).toBe(false)
+    expect(terminalFormShowsFields(
+      wrappedPane.replace('Confirm after completing the sign-in window.', 'Unrelated question'),
+      { ...wrappedForm, question: 'Unrelated question' },
+    )).toBe(false)
+  })
+
+  it('does not erase spaces within a question line when comparing identities', () => {
+    expect(terminalFormShowsFields(
+      wrappedPane.replace('credential manager', 'credentialmanager'),
+      wrappedForm,
+    )).toBe(false)
+  })
+
+  it('recognises wrapped questions above multi-field tabs without changing focus', () => {
+    const pane = formPaneLastField.replace(
+      ' Configure the deployment request.',
+      wrappedPane.split('\n').slice(1, 3).join('\n'),
+    )
+    const form = {
+      question: wrappedQuestion,
+      fields: ['Deployment name', 'Catalog scope', 'Confirm deployment'],
+    }
+    expect(terminalFormShowsFields(pane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, form)).toBe(2)
   })
 })
 
@@ -2615,6 +3185,57 @@ describe('composerHoldsOtherText', () => {
         'deploy the thing',
       ),
     ).toBe(false)
+  })
+
+  describe('current CLI paste receipt', () => {
+    const framed = (text = '') => [
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      ...text.split('\n').map((line) => `┃ ${line}`),
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' / commands',
+    ].join('\n')
+    const shortMultiline = Array(32).fill('p').join('\n')
+
+    it('recognizes current markers for small multiline payloads, including trailing newlines', () => {
+      for (const content of [shortMultiline, shortMultiline + '\n']) {
+        const after = framed('[Paste #1 - 32 lines]')
+        expect(composerTookPaste(framed(), after, content, content)).toBe(true)
+        expect(paneShowsText(after, content, 0, content)).toBe(true)
+        expect(composerHoldsOtherText(framed(), after, content)).toBe(false)
+      }
+    })
+
+    it('recognizes markers wrapped inside their labels without crediting an existing marker', () => {
+      const after = framed('[Pa\nste #1 - 32 li\nnes]')
+      expect(composerTookPaste(framed(), after, shortMultiline)).toBe(true)
+      expect(composerTookPaste(after, after, shortMultiline)).toBe(false)
+    })
+
+    it('rejects wrong line counts, two new markers, or unrelated text beside a marker', () => {
+      for (const text of [
+        '[Paste #1 - 31 lines]',
+        '[Paste #1 - 32 lines][Paste #2 - 32 lines]',
+        '[Paste #1 - 32 lines]another draft',
+      ]) {
+        expect(composerTookPaste(framed(), framed(text), shortMultiline)).toBe(false)
+        expect(composerHoldsOtherText(framed(), framed(text), shortMultiline)).toBe(true)
+      }
+    })
+
+    it('does not count marker metadata as receipt of a short literal word', () => {
+      for (const marker of ['[Paste #1 - 32 lines]', '[Pasted text #1 +32 lines]']) {
+        expect(composerTookPaste(framed(), framed(marker), 'Paste')).toBe(false)
+        expect(paneShowsText(framed(marker), 'Paste')).toBe(false)
+      }
+    })
+
+    it('recognizes a scrolled long line only from substantial matching suffix text', () => {
+      const content = 'start-' + 'abcdefgh'.repeat(150) + '-distinct-end'
+      expect(composerTookPaste(framed(), framed(content.slice(-200)), content)).toBe(true)
+      expect(composerTookPaste(framed(), framed(content.slice(0, 200)), content)).toBe(false)
+      expect(composerTookPaste(framed(), framed(content.slice(-12)), content)).toBe(false)
+      expect(composerTookPaste(framed('existing draft'), framed(content.slice(-200)), content)).toBe(false)
+    })
   })
 
   it('sees text typed beside the paste', () => {

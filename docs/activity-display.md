@@ -26,15 +26,15 @@ and the row itself reads left to right:
 - **One line per call.** Density is the point: a dozen steps stay readable.
 - **A status glyph in the left gutter.** Filled for finished, hollow for still
   running, so progress reads as a column rather than as prose.
-- **The tool name leads, in bold.** `search_ecs_config_keys`, `Read`,
+- **The tool name leads, in bold.** `search_config_keys`, `Read`,
   `Search` — the thing that happened is the first word.
-- **Provenance is muted and parenthesised.** `(MCP: ecs-mcp-server)` says where
+- **Provenance is muted and parenthesised.** `(MCP: configuration-service)` says where
   a call went without competing with what it did.
 - **Arguments follow after a separator**, truncated with an ellipsis.
 - **Results are reported.** `48 lines read`, `No matches found`,
   `95 lines found` — the row says how it went, not merely that it ran.
 - **Duration is right-aligned.** A column of times makes a slow step obvious.
-- **A skill announces itself** as `skill(tool-model-catalog)`, acting as a
+- **A skill announces itself** as `skill(service-inventory)`, acting as a
   heading for the calls it brings with it.
 - **Narration is marked by colour, not by typeface.** Thinking keeps the
   monospace but takes a blue bullet, so it reads as a different kind of line
@@ -52,7 +52,7 @@ Every call is a bordered pill with a tint, stacked one per row.
 - Nothing lines up: each pill is only as wide as its text, so there is no
   column of statuses to scan and no column of durations at all.
 - Vertical space is spent on borders and padding rather than on steps.
-- The tool title carries a humanised name — `MCP · Polymer Llm Deployment
+- The tool title carries a humanised name — `MCP · Service Deployment
   Operations · Search Deployment Store` — which is long, and wraps.
 - There is nowhere to put a result or a duration, so neither is shown.
 - Skills and sub-agents are pills like any other call, so the work they pull in

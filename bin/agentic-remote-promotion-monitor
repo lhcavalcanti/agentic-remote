@@ -25,6 +25,7 @@ profile_value() {
 readonly DEV_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_DEV_ROOT '')"
 readonly PROD_ROOT="$(profile_value AGENTIC_REMOTE_MONITOR_PROD_ROOT '')"
 readonly USER_HOME="$(profile_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME_DEFAULT")"
+readonly GH_CLI_CONFIG_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR '')"
 readonly STATE_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_STATE_DIR "$USER_HOME/.local/state/agentic-remote-monitor")"
 readonly STATE_FILE="$STATE_DIR/last-graduated-commit"
 readonly STATE_RECORD="$STATE_DIR/promotion-state"
@@ -50,6 +51,15 @@ readonly PRODUCTION_HOST="$(profile_value AGENTIC_REMOTE_MONITOR_HOST '')"
 readonly PRODUCTION_PORT="$(profile_value AGENTIC_REMOTE_MONITOR_PORT '')"
 readonly PRODUCTION_ROLE="$(profile_value AGENTIC_REMOTE_MONITOR_ROLE '')"
 readonly PRODUCTION_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_NAME '')"
+
+if [[ -n "$GH_CLI_CONFIG_DIR" ]]; then
+  # A private HTTPS remote authenticates through `gh auth git-credential`,
+  # which reads its configuration from here. Without it the monitor cannot
+  # pull, and a machine whose profile names this directory would find the
+  # setting quietly ignored. This is Git authentication only: it neither
+  # enables nor requires hosted CI.
+  export GH_CONFIG_DIR="$GH_CLI_CONFIG_DIR"
+fi
 
 log() {
   printf '[agentic-remote-promotion] %s\n' "$*"

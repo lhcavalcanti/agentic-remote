@@ -136,6 +136,8 @@ derived_origins() {
 
 publish_release() {
   local releases_dir release_id release_dir temporary_link
+  [[ -s "$REPO_ROOT/dist/build-info.json" ]] ||
+    die "production build identity is missing; rebuild the app"
   releases_dir="$CONFIG_DIR/releases"
   release_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
   release_dir="$releases_dir/$release_id"
@@ -143,6 +145,7 @@ publish_release() {
 
   mkdir -p "$release_dir"
   mkdir -p "$release_dir/dist"
+  # Copy the generated identity with its bundle; never regenerate it on publish.
   cp -a "$REPO_ROOT/dist/." "$release_dir/dist/"
   cp -a \
     "$REPO_ROOT/server" \

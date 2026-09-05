@@ -214,6 +214,15 @@ const secondSession: ManagedSession = {
   messages: [],
 }
 
+const knowledgeRoot = {
+  id: 'root-1',
+  computerId: computer.id,
+  computerName: computer.name,
+  path: '/home/tester/docs',
+  name: 'docs',
+  createdAt: '2026-08-01T00:00:00.000Z',
+}
+
 /**
  * Knowledge listings have to answer per path. A single fixed listing makes
  * every folder contain itself, so expanding one recurses until the stack is
@@ -324,6 +333,7 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    sessionStorage.clear()
     // The address now carries the selected session, so it has to be reset or
     // one test's deep link selects a session in the next.
     window.history.replaceState({}, '', '/')
@@ -425,15 +435,15 @@ describe('App', () => {
     vi.mocked(createSession).mockResolvedValue(session)
     vi.mocked(getRuntimeOptions).mockResolvedValue({
       current: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
       },
       models: [
         {
-          id: 'gpt-5.6-sol',
-          name: 'GPT-5.6 Sol',
+          id: 'fixture-model',
+          name: 'Fixture Model',
           reasoningEfforts: ['medium', 'high', 'xhigh'],
           contextTiers: ['default', 'long_context'],
           contextTokenLimits: {
@@ -449,8 +459,8 @@ describe('App', () => {
           provider === 'copilot'
             ? [
                 {
-                  id: 'gpt-5.6-sol',
-                  name: 'GPT-5.6 Sol',
+                  id: 'fixture-model',
+                  name: 'Fixture Model',
                   reasoningEfforts: ['medium', 'high', 'xhigh'],
                   contextTiers: ['default', 'long_context'],
                   contextTokenLimits: {
@@ -459,16 +469,16 @@ describe('App', () => {
                   },
                 },
                 {
-                  id: 'gpt-fast',
-                  name: 'GPT Fast',
+                  id: 'fixture-fast',
+                  name: 'Fast Model',
                   reasoningEfforts: ['low', 'medium'],
                   contextTiers: ['default'],
                 },
               ]
             : [
                 {
-                  id: 'sonnet',
-                  name: 'Sonnet',
+                  id: 'provider-model',
+                  name: 'Provider Model',
                   description: '**Efficient** for routine tasks',
                   reasoningEfforts: ['low', 'medium', 'high'],
                   contextTiers: ['default'],
@@ -671,7 +681,7 @@ describe('App', () => {
         {
           id: 'tool:skill-call',
           role: 'activity',
-          content: 'Skill (tool-model-catalog)',
+          content: 'Skill (service-inventory)',
           createdAt: '2026-07-22T00:00:00.000Z',
           activityStatus: 'completed',
           activityKind: 'skill',
@@ -679,7 +689,7 @@ describe('App', () => {
         {
           id: 'mcp-call',
           role: 'activity',
-          content: 'MCP · ecs-mcp-server · search_config',
+          content: 'MCP · configuration-service · search_config_keys',
           createdAt: '2026-07-22T00:00:00.500Z',
           activityStatus: 'completed',
           activityResult: '48 lines read',
@@ -709,16 +719,16 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    expect(screen.getByText('skill(tool-model-catalog)')).toBeInTheDocument()
-    expect(screen.getByText('search_config')).toBeInTheDocument()
-    expect(screen.getByText('(MCP: ecs-mcp-server)')).toBeInTheDocument()
+    expect(screen.getByText('skill(service-inventory)')).toBeInTheDocument()
+    expect(screen.getByText('search_config_keys')).toBeInTheDocument()
+    expect(screen.getByText('(MCP: configuration-service)')).toBeInTheDocument()
     expect(screen.getByText('48 lines read')).toBeInTheDocument()
     expect(screen.getByText('1.3s')).toBeInTheDocument()
     expect(screen.getByText('Error: file not found')).toBeInTheDocument()
     expect(screen.getByText('cache')).toBeInTheDocument()
     expect(document.querySelectorAll('.activity-message')).toHaveLength(4)
     expect(document.querySelector('.activity-group__children')).toHaveTextContent(
-      'search_config',
+      'search_config_keys',
     )
     expect(
       document.querySelector('.activity-message--pending'),
@@ -836,7 +846,7 @@ describe('App', () => {
         {
           id: 'skill-call',
           role: 'activity',
-          content: 'Skill (tool-model-catalog)',
+          content: 'Skill (service-inventory)',
           createdAt: '2026-07-22T00:00:00.000Z',
           activityStatus: 'running',
           activityKind: 'skill',
@@ -868,7 +878,7 @@ describe('App', () => {
       [...document.querySelectorAll('.activity-message__name')].map(
         (name) => name.textContent,
       ),
-    ).toEqual(['skill(tool-model-catalog)', 'Read', 'Search Repositories'])
+    ).toEqual(['skill(service-inventory)', 'Read', 'Search Repositories'])
     expect(document.querySelectorAll('.activity-group')).toHaveLength(0)
   })
 
@@ -886,9 +896,9 @@ describe('App', () => {
     expect(sidebarSettings).toContainElement(
       screen.getByRole('button', { name: 'App settings' }),
     )
-    expect(sidebarSettings).toContainElement(
-      screen.getByRole('button', { name: 'Add knowledge root' }),
-    )
+    expect(
+      screen.queryByRole('button', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
 
   it('persists the sidebar width from the final pointer position', async () => {
@@ -1258,6 +1268,56 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
+  it('keeps an accent choice within the current browser tab', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const shell = document.querySelector('.app-shell')
+    expect(shell).toHaveAttribute('data-accent-theme', 'agentic')
+    const icon = () =>
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || ''
+    expect(decodeURIComponent(icon())).toContain('color="#b8f36b"')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
+
+    expect(shell).toHaveAttribute('data-accent-theme', 'violet')
+    expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBe('violet')
+    expect(localStorage.getItem('agentic-remote:accent-theme')).toBeNull()
+    expect(decodeURIComponent(icon())).toContain('color="#ad92ff"')
+    fireEvent.click(screen.getByRole('radio', { name: 'Teal accent' }))
+    expect(decodeURIComponent(icon())).toContain('color="#63d6c0"')
+    expect(document.querySelectorAll('link[rel="icon"]')).toHaveLength(1)
+  })
+
+  it('restores the tab icon from the saved accent on load', async () => {
+    sessionStorage.setItem('agentic-remote:accent-theme', 'rose')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelector('.app-shell')).toHaveAttribute(
+      'data-accent-theme',
+      'rose',
+    )
+    expect(decodeURIComponent(
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
+    )).toContain('color="#ff83b6"')
+  })
+
+  it('ignores an unknown stored accent', async () => {
+    sessionStorage.setItem('agentic-remote:accent-theme', 'infrared')
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    expect(document.querySelector('.app-shell')).toHaveAttribute(
+      'data-accent-theme',
+      'agentic',
+    )
+    expect(decodeURIComponent(
+      document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href || '',
+    )).toContain('color="#b8f36b"')
+  })
+
   it('falls back to blank runtime defaults when stored settings are null', async () => {
     localStorage.setItem('agentic-remote:default-models', 'null')
 
@@ -1282,10 +1342,10 @@ describe('App', () => {
       'copilot',
     )
     fireEvent.change(screen.getByLabelText('GitHub Copilot default model'), {
-      target: { value: 'gpt-5.6-sol' },
+      target: { value: 'fixture-model' },
     })
     fireEvent.change(screen.getByLabelText('Claude Agent default model'), {
-      target: { value: 'sonnet' },
+      target: { value: 'provider-model' },
     })
     expect(screen.getByText('Efficient').tagName).toBe('STRONG')
     fireEvent.change(
@@ -1305,12 +1365,12 @@ describe('App', () => {
       JSON.parse(localStorage.getItem('agentic-remote:default-models') || '{}'),
     ).toEqual({
       copilot: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'xhigh',
         contextTier: 'long_context',
       },
       claude: {
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'low',
         contextTier: 'default',
       },
@@ -1327,7 +1387,7 @@ describe('App', () => {
         provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: true,
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'xhigh',
         contextTier: 'long_context',
       }),
@@ -1349,11 +1409,51 @@ describe('App', () => {
         provider: 'claude',
         terminalBacked: false,
         allowAllPermissions: true,
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'low',
         contextTier: 'default',
       }),
     )
+  })
+
+  it('refreshes both provider catalogs every time app settings is reopened', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const copilot = await screen.findByLabelText('GitHub Copilot default model')
+    await waitFor(() => expect(copilot).toBeEnabled())
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (_computerId, provider) => ({
+        models: [{
+          id: `${provider}-new-model`,
+          name: `New ${provider} model`,
+          reasoningEfforts: [],
+          contextTiers: ['default'],
+        }],
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(
+      await screen.findByRole('option', { name: 'New copilot model' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'New claude model' })).toBeInTheDocument()
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(4)
+    expect(screen.getByLabelText('GitHub Copilot default model')).toHaveValue('')
+    expect(screen.getByLabelText('Claude Agent default model')).toHaveValue('')
+    expect(configureRuntime).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    vi.mocked(getProviderRuntimeOptions).mockRejectedValue(
+      new Error('Catalog refresh failed'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(await screen.findAllByText('Catalog refresh failed')).toHaveLength(2)
+    expect(screen.queryByRole('option', { name: 'New copilot model' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'New claude model' })).toBeNull()
+    expect(getProviderRuntimeOptions).toHaveBeenCalledTimes(6)
   })
 
   it('preserves provider-managed defaults when app settings are opened', async () => {
@@ -1428,8 +1528,8 @@ describe('App', () => {
           provider === 'claude'
             ? [
                 {
-                  id: 'sonnet',
-                  name: 'Sonnet',
+                  id: 'provider-model',
+                  name: 'Provider Model',
                   reasoningEfforts: ['low', 'medium', 'high'],
                   contextTiers: ['default'],
                 },
@@ -1588,7 +1688,7 @@ describe('App', () => {
           contextTier: 'long_context',
         },
         claude: {
-          model: 'sonnet',
+          model: 'provider-model',
           reasoningEffort: 'max',
           contextTier: 'long_context',
         },
@@ -1608,7 +1708,7 @@ describe('App', () => {
         provider: 'copilot',
         terminalBacked: true,
         allowAllPermissions: true,
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'medium',
         contextTier: 'long_context',
       }),
@@ -1622,7 +1722,7 @@ describe('App', () => {
         contextTier: 'long_context',
       },
       claude: {
-        model: 'sonnet',
+        model: 'provider-model',
         reasoningEffort: 'max',
         contextTier: 'long_context',
       },
@@ -1849,12 +1949,12 @@ describe('App', () => {
       )
     })
     expect(
-      screen.getByText('A new Agentic Remote version is ready.'),
+      screen.getByText('An Agentic Remote update is ready.'),
     ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss update' }))
     expect(
-      screen.queryByText('A new Agentic Remote version is ready.'),
+      screen.queryByText('An Agentic Remote update is ready.'),
     ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
@@ -3965,12 +4065,12 @@ describe('App', () => {
     fireEvent.keyDown(textarea, { key: 'Enter' })
     expect(textarea).toHaveValue('/model ')
 
-    fireEvent.change(textarea, { target: { value: '/model gpt-5.6-sol' } })
+    fireEvent.change(textarea, { target: { value: '/model fixture-model' } })
     expect(fireEvent.keyDown(textarea, { key: 'ArrowDown' })).toBe(true)
     fireEvent.keyDown(textarea, { key: 'Enter' })
     await waitFor(() => {
       expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
-        command: '/model gpt-5.6-sol',
+        command: '/model fixture-model',
         enqueue: false,
       })
     })
@@ -4012,11 +4112,11 @@ describe('App', () => {
       } as MessageEvent)
     })
     vi.mocked(executeCommand).mockClear()
-    fireEvent.change(textarea, { target: { value: '/model gpt-5.6-sol' } })
+    fireEvent.change(textarea, { target: { value: '/model fixture-model' } })
     fireEvent.keyDown(textarea, { key: 'Enter' })
     await waitFor(() => {
       expect(executeCommand).toHaveBeenCalledWith('computer-1', 'session-1', {
-        command: '/model gpt-5.6-sol',
+        command: '/model fixture-model',
         enqueue: true,
       })
     })
@@ -4074,11 +4174,62 @@ describe('App', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('refreshes the model panel on reopening and retries a failed refresh', async () => {
+    render(<App />)
+    const open = await screen.findByRole('button', {
+      name: 'Configure model, effort, and context',
+    })
+    fireEvent.click(open)
+    await screen.findByLabelText('Model')
+    expect(getRuntimeOptions).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getRuntimeOptions).mockRejectedValueOnce(
+      new Error('Catalog refresh failed'),
+    )
+    fireEvent.click(open)
+    expect(await screen.findByText('Catalog refresh failed')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Model')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    vi.mocked(getRuntimeOptions).mockResolvedValueOnce({
+      current: {},
+      status: 'idle',
+      models: [{
+        id: 'new-provider-model',
+        name: 'New Provider Model',
+        reasoningEfforts: ['high'],
+        contextTiers: ['default'],
+      }],
+    })
+    fireEvent.click(open)
+    const model = await screen.findByLabelText('Model')
+    expect(model).toHaveValue('new-provider-model')
+    expect(within(model).getAllByRole('option')).toHaveLength(1)
+    expect(getRuntimeOptions).toHaveBeenCalledTimes(3)
+    expect(getRuntimeOptions).toHaveBeenLastCalledWith('computer-1', 'session-1')
+    expect(configureRuntime).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply runtime settings' }))
+    await waitFor(() =>
+      expect(configureRuntime).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          model: 'new-provider-model',
+          reasoningEffort: 'high',
+          contextTier: 'default',
+          mode: 'interactive',
+        },
+      ),
+    )
+  })
+
   it('supports command abbreviations and configures the web status line', async () => {
       const runtimeSession = {
         ...session,
         runtime: {
-          model: 'gpt-5.6-sol',
+          model: 'fixture-model',
           reasoningEffort: 'high',
           contextTier: 'long_context',
           contextTokens: 200_000,
@@ -4094,7 +4245,7 @@ describe('App', () => {
       const textarea = await screen.findByLabelText('Message')
       expect(screen.getByTestId('web-statusline')).toBeInTheDocument()
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
-        'gpt-5.6-sol',
+        'fixture-model',
       )
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         'effort high',
@@ -4106,7 +4257,7 @@ describe('App', () => {
         'ctx ~200k/922k (22%)',
       )
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
-        'gpt-5.6-sol',
+        'fixture-model',
       )
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
         'ctx ~200k/922k (22%)',
@@ -4144,7 +4295,7 @@ describe('App', () => {
           'computer-1',
           'session-1',
           {
-            model: 'gpt-5.6-sol',
+            model: 'fixture-model',
             reasoningEffort: 'xhigh',
             contextTier: 'default',
             mode: 'autopilot',
@@ -4217,7 +4368,7 @@ describe('App', () => {
       ...session,
       status: 'running' as const,
       runtime: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
@@ -4624,7 +4775,7 @@ describe('App', () => {
       ...session,
       status: 'running' as const,
       runtime: {
-        model: 'gpt-5.6-sol',
+        model: 'fixture-model',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'plan',
@@ -4637,8 +4788,8 @@ describe('App', () => {
       current: staleSession.runtime,
       models: [
         {
-          id: 'gpt-5.6-sol',
-          name: 'GPT-5.6 Sol',
+          id: 'fixture-model',
+          name: 'Fixture Model',
           reasoningEfforts: ['high'],
           contextTiers: ['default', 'long_context'],
         },
@@ -4683,6 +4834,132 @@ describe('App', () => {
     })
     expect(loaded).toEqual([computer, secondComputer])
   })
+  it('follows workspace Markdown links without leaving the selected session', async () => {
+    vi.mocked(readWorkspaceFile).mockImplementation(
+      async (_computerId, _sessionId, path) => ({
+        name: path.split('/').at(-1) || path,
+        path,
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 100,
+        content: path === 'README.md'
+          ? '# Start\n\n[Read installation](docs/setup%20guide.md#install)'
+          : '# Setup guide\n\n## Install\n\nInstall the application.',
+      }),
+    )
+    render(<App />)
+    const composer = await screen.findByLabelText('Message')
+    fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Browse current session folder',
+    }))
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    const location = window.location.href
+    fireEvent.click(await screen.findByRole('link', { name: 'Read installation' }))
+
+    const heading = await screen.findByRole('heading', { name: 'Install' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    expect(readWorkspaceFile).toHaveBeenLastCalledWith(
+      computer.id, session.id, 'docs/setup guide.md',
+    )
+    expect(window.location.href).toBe(location)
+    expect(composer).toHaveValue('Keep this draft')
+    expect(sendMessage).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous document' }))
+    expect(await screen.findByRole('heading', { name: 'Start' }))
+      .toBeInTheDocument()
+  })
+
+  it('scopes Markdown fragments to unique headings and refuses escaping links', async () => {
+    vi.mocked(readWorkspaceFile).mockResolvedValue({
+      name: 'README.md',
+      path: 'README.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 100,
+      content: [
+        '# Start',
+        '[Second install](#install-1)',
+        '[Missing section](#missing)',
+        '[Outside workspace](../outside.md)',
+        '## Install',
+        'First.',
+        '## Install',
+        'Second.',
+        '## Install-1',
+        'A naturally suffixed heading.',
+      ].join('\n\n'),
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Browse current session folder',
+    }))
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    const headings = await screen.findAllByRole('heading', { name: 'Install' })
+    expect(headings.map((heading) => heading.id)).toEqual(['install', 'install-1'])
+    expect(screen.getByRole('heading', { name: 'Install-1' }))
+      .toHaveAttribute('id', 'install-1-1')
+    const location = window.location.href
+    fireEvent.click(screen.getByRole('link', { name: 'Second install' }))
+    expect(headings[1]).toHaveFocus()
+    expect(window.location.href).toBe(location)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Missing section' }))
+    expect(await screen.findByText('Section "missing" was not found in this document.'))
+      .toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link', { name: 'Outside workspace' }))
+    expect(await screen.findByText('This link points outside the document root.'))
+      .toBeInTheDocument()
+    expect(readWorkspaceFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('follows Knowledge Markdown links on the owning root and reports failed reads', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+      id: 'root-1',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/home/tester/docs',
+      name: 'docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    }])
+    vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
+      '.': {
+        path: '.',
+        entries: [{ name: 'README.md', path: 'README.md', kind: 'markdown' }],
+      },
+    }))
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_root, path) => {
+      if (path === 'missing.md') {
+        throw new Error('Document was not found')
+      }
+      return {
+        path,
+        name: path.split('/').at(-1) || path,
+        kind: 'markdown',
+        mimeType: 'text/markdown',
+        size: 100,
+        content: path === 'README.md'
+          ? '# Knowledge start\n\n[Open guide](guides/setup.md#r%C3%A9sum%C3%A9)'
+          : '# Setup\n\n## Resume\n\n## R\u00e9sum\u00e9\n\n[Missing file](../missing.md)',
+      }
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /README.md/ }))
+    const location = window.location.href
+    fireEvent.click(await screen.findByRole('link', { name: 'Open guide' }))
+    const heading = await screen.findByRole('heading', { name: 'R\u00e9sum\u00e9' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    expect(readKnowledgeFile).toHaveBeenLastCalledWith('root-1', 'guides/setup.md')
+    expect(window.location.href).toBe(location)
+    expect(sendMessage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('link', { name: 'Missing file' }))
+    expect(await screen.findAllByText('Document was not found')).not.toHaveLength(0)
+    expect(heading).toBeInTheDocument()
+  })
+
   it('navigates with breadcrumbs and offers a document outline', async () => {
     vi.mocked(readWorkspaceFile).mockResolvedValue({
       name: 'knowledge.md',
@@ -5330,12 +5607,19 @@ describe('App', () => {
 
   it('adds a knowledge root by picking a computer folder', async () => {
     vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => ({
+        path,
+        parent: path === '~' ? undefined : '~',
+        directories: [],
+      }),
+    )
     vi.mocked(addKnowledgeRoot).mockResolvedValue({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
-      path: '~/src',
-      name: 'src',
+      path: session.cwd,
+      name: 'project',
       createdAt: '2026-08-01T00:00:00.000Z',
     })
     vi.mocked(listKnowledgeEntries).mockResolvedValue({
@@ -5346,15 +5630,18 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
-    )
     // Sessions stay visible beside the panel, so the folder has to be picked
     // inside the dialog rather than anywhere on screen.
     const rootDialog = await screen.findByRole('dialog', {
       name: 'Add knowledge root',
     })
-    fireEvent.click(await within(rootDialog).findByRole('button', { name: /src/ }))
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        session.cwd,
+        'all',
+      ),
+    )
     const addFolder = within(rootDialog).getByRole('button', {
       name: 'Add this folder',
     })
@@ -5364,9 +5651,144 @@ describe('App', () => {
     await waitFor(() =>
       expect(addKnowledgeRoot).toHaveBeenCalledWith({
         computerId: computer.id,
-        path: '~/src',
+        path: session.cwd,
       }),
     )
+  })
+
+  it('falls back to home when the active session folder is unavailable', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => {
+        if (path === session.cwd) {
+          throw new Error('Folder does not exist')
+        }
+        return {
+          path: '~',
+          directories: [{ name: 'src', path: '~/src' }],
+        }
+      },
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenNthCalledWith(
+        2,
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+    expect(
+      within(rootDialog).getByText(
+        `Could not open ${session.cwd}: Folder does not exist. Showing the home folder instead.`,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(rootDialog).getByRole('button', { name: 'Add this folder' }),
+    ).toBeEnabled()
+  })
+
+  it('uses the session folder only before the root picker computer changes', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => ({ path, directories: [] }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    const computerSelect = within(rootDialog).getByLabelText('Computer')
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        session.cwd,
+        'all',
+      ),
+    )
+
+    fireEvent.change(computerSelect, {
+      target: { value: secondComputer.id },
+    })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        secondComputer.id,
+        '~',
+        'all',
+      ),
+    )
+    fireEvent.change(computerSelect, { target: { value: computer.id } })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenLastCalledWith(
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+  })
+
+  it('ignores a stale root browse after switching computers', async () => {
+    let finishStaleBrowse:
+      | ((listing: {
+          path: string
+          parent: string
+          directories: []
+        }) => void)
+      | undefined
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (computerId, path = '~') => {
+        if (computerId === computer.id && path === session.cwd) {
+          return {
+            path,
+            directories: [{ name: 'slow', path: `${path}/slow` }],
+          }
+        }
+        if (computerId === computer.id && path.endsWith('/slow')) {
+          return await new Promise((resolve) => {
+            finishStaleBrowse = resolve
+          })
+        }
+        return { path: '/home/worker', directories: [] }
+      },
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(
+      await within(rootDialog).findByRole('button', { name: 'slow' }),
+    )
+    fireEvent.change(within(rootDialog).getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    await within(rootDialog).findByText('/home/worker')
+
+    await act(async () => {
+      finishStaleBrowse?.({
+        path: `${session.cwd}/slow`,
+        parent: session.cwd,
+        directories: [],
+      })
+    })
+    expect(within(rootDialog).getByText('/home/worker')).toBeInTheDocument()
+    expect(
+      within(rootDialog).queryByText(`${session.cwd}/slow`),
+    ).not.toBeInTheDocument()
   })
   it('renders an image referenced from a workspace document', async () => {
     vi.mocked(readWorkspaceFile).mockImplementation(async (_c, _s, target) =>
@@ -5646,7 +6068,16 @@ describe('App', () => {
   })
 
   it('picks a knowledge root from anywhere on the computer', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-existing',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
     vi.mocked(listDirectories).mockResolvedValue({
       path: '/srv',
       parent: '/',
@@ -5664,23 +6095,107 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
+      await screen.findByRole('button', { name: 'New knowledge root' }),
     )
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
     // The picker walks the whole filesystem, not just the home directory.
     await waitFor(() =>
       expect(listDirectories).toHaveBeenCalledWith(computer.id, '~', 'all'),
     )
-    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Add this folder' }),
-    )
+    fireEvent.click(await within(rootDialog).findByRole('button', { name: /docs/ }))
+    const addFolder = within(rootDialog).getByRole('button', {
+      name: 'Add this folder',
+    })
+    await waitFor(() => expect(addFolder).toBeEnabled())
+    fireEvent.click(addFolder)
     await waitFor(() =>
       expect(addKnowledgeRoot).toHaveBeenCalledWith({
         computerId: computer.id,
         path: '/srv',
       }),
     )
+  })
+
+  it('keeps the general root picker available without a selected session', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findByText('No sessions here.')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(listKnowledgeRoots).toHaveBeenCalled())
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+    expect(
+      await screen.findByRole('dialog', { name: 'Add knowledge root' }),
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(computer.id, '~', 'all'),
+    )
+  })
+
+  it('does not choose another computer for an offline session knowledge root', async () => {
+    const offlineComputer = { ...computer, online: false }
+    const offlineSession = {
+      ...session,
+      computerName: offlineComputer.name,
+    }
+    vi.mocked(listComputers).mockResolvedValue([
+      offlineComputer,
+      secondComputer,
+    ])
+    vi.mocked(listSessions).mockResolvedValue([offlineSession])
+    vi.mocked(getSession).mockResolvedValue(offlineSession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(listKnowledgeRoots).toHaveBeenCalled())
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
+    expect(listDirectories).not.toHaveBeenCalledWith(
+      secondComputer.id,
+      '~',
+      'all',
+    )
+  })
+
+  it('does not reopen a cancelled root picker after root loading finishes', async () => {
+    let finishRoots: (() => void) | undefined
+    vi.mocked(listKnowledgeRoots).mockReturnValue(
+      new Promise((resolve) => {
+        finishRoots = () => resolve([])
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await act(async () => {
+      finishRoots?.()
+    })
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
 
   it('keeps knowledge open across sessions and follows the new one', async () => {
@@ -5830,10 +6345,508 @@ describe('App', () => {
     ).toBe(180)
   })
 
-  it('drives sessions and the knowledge panel from the keyboard', async () => {
+  it('starts up when the stored shortcuts are nonsense', async () => {
+    // Storage is not a trusted source: another tab, an older version, or a
+    // hand edit can leave anything here. `null` in particular is an object to
+    // `typeof`, and reading its entries threw before anything had rendered --
+    // a blank screen with no way back except clearing site data.
+    localStorage.setItem('agentic-remote:shortcuts', 'null')
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByLabelText('App settings'))
+    expect(
+      await screen.findByLabelText('Change the keys for Open or close knowledge'),
+    ).toHaveTextContent('Alt + K')
+  })
+
+  it('drops stored shortcut keys that the editor would have refused', async () => {
+    // A binding held with nothing would fire while typing, and two rows on the
+    // same keys leave the second unreachable. Neither can be made in the
+    // editor, so neither may arrive by reloading either.
+    localStorage.setItem(
+      'agentic-remote:shortcuts',
+      JSON.stringify({
+        toggleKnowledge: { code: 'KeyG', alt: false, shift: false, ctrl: false, meta: false },
+        backgroundTasks: { code: 'ArrowDown', alt: true, shift: false, ctrl: false, meta: false },
+        nonsense: { code: 'KeyZ', alt: true },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    // Held with nothing: refused, so the default stands.
+    expect(
+      await screen.findByLabelText('Change the keys for Open or close knowledge'),
+    ).toHaveTextContent('Alt + K')
+    // Already what "Next session" answers to: refused for the same reason.
+    expect(
+      screen.getByLabelText('Change the keys for View background tasks'),
+    ).toHaveTextContent('Alt + T')
+    expect(
+      screen.getByLabelText('Change the keys for Next session'),
+    ).toHaveTextContent('Alt + \u2193')
+  })
+
+  it('refuses a key at capture that a reload would throw away', async () => {
+    // The editor and the stored form have to agree. Accepting a key here that
+    // reloading discards gave a shortcut that worked until the page was opened
+    // again, and then quietly was not there.
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(
+      await screen.findByLabelText('Change the keys for View background tasks'),
+    )
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for View background tasks'),
+      { key: 'Enter', code: 'NumpadEnter', altKey: true },
+    )
+
+    await screen.findByText(/cannot be used for a shortcut/i)
+    // Still listening, so another key can be tried; nothing was changed.
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for View background tasks'),
+      { key: 'Escape', code: 'Escape' },
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for View background tasks'),
+      ).toHaveTextContent('Alt + T'),
+    )
+  })
+
+  it('drops a stored shortcut whose key is not a real one', async () => {
+    // Any nonempty string was accepted, so a code no keyboard produces came
+    // back as a shortcut that showed in the list and could never be pressed.
+    localStorage.setItem(
+      'agentic-remote:shortcuts',
+      JSON.stringify({
+        toggleKnowledge: {
+          code: 'NotARealKey',
+          alt: true,
+          shift: false,
+          ctrl: false,
+          meta: false,
+        },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    expect(
+      await screen.findByLabelText('Change the keys for Open or close knowledge'),
+    ).toHaveTextContent('Alt + K')
+  })
+
+  it('drops stored shortcut keys that could never be pressed', async () => {
+    // Escape leaves the editor and Tab moves on, so neither can be recorded
+    // however they are held -- stored, they showed in the list as shortcuts
+    // that did nothing. A modifier that is a string rather than a boolean is
+    // not a choice anybody made either.
+    localStorage.setItem(
+      'agentic-remote:shortcuts',
+      JSON.stringify({
+        toggleKnowledge: { code: 'Escape', ctrl: true, alt: false, shift: false, meta: false },
+        backgroundTasks: { code: 'KeyM', alt: 'yes', shift: false, ctrl: false, meta: false },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    expect(
+      await screen.findByLabelText('Change the keys for Open or close knowledge'),
+    ).toHaveTextContent('Alt + K')
+    expect(
+      screen.getByLabelText('Change the keys for View background tasks'),
+    ).toHaveTextContent('Alt + T')
+  })
+
+  it('drops a stored override that collides with a default it fell back to', async () => {
+    // The override that survives and the default that another row falls back
+    // to have to be checked against each other, not only the overrides among
+    // themselves. Otherwise the same fault reappears one step along.
+    localStorage.setItem(
+      'agentic-remote:shortcuts',
+      JSON.stringify({
+        // Takes the keys "View background tasks" answers to by default...
+        nextSession: { code: 'KeyT', alt: true, shift: false, ctrl: false, meta: false },
+        // ...while this one is discarded for duplicating another override, so
+        // it falls back to exactly those keys.
+        backgroundTasks: { code: 'KeyT', alt: true, shift: false, ctrl: false, meta: false },
+      }),
+    )
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    // Both back to their defaults, so each can still be pressed.
+    expect(
+      await screen.findByLabelText('Change the keys for Next session'),
+    ).toHaveTextContent('Alt + \u2193')
+    expect(
+      screen.getByLabelText('Change the keys for View background tasks'),
+    ).toHaveTextContent('Alt + T')
+  })
+
+  it('will not reset a shortcut onto keys another row has taken', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    // Move background tasks off Alt+T...
+    fireEvent.click(
+      await screen.findByLabelText('Change the keys for View background tasks'),
+    )
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for View background tasks'),
+      { key: 'y', code: 'KeyY', altKey: true },
+    )
+    // ...then give Alt+T to another row.
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for Next session'),
+      ).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByLabelText('Change the keys for Next session'))
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for Next session'),
+      { key: 't', code: 'KeyT', altKey: true },
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for Next session'),
+      ).toHaveTextContent('Alt + T'),
+    )
+
+    // Putting the first back would land on the keys the other now holds.
+    fireEvent.click(
+      screen.getByLabelText('Reset the keys for View background tasks'),
+    )
+    await screen.findByText(/now does "Next session"/i)
+    expect(
+      screen.getByLabelText('Change the keys for View background tasks'),
+    ).toHaveTextContent('Alt + Y')
+  })
+
+  it('gives a shortcut different keys, and answers to them', async () => {
+    // The list and the handler read the same rows, so a shortcut cannot be
+    // shown as one thing and answer to another.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
     vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    const change = await screen.findByLabelText(
+      'Change the keys for Open or close knowledge',
+    )
+    expect(change).toHaveTextContent('Alt + K')
+    fireEvent.click(change)
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for Open or close knowledge'),
+      { key: 'j', code: 'KeyJ', altKey: true },
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for Open or close knowledge'),
+      ).toHaveTextContent('Alt + J'),
+    )
+
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    )
+
+    // The keys it was given work...
+    fireEvent.keyDown(window, { key: 'j', code: 'KeyJ', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+    // ...and the ones it used to have do not.
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+  })
+
+  it('refuses shortcut keys that are already taken, or held with nothing', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+
+    const change = await screen.findByLabelText(
+      'Change the keys for View background tasks',
+    )
+    fireEvent.click(change)
+    const recording = screen.getByLabelText(
+      'Press the new keys for View background tasks',
+    )
+
+    // A bare letter would fire the moment it was typed anywhere outside a
+    // text box.
+    fireEvent.keyDown(recording, { key: 't', code: 'KeyT' })
+    await screen.findByText(/Hold Alt, Ctrl or Cmd as well/i)
+
+    // And one already spoken for would leave two rows claiming the same keys.
+    fireEvent.keyDown(recording, { key: 'k', code: 'KeyK', altKey: true })
+    await screen.findByText(/already does "Open or close knowledge"/i)
+
+    // Unchanged throughout.
+    fireEvent.keyDown(recording, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for View background tasks'),
+      ).toHaveTextContent('Alt + T'),
+    )
+  })
+
+  it('remembers changed shortcut keys across a reload, and resets them', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    const first = render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(
+      await screen.findByLabelText('Change the keys for View background tasks'),
+    )
+    fireEvent.keyDown(
+      screen.getByLabelText('Press the new keys for View background tasks'),
+      { key: 'b', code: 'KeyB', altKey: true, shiftKey: true },
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for View background tasks'),
+      ).toHaveTextContent('Alt + Shift + B'),
+    )
+    first.unmount()
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByLabelText('App settings'))
+    const kept = await screen.findByLabelText(
+      'Change the keys for View background tasks',
+    )
+    expect(kept).toHaveTextContent('Alt + Shift + B')
+
+    // Put back, and the row stops offering to.
+    fireEvent.click(
+      screen.getByLabelText('Reset the keys for View background tasks'),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Change the keys for View background tasks'),
+      ).toHaveTextContent('Alt + T'),
+    )
+    expect(
+      screen.queryByLabelText('Reset the keys for View background tasks'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('closes the knowledge panel, then the drawer, on Escape', async () => {
+    // One press puts away one thing, in the order they are stacked.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
+        'hidden',
+      ),
+    )
+  })
+
+  it('closes the command menu on Escape, and nothing behind it', async () => {
+    // The menu is what Escape is about while it is open. Left to the global
+    // handler, the press went straight past it and closed a panel behind the
+    // composer while the menu stayed exactly where it was.
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    vi.mocked(listCommands).mockResolvedValue([
+      {
+        name: 'clear',
+        description: 'Clear the conversation',
+        allowDuringAgentExecution: false,
+      },
+    ])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+
+    const composer = screen.getByLabelText('Message')
+    fireEvent.change(composer, { target: { value: '/cle' } })
+    await waitFor(() =>
+      expect(document.querySelector('.command-menu')).not.toBeNull(),
+    )
+
+    fireEvent.keyDown(composer, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.command-menu')).toBeNull(),
+    )
+    // The panel behind it is untouched.
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+  })
+
+  it('closes the drawer before the panel it slid over', async () => {
+    // The drawer only exists on a narrow screen, and there it covers
+    // everything else. Closing what is behind it first put away something the
+    // reader could not see, and left the thing they were looking at.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 700,
+      writable: true,
+    })
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+    fireEvent.click(screen.getByLabelText('Open sessions'))
+    await waitFor(() =>
+      expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open'),
+    )
+
+    // The drawer goes first...
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.sidebar')).not.toHaveClass(
+        'sidebar--open',
+      ),
+    )
+    expect(document.querySelector('.knowledge-panel')).not.toHaveAttribute(
+      'hidden',
+    )
+
+    // ...and the panel it was covering on the next press.
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
+        'hidden',
+      ),
+    )
+    // Put back, or every test after this one runs at a phone's width.
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalWidth,
+      writable: true,
+    })
+  })
+
+  it('ignores the drawer flag once the sidebar is part of the layout again', async () => {
+    // Widening past the breakpoint leaves the drawer flag set while the
+    // sidebar is simply part of the page. Escape then spent the press on
+    // something invisible and left what was in front of the reader open.
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    const setWidth = (width: number) => {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: width,
+        writable: true,
+      })
+    }
+    const original = window.innerWidth
+    setWidth(700)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.keyDown(window, { key: 'k', code: 'KeyK', altKey: true })
+    fireEvent.click(screen.getByLabelText('Open sessions'))
+    await waitFor(() =>
+      expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open'),
+    )
+
+    // The window is widened; the sidebar is no longer an overlay.
+    setWidth(1400)
+
+    // The press closes what is actually in front, not the flag behind it.
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+    await waitFor(() =>
+      expect(document.querySelector('.knowledge-panel')).toHaveAttribute(
+        'hidden',
+      ),
+    )
+    setWidth(original)
+  })
+
+  it('closes an open dialog on Escape, from a field inside it', async () => {
+    // The keys that drive the app are held back while a dialog is open, and
+    // Escape has to be the exception -- it is exactly then that it is wanted,
+    // and it has to work from the field the reader is typing in.
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockResolvedValue(session)
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getAllByRole('button', { name: /new session/i })[0])
+    const dialog = await screen.findByRole('dialog')
+    const field = within(dialog).getAllByRole('combobox')[0]
+    fireEvent.keyDown(field, { key: 'Escape', code: 'Escape' })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('drives sessions and the knowledge panel from the keyboard', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -7532,7 +8545,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
+      await screen.findByRole('button', { name: 'New knowledge root' }),
     )
     const rootDialog = await screen.findByRole('dialog', {
       name: 'Add knowledge root',
@@ -8629,8 +9642,8 @@ describe('App', () => {
     // Knowledge is a per-session panel now, closed until the session opens it.
     expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
     expect(
-      screen.getByRole('button', { name: 'Add knowledge root' }),
-    ).toBeInTheDocument()
+      screen.queryByRole('button', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
   it('keeps the remembered position when it cannot be restored', async () => {
     const remembered = {

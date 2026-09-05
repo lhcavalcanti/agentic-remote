@@ -90,7 +90,7 @@ describe('desktop composer layout', () => {
     ).toBe('0')
     // The focus ring belongs to the merged panel now.
     expect(declaration(desktop, '.composer:focus-within', 'border-color')).toBe(
-      '#59634c',
+      'var(--accent-focus)',
     )
   })
 

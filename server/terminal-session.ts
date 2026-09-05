@@ -94,6 +94,7 @@ export interface TerminalSessionController {
   dismissUserInput?(
     sessionId: string,
     form?: TerminalFormIdentity,
+    action?: 'cancel' | 'decline',
   ): Promise<boolean>
   /**
    * Fills the structured form the agent is showing and submits it, so the
@@ -986,6 +987,7 @@ export class TmuxTerminalSessionController
   async dismissUserInput(
     sessionId: string,
     form?: TerminalFormIdentity,
+    action: 'cancel' | 'decline' = 'cancel',
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const owner = await this.boundOwner(sessionId)
@@ -1011,7 +1013,12 @@ export class TmuxTerminalSessionController
           return false
         }
       }
-      await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Escape'])
+      await execFileAsync('tmux', [
+        'send-keys',
+        '-t',
+        owner.target,
+        action === 'decline' ? 'C-d' : 'Escape',
+      ])
       return true
     })
   }
@@ -1066,7 +1073,9 @@ export class TmuxTerminalSessionController
         ) {
           throw Object.assign(
             new Error(
-              'The terminal is waiting for user input. Answer it before sending a message.',
+              isTerminalSessionInUsePrompt(pane)
+                ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
+                : 'The terminal is waiting for user input. Answer it before sending a message.',
             ),
             { statusCode: 409 },
           )
@@ -1089,9 +1098,12 @@ export class TmuxTerminalSessionController
           },
         )
         if (startup !== 'ready') {
+          const pane = await capturePane(owner.target)
           throw Object.assign(
             new Error(
-              'The terminal is waiting for user input. Answer it before sending a message.',
+              isTerminalSessionInUsePrompt(pane)
+                ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
+                : 'The terminal is waiting for user input. Answer it before sending a message.',
             ),
             { statusCode: 409 },
           )
@@ -1125,7 +1137,46 @@ export class TmuxTerminalSessionController
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
-      const paneBeforePaste = await capturePane(owner.target)
+      let paneBeforePaste = await capturePane(owner.target)
+      // The previous submitted/queued prompt may still be awaiting repaint.
+      // Wait briefly without typing, but never overwrite a draft that remains.
+      for (
+        let attempt = 0;
+        attempt < 10 &&
+        composerText(paneBeforePaste) !== undefined &&
+        composerHoldsText(paneBeforePaste);
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        paneBeforePaste = await capturePane(owner.target)
+      }
+      if (isTerminalSessionInUsePrompt(paneBeforePaste)) {
+        throw Object.assign(
+          new Error(
+            'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      if (
+        composerText(paneBeforePaste) !== undefined &&
+        composerHoldsText(paneBeforePaste)
+      ) {
+        throw Object.assign(
+          new Error(
+            'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      if (isTerminalOverlay(paneBeforePaste)) {
+        throw Object.assign(
+          new Error(
+            'The terminal is showing a full-screen view. Close it there, then send this again.',
+          ),
+          { statusCode: 409 },
+        )
+      }
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -1187,34 +1238,19 @@ export class TmuxTerminalSessionController
           paneBeforePaste,
           confirmation,
           content,
-        ))
-      ) {
-        // The prompt never showed the message, so pressing Enter would send
-        // whatever it does hold and still be reported as delivered.
-        //
-        // The paste itself may still have landed, and saying so while leaving
-        // it there is what puts a second copy in the prompt when the message
-        // is sent again — which the queue does on its own, without anyone
-        // deciding to. The prompt is put back the way it was found, so
-        // sending again is sending once.
-        //
-        // The load that makes a send look failed is the same load that makes
-        // the paste arrive late, so one look at this instant would miss it and
-        // leave the text to be concatenated with the retry. It is given a
-        // further moment to appear.
-        // Waited for anyway. The clear that follows refuses to touch a
-        // composer holding anything this paste did not put there, and giving
-        // the paste time to appear is what lets it be recognised as ours
-        // rather than mistaken for somebody else's writing.
-        await waitForComposerPaste(
+        )) &&
+        !(await waitForComposerPaste(
           target,
           paneBeforePaste,
           confirmation,
           content,
           20,
-        )
-        // Nothing is cleared here any more.
+        ))
+      ) {
+        // The prompt never showed the message, so pressing Enter would send
+        // whatever it does hold and still be reported as delivered.
         //
+        // Both waits failed. Never clear the composer or repeat the paste:
         // Reading the composer and then clearing it cannot be made one act:
         // whatever is read, a person at the terminal can type between the
         // reading and the keystroke, and Ctrl+U takes the whole composer.
@@ -1635,10 +1671,6 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   )
 }
 
-function hasComposerAfter(lines: string[], index: number): boolean {
-  return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
-}
-
 function activeBottomFrame(
   lines: string[],
   marker: number,
@@ -1763,7 +1795,7 @@ async function clearAutomaticStartupPrompts(
     const pane = await capture()
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
-      parseTerminalPermission(pane) ||
+      (parseTerminalPermission(pane) && !isTerminalSessionInUsePrompt(pane)) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
@@ -1804,7 +1836,7 @@ async function waitForTerminalStartup(
     const pane = await capturePane(target)
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
-      parseTerminalPermission(pane) ||
+      (parseTerminalPermission(pane) && !isTerminalSessionInUsePrompt(pane)) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
@@ -1924,11 +1956,28 @@ function stripTerminalStatus(pane: string): string[] {
   return lines
 }
 
+function terminalControlLines(pane: string): string[] {
+  const lines = pane.split('\n')
+  while (lines.length > 0 && !lines[lines.length - 1].trim()) {
+    lines.pop()
+  }
+  // The bottom of the CLI composer separates transcript/draft text from the
+  // controls that own the keyboard. Rounded dialog borders are not composers.
+  const composer = lines.findLastIndex((line) =>
+    /^\s*╹[\u2580-\u259f\u2500-\u257f]*\s*$/u.test(line),
+  )
+  return lines.slice(composer + 1)
+}
+
 // A full-screen view replaces the transcript and is driven by keystrokes, so
 // there is nothing useful to copy into the conversation. Its footer advertises
 // the keys it accepts, which is the most reliable signal available.
 export function isTerminalOverlay(pane: string): boolean {
-  const tail = pane.split('\n').slice(-6).join(' ')
+  const controls = terminalControlLines(pane)
+  if (parseTerminalFormPrompt(controls.join('\n'))) {
+    return true
+  }
+  const tail = controls.slice(-6).join(' ')
   // Footers phrase these as either "esc close" or "esc to cancel", so the
   // connecting word is optional.
   const hints = [
@@ -2048,8 +2097,7 @@ export async function submitTerminalForm(
 }
 
 export function parseTerminalFormPrompt(pane: string): boolean {
-  const rawLines = pane.split('\n')
-  const lines = rawLines.map(cleanDialogLine)
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
   const header = lines.findLastIndex((line) =>
     /^Copilot needs information\.?$/i.test(line),
   )
@@ -2062,10 +2110,41 @@ export function parseTerminalFormPrompt(pane: string): boolean {
       /cancel/i.test(line) &&
       /(?:esc|ctrl\+|enter)/i.test(line),
   )
-  if (footer < 0 || hasComposerAfter(rawLines, footer)) {
+  if (footer < 0) {
     return false
   }
   return /enter accept/i.test(lines.slice(header, footer + 1).join(' '))
+}
+
+function terminalFormQuestionEnd(
+  lines: string[],
+  header: number,
+  question: string,
+): number {
+  const expected = question.replace(/\s+/gu, ' ').trim()
+  if (!expected) {
+    return header
+  }
+  let offset = 0
+  for (let index = header + 1; index < lines.length; index += 1) {
+    const line = lines[index].replace(/\s+/gu, ' ').trim()
+    if (!line) {
+      continue
+    }
+    // Wrapping may split at whitespace or inside a word. Only the break is
+    // flexible; spaces within each rendered line remain part of its identity.
+    if (expected[offset] === ' ') {
+      offset += 1
+    }
+    if (!expected.startsWith(line, offset)) {
+      return -1
+    }
+    offset += line.length
+    if (offset === expected.length) {
+      return index
+    }
+  }
+  return -1
 }
 
 /**
@@ -2074,6 +2153,19 @@ export function parseTerminalFormPrompt(pane: string): boolean {
  * nothing about which request it belongs to; the tabs are what distinguish one
  * prompt from the next.
  */
+/**
+ * Whether a tab on screen is the field of that name.
+ *
+ * The CLI writes the tab holding focus inside brackets, and a name compared
+ * with that mark still on it never matches, so the form is not recognised as
+ * the one being answered. A title can also contain brackets of its own, so
+ * the name as written is tried first and the mark only taken off when that
+ * leaves nothing.
+ */
+function tabNames(tab: string, field: string): boolean {
+  return tab === field || tab.replace(/^\[(.*)\]$/, '$1') === field
+}
+
 function terminalFormTabsIndex(
   lines: string[],
   form: TerminalFormIdentity,
@@ -2089,50 +2181,29 @@ function terminalFormTabsIndex(
   }
   // The CLI prints the request's own question between the header and the tabs.
   // Two requests can share a schema, so the question is what separates them.
-  // Long questions wrap to the pane width, so compare the complete rendered
-  // region instead of requiring the original text to fit on one line.
-  const question = form.question.replace(/\s+/gu, ' ').trim()
-  for (let index = header + 1; index < lines.length; index += 1) {
-    // Tabs sit on one line separated by runs of spaces, so a title containing
-    // a single space stays intact.
-    const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
-    const renderedQuestion = lines
-      .slice(header + 1, index)
-      .join(' ')
-      .replace(/\s+/gu, ' ')
-      .trim()
-    if (renderedQuestion !== question) {
-      continue
-    }
-    if (form.fields.length === 1) {
-      // A form of one field prints no row of tabs: the field's own heading is
-      // all there is, and the CLI writes a heading with a colon after it.
-      // Reading that heading as the tab is what lets a single question be
-      // recognised.
-      //
-      // Only in a pane that prints no tab row at all. Every line was a
-      // candidate before, so a single-field identity could match a lone
-      // heading inside a form of several fields -- and answering it submitted
-      // that whole form, the other fields left at their defaults.
-      if (tabs.length !== 1) {
-        continue
-      }
-      // Only the trailing colon the heading is printed with: taking one off
-      // every tab stopped a field whose own title ends in a colon from ever
-      // matching the row it is printed in.
-      if (tabs[0].replace(/:$/, '') === form.fields[0]) {
-        return index
-      }
-      continue
-    }
-    if (
-      tabs.length === form.fields.length &&
-      tabs.every((tab, slot) => tab === form.fields[slot])
-    ) {
-      return index
-    }
+  const questionAt = terminalFormQuestionEnd(lines, header, form.question)
+  if (questionAt < 0) {
+    return -1
   }
-  return -1
+  // The first content after the complete question must be its tabs (or the
+  // lone field heading). Searching further could match a title in a value or
+  // accept only a prefix of a longer, different question.
+  const index = lines.findIndex(
+    (line, position) => position > questionAt && line.trim().length > 0,
+  )
+  if (index < 0) {
+    return -1
+  }
+  const tabs = lines[index].split(/\s{2,}/).filter(Boolean)
+  if (form.fields.length === 1) {
+    return tabs.length === 1 && tabs[0].replace(/:$/, '') === form.fields[0]
+      ? index
+      : -1
+  }
+  return tabs.length === form.fields.length &&
+    tabs.every((tab, slot) => tabNames(tab, form.fields[slot]))
+    ? index
+    : -1
 }
 
 /**
@@ -2172,7 +2243,7 @@ export function terminalFormShowsFields(
   pane: string,
   form: TerminalFormIdentity,
 ): boolean {
-  return terminalFormTabsIndex(pane.split('\n').map(cleanDialogLine), form) >= 0
+  return terminalFormTabsIndex(terminalControlLines(pane).map(cleanDialogLine), form) >= 0
 }
 
 /**
@@ -2190,7 +2261,7 @@ export function parseTerminalFormActiveField(
   if (new Set(form.fields).size !== form.fields.length) {
     return undefined
   }
-  const lines = pane.split('\n').map(cleanDialogLine)
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
   const tabs = terminalFormTabsIndex(lines, form)
   if (tabs < 0) {
     return undefined
@@ -2283,112 +2354,16 @@ export function parseTerminalUserInput(
 export function parseTerminalPermission(
   pane: string,
 ): PendingPermission | undefined {
-  const rawLines = pane.split('\n')
-  const lines = rawLines.map(cleanDialogLine)
-  const trustQuestion = findTerminalWrappedText(
-    lines,
-    'Do you trust the files in this folder?',
-  )
-  folderTrust: if (trustQuestion) {
-    const frame = activeBottomFrame(rawLines, trustQuestion.start)
-    if (!frame) {
-      break folderTrust
-    }
-    const frameLines = lines.slice(frame.start, frame.end + 1)
-    // A command permission frame can carry any text at all inside it, the
-    // command's own included -- so one that prints the trust dialog word for
-    // word would be answered as trust, and "Trust once" would send Enter to
-    // whatever the command dialog actually had selected.
-    //
-    // Found the same way the trust question is, because the command question
-    // wraps too: matched line by line it survived being broken across two, and
-    // the frame was read as trust after all.
-    if (findTerminalWrappedText(frameLines, 'Do you want to run this command?')) {
-      break folderTrust
-    }
-    const frameQuestion = findTerminalWrappedText(
-      frameLines,
-      'Do you trust the files in this folder?',
-    )
-    if (!frameQuestion) {
-      break folderTrust
-    }
-    const heading = frameLines.findLastIndex(
-      (line, index) =>
-        index < frameQuestion.start && /^Confirm folder trust$/i.test(line),
-    )
-    if (heading < 0) {
-      break folderTrust
-    }
-    const dialog = frameLines.slice(heading)
-    const choices = terminalDialogChoices(dialog)
-    const hasSelection = dialog.some((line) =>
-      /^[>❯]\s*(?:1\.\s+Yes|2\.\s+Yes,\s+and remember|3\.\s+No\b)/i.test(
-        line,
-      ),
-    )
-    const normalizedDialog = dialog.join(' ').replace(/\s+/gu, ' ')
-    const hasFooter =
-      /↑\/↓\s+(?:to\s+)?navigate/i.test(normalizedDialog) &&
-      /enter\s+(?:to\s+)?select/i.test(normalizedDialog) &&
-      /esc\s+(?:to\s+)?cancel/i.test(normalizedDialog)
-    if (
-      hasSelection &&
-      hasFooter &&
-      choices.some(
-        (choice) => choice.index === 1 && /^Yes$/i.test(choice.label),
-      ) &&
-      choices.some(
-        (choice) =>
-          choice.index === 2 &&
-          /^Yes, and remember this folder for future sessions$/i.test(
-            choice.label,
-          ),
-      ) &&
-      choices.some(
-        (choice) => choice.index === 3 && /^No\b/i.test(choice.label),
-      )
-    ) {
-      const fingerprint = createHash('sha256')
-        .update(
-          dialog
-            .filter(
-              (line) =>
-                line &&
-                !(
-                  /to navigate/i.test(line) &&
-                  /enter to select/i.test(line)
-                ),
-            )
-            .join('\n'),
-        )
-        .digest('hex')
-        .slice(0, 24)
-      return {
-        requestId: `terminal-permission:${fingerprint}`,
-        title: 'Confirm folder trust',
-        kind: 'folder-trust',
-        choiceCount: 3,
-        options: [
-          {
-            optionId: 'terminal:trust-once',
-            name: 'Trust once',
-            kind: 'allow_once',
-          },
-          {
-            optionId: 'terminal:trust-always',
-            name: 'Trust and remember',
-            kind: 'allow_always',
-          },
-          {
-            optionId: 'terminal:stop',
-            name: 'Do not trust',
-            kind: 'reject_once',
-          },
-        ],
-      }
-    }
+  const sessionInUse = parseTerminalSessionInUse(pane)
+  if (sessionInUse) {
+    return sessionInUse
   }
+  const folderTrust = parseTerminalFolderTrust(pane)
+  if (folderTrust) {
+    return folderTrust
+  }
+  const rawLines = terminalControlLines(pane)
+  const lines = rawLines.map(cleanDialogLine)
   const commandQuestion = findTerminalWrappedText(
     lines,
     'Do you want to run this command?',
@@ -2555,6 +2530,116 @@ function findTerminalWrappedText(
   return found
 }
 
+function parseTerminalSessionInUse(pane: string): PendingPermission | undefined {
+  if (!isTerminalSessionInUsePrompt(pane)) {
+    return undefined
+  }
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  const header = lines.findLastIndex((line) => line === 'Session in use')
+  if (header < 0) {
+    return undefined
+  }
+  const dialog = lines.slice(header + 1)
+  const choices = dialog.flatMap((line) => {
+    const choice = /^(?:❯\s*)?(\d+)\.\s+(.+)$/u.exec(line)
+    return choice ? [{ index: Number(choice[1]), label: choice[2] }] : []
+  })
+  if (
+    !/in use by another CLI or application/.test(dialog.join(' ')) ||
+    choices.length !== 2 ||
+    choices[0].index !== 1 || choices[0].label !== 'Resume anyway' ||
+    choices[1].index !== 2 || choices[1].label !== 'Go back (Esc)'
+  ) {
+    return undefined
+  }
+  // Relative activity times and the highlighted row can change while the
+  // reader decides. The session-scoped action and option order stay the same.
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ kind: 'session-in-use', choices }))
+    .digest('hex')
+    .slice(0, 24)
+  return {
+    requestId: `terminal-permission:${fingerprint}`,
+    title: 'Session in use. Resuming here may conflict with another CLI or application.',
+    kind: 'terminal',
+    choiceCount: 2,
+    options: [
+      { optionId: 'terminal:allow', name: 'Resume anyway', kind: 'allow_once' },
+      { optionId: 'terminal:stop', name: 'Go back', kind: 'reject_once' },
+    ],
+  }
+}
+
+function parseTerminalFolderTrust(pane: string): PendingPermission | undefined {
+  const rawLines = terminalControlLines(pane)
+  const cleaned = rawLines.map(cleanDialogLine)
+  const trustQuestion = findTerminalWrappedText(
+    cleaned,
+    'Do you trust the files in this folder?',
+  )
+  const frame = trustQuestion && activeBottomFrame(rawLines, trustQuestion.start)
+  if (!frame) {
+    return undefined
+  }
+  const lines = cleaned.slice(frame.start, frame.end + 1)
+  // A command may quote the entire trust dialog, even across wrapped lines.
+  // Never treat that command's confirmation as permission to trust a folder.
+  if (findTerminalWrappedText(lines, 'Do you want to run this command?')) {
+    return undefined
+  }
+  const header = lines.findLastIndex((line) => line === 'Confirm folder trust')
+  const question = findTerminalWrappedText(
+    lines,
+    'Do you trust the files in this folder?',
+  )
+  if (header < 0 || !question || question.start <= header) {
+    return undefined
+  }
+  const folderStart = lines.findIndex(
+    (line, index) =>
+      index > header && index < question.start && /^(?:\/|[a-z]:[\\/]|\\\\)/i.test(line),
+  )
+  if (folderStart < 0) {
+    return undefined
+  }
+  const folderEnd = lines.findIndex(
+    (line, index) => index > folderStart && /^[─━]+$/u.test(line),
+  )
+  if (folderEnd < 0 || folderEnd >= question.start) {
+    return undefined
+  }
+  const folder = lines.slice(folderStart, folderEnd).join('\n')
+  const dialog = lines.slice(question.end + 1)
+  const choices = terminalDialogChoices(dialog)
+  const normalizedDialog = dialog.join(' ').replace(/\s+/gu, ' ')
+  if (
+    !dialog.some((line) => /^[>❯]\s*\d+\.\s/u.test(line)) ||
+    !/↑\/↓\s+(?:to\s+)?navigate/i.test(normalizedDialog) ||
+    !/enter\s+(?:to\s+)?select/i.test(normalizedDialog) ||
+    !/esc\s+(?:to\s+)?cancel/i.test(normalizedDialog) ||
+    choices.length !== 3 ||
+    choices[0].index !== 1 || choices[0].label !== 'Yes' ||
+    choices[1].index !== 2 || choices[1].label !== 'Yes, and remember this folder for future sessions' ||
+    choices[2].index !== 3 || choices[2].label !== 'No (Esc)'
+  ) {
+    return undefined
+  }
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ folder, choices }))
+    .digest('hex')
+    .slice(0, 24)
+  return {
+    requestId: `terminal-permission:${fingerprint}`,
+    title: `Trust folder for this session: ${folder}`,
+    kind: 'terminal',
+    choiceCount: 3,
+    options: [
+      { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+      { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+    ],
+  }
+}
+
 async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
   try {
     const output = (
@@ -2701,9 +2786,10 @@ export function paneEvidenceCount(
   }
   let found = 0
   let index = 0
-  const haystack = compact(
+  const rendered = compact(
     pane.split('\n').map(cleanDialogLine).join(''),
   )
+  const haystack = rendered.replace(PASTED_PLACEHOLDERS, '')
   for (;;) {
     const at = haystack.indexOf(wanted, index)
     if (at < 0) {
@@ -2722,7 +2808,7 @@ export function paneEvidenceCount(
   // end in a short one: judged by that line alone, the placeholder it really
   // did produce went unrecognised and the paste was left behind to be sent
   // twice.
-  return found + pastePlaceholderEvidenceCount(haystack, pasted)
+  return found + qualifyingPasteCount(rendered, pasted)
 }
 
 /**
@@ -2814,21 +2900,13 @@ export function composerHoldsOtherText(
   // received, and compaction removes every space and newline: hundreds of
   // one-character lines are a large paste that measures small once joined, and
   // the placeholder it produced was then refused as evidence.
-  const legacyAdded =
-    placeholderCount(remainder, LEGACY_PASTED_PLACEHOLDER_GLOBAL) -
-    placeholderCount(before, LEGACY_PASTED_PLACEHOLDER_GLOBAL)
-  const currentAdded =
-    placeholderCount(remainder, CURRENT_PASTED_PLACEHOLDER_GLOBAL) -
-    placeholderCount(before, CURRENT_PASTED_PLACEHOLDER_GLOBAL)
-  if (legacyAdded + currentAdded === 1) {
-    if (couldRenderLegacyPastePlaceholder(pasted) && legacyAdded === 1) {
-      remainder = remainder.replace(LEGACY_PASTED_PLACEHOLDER, ' ')
-    } else if (
-      couldRenderCurrentPastePlaceholder(pasted) &&
-      currentAdded === 1
-    ) {
-      remainder = remainder.replace(CURRENT_PASTED_PLACEHOLDER, ' ')
-    }
+  const couldHavePlaceholder = pasteCouldCollapse(pasted)
+  if (
+    couldHavePlaceholder &&
+    pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1 &&
+    qualifyingPasteCount(remainder, pasted) - qualifyingPasteCount(before, pasted) === 1
+  ) {
+    remainder = remainder.replace(PASTED_PLACEHOLDER, ' ')
   }
   // Likewise for the text itself, and at most once per line. This paste put
   // each line there once, so a second copy is somebody else typing the same
@@ -2851,19 +2929,32 @@ export function composerHoldsOtherText(
 
 // Matched against composer text with its whitespace removed, because the
 // composer wraps inside words and the placeholder is no exception.
-// Roughly where the CLI stops echoing a paste and shows a placeholder for it
-// instead. Only a send past this size can account for one.
+// Legacy CLIs collapse long text; the current CLI also collapses more than ten
+// logical lines, even when those lines contain only a few characters.
 const PASTE_ECHO_LIMIT = 800
 const PASTE_LINE_LIMIT = 10
 
-const LEGACY_PASTED_PLACEHOLDER =
-  /\[Pastedtext#\d+(?:[+-][^\]]+)?\]/u
-const CURRENT_PASTED_PLACEHOLDER =
-  /\[Paste#\d+(?:[+-][^\]]+)?\]/u
-const LEGACY_PASTED_PLACEHOLDER_GLOBAL =
-  /\[Pastedtext#\d+(?:[+-][^\]]+)?\]/gu
-const CURRENT_PASTED_PLACEHOLDER_GLOBAL =
-  /\[Paste#\d+(?:[+-][^\]]+)?\]/gu
+const PASTED_PLACEHOLDER = /\[(?:Pastedtext[^\]]*|Paste#\d+-(\d+)lines?)\]/u
+const PASTED_PLACEHOLDERS = new RegExp(PASTED_PLACEHOLDER.source, 'gu')
+
+function pasteCouldCollapse(pasted: string): boolean {
+  return pasted.length > PASTE_ECHO_LIMIT ||
+    pasted.trimEnd().split('\n').length > PASTE_LINE_LIMIT
+}
+
+function qualifyingPasteCount(text: string, pasted: string): number {
+  if (!pasteCouldCollapse(pasted)) {
+    return 0
+  }
+  const lineCounts = new Set([
+    pasted.split('\n').length,
+    pasted.trimEnd().split('\n').length,
+    pasted.trim().split('\n').length,
+  ])
+  return [...text.matchAll(PASTED_PLACEHOLDERS)].filter(
+    (match) => match[1] === undefined || lineCounts.has(Number(match[1])),
+  ).length
+}
 
 function occurrences(text: string, needle: string): number {
   if (!needle) {
@@ -2872,40 +2963,8 @@ function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1
 }
 
-function placeholderCount(text: string, pattern: RegExp): number {
-  return (text.match(pattern) || []).length
-}
-
-function couldRenderLegacyPastePlaceholder(pasted: string): boolean {
-  return pasted.length > PASTE_ECHO_LIMIT
-}
-
-function couldRenderCurrentPastePlaceholder(pasted: string): boolean {
-  return (
-    pasted.length > PASTE_ECHO_LIMIT ||
-    pasted.split('\n').length > PASTE_LINE_LIMIT
-  )
-}
-
-function pastePlaceholderEvidenceCount(
-  text: string,
-  pasted: string,
-): number {
-  return (
-    (couldRenderLegacyPastePlaceholder(pasted)
-      ? placeholderCount(text, LEGACY_PASTED_PLACEHOLDER_GLOBAL)
-      : 0) +
-    (couldRenderCurrentPastePlaceholder(pasted)
-      ? placeholderCount(text, CURRENT_PASTED_PLACEHOLDER_GLOBAL)
-      : 0)
-  )
-}
-
-function allPastePlaceholderCount(text: string): number {
-  return (
-    placeholderCount(text, LEGACY_PASTED_PLACEHOLDER_GLOBAL) +
-    placeholderCount(text, CURRENT_PASTED_PLACEHOLDER_GLOBAL)
-  )
+function pastedPlaceholderCount(text: string): number {
+  return (text.match(PASTED_PLACEHOLDERS) || []).length
 }
 
 /** The composer's contents, or nothing when the pane cannot be read. */
@@ -2992,13 +3051,13 @@ export function composerTookPaste(
     const compactAfter = compact(paneAfter)
     const compactBefore = compact(paneBefore)
     const allAdded =
-      allPastePlaceholderCount(compactAfter) -
-      allPastePlaceholderCount(compactBefore)
+      pastedPlaceholderCount(compactAfter) -
+      pastedPlaceholderCount(compactBefore)
     if (allAdded > 0) {
       return (
         allAdded === 1 &&
-        pastePlaceholderEvidenceCount(compactAfter, pasted) -
-          pastePlaceholderEvidenceCount(compactBefore, pasted) ===
+        qualifyingPasteCount(compactAfter, pasted) -
+          qualifyingPasteCount(compactBefore, pasted) ===
           1
       )
     }
@@ -3021,17 +3080,13 @@ export function composerTookPaste(
   const before = composerHoldsText(paneBefore) ? compact(drawnBefore || '') : ''
   // A paste too large to echo is shown as a placeholder instead of its text,
   // and only a send big enough to have produced one may claim it.
-  if (
-    couldRenderLegacyPastePlaceholder(pasted) ||
-    couldRenderCurrentPastePlaceholder(pasted)
-  ) {
-    const drawn = pastePlaceholderEvidenceCount(after, pasted)
-    const had = pastePlaceholderEvidenceCount(before, pasted)
-    const allDrawn = allPastePlaceholderCount(after)
-    const allHad = allPastePlaceholderCount(before)
-    if (drawn - had === 1 && allDrawn - allHad === 1) {
-      return true
-    }
+  const plainAfter = after.replace(PASTED_PLACEHOLDERS, '').replace(/^[>\u276f]/u, '')
+  const plainBefore = before.replace(PASTED_PLACEHOLDERS, '').replace(/^[>\u276f]/u, '')
+  const newPlaceholders = pastedPlaceholderCount(after) - pastedPlaceholderCount(before)
+  if (newPlaceholders > 0) {
+    return newPlaceholders === 1 &&
+      qualifyingPasteCount(after, pasted) - qualifyingPasteCount(before, pasted) === 1 &&
+      plainAfter === plainBefore
   }
   const occurrences = (haystack: string, needle: string) => {
     let found = 0
@@ -3047,7 +3102,17 @@ export function composerTookPaste(
   }
   // One more than the composer already held. The same text may have been
   // typed there and left, and its mere presence would prove nothing.
-  return occurrences(after, wanted) > occurrences(before, wanted)
+  if (occurrences(plainAfter, wanted) > occurrences(plainBefore, wanted)) {
+    return true
+  }
+  // Long logical lines scroll within the CLI's bounded composer. An empty
+  // composer gaining a substantial suffix of the paste is still evidence;
+  // the caller waits for this rendering to settle before pressing Enter.
+  return drawnBefore !== undefined &&
+    !before &&
+    plainAfter.length >= 64 &&
+    plainAfter.length < wanted.length &&
+    wanted.endsWith(plainAfter)
 }
 
 async function waitForComposerPaste(
@@ -3057,11 +3122,19 @@ async function waitForComposerPaste(
   pasted: string,
   attempts = 40,
 ): Promise<boolean> {
+  let previousMatch: string | undefined
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const pane = await capturePane(target)
     if (
-      composerTookPaste(paneBefore, await capturePane(target), expected, pasted)
+      composerTookPaste(paneBefore, pane, expected, pasted)
     ) {
-      return true
+      const rendered = composerText(pane) ?? pane
+      if (rendered === previousMatch) {
+        return true
+      }
+      previousMatch = rendered
+    } else {
+      previousMatch = undefined
     }
     await new Promise((resolve) => setTimeout(resolve, 50))
   }

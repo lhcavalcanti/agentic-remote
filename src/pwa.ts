@@ -3,9 +3,19 @@ import {
   getPushPublicKey,
   savePushSubscription,
 } from './api'
+import { parseAppVersion, type AppVersion } from '../shared/app-version'
 
 export const PWA_UPDATE_EVENT = 'agentic-remote:update-ready'
-let announcedUpdateVersion: string | undefined
+let announcedUpdateIdentity: string | undefined
+
+function workerUrl(version: AppVersion): string {
+  return `/sw.js?v=${encodeURIComponent(version.buildId ?? version.version)}`
+}
+
+const workerOptions: RegistrationOptions = {
+  scope: '/',
+  updateViaCache: 'none',
+}
 
 function applicationServerKey(value: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (value.length % 4)) % 4)
@@ -145,10 +155,12 @@ export async function registerPwa(): Promise<void> {
   if (!('serviceWorker' in navigator)) {
     return
   }
-  const registration = await navigator.serviceWorker.register(
-    `/sw.js?v=${encodeURIComponent(__APP_VERSION__)}`,
-    { scope: '/' },
-  )
+  const registration =
+    (await navigator.serviceWorker.getRegistration()) ??
+    (await navigator.serviceWorker.register(
+      workerUrl({ version: __APP_VERSION__, buildId: __APP_BUILD_ID__ }),
+      workerOptions,
+    ))
   const announceUpdate = () => {
     window.dispatchEvent(
       new CustomEvent(PWA_UPDATE_EVENT, { detail: registration }),
@@ -171,11 +183,13 @@ export async function registerPwa(): Promise<void> {
   const update = () =>
     void checkForPwaUpdate()
       .then((available) => {
-        if (
-          available &&
-          available.version !== announcedUpdateVersion
-        ) {
-          announcedUpdateVersion = available.version
+        if (!available) {
+          announcedUpdateIdentity = undefined
+          return
+        }
+        const updateIdentity = available.buildId ?? available.version
+        if (updateIdentity !== announcedUpdateIdentity) {
+          announcedUpdateIdentity = updateIdentity
           window.dispatchEvent(
             new CustomEvent(PWA_UPDATE_EVENT, {
               detail: available.registration,
@@ -194,7 +208,7 @@ export async function registerPwa(): Promise<void> {
 }
 
 export async function checkForPwaUpdate(): Promise<
-  { registration: ServiceWorkerRegistration; version: string } | undefined
+  ({ registration: ServiceWorkerRegistration } & AppVersion) | undefined
 > {
   if (!('serviceWorker' in navigator)) {
     return undefined
@@ -203,25 +217,19 @@ export async function checkForPwaUpdate(): Promise<
   if (!versionResponse.ok) {
     throw new Error(`Unable to check app version (${versionResponse.status})`)
   }
-  const payload = (await versionResponse.json()) as { version?: unknown }
-  if (typeof payload.version !== 'string' || !payload.version.trim()) {
-    throw new Error('The server returned an invalid app version')
-  }
-  const deployedVersion = payload.version.trim()
-  let registration = await navigator.serviceWorker.getRegistration()
-  if (!registration) {
-    return undefined
-  }
-  const bundleUpdate = deployedVersion !== __APP_VERSION__
-  if (bundleUpdate) {
-    registration = await navigator.serviceWorker.register(
-      `/sw.js?v=${encodeURIComponent(deployedVersion)}`,
-      { scope: '/' },
-    )
-  }
+  const deployed = parseAppVersion(await versionResponse.json())
+  const bundleUpdate =
+    deployed.version !== __APP_VERSION__ ||
+    (deployed.buildId !== undefined && deployed.buildId !== __APP_BUILD_ID__)
+  // Retarget even when this page is current: a waiting worker can belong to a
+  // release that has since been rolled back.
+  const registration = await navigator.serviceWorker.register(
+    workerUrl(deployed),
+    workerOptions,
+  )
   await registration.update()
   if (registration.waiting) {
-    return { registration, version: deployedVersion }
+    return { registration, ...deployed }
   }
   const worker =
     registration.installing || (await waitForInstallingWorker(registration))
@@ -229,7 +237,7 @@ export async function checkForPwaUpdate(): Promise<
     await waitForWorkerInstalled(worker)
   }
   return registration.waiting || bundleUpdate
-    ? { registration, version: deployedVersion }
+    ? { registration, ...deployed }
     : undefined
 }
 
@@ -275,16 +283,11 @@ function waitForWorkerInstalled(
 }
 
 export async function activatePwaUpdate(
-  registration: ServiceWorkerRegistration,
   reload: () => void = () => window.location.reload(),
 ): Promise<void> {
-  if (!registration.waiting) {
-    await registration.update()
-    if (registration.installing) {
-      await waitForWorkerInstalled(registration.installing)
-    }
-  }
-  const worker = registration.waiting
+  // A toast can outlive the release it advertised, especially after rollback.
+  const latest = await checkForPwaUpdate()
+  const worker = latest?.registration.waiting
   if (!worker) {
     reload()
     return

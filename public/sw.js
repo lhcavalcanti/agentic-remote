@@ -1,4 +1,7 @@
-const VERSION = new URL(self.location.href).searchParams.get('v') || 'dev'
+const VERSION =
+  self.AGENTIC_REMOTE_BUILD_ID ||
+  new URL(self.location.href).searchParams.get('v') ||
+  'dev'
 const CACHE_NAME = `agentic-remote-shell-${VERSION}`
 const SHELL = [
   '/',
@@ -8,7 +11,11 @@ const SHELL = [
 ]
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)))
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' }))),
+    ),
+  )
 })
 
 self.addEventListener('activate', (event) => {
@@ -70,22 +77,17 @@ self.addEventListener('fetch', (event) => {
     return
   }
   if (request.mode === 'navigate') {
+    // The installed shell belongs to this build. A navigation can already be
+    // served by a newer release, before its worker has been activated.
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone()
-            caches.open(CACHE_NAME).then((cache) => cache.put('/', copy))
-          }
-          return response
-        })
-        .catch(() => caches.match('/')),
+        .catch(() => caches.open(CACHE_NAME).then((cache) => cache.match('/'))),
     )
     return
   }
   if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/')) {
     event.respondWith(
-      caches.match(request).then(
+      caches.open(CACHE_NAME).then((cache) => cache.match(request)).then(
         (cached) =>
           cached ||
           fetch(request).then((response) => {

@@ -52,7 +52,6 @@ import {
   Folder,
   FolderInput,
   FolderOpen,
-  File as FileIcon,
   FileText,
   History,
   List,
@@ -80,6 +79,10 @@ import {
   XCircle,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { DocumentViewControls } from './DocumentViewControls'
+import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import { WorkspaceFileIcon } from './WorkspaceFileIcon'
+import { KnowledgeRootSelector } from './KnowledgeRootSelector'
 import { SessionActions } from './SessionActions'
 import { SessionNavigation } from './SessionNavigation'
 import {
@@ -87,9 +90,12 @@ import {
   executionModeName,
   providerName,
   sessionKey,
+  sessionSortFrom,
   shortPath,
+  sortSessionView,
   taskSnapshot,
 } from './session-presentation'
+import type { SessionSort } from './session-presentation'
 import { MermaidDiagram } from './MermaidDiagram.js'
 import {
   breadcrumbSegments,
@@ -185,6 +191,7 @@ import {
   knowledgePathChain,
   knowledgeRootPath,
   knowledgeTreeRows,
+  orderedWorkspaceEntries,
   type KnowledgeFolders,
 } from './knowledge-tree'
 import { composerMaximumHeight } from './composer-sizing'
@@ -260,7 +267,7 @@ function slashShortcut(value: string): string {
 }
 
 const SIDEBAR_WIDTH_KEY = 'agentic-remote:sidebar-width'
-const SIDEBAR_WIDTH_DEFAULT = 286
+const SIDEBAR_WIDTH_DEFAULT = 320
 const SIDEBAR_WIDTH_MIN = 220
 const SIDEBAR_WIDTH_MAX = 560
 
@@ -5630,6 +5637,20 @@ function markdownComponentsFor(
 ) {
   return {
     ...mermaidComponents,
+    pre({ children, node: _node, ...rest }: { children?: ReactNode; node?: unknown }) {
+      const mermaid = mermaidFencedSource(children)
+      if (mermaid !== undefined) return <MermaidDiagram source={mermaid} />
+      const fence = codeFenceProps(children)
+      if (!fence) return <pre {...rest}>{children}</pre>
+      return (
+        <MarkdownCodeBlock
+          language={fence.className?.match(/\blanguage-([^\s]+)/)?.[1]}
+          source={fencedSource(fence.children)}
+        >
+          <pre {...rest}>{children}</pre>
+        </MarkdownCodeBlock>
+      )
+    },
     img({ alt, src, title }: { alt?: string; src?: unknown; title?: string }) {
       return (
         <MarkdownImage
@@ -5695,14 +5716,18 @@ const mermaidComponents = {
 }
 
 /** The text of a fenced mermaid block, or nothing if that is not what it is. */
-function mermaidFencedSource(children: ReactNode): string | undefined {
+function codeFenceProps(children: ReactNode) {
   const fence = Array.isArray(children)
     ? children.find((child) => isValidElement(child))
     : children
-  if (!isValidElement(fence)) {
-    return undefined
-  }
-  const props = fence.props as { className?: string; children?: ReactNode }
+  return isValidElement<{ className?: string; children?: ReactNode }>(fence)
+    ? fence.props
+    : undefined
+}
+
+function mermaidFencedSource(children: ReactNode): string | undefined {
+  const props = codeFenceProps(children)
+  if (!props) return undefined
   if (!/\blanguage-mermaid\b/.test(props.className || '')) {
     return undefined
   }
@@ -5773,7 +5798,6 @@ function KnowledgeReader({
   askUnavailableReason?: string
 }) {
   const [raw, setRaw] = useState(false)
-  const [outlineOpen, setOutlineOpen] = useState(false)
   const [linkError, setLinkError] = useState<string>()
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -5807,11 +5831,11 @@ function KnowledgeReader({
     return (
       <div className="knowledge-reader knowledge-reader--empty">
         <BookOpen size={26} />
-        <h3>{loading ? 'Opening your knowledge' : 'Room for your next idea'}</h3>
+        <h3>{loading ? 'Opening your knowledge' : 'Choose a document'}</h3>
         <p>
           {loading
             ? 'Loading...'
-            : 'Choose a Markdown, text, image, or PDF file from the tree. Your conversation stays beside it.'}
+            : 'Open the file explorer to choose a document. Your conversation and draft stay in place.'}
         </p>
       </div>
     )
@@ -5820,27 +5844,23 @@ function KnowledgeReader({
   return (
     <div className="knowledge-reader">
       <div className="workspace-preview__header">
+        <WorkspaceFileIcon kind={file.kind} size={18} />
         <div>
-          <strong title={file.name}>{file.name}</strong>
-          <small title={workspaceAbsolutePath(root.path, file.path)}>
-            {root.computerName} · {file.kind === 'markdown' ? 'Markdown document' : file.kind.toUpperCase()}
-          </small>
+          <strong title={`${root.computerName}: ${workspaceAbsolutePath(root.path, file.path)}`}>
+            {file.name}
+          </strong>
         </div>
-        {outline.length > 1 ? (
-          <button
-            aria-expanded={outlineOpen}
-            aria-label="Document outline"
-            onClick={() => setOutlineOpen(!outlineOpen)}
-            type="button"
-          >
-            <List size={15} />
-          </button>
-        ) : null}
-        {file.kind === 'markdown' ? (
-          <button onClick={() => setRaw(!raw)} type="button">
-            {raw ? 'Rendered' : 'Raw'}
-          </button>
-        ) : null}
+        <DocumentViewControls
+          markdown={file.kind === 'markdown'}
+          onRawChange={setRaw}
+          onSelectHeading={(heading) => {
+            if (!scrollToDocumentFragment(contentRef.current, heading.id)) {
+              setLinkError(missingDocumentFragment(heading.id))
+            }
+          }}
+          outline={outline}
+          raw={raw}
+        />
       </div>
       <nav
         aria-label="Knowledge breadcrumb"
@@ -5869,28 +5889,6 @@ function KnowledgeReader({
           </span>
         ))}
       </nav>
-      {outlineOpen && outline.length > 0 ? (
-        <nav aria-label="Document outline" className="workspace-outline">
-          {outline.map((heading) => (
-            <button
-              className={`workspace-outline__item workspace-outline__item--${Math.min(
-                heading.level,
-                3,
-              )}`}
-              key={`${heading.index}-${heading.id}`}
-              onClick={() => {
-                contentRef.current
-                  ?.querySelectorAll('h1, h2, h3, h4, h5, h6')
-                  ?.[heading.index]?.scrollIntoView({ block: 'start' })
-                setOutlineOpen(false)
-              }}
-              type="button"
-            >
-              {heading.text}
-            </button>
-          ))}
-        </nav>
-      ) : null}
       {linkError ? <p className="form-error" role="alert">{linkError}</p> : null}
       <div
         className={`workspace-preview__content${
@@ -5973,7 +5971,6 @@ function WorkspaceDialog({
   const historyIndexRef = useRef(-1)
   const [documentHistory, setDocumentHistory] = useState<NavigationEntry[]>([])
   const [documentIndex, setDocumentIndex] = useState(-1)
-  const [outlineOpen, setOutlineOpen] = useState(false)
   const documentHistoryRef = useRef<NavigationEntry[]>([])
   const documentIndexRef = useRef(-1)
   const pendingScrollRef = useRef<number | undefined>(undefined)
@@ -6092,7 +6089,6 @@ function WorkspaceDialog({
           pendingFragmentRef.current = fragment
           setFile(nextFile)
           setRaw(false)
-          setOutlineOpen(false)
           return true
         }
         return false
@@ -6418,7 +6414,7 @@ function WorkspaceDialog({
               </button>
             ))
           ) : (
-            listing?.entries.map((entry) => (
+            (listing ? orderedWorkspaceEntries(listing.entries) : []).map((entry) => (
               <button
                 className="workspace-entry"
                 key={entry.path}
@@ -6431,10 +6427,8 @@ function WorkspaceDialog({
               >
                 {entry.kind === 'directory' ? (
                   <Folder size={15} />
-                ) : entry.kind === 'markdown' ? (
-                  <FileText size={15} />
                 ) : (
-                  <FileIcon size={15} />
+                  <WorkspaceFileIcon kind={entry.kind} size={15} />
                 )}
                 <span>
                   <strong>{entry.name}</strong>
@@ -6463,6 +6457,7 @@ function WorkspaceDialog({
                 >
                   <ChevronLeft size={16} />
                 </button>
+                <WorkspaceFileIcon kind={file.kind} size={18} />
                 <div>
                   <strong title={file.name}>{file.name}</strong>
                   <small>{file.path}</small>
@@ -6491,21 +6486,18 @@ function WorkspaceDialog({
                     </button>
                   </>
                 ) : null}
-                {outline.length > 1 ? (
-                  <button
-                    aria-expanded={outlineOpen}
-                    aria-label="Document outline"
-                    onClick={() => setOutlineOpen(!outlineOpen)}
-                    type="button"
-                  >
-                    <List size={15} />
-                  </button>
-                ) : null}
-                {file.kind === 'markdown' ? (
-                  <button onClick={() => setRaw(!raw)} type="button">
-                    {raw ? 'Rendered' : 'Raw'}
-                  </button>
-                ) : null}
+                <DocumentViewControls
+                  key={file.path}
+                  markdown={file.kind === 'markdown'}
+                  onRawChange={setRaw}
+                  onSelectHeading={(heading) => {
+                    if (!scrollToDocumentFragment(previewContentRef.current, heading.id)) {
+                      setError(missingDocumentFragment(heading.id))
+                    }
+                  }}
+                  outline={outline}
+                  raw={raw}
+                />
               </div>
               <div className="workspace-preview__actions">
                 <button
@@ -6529,30 +6521,6 @@ function WorkspaceDialog({
                 <p className="workspace-preview__hint" id="workspace-insert-hint" role="status">
                   {insertUnavailableReason}
                 </p>
-              ) : null}
-              {outlineOpen && outline.length > 0 ? (
-                <nav aria-label="Document outline" className="workspace-outline">
-                  {outline.map((heading) => (
-                    <button
-                      className={`workspace-outline__item workspace-outline__item--${Math.min(
-                        heading.level,
-                        3,
-                      )}`}
-                      key={`${heading.index}-${heading.id}`}
-                      onClick={() => {
-                        // Headings are matched by position, so repeated
-                        // heading text still scrolls to the right one.
-                        previewContentRef.current
-                          ?.querySelectorAll('h1, h2, h3, h4, h5, h6')
-                          ?.[heading.index]?.scrollIntoView({ block: 'start' })
-                        setOutlineOpen(false)
-                      }}
-                      type="button"
-                    >
-                      {heading.text}
-                    </button>
-                  ))}
-                </nav>
               ) : null}
               <div
                 className={`workspace-preview__content${
@@ -6667,9 +6635,6 @@ function App() {
   const [knowledgeFolders, setKnowledgeFolders] = useState<KnowledgeFolders>({})
   const [expandedKnowledge, setExpandedKnowledge] = useState<string[]>([])
   const [knowledgePath, setKnowledgePath] = useState(knowledgeRootPath)
-  const [knowledgeRootsOpen, setKnowledgeRootsOpen] = useState(() =>
-    readStoredOrder('agentic-remote:knowledge-roots-open', true),
-  )
   const [knowledgeFile, setKnowledgeFile] = useState<WorkspaceFile>()
   const [knowledgeFragment, setKnowledgeFragment] = useState<string>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
@@ -6930,6 +6895,9 @@ function App() {
   )
   const [sessionOrder, setSessionOrder] = useState<Record<string, string[]>>(
     () => readStoredOrder('agentic-remote:session-order', {}),
+  )
+  const [sessionSort, setSessionSort] = useState<SessionSort>(() =>
+    sessionSortFrom(readStoredOrder<unknown>('agentic-remote:session-sort', 'custom')),
   )
   const timelineRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -7236,17 +7204,17 @@ function App() {
       )
       grouped.set(
         computer.id,
-        sessions
+        sortSessionView(sessions
           .filter((session) => session.computerId === computer.id)
           .sort(
             (left, right) =>
               (rank.get(sessionKey(left)) ?? Number.MAX_SAFE_INTEGER) -
               (rank.get(sessionKey(right)) ?? Number.MAX_SAFE_INTEGER),
-          ),
+          ), sessionSort, backgroundTaskSnapshots),
       )
     }
     return grouped
-  }, [orderedComputers, sessionOrder, sessions])
+  }, [orderedComputers, sessionOrder, sessions, sessionSort, backgroundTaskSnapshots])
   const selected = useMemo(
     () => sessions.find((session) => sessionKey(session) === selectedKey),
     [selectedKey, sessions],
@@ -7588,13 +7556,6 @@ function App() {
       JSON.stringify(stored),
     )
   }, [activeRootId, expandedKnowledge])
-
-  useEffect(() => {
-    writeStored(
-      'agentic-remote:knowledge-roots-open',
-      JSON.stringify(knowledgeRootsOpen),
-    )
-  }, [knowledgeRootsOpen])
 
   useEffect(() => {
     writeStored(
@@ -10390,6 +10351,15 @@ function App() {
     setKnowledgePath(knowledgeRootPath)
   }
 
+  async function refreshKnowledgeFolder(path = knowledgePath) {
+    if (!activeRootId) {
+      setError('Choose a knowledge root before refreshing files.')
+      return
+    }
+    cancelKnowledgeRestore()
+    await loadKnowledgeFolder(activeRootId, path)
+  }
+
   function knowledgeTreeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (
       event.altKey ||
@@ -11795,6 +11765,10 @@ function App() {
     if (!activeId.startsWith('session:') || !overId.startsWith('session:')) {
       return
     }
+    if (sessionSort !== 'custom') {
+      setError('Choose Custom order before rearranging sessions.')
+      return
+    }
     const activeKey = activeId.slice('session:'.length)
     const overKey = overId.slice('session:'.length)
     const activeSession = sessions.find(
@@ -11822,6 +11796,18 @@ function App() {
         [activeSession.computerId]: arrayMove(order, from, to),
       }
     })
+  }
+
+  function changeSessionSort(sort: SessionSort) {
+    try {
+      localStorage.setItem('agentic-remote:session-sort', JSON.stringify(sort))
+      setSessionSort(sort)
+    } catch (caught) {
+      setSidebarOpen(false)
+      setError(`Could not save the session order: ${
+        caught instanceof Error ? caught.message : String(caught)
+      }`)
+    }
   }
 
   return (
@@ -11929,6 +11915,8 @@ function App() {
                 }
                 selectedKey={selectedKey}
                 sessionsByComputer={sessionsByComputer}
+                sort={sessionSort}
+                onSortChange={changeSessionSort}
                 suspending={suspending}
               />
             </DndContext>
@@ -11947,54 +11935,12 @@ function App() {
               </p>
             ) : null}
             {roots.length > 0 ? (
-              <div className="knowledge-roots">
-                <button
-                  aria-expanded={knowledgeRootsOpen}
-                  className="knowledge-roots__summary"
-                  onClick={() => setKnowledgeRootsOpen(!knowledgeRootsOpen)}
-                  type="button"
-                >
-                  <ChevronRight
-                    aria-hidden="true"
-                    className={`knowledge-chevron${
-                      knowledgeRootsOpen ? ' knowledge-chevron--open' : ''
-                    }`}
-                    size={13}
-                  />
-                  <span className="sidebar-label">Roots</span>
-                  <em>{roots.length}</em>
-                </button>
-                {knowledgeRootsOpen
-                  ? roots.map((root) => (
-                      <div className="knowledge-root" key={root.id}>
-                        <button
-                          aria-current={
-                            root.id === activeRootId ? 'true' : undefined
-                          }
-                          className={root.id === activeRootId ? 'is-active' : ''}
-                          onClick={() => void selectRoot(root.id)}
-                          type="button"
-                        >
-                          <FolderOpen size={15} />
-                          <span>
-                            <strong>{root.name}</strong>
-                            <small>
-                              {root.computerName} · {root.path}
-                            </small>
-                          </span>
-                        </button>
-                        <button
-                          aria-label={`Remove ${root.name} root`}
-                          className="icon-button icon-button--danger knowledge-root__remove"
-                          onClick={() => void removeRoot(root.id)}
-                          type="button"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))
-                  : null}
-              </div>
+              <KnowledgeRootSelector
+                activeId={activeRootId}
+                onRemove={(id) => void removeRoot(id)}
+                onSelect={(id) => void selectRoot(id)}
+                roots={roots}
+              />
             ) : null}
             {activeRoot ? (
               <>
@@ -12047,6 +11993,16 @@ function App() {
                     </button>
                   ) : null}
                   <button
+                    aria-label="Refresh current folder"
+                    className="icon-button"
+                    disabled={knowledgeLoading || knowledgeFolders[knowledgePath]?.loading}
+                    onClick={() => void refreshKnowledgeFolder()}
+                    title="Refresh files in the current folder"
+                    type="button"
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                  <button
                     aria-label="Collapse all folders"
                     className="icon-button"
                     disabled={expandedKnowledge.length === 0}
@@ -12064,25 +12020,36 @@ function App() {
                   {knowledgeRows.map(
                     (row) =>
                       row.type === 'status' ? (
-                        <p
+                        <div
                           className={`knowledge-node__status${
                             row.variant === 'error'
                               ? ' knowledge-node__status--error'
                               : ''
                           }`}
                           key={`${row.variant}:${row.path}`}
+                          role={row.variant === 'error' ? 'alert' : 'status'}
                           style={
                             {
                               '--knowledge-depth': row.depth,
                             } as CSSProperties
                           }
                         >
-                          {row.variant === 'loading'
-                            ? 'Loading…'
+                          <span>{row.variant === 'loading'
+                            ? row.message || 'Loading...'
                             : row.variant === 'empty'
                               ? 'Empty folder'
-                              : row.message}
-                        </p>
+                              : row.message}</span>
+                          {row.variant === 'error' ? (
+                            <button
+                              aria-label={`Retry loading ${row.path === '.' ? 'root folder' : row.path}`}
+                              disabled={knowledgeFolders[row.path]?.loading}
+                              onClick={() => void refreshKnowledgeFolder(row.path)}
+                              type="button"
+                            >
+                              Retry
+                            </button>
+                          ) : null}
+                        </div>
                       ) : (
                         <button
                           aria-current={
@@ -12107,6 +12074,7 @@ function App() {
                               : void openKnowledgeFile(row.path)
                           }
                           role="treeitem"
+                          title={row.path}
                           style={
                             {
                               '--knowledge-depth': row.depth,
@@ -12128,14 +12096,14 @@ function App() {
                               className="knowledge-chevron knowledge-chevron--leaf"
                             />
                           )}
-                          {row.expandable ? (
+                          {row.entry.kind === 'directory' ? (
                             row.expanded ? (
-                              <FolderOpen size={14} />
+                              <FolderOpen aria-hidden="true" size={16} />
                             ) : (
-                              <Folder size={14} />
+                              <Folder aria-hidden="true" size={16} />
                             )
                           ) : (
-                            <FileText size={14} />
+                            <WorkspaceFileIcon kind={row.entry.kind} />
                           )}
                           <span className="knowledge-node__name">
                             {row.entry.name}
@@ -12851,6 +12819,7 @@ function App() {
             type="button"
           >
             <FolderOpen size={16} />
+            <span>Files</span>
           </button>
           <button
             aria-label="New knowledge root"

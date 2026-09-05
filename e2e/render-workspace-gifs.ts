@@ -18,6 +18,16 @@ if (!values['frames-dir'] || !ffmpeg) {
 const directory = resolve(values['frames-dir'])
 const workflows = [
   {
+    name: 'desktop-session-ordering',
+    width: 1152,
+    frames: ['desktop-conversation', 'desktop-session-order', 'desktop-attention-order', 'desktop-custom-order'],
+  },
+  {
+    name: 'desktop-document-reading',
+    width: 1152,
+    frames: ['desktop-expanded-reading', 'desktop-document-outline', 'desktop-markdown-source', 'desktop-markdown-code'],
+  },
+  {
     name: 'desktop-attention-flow',
     width: 1152,
     frames: ['desktop-conversation', 'desktop-needs-you', 'desktop-attention-question'],

@@ -5,7 +5,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Pause, Play, Search, X } from 'lucide-react'
+import { ChevronDown, GripVertical, Monitor, Pause, Play, Search, X } from 'lucide-react'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
@@ -16,12 +16,14 @@ import {
   executionModeName,
   matchesSessionSearch,
   providerName,
+  sessionActivityTime,
   sessionKey,
   sessionPresentation,
+  sessionSortFrom,
   shortPath,
   taskSnapshot,
 } from './session-presentation'
-import type { SessionPresentation } from './session-presentation'
+import type { SessionPresentation, SessionSort } from './session-presentation'
 
 type SessionFilter = 'all' | 'attention' | 'working'
 
@@ -56,6 +58,7 @@ function SortableSessionItem({
   computerName,
   online,
   filtering,
+  sorting,
   onSelectSession,
   onOpenSessionTasks,
   onToggleSessionSuspended,
@@ -67,6 +70,7 @@ function SortableSessionItem({
   computerName: string
   online: boolean
   filtering: boolean
+  sorting: boolean
 }) {
   const {
     attributes,
@@ -77,9 +81,10 @@ function SortableSessionItem({
     isDragging,
   } = useSortable({
     id: `session:${sessionKey(session)}`,
-    disabled: filtering,
+    disabled: filtering || sorting,
   })
   const presentation = sessionPresentation(session, backgroundTasks, online)
+  const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
   const suspendUnavailable =
     !online || suspending || (!session.suspended && (
@@ -135,6 +140,13 @@ function SortableSessionItem({
           <strong>{session.title}</strong>
           <small className="session-item__where">
             <span className="session-item__cwd">{shortPath(session.cwd)}</span>
+            <time
+              className="session-item__time"
+              dateTime={activity.dateTime}
+              title={activity.title}
+            >
+              {activity.label}
+            </time>
           </small>
         </span>
       </button>
@@ -181,6 +193,7 @@ function SortableComputerGroup({
   sessions,
   total,
   filtering,
+  sorting,
   backgroundTasks,
   selectedKey,
   ...actions
@@ -189,6 +202,7 @@ function SortableComputerGroup({
   sessions: ManagedSession[]
   total: number
   filtering: boolean
+  sorting: boolean
   backgroundTasks: Record<string, BackgroundTaskSnapshot>
   selectedKey?: string
 }) {
@@ -225,6 +239,7 @@ function SortableComputerGroup({
           }`}
           title={computer.online ? 'Online' : 'Offline'}
         />
+        <Monitor aria-hidden="true" className="computer-session-group__icon" size={14} />
         <strong>{computer.name}</strong>
         {!computer.online ? <span className="computer-offline">Offline</span> : null}
         <small aria-label={`${sessions.length} of ${total} sessions`}>
@@ -242,6 +257,7 @@ function SortableComputerGroup({
               backgroundTasks={taskSnapshot(backgroundTasks, session)}
               computerName={computer.name}
               filtering={filtering}
+              sorting={sorting}
               key={sessionKey(session)}
               online={computer.online}
               selected={sessionKey(session) === selectedKey}
@@ -265,6 +281,8 @@ export function SessionNavigation({
   backgroundTasks,
   selectedKey,
   loading,
+  sort,
+  onSortChange,
   ...actions
 }: SessionActions & {
   computers: ComputerSummary[]
@@ -272,6 +290,8 @@ export function SessionNavigation({
   backgroundTasks: Record<string, BackgroundTaskSnapshot>
   selectedKey?: string
   loading: boolean
+  sort: SessionSort
+  onSortChange: (sort: SessionSort) => void
 }) {
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -323,12 +343,27 @@ export function SessionNavigation({
     <nav aria-label="Sessions" className="session-list">
       <div className="session-list__controls">
         <div className="session-list__heading">
-          <h2>Sessions</h2>
-          <span>
+          <div className="session-list__title">
+            <h2>Sessions <span>{counts.all}</span></h2>
+            <small>
             {loading
               ? 'Connecting...'
               : `${computers.filter((computer) => computer.online).length}/${computers.length} online`}
-          </span>
+            </small>
+          </div>
+          <label className="session-sort">
+            <select
+              aria-label="Session order"
+              onChange={(event) => onSortChange(sessionSortFrom(event.target.value))}
+              value={sort}
+            >
+              <option value="custom">Custom order</option>
+              <option value="recent">Recent activity</option>
+              <option value="attention">Attention first</option>
+              <option value="name">Name (A-Z)</option>
+            </select>
+            <ChevronDown aria-hidden="true" size={13} />
+          </label>
         </div>
         <div className="session-search">
           <Search aria-hidden="true" size={15} />
@@ -408,6 +443,7 @@ export function SessionNavigation({
                 computer={group.computer}
                 backgroundTasks={backgroundTasks}
                 filtering={filtering}
+                sorting={sort !== 'custom'}
                 key={group.computer.id}
                 selectedKey={selectedKey}
                 sessions={group.sessions}

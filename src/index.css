@@ -27,7 +27,7 @@
   --task: #6ea8fe;
   --radius: 12px;
   --radius-small: 8px;
-  --reading-width: 72ch;
+  --reading-width: 78ch;
   --shadow-popover: 0 12px 36px rgb(0 0 0 / 35%);
 }
 
@@ -85,7 +85,7 @@ button {
   --app-content-safe-area-top: var(--app-safe-area-top);
   /* Both are tuned here rather than in the six places that used to hard-code
      a column width. The sidebar value is overridden inline when resized. */
-  --sidebar-width: 286px;
+  --sidebar-width: 320px;
   --content-max-width: 1280px;
   --composer-max-width: calc(var(--content-max-width) + 20px);
   display: grid;
@@ -291,16 +291,17 @@ button {
 .new-session-button {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
   min-height: 42px;
   margin: 4px 14px 18px;
   color: var(--text);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: var(--radius-small);
-  background: var(--panel-raised);
+  background: transparent;
   font-size: 13px;
   font-weight: 680;
+  padding: 0 14px;
   cursor: pointer;
 }
 
@@ -418,7 +419,7 @@ button {
 
 .sidebar-knowledge .knowledge-tree {
   min-height: 0;
-  padding: 10px 14px;
+  padding: 6px 12px 12px;
   overflow-y: auto;
 }
 
@@ -427,9 +428,9 @@ button {
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  padding: 14px 18px 0;
+  padding: 12px 16px 6px;
   color: var(--muted-strong);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .sidebar-knowledge__heading strong {
@@ -440,6 +441,9 @@ button {
 .sidebar-knowledge__heading > span {
   color: var(--muted);
   font-size: 10px;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 
 .knowledge-panel__reader {
@@ -459,100 +463,83 @@ button {
   width: 100%;
 }
 
-.knowledge-root {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 3px;
+.knowledge-root-picker {
+  padding: 2px 0 4px;
 }
 
-.knowledge-root > button:first-child {
-  display: flex;
-  min-width: 0;
-  flex: 1;
+.knowledge-root-picker__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
-  padding: 7px 8px;
-  color: var(--muted-strong);
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: transparent;
-  text-align: left;
+  gap: 3px;
+}
+
+.knowledge-root-picker__select {
+  position: relative;
+  min-width: 0;
+}
+
+.knowledge-root-picker__select select {
+  appearance: none;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 26px 0 33px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--panel-raised);
+  font-size: 12px;
   cursor: pointer;
 }
 
-.knowledge-root > button:first-child.is-active {
+.knowledge-root-picker__select option {
   color: var(--text);
-  border-color: var(--border);
-  background: var(--panel-raised);
+  background: var(--panel);
 }
 
-.knowledge-root span {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.knowledge-root strong {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.knowledge-root small {
-  overflow: hidden;
+.knowledge-root-picker__select > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
   color: var(--muted);
-  font-size: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.knowledge-root-picker__select > svg:first-child {
+  left: 10px;
+}
+
+.knowledge-root-picker__select > svg:last-child {
+  right: 8px;
+}
+
+.knowledge-root-picker__path {
+  overflow: hidden;
+  margin: 5px 8px 0;
+  color: var(--muted);
+  font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The remove action stays reachable but quiet until the row is used. */
-.knowledge-root__remove {
+.knowledge-root-picker__controls > .icon-button {
+  width: 32px;
+  height: 40px;
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
-.knowledge-root:hover .knowledge-root__remove,
-.knowledge-root:focus-within .knowledge-root__remove {
+.knowledge-root-picker:hover .icon-button,
+.knowledge-root-picker:focus-within .icon-button {
   opacity: 1;
 }
 
 @media (hover: none) {
-  .knowledge-root__remove {
+  .knowledge-root-picker__controls > .icon-button {
+    width: 40px;
     opacity: 1;
   }
-}
-
-.knowledge-roots {
-  margin-bottom: 6px;
-}
-
-.knowledge-roots__summary {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.knowledge-roots__summary:hover {
-  background: var(--panel-raised);
-}
-
-.knowledge-roots__summary .sidebar-label {
-  margin: 0;
-  flex: 1;
-  text-align: left;
-}
-
-.knowledge-roots__summary em {
-  color: var(--muted);
-  font-size: 10px;
-  font-style: normal;
 }
 
 .knowledge-chevron {
@@ -576,8 +563,10 @@ button {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 0 6px;
+  gap: 2px;
+  margin: 4px 0 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
 
@@ -627,17 +616,18 @@ button {
 }
 
 .knowledge-node {
-  --knowledge-indent: calc(var(--knowledge-depth, 0) * 13px);
+  --knowledge-indent: calc(var(--knowledge-depth, 0) * 16px);
 
   position: relative;
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 6px;
-  padding: 5px 6px 5px calc(6px + var(--knowledge-indent));
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 8px 6px calc(8px + var(--knowledge-indent));
   border: 0;
-  border-radius: 7px;
-  color: var(--text);
+  border-radius: 6px;
+  color: var(--muted-strong);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -661,23 +651,61 @@ button {
 
 .knowledge-node--active {
   color: var(--text);
-  background: var(--panel-raised);
-  font-weight: 650;
+  background: var(--panel-soft);
+  box-shadow: inset 2px 0 var(--accent);
+  font-weight: 600;
+}
+
+.knowledge-node:focus-visible,
+.knowledge-root-picker__select select:focus-visible,
+.knowledge-node__status button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.workspace-file-icon,
+.knowledge-node > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.knowledge-node--active .workspace-file-icon {
+  color: var(--text);
 }
 
 .knowledge-node__name {
   overflow: hidden;
   flex: 1;
-  font-size: 12px;
+  font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .knowledge-node__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
-  padding: 4px 6px 4px calc(19px + var(--knowledge-depth, 0) * 13px);
+  padding: 6px 8px 6px calc(21px + var(--knowledge-depth, 0) * 16px);
   color: var(--muted);
   font-size: 11px;
+  line-height: 1.5;
+}
+
+.knowledge-node__status > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-node__status button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--panel-raised);
+  color: var(--text);
+  cursor: pointer;
 }
 
 .knowledge-node__status--error {
@@ -690,6 +718,7 @@ button {
 }
 
 .knowledge-reader {
+  container: reader / inline-size;
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -722,7 +751,8 @@ button {
 }
 
 .knowledge-reader .workspace-preview__header {
-  padding: 12px 16px;
+  min-height: 56px;
+  padding: 10px 16px;
 }
 
 .knowledge-reader .workspace-preview__header strong {
@@ -735,7 +765,6 @@ button {
   font-size: 11px;
 }
 
-.knowledge-reader .workspace-preview__header button,
 .knowledge-reader__context button {
   display: inline-flex;
   flex: 0 0 auto;
@@ -752,7 +781,6 @@ button {
   cursor: pointer;
 }
 
-.knowledge-reader .workspace-preview__header button:hover,
 .knowledge-reader__context button:hover:not(:disabled) {
   background: var(--panel-soft);
 }
@@ -764,7 +792,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  padding: 10px 16px max(10px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
 }
 
@@ -775,7 +803,7 @@ button {
 
 .knowledge-reader__read-only {
   color: var(--muted-strong);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .knowledge-reader__hint {
@@ -792,10 +820,10 @@ button {
 }
 
 .knowledge-reader .workspace-preview__content {
-  padding: 26px max(22px, calc((100% - var(--reading-width)) / 2)) 32px;
+  padding: 28px max(24px, calc((100% - var(--reading-width)) / 2)) 40px;
   background: var(--bg);
   font-size: 16px;
-  line-height: 1.8;
+  line-height: 1.75;
 }
 
 .knowledge-reader__crumbs {
@@ -869,19 +897,74 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 2px 0 10px;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.session-list__title {
+  min-width: 0;
+}
+
+.session-list__title > small {
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .session-list__heading h2 {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
-.session-list__heading > span {
+.session-list__heading h2 > span {
+  margin-left: 4px;
   color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.session-sort {
+  position: relative;
+  min-width: 0;
+  max-width: 54%;
+}
+
+.session-sort select {
+  appearance: none;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 25px 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.session-sort select:hover {
+  border-color: var(--border);
+  background: var(--panel-raised);
+}
+
+.session-sort select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.session-sort option {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.session-sort > svg {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  color: var(--muted);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .session-search {
@@ -933,8 +1016,9 @@ button {
 .session-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
   margin-top: 8px;
+  border-bottom: 1px solid var(--border);
 }
 
 .session-filter {
@@ -947,8 +1031,9 @@ button {
   gap: 5px;
   padding: 4px;
   color: var(--muted);
-  border: 1px solid transparent;
-  border-radius: var(--radius-small);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   font-size: 11px;
   white-space: nowrap;
@@ -958,8 +1043,8 @@ button {
 .session-filter:hover,
 .session-filter[aria-pressed='true'] {
   color: var(--text);
-  border-color: var(--border-strong);
-  background: var(--panel-raised);
+  border-bottom-color: var(--muted-strong);
+  background: transparent;
 }
 
 .session-filter--attention[aria-pressed='true'] {
@@ -1030,7 +1115,7 @@ button {
   flex: 0 0 auto;
   min-height: 0;
   gap: 6px;
-  padding: 10px 14px max(10px, env(safe-area-inset-bottom));
+  padding: 6px 12px max(6px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
 }
 
@@ -1067,11 +1152,7 @@ button {
 }
 
 .sidebar-settings__button small {
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .sidebar-label {
@@ -1093,7 +1174,7 @@ button {
 .computer-session-groups {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .computer-session-group {
@@ -1103,10 +1184,10 @@ button {
 
 .computer-session-group__header {
   display: flex;
-  gap: 7px;
+  gap: 6px;
   align-items: center;
   min-height: 34px;
-  padding: 2px 6px 6px;
+  padding: 4px 6px;
   color: var(--muted);
 }
 
@@ -1115,7 +1196,7 @@ button {
   min-width: 0;
   flex: 1;
   color: var(--muted-strong);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1147,7 +1228,12 @@ button {
 }
 
 .computer-session-group__status--online {
-  background: var(--computer-accent);
+  background: var(--success);
+}
+
+.computer-session-group__icon {
+  flex: 0 0 auto;
+  color: var(--computer-accent);
 }
 
 .computer-session-group__sessions {
@@ -1185,11 +1271,11 @@ button {
   /* Handle, the conversation itself, and the control that puts it down.
      Opening and suspending are separate buttons side by side, so the row is
      the thing that arranges them rather than a button of its own. */
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  gap: 5px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 4px;
   align-items: start;
-  padding: 9px 7px;
-  color: var(--muted-strong);
+  padding: 8px 7px;
+  color: var(--text);
   border: 1px solid transparent;
   border-left: 2px solid transparent;
   border-radius: var(--radius-small);
@@ -1218,7 +1304,7 @@ button {
    target for something meant to be picked up and moved. */
 .session-item > .drag-handle {
   align-self: center;
-  width: 16px;
+  width: 20px;
   height: 40px;
 }
 
@@ -1228,7 +1314,7 @@ button {
 
 .session-item--active {
   color: var(--text);
-  border-color: var(--border);
+  border-color: transparent;
   border-left-color: var(--computer-accent);
   background: var(--panel-raised);
 }
@@ -1336,10 +1422,9 @@ button {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
-.session-item strong,
 .session-item small {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1347,8 +1432,14 @@ button {
 }
 
 .session-item strong {
-  font-size: 13px;
-  font-weight: 580;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .provider-badge {
@@ -1367,6 +1458,7 @@ button {
   min-width: 0;
   align-items: center;
   flex-wrap: wrap;
+  min-height: 15px;
   gap: 5px;
 }
 
@@ -1392,6 +1484,8 @@ button {
   color: var(--muted);
   font-size: 10px;
   font-weight: 500;
+  padding: 1px 4px;
+  border-radius: 4px;
 }
 
 .session-state .status-dot {
@@ -1406,14 +1500,17 @@ button {
 .session-state--permission,
 .session-state--waiting {
   color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
 }
 
 .session-state--error {
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 .session-state--tasks {
   color: var(--task);
+  background: color-mix(in srgb, var(--task) 8%, transparent);
 }
 
 .session-state--running {
@@ -1453,6 +1550,15 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  flex: 1;
+}
+
+.session-item__time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* The task action has its own line and hit target, not a button nested inside
@@ -1466,9 +1572,10 @@ button {
   font-size: 11px;
   font-weight: 650;
   white-space: nowrap;
-  padding: 0 0 1px;
-  border: 0;
-  background: transparent;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--task) 20%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--task) 5%, transparent);
 }
 
 .session-item__tasks--offline {
@@ -4018,39 +4125,255 @@ button {
   font-size: 11px;
 }
 
-.workspace-outline {
+.workspace-preview__header > .document-view-controls {
   display: flex;
-  max-height: 40%;
-  flex-direction: column;
-  padding: 8px;
-  overflow-y: auto;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel-soft);
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
 }
 
-.workspace-outline__item {
-  padding: 6px 8px;
+.document-view-switch {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+}
+
+.document-view-controls .document-view-switch button {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.document-view-controls .document-view-switch button[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--panel-soft);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 16%);
+}
+
+.document-view-controls button:focus-visible,
+.document-code button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.document-outline-control {
+  position: relative;
+}
+
+.document-view-controls .document-outline-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted-strong);
+  background: transparent;
+  cursor: pointer;
+}
+
+.document-view-controls .document-outline-button:hover:not(:disabled),
+.document-view-controls .document-outline-button[aria-expanded='true'] {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--panel-raised);
+}
+
+.document-outline-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.document-outline {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + 6px);
+  right: 0;
+  width: min(300px, calc(100vw - 32px));
+  max-width: calc(100cqw - 32px);
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-popover);
+}
+
+.document-outline__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 5px 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.document-outline__header strong {
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.document-outline .document-outline__header button {
+  width: 32px;
+  min-height: 32px;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.document-outline__items {
+  max-height: min(320px, max(96px, calc(var(--visual-viewport-height, 100dvh) - 280px)));
+  margin-top: 5px;
+  overflow-y: auto;
+}
+
+.document-outline .document-outline__item {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 8px;
   color: var(--muted-strong);
   border: 0;
-  border-radius: 7px;
+  border-radius: 5px;
   background: transparent;
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+  line-height: 1.4;
 }
 
-.workspace-outline__item:hover {
+.document-outline .document-outline__item:hover {
   color: var(--text);
   background: var(--panel-raised);
 }
 
-.workspace-outline__item--2 {
+.document-outline .document-outline__item--2 {
   padding-left: 20px;
 }
 
-.workspace-outline__item--3 {
+.document-outline .document-outline__item--3 {
   padding-left: 32px;
   font-size: 11.5px;
+}
+
+.document-code {
+  margin: 18px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+}
+
+.document-code figcaption {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 8px 4px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.document-code figcaption button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.document-code figcaption button:hover {
+  border-color: var(--border);
+  background: var(--panel-soft);
+}
+
+.workspace-preview__content .document-code pre {
+  margin: 0;
+  padding: 16px;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre;
+  word-break: normal;
+}
+
+.document-code .document-code__error {
+  margin: 0;
+  padding: 8px 14px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.knowledge-reader .markdown-body h1,
+.workspace-preview .markdown-body h1 {
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.knowledge-reader .markdown-body h2,
+.workspace-preview .markdown-body h2 {
+  margin: 28px 0 14px;
+  padding-bottom: 10px;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.knowledge-reader .markdown-body h3,
+.workspace-preview .markdown-body h3 {
+  margin: 24px 0 10px;
+  font-size: 17px;
+}
+
+.knowledge-reader .markdown-body blockquote,
+.workspace-preview .markdown-body blockquote {
+  margin: 18px 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--accent-tint);
+}
+
+.knowledge-reader .markdown-body blockquote > :last-child,
+.workspace-preview .markdown-body blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.knowledge-reader .markdown-body table,
+.workspace-preview .markdown-body table {
+  margin: 18px 0;
+  font-size: 14px;
+}
+
+.knowledge-reader .markdown-body th,
+.knowledge-reader .markdown-body td,
+.workspace-preview .markdown-body th,
+.workspace-preview .markdown-body td {
+  padding: 9px 12px;
 }
 
 .workspace-entry {
@@ -4095,6 +4418,7 @@ button {
 }
 
 .workspace-preview {
+  container: reader / inline-size;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -4116,6 +4440,15 @@ button {
   gap: 8px;
   padding: 9px 12px;
   border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.workspace-preview__header {
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 3;
+  min-height: 56px;
+  background: var(--panel);
 }
 
 .workspace-preview__header > div {
@@ -4168,6 +4501,13 @@ button {
   overflow: visible;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.workspace-preview__content:not(.markdown-body) > pre {
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre;
+  word-break: normal;
 }
 
 .pdf-viewer {
@@ -4545,6 +4885,8 @@ button {
   .dialog-select,
   .path-input input,
   .session-search input,
+  .session-sort select,
+  .knowledge-root-picker__select select,
   .user-input-card__form input,
   .composer textarea {
     font-size: 16px;
@@ -4580,6 +4922,16 @@ button {
     padding: calc(10px + var(--app-content-safe-area-top))
       max(12px, env(safe-area-inset-right)) 10px
       max(12px, env(safe-area-inset-left));
+  }
+
+  .knowledge-panel__files {
+    display: inline-flex;
+    width: auto;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    font-size: 12px;
   }
 
   .workspace--docked .conversation {
@@ -4693,10 +5045,49 @@ button {
 
   .knowledge-reader .workspace-preview__header button,
   .knowledge-reader__context button,
+  .document-view-controls .document-view-switch button,
+  .document-view-controls .document-outline-button,
+  .document-outline .document-outline__item,
+  .document-code figcaption button,
+  .knowledge-node,
+  .knowledge-node__status button,
   .session-filter,
   .session-list__results button,
   .session-item__tasks {
     min-height: 40px;
+  }
+
+  .document-view-controls .document-view-switch button {
+    padding: 0 7px;
+  }
+
+  .document-view-controls .document-outline-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .document-outline .document-outline__header button {
+    width: 40px;
+    min-height: 40px;
+  }
+
+  .session-sort select {
+    min-height: 40px;
+    padding-left: 5px;
+  }
+
+  .session-item {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+
+  .session-item > .drag-handle {
+    width: 40px;
+    height: 44px;
+  }
+
+  .computer-session-group__header > .drag-handle {
+    width: 40px;
+    height: 40px;
   }
 
   .session-search button {

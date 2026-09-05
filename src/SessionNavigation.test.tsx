@@ -9,6 +9,7 @@ import type {
   ManagedSession,
 } from '../shared/contracts'
 import { SessionNavigation } from './SessionNavigation'
+import type { SessionSort } from './session-presentation'
 
 const computers: ComputerSummary[] = [
   { id: 'studio', name: 'Studio', isLocal: true, online: true },
@@ -60,9 +61,10 @@ const actions = {
   onOpenSessionTasks: vi.fn(),
   onToggleSessionSuspended: vi.fn(),
   suspending: false,
+  onSortChange: vi.fn(),
 }
 
-function navigation(sessions = sessionsByComputer) {
+function navigation(sessions = sessionsByComputer, sort: SessionSort = 'custom') {
   return (
     <DndContext>
       <SessionNavigation
@@ -72,6 +74,7 @@ function navigation(sessions = sessionsByComputer) {
         loading={false}
         selectedKey="studio:review"
         sessionsByComputer={sessions}
+        sort={sort}
       />
     </DndContext>
   )
@@ -83,6 +86,24 @@ afterEach(() => {
 })
 
 describe('session navigation', () => {
+  it('offers explicit ordering without mutating the custom list or selection', () => {
+    render(navigation())
+    const order = screen.getByRole('combobox', { name: 'Session order' })
+    expect(order).toHaveValue('custom')
+    fireEvent.change(order, { target: { value: 'recent' } })
+    expect(actions.onSortChange).toHaveBeenCalledWith('recent')
+    expect(actions.onSelectSession).not.toHaveBeenCalled()
+    expect(sessionsByComputer.get('studio')).toEqual([session, question])
+  })
+
+  it('does not allow dragging a computed order while keeping every computer visible', () => {
+    render(navigation(sessionsByComputer, 'attention'))
+    expect(screen.getByLabelText('Reorder Review the release')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('region', { name: 'Studio' })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Build node' })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Travel laptop' })).toBeVisible()
+  })
+
   it('filters attention without changing selection or hiding any computer', () => {
     render(navigation())
     fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
@@ -166,6 +187,7 @@ describe('session navigation', () => {
           loading={false}
           selectedKey="studio:review"
           sessionsByComputer={sessionsByComputer}
+          sort="custom"
         />
       </DndContext>,
     )
@@ -203,6 +225,7 @@ describe('session navigation', () => {
           loading={false}
           selectedKey="studio:review"
           sessionsByComputer={sessionsByComputer}
+          sort="custom"
         />
       </DndContext>,
     )

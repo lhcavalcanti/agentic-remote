@@ -129,3 +129,76 @@ export function matchesSessionSearch(
     (term) => searchable.includes(term),
   )
 }
+
+export type SessionSort = 'custom' | 'recent' | 'attention' | 'name'
+
+export function sessionSortFrom(value: unknown): SessionSort {
+  return value === 'recent' || value === 'attention' || value === 'name'
+    ? value
+    : 'custom'
+}
+
+const attentionRank: Record<SessionState, number> = {
+  question: 0,
+  permission: 1,
+  waiting: 2,
+  error: 3,
+  tasks: 4,
+  running: 4,
+  idle: 5,
+  suspended: 6,
+  offline: 7,
+}
+
+function recentFirst(left: ManagedSession, right: ManagedSession): number {
+  const leftTime = Date.parse(left.updatedAt)
+  const rightTime = Date.parse(right.updatedAt)
+  if (!Number.isFinite(leftTime)) return Number.isFinite(rightTime) ? 1 : 0
+  if (!Number.isFinite(rightTime)) return -1
+  return rightTime - leftTime
+}
+
+export function sortSessionView(
+  sessions: readonly ManagedSession[],
+  sort: SessionSort,
+  snapshots: Record<string, BackgroundTaskSnapshot>,
+): ManagedSession[] {
+  const ordered = [...sessions]
+  if (sort === 'custom') return ordered
+  return ordered.sort((left, right) => {
+    if (sort === 'name') {
+      return left.title.localeCompare(right.title, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      })
+    }
+    if (sort === 'attention') {
+      const leftState = sessionPresentation(left, taskSnapshot(snapshots, left))
+      const rightState = sessionPresentation(right, taskSnapshot(snapshots, right))
+      const priority = attentionRank[leftState.state] - attentionRank[rightState.state]
+      if (priority) return priority
+    }
+    return recentFirst(left, right)
+  })
+}
+
+const sessionDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+const sessionTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
+export function sessionActivityTime(updatedAt: string, now = new Date()): {
+  label: string
+  title: string
+  dateTime?: string
+} {
+  const date = new Date(updatedAt)
+  if (!Number.isFinite(date.getTime())) {
+    return { label: '--', title: 'Activity time unavailable' }
+  }
+  return {
+    label: date.toDateString() === now.toDateString()
+      ? sessionTime.format(date)
+      : sessionDay.format(date),
+    title: `Last activity: ${date.toLocaleString()}`,
+    dateTime: updatedAt,
+  }
+}

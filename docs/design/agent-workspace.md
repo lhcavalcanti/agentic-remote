@@ -16,6 +16,30 @@ The mockups are captures of the actual React implementation with synthetic
 data, not a separate interface that cannot be used. No provider conversation,
 private document, real machine name, or credential appears in the fixtures.
 
+## Professional workspace revision
+
+The follow-up focuses on four surfaces the owner identified as insufficient:
+sessions, their order, the document tree, and the Markdown viewer. The official
+Copilot App's restrained navigation rows and compact file chrome are the
+reference, not a reason to remove Agentic Remote's computer/provider identity.
+
+| Surface | Revised treatment |
+| --- | --- |
+| Sessions | More readable titles, quiet provider/runtime metadata, explicit status treatments, local activity times, and flatter computer groups. A new default sidebar width of 320px gives titles room; saved user widths remain respected. |
+| Ordering | Explicit Custom, Recent activity, Attention first, and Name views. Custom order is not overwritten; drag is unavailable in computed/filtered session views, and next/previous shortcuts follow the visible order. |
+| File explorer | A compact native root selector replaces stacked root cards, keeping owner/path context and selected-root removal. File-kind icons, consistent indentation, natural folder-first ordering, and branch-local refresh/retry support a real explorer rather than a bookmark list. |
+| Markdown | Shared Preview/Source controls in Knowledge and workspace previews, an overlay outline with proper focus behavior, a measured reading column, clearer heading/table/quote hierarchy, and explicit exact-text code copying. |
+
+The old `knowledge-roots-open` display preference is no longer read or written;
+it is left intact for rollback rather than migrated or deleted. No Knowledge
+root or session state is rewritten. Folder refresh updates the listing, not
+the document being read. Source view remains read-only.
+
+The browser walkthrough exercises real ordering selection and keyboard
+drag-and-drop, outline navigation, source view, and clipboard copying using
+fictional data. The file explorer and session list have their own scroll
+regions: variable-length titles are not forced into a fixed visible-row count.
+
 ## What the reference products contribute
 
 The study used official product material, not assumptions about feature parity.
@@ -219,6 +243,11 @@ interaction states, not recordings of a live fleet. Static images accompany
 them so motion is not required to understand the design. To regenerate the
 before images, serve base commit `c9e501ad25dbb4638d27f43cc85e35f3cbc7ace0`
 from a separate checkout/port and run the same capture with `--phase before`.
+
+The professional revision adds walkthroughs for session ordering and document
+reading, including keyboard rearrangement, the outline, Source mode, and code
+copying. Existing browser-local custom order and reading positions remain the
+underlying state rather than being recreated for the visuals.
 
 ## Review flows
 

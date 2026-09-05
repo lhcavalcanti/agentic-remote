@@ -1,0 +1,7 @@
+graph.json linguist-generated=true
+graph.html linguist-generated=true
+GRAPH_REPORT.md linguist-generated=true
+communities.json linguist-generated=true
+metadata.json linguist-generated=true
+vendor/* linguist-vendored=true
+licenses/* linguist-vendored=true

@@ -37,6 +37,13 @@ export interface KnowledgeStatusRow {
 
 export type KnowledgeRow = KnowledgeEntryRow | KnowledgeStatusRow
 
+export function orderedWorkspaceEntries(entries: readonly WorkspaceEntry[]): WorkspaceEntry[] {
+  return [...entries].sort((left, right) =>
+    Number(right.kind === 'directory') - Number(left.kind === 'directory') ||
+    left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }),
+  )
+}
+
 /**
  * Ancestor folders of a path, outermost first, excluding the root and the path
  * itself. Revealing a folder has to open everything above it or the row would
@@ -132,6 +139,12 @@ export function knowledgeTreeRows(
     return rows
   }
 
+  if (state?.error) {
+    rows.push({ type: 'status', path, depth, variant: 'error', message: state.error })
+  } else if (state?.loading) {
+    rows.push({ type: 'status', path, depth, variant: 'loading', message: 'Refreshing folder...' })
+  }
+
   if (listing.entries.length === 0) {
     rows.push({ type: 'status', path, depth, variant: 'empty' })
     return rows
@@ -140,7 +153,7 @@ export function knowledgeTreeRows(
   // The folders already open at or above this one, so a listing that repeats
   // any of them is not followed a second time.
   const chain = [...ancestors, path]
-  for (const entry of listing.entries) {
+  for (const entry of orderedWorkspaceEntries(listing.entries)) {
     const expandable = entry.kind === 'directory'
     const isExpanded = expandable && expanded.includes(entry.path)
     rows.push({

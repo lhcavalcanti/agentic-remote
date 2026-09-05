@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `863b2da5ea9bf065d92b8e0a7bc38f7a634e763200e31299045b001c6efe0c84`
+Snapshot: `03cd69533ea7abff5fd25dfa285485187152815546bddf66d73c6a01038ef2f0`
 
-Source checkout: `c9e501ad25dbb4638d27f43cc85e35f3cbc7ace0`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `a208bc0430578a49a67b5cd19246249bda655de6`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -438,6 +438,10 @@ _Questions this graph is uniquely positioned to answer:_
 - `.github/copilot-instructions.md`
 - `.github/dependabot.yml`
 - `.github/skills/agentic-remote-navigation/SKILL.md`
+- `.github/skills/frontend-design/LICENSE.txt`
+- `.github/skills/frontend-design/SKILL.md`
+- `.github/skills/frontend-design/SOURCE.md`
+- `.github/skills/frontend-design/references/agentic-remote.md`
 - `.gitignore`
 - `LICENSE`
 - `README.md`

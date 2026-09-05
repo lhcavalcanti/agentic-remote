@@ -12,6 +12,10 @@ Agentic Remote is a mobile-first PWA for supervising GitHub Copilot and Claude
 Agent sessions across trusted computers. `docs/app-spec.md` is the normative
 product specification and wins over this skill whenever the two disagree.
 
+For UI/UX design, visual polish, or frontend implementation, also load the
+repository's `frontend-design` skill. It supplies design craft; this skill and
+the product specification retain ownership of behavioral and rollout rules.
+
 ## Query the maintained code graph first
 
 For architecture, ownership, call chains, dependencies, and cross-file

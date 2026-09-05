@@ -122,7 +122,11 @@
   "inputs": {
     ".github/copilot-instructions.md": "15a3fe1c5de27c9cc24a3b26697b794876c6b7dda4fbe08ab1cc4523eaa1a2fe",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "bc0f5186335aa3bb3afd458839f8b8d9f44adee3ae9e5741c76128c920fc6c5d",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "d155de40cee020b624b152189585e877ea21c0b65fdf577411702aa6ddf1b0dd",
+    ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+    ".github/skills/frontend-design/SKILL.md": "1d5a0a7ae710320c361e0005b23fd7f79fc207eae476d4fbfba855ed03037bff",
+    ".github/skills/frontend-design/SOURCE.md": "94f731eab624bf91a967d550a4470556c9e760314a3d04ecc727717ed7d9d422",
+    ".github/skills/frontend-design/references/agentic-remote.md": "041be5e07ec4f5f42e581d4f8271fd6f418d54345a3e9883293c47603a4a1d17",
     ".gitignore": "73cbd7f059c7549275afc2891ae3325a91d36789557ded2a6364ddea86447d2b",
     ".oxlintrc.json": "07c58c79b4cf22b23a6f2b8179b11b19c52ac01e0045111dec7a66522e6428b5",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
@@ -273,6 +277,10 @@
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
     ".github/skills/agentic-remote-navigation/SKILL.md",
+    ".github/skills/frontend-design/LICENSE.txt",
+    ".github/skills/frontend-design/SKILL.md",
+    ".github/skills/frontend-design/SOURCE.md",
+    ".github/skills/frontend-design/references/agentic-remote.md",
     ".gitignore",
     "LICENSE",
     "README.md",
@@ -305,17 +313,19 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "c69a6430662de2d88fcfc7404800e5579a6105bfc83ca3acf3a42d05208cf168",
+    "GRAPH_REPORT.md": "b2bb9682060ae98bd040f9daaec579631b7161d625f2931ef3262d7c6445861f",
     "communities.json": "03d4de3055268d7cae76b2ffcfabf5f57d8b91894bf053a6a4277f8b24111466",
-    "graph.html": "77a13aae0e93451550931ddc73ec6933bd9641a22879fdf1d84418de7ecb5027",
-    "graph.json": "eb58ac0ee87054e7674a8b2d06b756175c8958833834685f2c649530fe78294b"
+    "graph.html": "1981f6eea9a0268f5cb51423c77b8c0c0326bf13766c25c7f752f9d9536c6090",
+    "graph.json": "fb241525f5bde6891a29a6902660d0c3a6798e25d5608a0c749881a0b35340cc"
   },
   "schema_version": 1,
-  "source_commit": "c9e501ad25dbb4638d27f43cc85e35f3cbc7ace0",
-  "source_fingerprint": "863b2da5ea9bf065d92b8e0a7bc38f7a634e763200e31299045b001c6efe0c84",
+  "source_commit": "a208bc0430578a49a67b5cd19246249bda655de6",
+  "source_fingerprint": "03cd69533ea7abff5fd25dfa285485187152815546bddf66d73c6a01038ef2f0",
   "working_tree_changes": [
     ".github/skills/agentic-remote-navigation/SKILL.md",
-    ".oxlintrc.json",
-    "README.md"
+    ".github/skills/frontend-design/LICENSE.txt",
+    ".github/skills/frontend-design/SKILL.md",
+    ".github/skills/frontend-design/SOURCE.md",
+    ".github/skills/frontend-design/references/agentic-remote.md"
   ]
 }

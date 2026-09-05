@@ -543,6 +543,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     try {
       response = await fetch(`${this.computer.baseUrl}${path}`, {
         ...init,
+        redirect: 'error',
         headers,
         signal: init.signal
           ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])

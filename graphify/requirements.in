@@ -1,0 +1,3 @@
+# Official package: https://github.com/Graphify-Labs/graphify
+# Code-only AST extraction; no optional LLM, media, database, or watch backends.
+graphifyy==0.9.54

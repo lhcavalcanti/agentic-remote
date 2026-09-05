@@ -745,6 +745,20 @@ export class TmuxTerminalSessionController
         return true
       }
       if (
+        !owner &&
+        expectedTarget &&
+        (await this.owner(sessionId, undefined, true))
+      ) {
+        this.inputReadySessions.delete(sessionId)
+        this.automaticStartupSessions.delete(sessionId)
+        throw Object.assign(
+          new Error(
+            'The terminal session reopened in a different pane. Check it there before continuing startup.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      if (
         !owner ||
         automaticOwner?.pid !== owner.pid ||
         automaticOwner.target !== owner.target

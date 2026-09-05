@@ -64,6 +64,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   Filtering MUST keep every configured computer visible and MUST NOT change
   the selected session, its draft, or its Knowledge position. Reordering MUST
   be disabled while filtered so hidden sessions are not reordered implicitly.
+- Session ordering MUST be explicit. Custom order remains the backward-
+  compatible default; Recent activity, Attention first, and Name views MAY
+  reorder the displayed sessions within each computer without rewriting the
+  saved custom order. Keyboard next/previous navigation MUST follow the
+  displayed order. A failed preference save MUST surface an error.
 - Needs you MUST include pending questions, permissions, waiting sessions, and
   errors. Pending actions MUST take precedence over passive runtime status.
   Working MUST include running background tasks, but MUST NOT represent a
@@ -313,6 +318,10 @@ switches, failed sends, and clear replacement IDs.
   root MUST be rejected.
 - Hidden files/directories MUST be omitted by default.
 - Markdown MUST support rendered and raw views.
+- Markdown readers MUST label those views Preview and Source. Their outline
+  MUST remain keyboard-accessible without pushing document content away.
+  Copying a code fence MUST require an explicit action, retain its exact text,
+  and report clipboard failure rather than claiming success.
 - Relative Markdown document links MUST open through the owning workspace or
   Knowledge root without navigating away from the app. Section links MUST stay
   inside the displayed document, with unique anchors for repeated headings.
@@ -371,6 +380,13 @@ switches, failed sends, and clear replacement IDs.
 - Folders MUST expand in place as a tree rather than replacing the listing, so
   a parent stays visible while a child is open. Children are loaded on first
   expansion and reused afterwards.
+- File listings SHOULD put folders before files and sort names naturally.
+  Root selection MUST identify the owning computer and keep full paths
+  available. A compact root selector MAY replace a permanently expanded root
+  list; root metadata and per-session reading positions remain unchanged.
+- Refreshing a folder MUST preserve the open document. Failed refreshes MUST
+  remain visible beside their branch, with existing loaded entries retained
+  and a reachable retry action.
 - Expanded folders MUST be remembered per root, and reopening a remembered
   document MUST open the folders above it.
 - A folder that cannot be read MUST report the failure on its own branch and

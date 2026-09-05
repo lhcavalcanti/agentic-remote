@@ -20,6 +20,7 @@ export const SUSPENDED_SESSION_ID = 'fixture-sketch-handoff'
 export const KNOWLEDGE_ROOT_ID = 'fixture-field-notes'
 export const KNOWLEDGE_FILE_PATH = 'handbook/agent-workspace.md'
 export const KNOWLEDGE_DOCUMENT_TITLE = 'Agent workspace field guide'
+export const CONTEXT_EXAMPLE = '{\n  "computer": "Studio",\n  "folder": "~/field-notes",\n  "mode": "plan"\n}\n'
 
 export const fixtureComputers: ComputerSummary[] = [
   {
@@ -314,6 +315,12 @@ const documents: Record<string, string> = {
     '# Reading patterns\n\n' +
     'Open a short note beside a conversation. Expand it when the document needs room, ' +
     'then return to the same draft.\n',
+  'reference/session-context.md':
+    '# Session context\n\n' +
+    'A small reference for keeping the work and its owner clear.\n\n' +
+    '> The session stays on its owning computer. Reading a note does not move it.\n\n' +
+    '## Example configuration\n\n```json\n' + CONTEXT_EXAMPLE + '```\n\n' +
+    'Use this as context for a draft, then choose when to send.\n',
 }
 
 export const fixtureKnowledgeFiles: Record<string, WorkspaceFile> =
@@ -354,6 +361,11 @@ export const fixtureKnowledgeListings: Record<string, WorkspaceListing> = {
       {
         name: 'reading-patterns.md',
         path: 'reference/reading-patterns.md',
+        kind: 'markdown',
+      },
+      {
+        name: 'session-context.md',
+        path: 'reference/session-context.md',
         kind: 'markdown',
       },
     ],

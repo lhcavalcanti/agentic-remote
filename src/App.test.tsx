@@ -925,6 +925,7 @@ describe('App', () => {
     const resizer = await screen.findByRole('separator', {
       name: 'Resize sidebar',
     })
+    const initialWidth = Number(resizer.getAttribute('aria-valuenow'))
     const pointer = (type: string, clientX: number) =>
       new PointerEvent(type, { bubbles: true, clientX, pointerId: 1 })
 
@@ -940,7 +941,7 @@ describe('App', () => {
       resizer.dispatchEvent(pointer('pointerup', 380))
     })
 
-    expect(localStorage.getItem('agentic-remote:sidebar-width')).toBe('366')
+    expect(localStorage.getItem('agentic-remote:sidebar-width')).toBe(String(initialWidth + 80))
   })
 
   it('recalls previous sent messages with ArrowUp per session', async () => {
@@ -2215,7 +2216,7 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('Useful knowledge.')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Raw' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }))
     expect(screen.getByText(/# Workspace guide/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Insert path' }))
     expect(screen.getByLabelText('Message')).toHaveValue(
@@ -5205,6 +5206,79 @@ describe('App', () => {
       expect(screen.getByRole('button', { name: 'Ask agent about file' })).toBeDisabled()
       expect(createSession).not.toHaveBeenCalled()
     })
+
+    it('refreshes and retries a folder without discarding the open document', async () => {
+      render(<App />)
+      await openNote()
+      vi.mocked(listKnowledgeEntries).mockRejectedValueOnce(new Error('Folder temporarily unavailable'))
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh current folder' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Folder temporarily unavailable')
+      expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      expect(screen.getByRole('treeitem', { name: 'guide.md' })).toBeVisible()
+      fireEvent.click(screen.getByRole('button', { name: 'Retry loading root folder' }))
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+      expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+  })
+
+  it('keeps custom ordering while explicit sorted views also drive keyboard navigation', async () => {
+    const items = [
+      { ...session, id: 'sort-zulu', title: 'Zulu' },
+      { ...session, id: 'sort-mike', title: 'Mike', messages: [] },
+      { ...session, id: 'sort-alpha', title: 'Alpha', messages: [] },
+    ]
+    const order = items.map((item) => `${computer.id}:${item.id}`)
+    localStorage.setItem('agentic-remote:session-order', JSON.stringify({ [computer.id]: order }))
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = items.find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    render(<App />)
+    await screen.findAllByText('Zulu')
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    expect(titles()).toEqual(['Zulu', 'Mike', 'Alpha'])
+    const draft = screen.getByLabelText('Message')
+    fireEvent.change(draft, { target: { value: 'Keep this draft' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Session order' }), {
+      target: { value: 'name' },
+    })
+    expect(titles()).toEqual(['Alpha', 'Mike', 'Zulu'])
+    expect(draft).toHaveValue('Keep this draft')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:session-sort') || 'null')).toBe('name')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:session-order') || '{}')[computer.id])
+      .toEqual(order)
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=sort-alpha'))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Session order' }), {
+      target: { value: 'custom' },
+    })
+    expect(titles()).toEqual(['Zulu', 'Mike', 'Alpha'])
+  })
+
+  it('reports a refused sort preference without claiming the order was saved', async () => {
+    render(<App />)
+    await screen.findByLabelText('Message')
+    const original = Storage.prototype.setItem
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage, key: string, value: string,
+    ) {
+      if (key === 'agentic-remote:session-sort') throw new Error('Storage unavailable')
+      original.call(this, key, value)
+    })
+    try {
+      fireEvent.change(screen.getByRole('combobox', { name: 'Session order' }), {
+        target: { value: 'recent' },
+      })
+      expect(within(screen.getByRole('main'))
+        .getByText('Could not save the session order: Storage unavailable')).toBeVisible()
+      expect(screen.getByRole('combobox', { name: 'Session order' })).toHaveValue('custom')
+    } finally {
+      save.mockRestore()
+    }
   })
 
   it('keeps search arrows from recalling a prompt or changing the selected session', async () => {
@@ -8520,9 +8594,7 @@ describe('App', () => {
     await screen.findByRole('navigation', { name: 'Knowledge' })
     // The root selector and breadcrumbs sit outside the tree's own key
     // handling, so they are where a stray recall would surface.
-    const rootButton = document.querySelector<HTMLButtonElement>(
-      '.knowledge-root > button',
-    )!
+    const rootButton = screen.getByRole('combobox', { name: 'Knowledge root' })
     rootButton.focus()
 
     fireEvent.keyDown(rootButton, { key: 'ArrowUp' })
@@ -9019,11 +9091,9 @@ describe('App', () => {
     await waitFor(() => expect(releaseGuides).toBeDefined())
 
     // The reader switches root while the remembered branch is still loading.
-    fireEvent.click(
-      within(tree)
-        .getAllByRole('button', { name: /other/ })
-        .find((button) => button.closest('.knowledge-root'))!,
-    )
+    fireEvent.change(within(tree).getByRole('combobox', { name: 'Knowledge root' }), {
+      target: { value: 'root-2' },
+    })
     await within(tree).findByRole('treeitem', { name: /only-here.md/ })
 
     releaseGuides?.()

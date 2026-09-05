@@ -5,6 +5,8 @@ import { chromium, expect as playwrightExpect } from '@playwright/test'
 import type { BrowserContext, Page } from '@playwright/test'
 import {
   BACKGROUND_SESSION_ID,
+  CONTEXT_EXAMPLE,
+  IDLE_SESSION_ID,
   KNOWLEDGE_DOCUMENT_TITLE,
   KNOWLEDGE_FILE_PATH,
   PENDING_SESSION_ID,
@@ -133,15 +135,41 @@ async function showLastComputer(page: Page) {
 async function desktop(page: Page, fixture: WorkspaceFixture) {
   await expect(documentHeading(page)).toBeVisible()
   await assertConversation(page)
-  if (phase === 'after') {
-    await expect(sessionButton(page, PERMISSION_SESSION_ID)).toBeInViewport({ ratio: 1 })
-  }
   await capture(page, fixture, 'desktop-reading')
+  if (phase === 'after') {
+    const sessionScroll = page.locator('.session-list__scroll')
+    const previousScroll = await sessionScroll.evaluate((element) => element.scrollTop)
+    await sessionButton(page, PERMISSION_SESSION_ID).scrollIntoViewIfNeeded()
+    await expect(sessionButton(page, PERMISSION_SESSION_ID)).toBeInViewport()
+    await expect(documentHeading(page)).toBeVisible()
+    await sessionScroll.evaluate((element, top) => { element.scrollTop = top }, previousScroll)
+  }
 
   await page.getByRole('button', { name: 'Expand knowledge panel', exact: true }).click()
   await expect(documentHeading(page)).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeHidden()
   await capture(page, fixture, 'desktop-expanded-reading')
+  if (phase === 'after') {
+    await page.getByRole('button', { name: 'Document outline', exact: true }).click()
+    await capture(page, fixture, 'desktop-document-outline')
+    await page.getByRole('navigation', { name: 'Document outline', exact: true })
+      .getByRole('button', { name: 'A small review loop', exact: true }).click()
+    await expect(documentHeading(page, 'A small review loop')).toBeFocused()
+    await page.getByRole('button', { name: 'Source', exact: true }).click()
+    await expect(page.locator('.knowledge-reader .workspace-preview__content > pre'))
+      .toContainText('# Agent workspace field guide')
+    await capture(page, fixture, 'desktop-markdown-source')
+    await page.getByRole('button', { name: 'Preview', exact: true }).click()
+    await page.getByRole('treeitem', { name: 'reference', exact: true }).click()
+    await page.getByRole('treeitem', { name: 'session-context.md', exact: true }).click()
+    await expect(documentHeading(page, 'Session context')).toBeVisible()
+    await page.getByRole('button', { name: 'Copy code', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Code copied', exact: true })).toBeVisible()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(CONTEXT_EXAMPLE)
+    await capture(page, fixture, 'desktop-markdown-code')
+    await page.getByRole('treeitem', { name: 'agent-workspace.md', exact: true }).click()
+    await page.getByRole('treeitem', { name: 'reference', exact: true }).click()
+  }
   await page.getByRole('button', { name: 'Minimize knowledge panel', exact: true }).click()
 
   await page.getByRole('link', { name: 'release checklist', exact: true }).click()
@@ -168,6 +196,44 @@ async function desktop(page: Page, fixture: WorkspaceFixture) {
 
   if (phase === 'after') {
     const sessions = page.getByRole('navigation', { name: 'Sessions', exact: true })
+    const order = sessions.getByRole('combobox', { name: 'Session order', exact: true })
+    const studioOrder = () => sessions.getByRole('region', { name: 'Studio', exact: true })
+      .locator('.session-item__open strong').allTextContents()
+    const customOrder = await studioOrder()
+    const selection = page.url()
+    await order.selectOption('name')
+    expect(await studioOrder()).toEqual([
+      fixtureSessions.find((session) => session.id === IDLE_SESSION_ID)!.title,
+      fixtureSessions.find((session) => session.id === SELECTED_SESSION_ID)!.title,
+      fixtureSessions.find((session) => session.id === PENDING_SESSION_ID)!.title,
+    ])
+    expect(page.url()).toBe(selection)
+    await capture(page, fixture, 'desktop-session-order')
+    await order.selectOption('attention')
+    expect((await studioOrder())[0]).toBe('Review session recovery')
+    await capture(page, fixture, 'desktop-attention-order')
+    await order.selectOption('custom')
+    expect(await studioOrder()).toEqual(customOrder)
+    const handle = sessions.getByRole('button', { name: 'Reorder Plan the knowledge workspace', exact: true })
+    await handle.focus()
+    await page.keyboard.press('Space')
+    await expect(page.locator('.session-item.sortable-dragging')).toHaveCount(1)
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByRole('status')).toContainText(
+      'was moved over droppable area session:fixture-studio:fixture-review-recovery',
+    )
+    await page.keyboard.press('Space')
+    await expect.poll(studioOrder).not.toEqual(customOrder)
+    await capture(page, fixture, 'desktop-custom-order')
+    await handle.focus()
+    await page.keyboard.press('Space')
+    await expect(page.locator('.session-item.sortable-dragging')).toHaveCount(1)
+    await page.keyboard.press('ArrowUp')
+    await expect(page.getByRole('status')).toContainText(
+      'was moved over droppable area session:fixture-studio:fixture-review-recovery',
+    )
+    await page.keyboard.press('Space')
+    await expect.poll(studioOrder).toEqual(customOrder)
     const actions = page.getByRole('button', { name: 'Session actions', exact: true })
     await actions.click()
     await expect(actions).toHaveAttribute('aria-expanded', 'true')
@@ -251,6 +317,13 @@ async function phone(page: Page, fixture: WorkspaceFixture) {
   }
   await page.getByRole('button', { name: 'Open sessions', exact: true }).click()
   await expect(sessionButton(page, SELECTED_SESSION_ID)).toBeVisible()
+  if (phase === 'after') {
+    for (const name of ['Reorder Studio', 'Reorder Plan the knowledge workspace']) {
+      const target = await page.getByRole('button', { name, exact: true }).boundingBox()
+      expect(target?.width).toBeGreaterThanOrEqual(40)
+      expect(target?.height).toBeGreaterThanOrEqual(40)
+    }
+  }
   await capture(page, fixture, 'phone-sessions')
   if (phase === 'after') {
     const sessions = page.getByRole('navigation', { name: 'Sessions', exact: true })
@@ -334,6 +407,7 @@ try {
         artifactsDir: join(runtimeDir, 'artifacts', viewport.name),
         acceptDownloads: false,
         serviceWorkers: 'block',
+        permissions: ['clipboard-read', 'clipboard-write'],
         viewport: { width: viewport.width, height: viewport.height },
         deviceScaleFactor: 1,
         isMobile: viewport.name === 'phone',

@@ -1,12 +1,34 @@
 ---
 name: frontend-design
-description: Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.
+description: Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults. For Agentic Remote, also covers product-workspace craft, accessibility, mobile input, restrained motion, frontend performance, and evidence-based UI review.
 license: Complete terms in LICENSE.txt
 ---
 
 # Frontend Design
 
-> Agentic Remote adaptation: first read [the repository context](references/agentic-remote.md) and use `agentic-remote-navigation` alongside this skill. The product specification and the user's explicit design decisions take precedence over generic aesthetic guidance. Upstream attribution and the local modification are recorded in [SOURCE.md](SOURCE.md).
+> Agentic Remote adaptation: first read [the repository context](references/agentic-remote.md) and use `agentic-remote-navigation` alongside this skill. The product specification and the user's explicit design decisions take precedence over generic aesthetic guidance. Upstream attribution and local adaptations are recorded in [SOURCE.md](SOURCE.md).
+
+<!-- agentic-remote-ui-guidance:start -->
+## Select the smallest useful reference set
+
+Keep Anthropic's design direction below as the foundation. Load only the
+companion guidance relevant to the requested work; do not load or install
+the whole UI Skills catalog.
+
+| Task | Local reference |
+| --- | --- |
+| Workspace layout, visual hierarchy, tokens, or component polish | [Product workspaces](references/product-workspaces.md) |
+| Controls, forms, focus, keyboard, touch, or accessibility | [Accessibility and input](references/accessibility-and-input.md) |
+| Motion, streaming updates, expensive rendering, or large readers/lists | [Motion and frontend performance](references/motion-and-performance.md) |
+| Audit, critique, review, or an evidence-backed improvement proposal | [Evidence and review](references/evidence-and-review.md) |
+
+An audit stays read-only unless changes are requested. An implementation
+request proceeds to working code, not just a handoff plan. Preserve the
+repository's stack, state owners, and behavioral contracts in either mode.
+Consult [selection and conflict decisions](UI-SKILLS.md) when a source recipe
+disagrees with this application; local adaptations are intentional.
+
+<!-- agentic-remote-ui-guidance:end -->
 
 Approach this as the design lead at a design studio known for giving every client a distinct visual identity that is not mistaken for anyone else's. This client has already rejected proposals that felt cliché or templated, and is paying for a distinctive point of view: make deliberate, opinionated choices about palette, typography, and layout that are specific to this brief, and take aesthetic risk if justified.
 

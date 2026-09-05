@@ -14,13 +14,21 @@ The catalog excerpt differs from the current canonical source. This
 installation uses the versioned Anthropic source rather than treating the
 catalog's excerpt as a separate skill.
 
-`SKILL.md` preserves the upstream text and frontmatter, with one prominently
-labeled Agentic Remote adaptation callout after its heading. The callout
-points to `references/agentic-remote.md`, which supplies local product,
-privacy, accessibility, workflow, and navigation constraints.
+`SKILL.md` preserves the upstream design body, name, and license field.
+Local adaptations are a description extension, the prominently labeled
+Agentic Remote callout, and the bounded
+`agentic-remote-ui-guidance` routing block. The callout points to
+`references/agentic-remote.md` for local product, privacy, accessibility,
+workflow, and navigation constraints.
+
+The conditional companion references are project-specific adaptations of
+five selected UI Skills. [UI-SKILLS.md](UI-SKILLS.md) records their fit,
+canonical version pins, MIT license copies, standards references, and
+source recommendations deliberately not adopted. They supplement the
+Anthropic foundation rather than replacing it or installing global skills.
 
 To update, review a new upstream revision, retain its license, replace the
-upstream portion without losing the local callout, and record the new
-revision here. Review the local reference against the current product spec
+upstream portion without losing the local adaptations, and record the new
+revision here. Review all local references against the current product spec
 and refresh Graphify after staging the changed files. Do not run an installer
 that changes global agent configuration merely to refresh this project skill.

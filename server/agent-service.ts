@@ -1480,6 +1480,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly client: CopilotClientLike
   private readonly sessions = new Map<string, CopilotSessionLike>()
   private readonly pendingSessionMetadata = new Map<string, SessionEvent[]>()
+  private readonly sessionCreations = new Set<Promise<void>>()
   private readonly hydratedSessions = new Set<string>()
   private readonly loadingSessions = new Map<
     string,
@@ -1508,6 +1509,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
   private readonly queueOperations = new Map<string, Promise<unknown>>()
+  private readonly terminalAdmissionOperations = new Map<
+    string,
+    Promise<unknown>
+  >()
+  private readonly terminalAdmissionDispatched = new Set<string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
   private readonly backgroundTaskTracker = new BackgroundTaskTracker()
@@ -1541,6 +1547,56 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   // was already waiting has been taken.
   private readonly admissionClosed = new Set<string>()
 
+  private async runSessionCreation<T>(run: () => Promise<T>): Promise<T> {
+    if (this.stopped) {
+      throw new Error('The session service is stopping')
+    }
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => { finish = resolve })
+    this.sessionCreations.add(pending)
+    this.discoveryGeneration += 1
+    try {
+      return await run()
+    } finally {
+      this.sessionCreations.delete(pending)
+      this.discoveryGeneration += 1
+      finish()
+    }
+  }
+
+  private async disposeSdkIdentity(
+    id: string,
+    session?: CopilotSessionLike,
+  ): Promise<void> {
+    const current = this.sessions.get(id)
+    if (current && current !== session) {
+      throw new Error(`SDK ownership changed before cleaning up session ${id}`)
+    }
+    this.deletedSessionIds.add(id)
+    this.discoveryGeneration += 1
+    this.sessions.delete(id)
+    this.hydratedSessions.delete(id)
+    this.loadingSessions.delete(id)
+    this.hydratingSessions.delete(id)
+    this.pendingSessionMetadata.delete(id)
+    const errors: unknown[] = []
+    if (session) {
+      try {
+        await session.disconnect()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    try {
+      await this.client.deleteSession(id)
+    } catch (error) {
+      if (!isMissingSessionError(error)) errors.push(error)
+    }
+    if (errors.length) {
+      throw new AggregateError(errors, `SDK cleanup is incomplete for session ${id}`)
+    }
+  }
+
   /** Marks a session as having a prompt on its way, and gives back the undo. */
   private holdDispatch(sessionId: string): () => void {
     // Counted rather than flagged: two sends can overlap, and the first to
@@ -1570,6 +1626,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     run: () => Promise<T>,
   ): Promise<T> {
+    if (this.stopped) {
+      return Promise.reject(new Error('The session service is stopping'))
+    }
     const previous = this.lifecycleLocks.get(sessionId) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(run)
     // Only that it finished, never what it produced: holding the result keeps
@@ -1745,6 +1804,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.answeredTerminalInputs.clear()
     this.backgroundTaskSyncs.clear()
     this.backgroundTaskResyncNeeded.clear()
+    await Promise.all([...this.sessionCreations])
+    await Promise.all([...this.lifecycleLocks.values()])
     for (const session of this.store.list()) {
       this.backgroundTaskTracker.remove(session.id)
     }
@@ -1752,8 +1813,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       [...this.sessions.values()].map((session) => session.disconnect()),
     )
     this.sessions.clear()
+    const runtimeErrors = await this.client.stop()
+    const synchronized = await Promise.allSettled([
+      this.discoveryInFlight,
+      this.transcriptInFlight,
+    ])
     const errors = [
-      ...disconnected.flatMap((result) =>
+      ...[...disconnected, ...synchronized].flatMap((result) =>
         result.status === 'rejected'
           ? [
               result.reason instanceof Error
@@ -1762,12 +1828,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             ]
           : [],
       ),
-      ...(await this.client.stop()),
+      ...runtimeErrors,
     ]
-    // Sessions and the SDK are down, so settle any write they triggered. Once
-    // stop() resolves no further write can land, which is what lets a caller
-    // safely tear down the data directory.
-    await this.store.flush()
+    // Sessions and the SDK are down, so settle any write they triggered, and
+    // refuse the ones a prompt still finishing has yet to make. Once stop()
+    // resolves no further write can land, which is what lets a caller safely
+    // tear down the data directory.
+    await this.store.close()
     const runtimeTimeouts = errors.filter((error) =>
       error.message.startsWith(
         'Failed to gracefully shut down runtime: runtime.shutdown timed out',
@@ -2000,9 +2067,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       reasoningEffort,
       contextTier,
     )
-    if (terminalBacked) {
-      return this.createTerminalSession(cwd, allowAllPermissions, runtime)
-    }
+    return this.runSessionCreation(() => terminalBacked
+      ? this.createTerminalSession(cwd, allowAllPermissions, runtime)
+      : this.createSdkSession(cwd, allowAllPermissions, runtime))
+  }
+
+  private async createSdkSession(
+    cwd: string,
+    allowAllPermissions: boolean,
+    runtime?: CreationRuntime,
+  ): Promise<SessionDetail> {
     const sdkSession = await this.client.createSession({
       workingDirectory: cwd,
       streaming: true,
@@ -2015,11 +2089,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.requestUserInput(invocation.sessionId, request),
       onElicitationRequest: (context) => this.requestElicitation(context),
     })
+    if (this.store.get(sdkSession.sessionId) || this.sessions.has(sdkSession.sessionId)) {
+      throw new Error('The provider returned an existing session identity')
+    }
+    this.deletedSessionIds.add(sdkSession.sessionId)
     this.pendingSessionMetadata.set(sdkSession.sessionId, [])
+    let committed = false
     try {
-      this.attachSession(sdkSession)
+      if (this.stopped) throw new Error('The session service is stopping')
       this.sessions.set(sdkSession.sessionId, sdkSession)
       this.hydratedSessions.add(sdkSession.sessionId)
+      this.attachSession(sdkSession)
 
       const now = new Date().toISOString()
       const session = await this.store.create(
@@ -2038,9 +2118,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         { managedOpen: true, backend: 'sdk' },
       )
+      committed = true
+      this.deletedSessionIds.delete(sdkSession.sessionId)
       this.publish(session)
       this.flushSessionMetadata(sdkSession.sessionId)
       return session
+    } catch (error) {
+      if (!committed) {
+        try {
+          await this.disposeSdkIdentity(sdkSession.sessionId, sdkSession)
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            'Session creation failed and SDK cleanup is incomplete',
+          )
+        }
+      }
+      throw error
     } finally {
       this.pendingSessionMetadata.delete(sdkSession.sessionId)
     }
@@ -2768,11 +2862,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         : undefined
     const replacementId = randomUUID()
     this.deletedSessionIds.add(id)
+    this.deletedSessionIds.add(replacementId)
     forgetSessionEvents(id)
     this.discoveryGeneration += 1
     this.pendingSessionMetadata.set(replacementId, [])
+    let fresh: CopilotSessionLike | undefined
+    let original: CopilotSessionLike | undefined
+    let committed = false
+    const terminalBacked = this.externalSessionIds.has(id)
     try {
-      if (this.externalSessionIds.has(id)) {
+      if (terminalBacked) {
         if (!this.terminalController.reset) {
           throw new Error('Terminal conversation reset is not available')
         }
@@ -2799,21 +2898,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.externalSessionIds.delete(id)
         this.externalSessionIds.add(replacementId)
       } else {
-        const active = this.sessions.get(id)
-        if (active) {
-          await active.disconnect()
-          this.sessions.delete(id)
-        }
-        this.hydratedSessions.delete(id)
-        try {
-          await this.client.deleteSession(id)
-        } catch (error) {
-          if (!isMissingSessionError(error)) {
-            throw error
-          }
-        }
-        await removeCopilotSessionFiles(id)
-        let fresh: CopilotSessionLike | undefined
+        original = this.sessions.get(id)
         try {
           fresh = await this.client.createSession({
             sessionId: replacementId,
@@ -2833,9 +2918,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.publishError(replacementId, error)
         }
         if (fresh) {
-          this.attachSession(fresh)
           this.sessions.set(replacementId, fresh)
           this.hydratedSessions.add(replacementId)
+          this.attachSession(fresh, replacementId)
         }
         if (fresh && runtime) {
           await fresh.rpc.model
@@ -2854,6 +2939,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             )
         }
       }
+      const cleared = await this.store.replaceWithClearedSession(
+        id,
+        replacementId,
+      )
+      committed = true
+      this.deletedSessionIds.delete(replacementId)
       for (const [requestId, permission] of this.permissions) {
         if (permission.sessionId === id) {
           permission.resolve({ kind: 'user-not-available' })
@@ -2879,10 +2970,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.terminalUpdateChecks.delete(id)
       this.answeredTerminalPermissions.delete(id)
       this.answeredTerminalInputs.delete(id)
-      const cleared = await this.store.replaceWithClearedSession(
-        id,
-        replacementId,
-      )
       // Anything still waiting to be done for the old session has to follow it
       // here. A recovery marker moves across with the conversation, and a
       // clearance still being retried would otherwise look for a session that
@@ -2895,13 +2982,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       this.publish(cleared)
       this.flushSessionMetadata(replacementId)
+      if (!terminalBacked) {
+        // The original provider history remains recoverable until replacement
+        // commits. Cleanup failure cannot undo an already accepted clear.
+        try {
+          await this.disposeSdkIdentity(id, original)
+          await removeCopilotSessionFiles(id)
+        } catch (error) {
+          this.publishError(replacementId, error)
+        }
+      }
       return cleared
+    } catch (error) {
+      if (!committed && !terminalBacked) {
+        try {
+          await this.disposeSdkIdentity(replacementId, fresh)
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            'Clearing failed and replacement SDK cleanup is incomplete',
+          )
+        }
+      }
+      throw error
     } finally {
       this.pendingSessionMetadata.delete(replacementId)
       if (this.transcriptInFlight) {
         await this.transcriptInFlight
       }
-      this.deletedSessionIds.delete(id)
+      if (!committed) this.deletedSessionIds.delete(id)
       this.discoveryGeneration += 1
     }
   }
@@ -2916,6 +3025,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const sessionId = randomUUID()
     const title = path.basename(cwd) || 'New session'
+    let committed = false
     this.launchingTerminalSessionIds.add(sessionId)
     this.discoveryGeneration += 1
     try {
@@ -2935,6 +3045,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           allowAllPermissions,
         )
       }
+      if (this.stopped) throw new Error('The session service is stopping')
       const now = new Date().toISOString()
       const session = await this.store.create(
         {
@@ -2952,11 +3063,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         { managedOpen: true, backend: 'terminal' },
       )
+      committed = true
       this.externalSessionIds.add(sessionId)
       this.publish(session)
       return session
     } catch (error) {
-      await this.activeSessionStopper(sessionId)
+      if (!committed) {
+        this.deletedSessionIds.add(sessionId)
+        try {
+          await this.activeSessionStopper(sessionId)
+          await removeCopilotSessionFiles(sessionId)
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            'Terminal creation failed and cleanup is incomplete',
+          )
+        }
+      }
       throw error
     } finally {
       this.launchingTerminalSessionIds.delete(sessionId)
@@ -3017,10 +3140,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
-    const content = rawContent.trim()
-    if (!content) {
+    // Emptiness is judged on the trimmed text; what is sent is what was
+    // written. Trimming the message itself quietly rewrote it, which matters
+    // for pasted text whose leading indentation or trailing newline is part of
+    // what was meant.
+    if (!rawContent.trim()) {
       throw new Error('Message cannot be empty')
     }
+    const content = rawContent
     if (
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
@@ -3300,7 +3427,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.admissionClosed.has(sessionId)) {
       throw Object.assign(new Error('The session is still resuming'), { statusCode: 409 })
     }
+    if (
+      this.terminalController.ownsStartupPrompt?.(sessionId) ||
+      this.terminalAdmissionOperations.has(sessionId)
+    ) {
+      return this.serializeTerminalAdmission(sessionId, async () => {
+        const terminalBacked = await this.terminalController.has(sessionId)
+        return this.sendAdmittedWithBackend(
+          sessionId,
+          content,
+          enqueue,
+          answers,
+          terminalBacked,
+          true,
+        )
+      })
+    }
     const terminalBacked = await this.terminalController.has(sessionId)
+    return this.sendAdmittedWithBackend(
+      sessionId,
+      content,
+      enqueue,
+      answers,
+      terminalBacked,
+    )
+  }
+
+  private async sendAdmittedWithBackend(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    answers: string | undefined,
+    terminalBacked: boolean,
+    startupLocked = false,
+  ): Promise<SessionDetail> {
     // Detection is awaited, and suspending can finish while it is: the guard
     // above spoke for a session that was still running.
     if (
@@ -3314,39 +3474,156 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
+    let resolvedStartup = false
+    let startupIdle = false
+    let terminalWorking = false
     if (terminalBacked) {
+      if (
+        !startupLocked &&
+        this.terminalAdmissionOperations.has(sessionId)
+      ) {
+        return this.serializeTerminalAdmission(sessionId, () =>
+          this.sendAdmittedWithBackend(
+            sessionId,
+            content,
+            enqueue,
+            answers,
+            terminalBacked,
+            true,
+          ),
+        )
+      }
       // A full-screen view takes the keyboard, so a prompt sent now is typed
       // into its search box: it filters a list, a stray Enter can pick from
       // it, and nothing says the prompt was never delivered. Refusing is
       // recoverable in a way that silently losing it is not.
       const pane = await this.terminalController.capture?.(sessionId)
-      if (pane && isTerminalOverlay(pane)) {
-        // Carries a status so the reason reaches the reader: an unclassified
-        // failure is reported as a generic server error, which would leave
-        // them no better off than the silent loss this replaces.
-        throw Object.assign(
-          new Error(
-            isTerminalSessionInUsePrompt(pane)
-              ? 'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
-              : 'The terminal is showing a full-screen view. Close it there, then send this again.',
+      if (
+        !startupLocked &&
+        this.terminalAdmissionOperations.has(sessionId)
+      ) {
+        return this.serializeTerminalAdmission(sessionId, () =>
+          this.sendAdmittedWithBackend(
+            sessionId,
+            content,
+            enqueue,
+            answers,
+            terminalBacked,
+            true,
           ),
-          { statusCode: 409 },
         )
       }
+      const ownsStartup =
+        startupLocked &&
+        (this.terminalController.ownsStartupPrompt?.(sessionId) ?? false)
+      if (ownsStartup || (pane && isTerminalOverlay(pane))) {
+        if (!startupLocked) {
+          return this.serializeTerminalAdmission(sessionId, () =>
+            this.sendAdmittedWithBackend(
+              sessionId,
+              content,
+              enqueue,
+              answers,
+              terminalBacked,
+              true,
+            ),
+          )
+        }
+        const canHandleStartup =
+          ownsStartup ||
+          (pane
+            ? ((await this.terminalController.canHandleStartupPrompt?.(
+                sessionId,
+                pane,
+              )) ?? false)
+            : false)
+        resolvedStartup =
+          canHandleStartup &&
+          ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??
+            false)
+        if (!resolvedStartup) {
+          // Carries a status so the reason reaches the reader: an unclassified
+          // failure is reported as a generic server error, which would leave
+          // them no better off than the silent loss this replaces.
+          throw Object.assign(
+            new Error(
+              pane && isTerminalSessionInUsePrompt(pane)
+                ? 'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
+                : 'The terminal is showing a full-screen view. Close it there, then send this again.',
+            ),
+            { statusCode: 409 },
+          )
+        }
+        const currentPane = await this.terminalController.capture?.(sessionId)
+        if (!currentPane || isTerminalOverlay(currentPane)) {
+          throw Object.assign(
+            new Error(
+              'The terminal changed while its startup prompt was being resolved. Check it, then send this again.',
+            ),
+            { statusCode: 409 },
+          )
+        }
+        startupIdle =
+          (await this.terminalController.inputReady?.(sessionId)) ??
+          !isTerminalAgentWorking(currentPane)
+      } else if (startupLocked && pane) {
+        terminalWorking = isTerminalAgentWorking(pane)
+        startupIdle =
+          ((await this.terminalController.inputReady?.(sessionId)) ??
+            !terminalWorking) &&
+          !this.terminalAdmissionDispatched.has(sessionId)
+      }
+    }
+    const startupReady = (resolvedStartup || startupLocked) && startupIdle
+    if (
+      startupReady &&
+      this.store.get(sessionId)?.status !== 'idle'
+    ) {
+      const idle = await this.store.update(sessionId, (session) => {
+        session.status = 'idle'
+        session.activity = undefined
+      })
+      this.publish(idle)
     }
     if (
       enqueue &&
+      startupLocked &&
+      (terminalWorking || this.terminalAdmissionDispatched.has(sessionId)) &&
+      this.store.get(sessionId)?.status === 'idle'
+    ) {
+      const running = await this.store.update(sessionId, (session) => {
+        session.status = 'running'
+        session.activity = 'Working in terminal'
+      })
+      this.publish(running)
+    }
+    if (
+      enqueue &&
+      startupReady &&
+      this.store.get(sessionId)?.queuedPrompts?.length
+    ) {
+      return this.enqueueTerminalPrompt(sessionId, content, false, answers)
+    }
+    if (
+      enqueue &&
+      !startupReady &&
       terminalBacked &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
       return this.enqueueTerminalPrompt(sessionId, content, false, answers)
     }
-    const nativeEnqueue = this.shouldUseNativeTerminalQueue(sessionId, enqueue)
+    const nativeEnqueue = this.shouldUseNativeTerminalQueue(
+      sessionId,
+      enqueue && !startupReady,
+    )
     const dispatchedAt = new Date().toISOString()
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
       this.deliveredSends.add(sessionId)
+      if (startupLocked && startupReady && !nativeEnqueue) {
+        this.terminalAdmissionDispatched.add(sessionId)
+      }
       if (nativeEnqueue) {
         const queued = await this.store.update(sessionId, (session) => {
           session.activity = 'Queued in terminal'
@@ -3551,7 +3828,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       session.status = 'running'
       session.activity = 'Thinking'
       if (session.messages.filter((message) => message.role === 'user').length === 1) {
-        session.title = content.length > 52 ? `${content.slice(0, 52)}…` : content
+        // From a trimmed copy. The message keeps its own leading whitespace,
+        // which is part of what was written, but a title made of it is blank.
+        const forTitle = content.trim()
+        session.title =
+          forTitle.length > 52 ? `${forTitle.slice(0, 52)}…` : forTitle
       }
     })
     this.activePrompts.set(sessionId, { assistantMessageId })
@@ -3719,6 +4000,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ) {
         // Already taken by the terminal, so this cannot simply be run again.
         claim?.release(true)
+        await this.acknowledgeFailedPrompt(
+          sessionId,
+          command,
+          acknowledgedFailure,
+        ).catch(() => {
+          this.scheduleFailureAcknowledgement(
+            sessionId,
+            command,
+            acknowledgedFailure,
+          )
+        })
       } else {
         claim?.release()
       }
@@ -3795,6 +4087,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // to get there, so it holds the session for the whole of it.
     const releaseDispatch = this.holdDispatch(sessionId)
     try {
+      if (
+        this.terminalController.ownsStartupPrompt?.(sessionId) ||
+        this.terminalAdmissionOperations.has(sessionId)
+      ) {
+        return await this.serializeTerminalAdmission(sessionId, async () => {
+          await this.prepareTerminalCommandAdmission(sessionId)
+          return this.dispatchCommand(
+            sessionId,
+            name,
+            argument,
+            enqueue,
+            answers,
+          )
+        })
+      }
       return await this.dispatchCommand(
         sessionId,
         name,
@@ -3804,6 +4111,67 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       )
     } finally {
       releaseDispatch()
+    }
+  }
+
+  private async prepareTerminalCommandAdmission(
+    sessionId: string,
+  ): Promise<void> {
+    const pane = await this.terminalController.capture?.(sessionId)
+    if (!pane) {
+      return
+    }
+    let currentPane = pane
+    const ownsStartup =
+      this.terminalController.ownsStartupPrompt?.(sessionId) ?? false
+    if (ownsStartup || isTerminalOverlay(currentPane)) {
+      const canHandle =
+        ownsStartup ||
+        ((await this.terminalController.canHandleStartupPrompt?.(
+          sessionId,
+          currentPane,
+        )) ?? false)
+      const resolved =
+        canHandle &&
+        ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??
+          false)
+      if (!resolved) {
+        throw Object.assign(
+          new Error(
+            'The terminal is showing a full-screen view. Close it there, then run this command again.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      const refreshed = await this.terminalController.capture?.(sessionId)
+      if (!refreshed || isTerminalOverlay(refreshed)) {
+        throw Object.assign(
+          new Error(
+            'The terminal changed while its startup prompt was being resolved. Check it, then run this command again.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      currentPane = refreshed
+    }
+    const ready =
+      (await this.terminalController.inputReady?.(sessionId)) ??
+      !isTerminalAgentWorking(currentPane)
+    const working =
+      !ready || this.terminalAdmissionDispatched.has(sessionId)
+    const current = this.store.get(sessionId)
+    if (working && current?.status === 'idle') {
+      const running = await this.store.update(sessionId, (session) => {
+        session.status = 'running'
+        session.activity = 'Working in terminal'
+      })
+      this.publish(running)
+    } else if (!working && current?.status !== 'idle') {
+      const idle = await this.store.update(sessionId, (session) => {
+        session.status = 'idle'
+        session.activity = undefined
+      })
+      this.publish(idle)
     }
   }
 
@@ -3895,6 +4263,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         canonicalCommand,
         nativeEnqueue,
+        ...(commandInfo?.allowDuringAgentExecution
+          ? [{ allowDuringAgentExecution: true }]
+          : []),
       )
     ) {
       const feedback = await this.terminalCommandFeedback(
@@ -3946,7 +4317,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           createdAt: new Date().toISOString(),
         })
         this.publish(notice)
-        return this.sendMessage(sessionId, result.prompt, busy)
+        // Command dispatch already owns the terminal-admission slot. Re-entering
+        // sendMessage here can queue behind that same slot when a stale terminal
+        // owner disappeared and the command fell back to the SDK.
+        try {
+          const sent = await this.sendAdmittedWithBackend(
+            sessionId,
+            result.prompt,
+            busy,
+            undefined,
+            false,
+          )
+          this.deliveredSends.delete(sessionId)
+          return sent
+        } catch (error) {
+          if (this.deliveredSends.has(sessionId)) {
+            this.deliveredSends.delete(sessionId)
+            throw Object.assign(
+              error instanceof Error ? error : new Error(String(error)),
+              { uncertainDelivery: true },
+            )
+          }
+          throw error
+        }
       }
       const content =
         result.kind === 'text'
@@ -4516,6 +4909,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async ensureLoaded(sessionId: string): Promise<CopilotSessionLike> {
+    if (this.stopped || this.deletedSessionIds.has(sessionId)) {
+      throw new Error('Session is no longer available')
+    }
     const active = this.sessions.get(sessionId)
     if (active) {
       return active
@@ -4587,8 +4983,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         onElicitationRequest: (context) => this.requestElicitation(context),
       })
     }
-    this.attachSession(sdkSession)
+    if (this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId)) {
+      await sdkSession.disconnect()
+      throw new Error('Session is no longer available')
+    }
     this.sessions.set(sessionId, sdkSession)
+    this.attachSession(sdkSession, sessionId)
     return sdkSession
   }
 
@@ -4664,9 +5064,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async discoverSessions(): Promise<void> {
+    if (this.stopped) return
     let sessions: SessionMetadata[]
     let activeSessions: DiscoveredSession[]
     while (true) {
+      // A provider may list a new session before createSession() has returned
+      // its ID. Do not discover it before its identity write and cleanup settle.
+      while (this.sessionCreations.size) {
+        await Promise.all([...this.sessionCreations])
+      }
+      if (this.stopped) return
       const generation = this.discoveryGeneration
       const discovery = await Promise.all([
         this.client.listSessions(),
@@ -4674,24 +5081,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ])
       sessions = discovery[0]
       activeSessions = discovery[1]
+      if (this.stopped) return
       if (generation === this.discoveryGeneration) {
         break
       }
     }
     const storedBeforeDiscovery = this.store.list()
+    const retiredIds = new Set(storedBeforeDiscovery.flatMap(
+      (session) => session.replacedSessionIds || [],
+    ))
+    const excluded = (id: string) =>
+      this.deletedSessionIds.has(id) || retiredIds.has(id)
+    activeSessions = activeSessions.filter((session) => !excluded(session.id))
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
     const previouslyExternal = this.externalSessionIds
     this.externalSessionIds = new Set(
       [
-        ...activeSessions
-          .filter((session) => !this.deletedSessionIds.has(session.id))
-          .map((session) => session.id),
+        ...activeSessions.map((session) => session.id),
         ...this.launchingTerminalSessionIds,
       ],
     )
     await this.clearUpdateNoticeForExited(previouslyExternal)
     const indexedSessions = sessions.flatMap((session) => {
-      if (this.deletedSessionIds.has(session.sessionId)) {
+      if (excluded(session.sessionId)) {
         return []
       }
       const cwd = session.context?.workingDirectory?.trim()
@@ -4717,7 +5129,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ...activeSessions
           .filter(
             (session) =>
-              !this.deletedSessionIds.has(session.id) &&
+              !excluded(session.id) &&
               !indexedIds.has(session.id) && !storedIds.has(session.id),
           )
           .map((session) => ({
@@ -4746,7 +5158,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     await this.store.syncOpen([
       ...this.externalSessionIds,
-      ...this.sessions.keys(),
+      ...[...this.sessions.keys()].filter((id) => !excluded(id)),
     ])
   }
 
@@ -5426,9 +5838,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
   }
 
-  private attachSession(session: CopilotSessionLike): void {
+  private attachSession(
+    session: CopilotSessionLike,
+    sessionId = session.sessionId,
+  ): void {
     session.on((event) => {
-      this.handleSessionEvent(session.sessionId, event)
+      if (
+        this.sessions.get(sessionId) !== session ||
+        (this.deletedSessionIds.has(sessionId) &&
+          !this.pendingSessionMetadata.has(sessionId))
+      ) {
+        return
+      }
+      this.handleSessionEvent(sessionId, event)
     })
   }
 
@@ -5939,6 +6361,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } finally {
       if (this.queueOperations.get(sessionId) === current) {
         this.queueOperations.delete(sessionId)
+      }
+    }
+  }
+
+  private async serializeTerminalAdmission<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous =
+      this.terminalAdmissionOperations.get(sessionId) || Promise.resolve()
+    const current = previous.catch(() => undefined).then(operation)
+    this.terminalAdmissionOperations.set(sessionId, current)
+    try {
+      return await current
+    } finally {
+      if (this.terminalAdmissionOperations.get(sessionId) === current) {
+        this.terminalAdmissionOperations.delete(sessionId)
+        this.terminalAdmissionDispatched.delete(sessionId)
       }
     }
   }

@@ -227,6 +227,9 @@ export class ClaudeAgentService
   private readonly startedQuery = new Map<string, () => void>()
   /** Sessions whose queue is being drained, so two drains cannot overlap. */
   private readonly drainingSessions = new Set<string>()
+  private readonly drainingWork = new Set<Promise<void>>()
+  private stopping = false
+  private stopTask?: Promise<void>
   private readonly permissions = new Map<string, PendingClaudePermission>()
   private readonly userInputs = new Map<string, PendingClaudeInput>()
 
@@ -286,11 +289,16 @@ export class ClaudeAgentService
     }
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    this.stopping = true
+    this.stopTask ??= this.stopSettled()
+    return this.stopTask
+  }
+
+  private async stopSettled(): Promise<void> {
     for (const active of this.active.values()) {
       active.abortController.abort()
     }
-    this.active.clear()
     for (const permission of this.permissions.values()) {
       permission.resolve({
         behavior: 'deny',
@@ -305,6 +313,21 @@ export class ClaudeAgentService
       })
     }
     this.userInputs.clear()
+    await Promise.allSettled([
+      ...[...this.admittingSends.values()].flat(),
+      ...this.drainingWork,
+    ])
+    await Promise.allSettled([...this.startingQueries.values()])
+    const active = [...this.active.entries()]
+    for (const [sessionId, query] of active) {
+      query.abortController.abort()
+      this.resolvePending(sessionId, 'Agentic Remote is shutting down')
+    }
+    // Streaming updates are in memory until the turn's completion path writes
+    // them. Keep storage open until every admitted turn has settled.
+    await Promise.allSettled(active.map(([, query]) => query.done))
+    this.active.clear()
+    await this.store.close()
   }
 
   listSessions(): SessionDetail[] {
@@ -715,6 +738,7 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
   ): Promise<SessionDetail> {
+    this.assertNotStopping()
     if (this.deletingSessions.has(sessionId)) {
       // Deleting takes several awaits, and a send starting inside any of them
       // ran a turn against a conversation on its way out.
@@ -902,12 +926,18 @@ export class ClaudeAgentService
         statusCode: 409,
       })
     }
+    const titleSource = content.trim()
     const running = await this.store.update(sessionId, (stored) => {
       stored.status = 'running'
       stored.activity = 'Thinking'
       if (stored.messages.filter((message) => message.role === 'user').length === 1) {
         stored.title =
-          content.length > 52 ? `${content.slice(0, 52)}…` : content
+          // From a trimmed copy. The message keeps its own leading whitespace,
+          // which is part of what was written, but a title made of it is
+          // blank.
+          titleSource.length > 52
+            ? `${titleSource.slice(0, 52)}…`
+            : titleSource
       }
     })
     this.publish(running)
@@ -1195,6 +1225,10 @@ export class ClaudeAgentService
       const hasProviderSession = Boolean(
         await this.sdk.getSessionInfo(sessionId, { dir: session.cwd }),
       )
+      if (this.stopping) {
+        abortController.abort()
+        throw new Error('Agentic Remote is shutting down')
+      }
       const activeQuery = this.sdk.query({
         prompt,
         options: {
@@ -1303,7 +1337,7 @@ export class ClaudeAgentService
       this.startedQuery.delete(sessionId)
       this.startingQueries.delete(sessionId)
       this.resolvePending(sessionId, 'Claude Agent stopped')
-      if (!aborted) {
+      if (!aborted && !this.stopping) {
         // The drain puts its own prompt back before rethrowing, and there is
         // nobody above this to tell. Reported rather than thrown out of a
         // finally block, which would replace whatever this turn was already
@@ -1441,6 +1475,12 @@ export class ClaudeAgentService
     toolName: string,
     input: Record<string, unknown>,
   ): Promise<PermissionResult> {
+    if (this.stopping) {
+      return Promise.resolve({
+        behavior: 'deny',
+        message: 'Agentic Remote is shutting down',
+      })
+    }
     if (toolName === 'AskUserQuestion') {
       return this.requestUserInput(sessionId, input)
     }
@@ -1610,13 +1650,16 @@ export class ClaudeAgentService
     // already waiting each took a different head off the queue before either
     // marked the session running, and started concurrent turns: the queue lost
     // its order, and the second registration hid the first from cancellation.
-    if (this.drainingSessions.has(sessionId)) {
+    if (this.stopping || this.drainingSessions.has(sessionId)) {
       return
     }
     this.drainingSessions.add(sessionId)
+    const work = this.drainSerialized(sessionId)
+    this.drainingWork.add(work)
     try {
-      await this.drainSerialized(sessionId)
+      await work
     } finally {
+      this.drainingWork.delete(work)
       this.drainingSessions.delete(sessionId)
     }
   }
@@ -1712,8 +1755,17 @@ export class ClaudeAgentService
   }
 
   private requireAvailable(): void {
+    this.assertNotStopping()
     if (!this.available) {
       throw new Error(this.unavailableReason)
+    }
+  }
+
+  private assertNotStopping(): void {
+    if (this.stopping) {
+      throw Object.assign(new Error('Agentic Remote is shutting down'), {
+        statusCode: 503,
+      })
     }
   }
 

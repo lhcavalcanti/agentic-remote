@@ -42,6 +42,28 @@ describe('read-only remote resource requests', () => {
     sessionId: 'remote/session', provider: 'claude', scope: 'session', capturedAt: '2026-09-05T10:00:00.000Z',
   }
 
+  it.each([307, 308])('preserves a trusted HTTP %i redirect diagnostic for resource reads', async (statusCode) => {
+    let redirected = 0
+    const node = await listen((request, response) => {
+      if (request.url?.startsWith('/redirect-target')) {
+        redirected += 1
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end('{}')
+      } else {
+        response.writeHead(statusCode, { location: '/redirect-target?secret=PRIVATE_LOCATION' })
+        response.end('PRIVATE_REDIRECT_BODY')
+      }
+    })
+    const error = await client(node).listSkills('remote/session', 'claude').catch((value: unknown) => value)
+    expect(error).toMatchObject({
+      statusCode: 502,
+      message: expect.stringContaining(`HTTP ${statusCode} redirect`),
+    })
+    expect(String(error)).toContain('final node URL')
+    expect(String(error)).not.toContain('PRIVATE')
+    expect(redirected).toBe(0)
+  })
+
   it('encodes the session identity, authenticates GETs, and strips arbitrary metadata', async () => {
     const requests: { path?: string; method?: string; authenticated: boolean }[] = []
     const node = await listen((request, response) => {

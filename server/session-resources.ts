@@ -14,6 +14,7 @@ import type {
   SessionSkillsSnapshot,
 } from '../shared/contracts.js'
 import type { SessionService } from './session-service.js'
+import { RemoteNodeRedirectError } from './remote-node-errors.js'
 
 export const MAX_SESSION_RESOURCES = 2_000
 
@@ -47,8 +48,9 @@ export class SessionResourceError extends Error {
   }
 }
 
-export function safeResourceError(error: unknown): SessionResourceError {
-  return error instanceof SessionResourceError ? error : new SessionResourceError('failed')
+export function safeResourceError(error: unknown): SessionResourceError | RemoteNodeRedirectError {
+  return error instanceof SessionResourceError || error instanceof RemoteNodeRedirectError
+    ? error : new SessionResourceError('failed')
 }
 
 export function isResourceMethodUnavailable(error: unknown): boolean {
@@ -89,10 +91,10 @@ function flag(value: unknown): boolean | undefined {
 
 function count(value: unknown): number | undefined {
   if (value === undefined) return undefined
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     throw new SessionResourceError('invalid')
   }
-  return value as number
+  return value
 }
 
 function source(value: unknown): SessionResourceSource | undefined {

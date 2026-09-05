@@ -8,15 +8,28 @@ import {
   enrichClaudeSkills,
   MAX_SESSION_RESOURCES,
   resourceMessages,
+  safeResourceError,
   sanitizeMcpSnapshot,
   sanitizeSkillsSnapshot,
   skillsSnapshot,
 } from './session-resources.js'
+import { RemoteNodeRedirectError } from './remote-node-errors.js'
 
 const capturedAt = '2026-09-05T10:00:00.000Z'
 const base = { sessionId: 'session', provider: 'copilot', scope: 'session', capturedAt }
 
 describe('safe session resource summaries', () => {
+  it('preserves only the trusted redirect error instance, not peer-supplied error names', () => {
+    const trusted = new RemoteNodeRedirectError('Worker', 307)
+    expect(safeResourceError(trusted)).toBe(trusted)
+    const forged = Object.assign(new Error('PRIVATE_PEER_ERROR'), {
+      name: 'RemoteNodeRedirectError', statusCode: 502,
+    })
+    expect(safeResourceError(forged).message).toBe('Unable to read session resource metadata.')
+    expect(safeResourceError({ name: 'RemoteNodeRedirectError', message: 'PRIVATE', statusCode: 502 }).message)
+      .toBe('Unable to read session resource metadata.')
+  })
+
   it('whitelists all peer metadata and never relays peer messages, config, or errors', () => {
     const secret = 'SYNTHETIC_PRIVATE_METADATA'
     const unexpected = {

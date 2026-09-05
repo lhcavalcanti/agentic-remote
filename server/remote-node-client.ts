@@ -30,8 +30,9 @@ import type {
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
-import { parseSubmissionReceipt, SubmissionError, type SubmissionReceipt } from '../shared/submission-error.js'
+import { parseSubmissionReceipt } from '../shared/submission-error.js'
 import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
+import { RemoteNodeRedirectError, RemoteNodeRequestError } from './remote-node-errors.js'
 import {
   safeResourceError,
   sanitizeSkillsSnapshot,
@@ -57,27 +58,6 @@ function headerSafe(value: string): string {
 interface RemoteNodeClientEvents {
   event: [event: ServerEvent]
   status: [online: boolean]
-}
-
-class RemoteNodeRequestError extends SubmissionError {
-  constructor(
-    message: string,
-    statusCode: number,
-    submission?: SubmissionReceipt,
-  ) {
-    super(message, statusCode, submission)
-    this.name = 'RemoteNodeRequestError'
-  }
-}
-
-class RemoteNodeRedirectError extends RemoteNodeRequestError {
-  constructor(computerName: string, status: number) {
-    super(
-      `${computerName} returned an HTTP ${status} redirect. Configure the final node URL; redirects are not followed.`,
-      502,
-    )
-    this.name = 'RemoteNodeRedirectError'
-  }
 }
 
 export function normalizeNodeUrl(value: string): string {
@@ -243,6 +223,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       if (this.stopped) throw new SessionResourceError('stopped')
       return normalize(raw)
     } catch (error) {
+      if (error instanceof RemoteNodeRedirectError) throw error
       if (error instanceof RemoteNodeRequestError) {
         throw new SessionResourceError(
           error.statusCode === 404 ? 'missing' :

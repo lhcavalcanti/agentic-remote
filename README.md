@@ -65,6 +65,21 @@ sequenceDiagram
 The browser communicates only with the hub. Repositories, authentication,
 processes, and provider history remain on the computer that owns each session.
 
+### Explore the code graph
+
+The maintained [Graphify folder](graphify/README.md) contains an offline
+interactive graph, source-linked graph data, a report, and a reproducible
+refresh command. Future agent sessions use it through the
+`agentic-remote-navigation` skill.
+
+```bash
+python3 graphify/manage.py check
+python3 graphify/manage.py query "KnowledgeRoot KnowledgeReader"
+```
+
+See the folder's setup instructions before the first CLI query. The graph
+indexes tracked code locally; it does not send source to an external model.
+
 ## Requirements
 
 - Linux with systemd user services

@@ -3625,11 +3625,15 @@ button {
   flex-direction: column;
 }
 
+.workspace-preview__header strong,
 .workspace-preview__header small {
   overflow: hidden;
-  color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspace-preview__header small {
+  color: var(--muted);
 }
 
 .workspace-preview__header button {

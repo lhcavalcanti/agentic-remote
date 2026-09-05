@@ -33,9 +33,9 @@ beforeEach(() => {
 function models(): ModelInfo[] {
   return [
     {
-      value: 'sonnet',
-      resolvedModel: 'claude-sonnet-5',
-      displayName: 'Sonnet',
+      value: 'provider-model',
+      resolvedModel: 'resolved-provider-model',
+      displayName: 'Provider Model',
       description: 'Efficient for routine tasks',
       supportsEffort: true,
       supportedEffortLevels: ['low', 'medium', 'high'],
@@ -43,15 +43,19 @@ function models(): ModelInfo[] {
   ]
 }
 
-function queryHandle(messages: () => AsyncGenerator<SDKMessage>): Query {
+function queryHandle(
+  messages: () => AsyncGenerator<SDKMessage>,
+  availableModels: () => ModelInfo[] = models,
+): Query {
   const generator = messages()
   return Object.assign(generator, {
-    supportedModels: async () => models(),
+    supportedModels: async () => availableModels(),
   }) as unknown as Query
 }
 
 async function fixture(
   run: (options: Options) => AsyncGenerator<SDKMessage>,
+  availableModels: () => ModelInfo[] = models,
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), 'claude-service-test-'))
   directories.push(directory)
@@ -73,9 +77,9 @@ async function fixture(
       queryCalls.push(options)
       if (typeof prompt === 'string') {
         runCount += 1
-        return queryHandle(() => run(options))
+        return queryHandle(() => run(options), availableModels)
       }
-      return queryHandle(async function* () {})
+      return queryHandle(async function* () {}, availableModels)
     },
   )
   const sdk: ClaudeSdk = {
@@ -261,13 +265,13 @@ describe('ClaudeAgentService', () => {
     expect(queryCalls.at(-1)).toMatchObject({ resume: sessionId })
 
     const configured = await service.configureRuntime(sessionId, {
-      model: 'sonnet',
+      model: 'provider-model',
       reasoningEffort: 'low',
       contextTier: 'default',
       mode: 'plan',
     })
     expect(configured.runtime).toMatchObject({
-      model: 'sonnet',
+      model: 'provider-model',
       reasoningEffort: 'low',
       mode: 'plan',
     })
@@ -285,20 +289,20 @@ describe('ClaudeAgentService', () => {
       false,
       true,
       'claude',
-      'sonnet',
+      'provider-model',
       'low',
       'default',
     )
 
     expect(created.runtime).toMatchObject({
-      model: 'sonnet',
+      model: 'provider-model',
       reasoningEffort: 'low',
       contextTier: 'default',
     })
     await expect(service.providerRuntimeOptions('claude')).resolves.toEqual({
       models: [
         expect.objectContaining({
-          id: 'sonnet',
+          id: 'provider-model',
           description: 'Efficient for routine tasks',
           reasoningEfforts: ['low', 'medium', 'high'],
         }),
@@ -340,12 +344,57 @@ describe('ClaudeAgentService', () => {
     ])
 
     await expect(service.providerRuntimeOptions('claude')).resolves.toEqual({
-      models: [expect.objectContaining({ id: 'sonnet' })],
+      models: [expect.objectContaining({ id: 'provider-model' })],
     })
     expect(authStatus).toHaveBeenCalledTimes(2)
     expect(service.providers()).toEqual([
       expect.objectContaining({ id: 'claude', available: true }),
     ])
+  })
+
+  it('discovers fresh Claude catalogs and recovers from a failed refresh', async () => {
+    let availableModels = models()
+    let discoveryError: Error | undefined
+    const { directory, service } = await fixture(
+      async function* () {},
+      () => {
+        if (discoveryError) {
+          throw discoveryError
+        }
+        return availableModels
+      },
+    )
+
+    try {
+      const created = await service.createSession(directory, false, false, 'claude')
+      const originalRuntime = { ...created.runtime }
+      availableModels = [{
+        ...models()[0],
+        value: 'new-provider-model',
+        displayName: 'New Provider Model',
+      }]
+      const refreshed = {
+        models: [expect.objectContaining({ id: 'new-provider-model' })],
+      }
+      await expect(service.providerRuntimeOptions('claude')).resolves.toMatchObject(
+        refreshed,
+      )
+      await expect(service.runtimeOptions(created.id)).resolves.toMatchObject(
+        refreshed,
+      )
+      expect(service.getSession(created.id)?.runtime).toEqual(originalRuntime)
+
+      discoveryError = new Error('Catalog refresh failed')
+      await expect(service.runtimeOptions(created.id)).rejects.toThrow(
+        'Catalog refresh failed',
+      )
+      discoveryError = undefined
+      await expect(service.runtimeOptions(created.id)).resolves.toMatchObject(
+        refreshed,
+      )
+    } finally {
+      await service.stop()
+    }
   })
 
   it('surfaces and answers Claude tool permissions', async () => {

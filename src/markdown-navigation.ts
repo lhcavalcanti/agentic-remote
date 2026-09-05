@@ -32,9 +32,50 @@ export function headingSlug(text: string, used?: Map<string, number>): string {
   if (!used) {
     return base
   }
-  const seen = used.get(base)
-  used.set(base, (seen ?? 0) + 1)
-  return seen === undefined ? base : `${base}-${seen}`
+  let suffix = used.get(base) ?? 0
+  let slug = base
+  while (used.has(slug)) {
+    suffix += 1
+    slug = `${base}-${suffix}`
+  }
+  used.set(base, suffix)
+  used.set(slug, 0)
+  return slug
+}
+
+interface MarkdownNode {
+  type: string
+  tagName?: string
+  value?: string
+  properties?: Record<string, unknown>
+  children?: MarkdownNode[]
+}
+
+function markdownNodeText(node: MarkdownNode): string {
+  if (node.type === 'text') {
+    return node.value || ''
+  }
+  if (node.tagName === 'img' && typeof node.properties?.alt === 'string') {
+    return node.properties.alt
+  }
+  return node.children?.map(markdownNodeText).join('') || ''
+}
+
+export function rehypeDocumentHeadings() {
+  return (tree: MarkdownNode) => {
+    const used = new Map<string, number>()
+    function visit(node: MarkdownNode) {
+      if (node.type === 'element' && /^h[1-6]$/.test(node.tagName || '')) {
+        node.properties = {
+          ...node.properties,
+          id: headingSlug(markdownNodeText(node), used),
+          tabIndex: -1,
+        }
+      }
+      node.children?.forEach(visit)
+    }
+    visit(tree)
+  }
 }
 
 /** Flattens a React heading child tree to its plain text. */
@@ -244,4 +285,53 @@ export function resolveDocumentPath(
 /** True for sources the browser should load itself rather than the workspace. */
 export function isExternalSource(source: string): boolean {
   return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(source.trim())
+}
+
+export type DocumentLink =
+  | { kind: 'external' }
+  | { kind: 'invalid'; error: string }
+  | { kind: 'document'; path: string; fragment?: string }
+
+export function resolveDocumentLink(documentPath: string, href: string): DocumentLink {
+  const source = href.trim()
+  if (isExternalSource(source)) {
+    return { kind: 'external' }
+  }
+  const hash = source.indexOf('#')
+  let fragment: string | undefined
+  if (hash >= 0) {
+    try {
+      fragment = decodeURIComponent(source.slice(hash + 1))
+    } catch {
+      return { kind: 'invalid', error: 'This link contains an invalid section anchor.' }
+    }
+  }
+  const path = !source || source.startsWith('#') || source.startsWith('?')
+    ? documentPath
+    : resolveDocumentPath(documentPath, source)
+  return path
+    ? { kind: 'document', path, fragment }
+    : { kind: 'invalid', error: 'This link points outside the document root.' }
+}
+
+export function scrollToDocumentFragment(
+  container: HTMLElement | null,
+  fragment: string,
+): boolean {
+  if (!container) {
+    return false
+  }
+  if (!fragment) {
+    container.scrollTop = 0
+    return true
+  }
+  const heading = Array.from(
+    container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'),
+  ).find((candidate) => candidate.id === fragment)
+  if (!heading) {
+    return false
+  }
+  heading.focus({ preventScroll: true })
+  heading.scrollIntoView({ block: 'start' })
+  return true
 }

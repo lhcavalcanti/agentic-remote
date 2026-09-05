@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -27,8 +27,9 @@ import type {
 } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import { ComputerManager } from './computer-manager.js'
-import type { ComputerRegistry } from './computer-registry.js'
-import type { NodeIdentityStore } from './node-identity.js'
+import { ComputerRegistry } from './computer-registry.js'
+import { NodeIdentityStore } from './node-identity.js'
+import { RemoteNodeClient } from './remote-node-client.js'
 import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
 import type {
@@ -1124,11 +1125,11 @@ describe('multi-node hub', () => {
       const command = await hub.app.inject({
         method: 'POST',
         url: `/api/computers/${remoteComputerId}/sessions/remote-session/commands`,
-        payload: { command: '/model gpt-5.6-sol' },
+        payload: { command: '/model fixture-model' },
       })
       expect(command.json().session.messages.at(-1)).toMatchObject({
         role: 'notice',
-        content: '/model gpt-5.6-sol',
+        content: '/model fixture-model',
       })
 
       const upserted = waitForEvent(
@@ -1627,6 +1628,247 @@ describe('multi-node hub', () => {
   })
 })
 
+function deferred<T>() {
+  let finish: ((value: T) => void) | undefined
+  const promise = new Promise<T>((resolve) => { finish = resolve })
+  return {
+    promise,
+    resolve(value: T) {
+      if (!finish) throw new Error('Deferred response was not initialized')
+      finish(value)
+    },
+  }
+}
+
+async function remoteSnapshotFixture() {
+  const directory = await temporaryDirectory('agentic-remote-snapshot')
+  const identity = new NodeIdentityStore(directory)
+  const registry = new ComputerRegistry(directory)
+  await identity.initialize()
+  await registry.initialize()
+  const computer = {
+    id: 'node-1',
+    name: 'Workshop',
+    baseUrl: 'http://127.0.0.1:1',
+    token: 'review-test-token',
+  }
+  await registry.upsert(computer)
+  const manager = new ComputerManager(new FakeSessionService(), identity, registry)
+  const client = new RemoteNodeClient(computer)
+  manager['clients'].set(computer.id, client)
+  const events: HubEvent[] = []
+  manager.on('event', (event) => events.push(event))
+  const managed = (entry: SessionDetail) => ({
+    ...entry, computerId: computer.id, computerName: computer.name,
+  })
+  return { manager, client, computer, events, managed }
+}
+
+function taskSnapshot(running: boolean): BackgroundTaskSnapshot {
+  return {
+    supported: true,
+    runningCount: running ? 1 : 0,
+    tasks: [{
+      id: 'review-task', type: 'shell', description: 'Build project',
+      startedAt: '2026-09-04T00:00:00.000Z',
+      status: running ? 'running' : 'completed', canCancel: running,
+    }],
+  }
+}
+
+describe('remote snapshot consistency', () => {
+  it('reconciles live session events received while a listing is in flight', async () => {
+    const { manager, client, computer, managed } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted', session: session('kept', 'New title'),
+    })
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted', session: session('added', 'Created during read'),
+    })
+    manager['emitNodeEvent'](computer, { type: 'session.removed', sessionId: 'deleted' })
+    response.resolve([session('kept', 'Old title'), session('deleted', 'Deleted')])
+
+    const result = await listing
+    expect(result.sessions).toEqual(expect.arrayContaining([
+      managed(session('kept', 'New title')),
+      managed(session('added', 'Created during read')),
+    ]))
+    expect(result.sessions.some((entry) => entry.id === 'deleted')).toBe(false)
+    expect(result.answeredComputerIds).toContain(computer.id)
+    manager.stop()
+  })
+
+  it('coalesces overlapping reconnect and browser session reads', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const first = manager['resyncRemoteComputer'](computer, client)
+    const second = manager['resyncRemoteComputer'](computer, client)
+    const listing = manager.listSessionsWithAuthority()
+    response.resolve([session('kept', 'Current')])
+    await Promise.all([first, second, listing])
+
+    expect(client.listSessions).toHaveBeenCalledOnce()
+    expect(events.filter((event) => event.type === 'session.upserted'))
+      .toHaveLength(1)
+    manager.stop()
+  })
+
+  it('keeps a snapshot revision newer than an event observed during its read', async () => {
+    const { manager, client, computer } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted',
+      session: { ...session('kept', 'Revision two'), revision: 2 },
+    })
+    response.resolve([{ ...session('kept', 'Revision three'), revision: 3 }])
+    expect((await listing).sessions).toEqual([
+      expect.objectContaining({ id: 'kept', title: 'Revision three', revision: 3 }),
+    ])
+    manager.stop()
+  })
+
+  it('does not recreate an unpaired computer from a late listing', async () => {
+    const { manager, client, computer } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    await manager.removeComputer(computer.id)
+    response.resolve([session('removed-node-session', 'No longer paired')])
+
+    const result = await listing
+    expect(result.sessions).toEqual([])
+    expect(result.answeredComputerIds).not.toContain(computer.id)
+    expect(manager['sessionCache'].has(computer.id)).toBe(false)
+  })
+
+  it('ignores an older event arriving after a newer snapshot revision', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([
+      { ...session('kept', 'Revision three'), revision: 3 },
+    ])
+    await manager.listSessionsWithAuthority()
+    manager['emitNodeEvent'](computer, {
+      type: 'session.upserted',
+      session: { ...session('kept', 'Revision two'), revision: 2 },
+    })
+    expect(manager['sessionCache'].get(computer.id)?.[0])
+      .toMatchObject({ title: 'Revision three', revision: 3 })
+    expect(events).toEqual([])
+    manager.stop()
+  })
+
+  it('does not accept a listing from a replaced node client', async () => {
+    const { manager, client, computer, managed } = await remoteSnapshotFixture()
+    const response = deferred<SessionDetail[]>()
+    vi.spyOn(client, 'listSessions').mockReturnValue(response.promise)
+    const listing = manager.listSessionsWithAuthority()
+    await vi.waitFor(() => expect(client.listSessions).toHaveBeenCalledOnce())
+    manager['clients'].set(computer.id, new RemoteNodeClient(computer))
+    manager['sessionCache'].set(computer.id, [managed(session('fresh', 'New client'))])
+    response.resolve([session('old', 'Old client')])
+
+    const result = await listing
+    expect(result.sessions.map((entry) => entry.id)).toEqual(['fresh'])
+    expect(result.answeredComputerIds).not.toContain(computer.id)
+    manager.stop()
+  })
+
+  it('keeps a live task event newer than a reconnect task read', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept', 'Current')])
+    vi.spyOn(client, 'providers', 'get').mockReturnValue(new FakeSessionService().providers())
+    const response = deferred<BackgroundTaskSnapshot>()
+    vi.spyOn(client, 'listBackgroundTasks').mockReturnValue(response.promise)
+    const sync = manager['resyncRemoteComputer'](computer, client)
+    await vi.waitFor(() => expect(client.listBackgroundTasks).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, {
+      type: 'session.tasks.updated', sessionId: 'kept', ...taskSnapshot(false),
+    })
+    response.resolve(taskSnapshot(true))
+    await sync
+
+    const updates = events.filter((event) => event.type === 'session.tasks.updated')
+    expect(updates).toHaveLength(1)
+    expect(updates[0]).toMatchObject({ runningCount: 0 })
+    manager.stop()
+  })
+
+  it('does not publish tasks from a superseded reconnect', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept', 'Current')])
+    vi.spyOn(client, 'providers', 'get').mockReturnValue(new FakeSessionService().providers())
+    const oldTasks = deferred<BackgroundTaskSnapshot>()
+    vi.spyOn(client, 'listBackgroundTasks')
+      .mockReturnValueOnce(oldTasks.promise)
+      .mockResolvedValueOnce(taskSnapshot(false))
+    const first = manager['resyncRemoteComputer'](computer, client)
+    await vi.waitFor(() => expect(client.listBackgroundTasks).toHaveBeenCalledOnce())
+    await manager['resyncRemoteComputer'](computer, client)
+    oldTasks.resolve(taskSnapshot(true))
+    await first
+
+    const updates = events.filter((event) => event.type === 'session.tasks.updated')
+    expect(updates).toHaveLength(1)
+    expect(updates[0]).toMatchObject({ runningCount: 0 })
+    manager.stop()
+  })
+
+  it('keeps offline fallback non-authoritative after a failed shared read', async () => {
+    const { manager, client, computer, managed } = await remoteSnapshotFixture()
+    const cached = managed(session('kept', 'Last known'))
+    manager['sessionCache'].set(computer.id, [cached])
+    vi.spyOn(client, 'listSessions').mockRejectedValue(new Error('Connection refused'))
+    const result = await manager.listSessionsWithAuthority()
+    expect(result.sessions).toEqual([cached])
+    expect(result.answeredComputerIds).not.toContain(computer.id)
+    manager.stop()
+  })
+
+  it('does not overwrite an explicit task refresh with an older reconnect read', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept', 'Current')])
+    vi.spyOn(client, 'providers', 'get').mockReturnValue(new FakeSessionService().providers())
+    const oldTasks = deferred<BackgroundTaskSnapshot>()
+    vi.spyOn(client, 'listBackgroundTasks')
+      .mockReturnValueOnce(oldTasks.promise)
+      .mockResolvedValueOnce(taskSnapshot(false))
+    const sync = manager['resyncRemoteComputer'](computer, client)
+    await vi.waitFor(() => expect(client.listBackgroundTasks).toHaveBeenCalledOnce())
+    expect(await manager.listBackgroundTasks(computer.id, 'kept'))
+      .toEqual(taskSnapshot(false))
+    oldTasks.resolve(taskSnapshot(true))
+    await sync
+    expect(events.filter((event) => event.type === 'session.tasks.updated'))
+      .toEqual([])
+    manager.stop()
+  })
+
+  it('does not emit tasks for a session removed during the reconnect read', async () => {
+    const { manager, client, computer, events } = await remoteSnapshotFixture()
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept', 'Current')])
+    vi.spyOn(client, 'providers', 'get').mockReturnValue(new FakeSessionService().providers())
+    const oldTasks = deferred<BackgroundTaskSnapshot>()
+    vi.spyOn(client, 'listBackgroundTasks').mockReturnValue(oldTasks.promise)
+    const sync = manager['resyncRemoteComputer'](computer, client)
+    await vi.waitFor(() => expect(client.listBackgroundTasks).toHaveBeenCalledOnce())
+    manager['emitNodeEvent'](computer, { type: 'session.removed', sessionId: 'kept' })
+    oldTasks.resolve(taskSnapshot(true))
+    await sync
+    expect(events.filter((event) => event.type === 'session.tasks.updated'))
+      .toEqual([])
+    manager.stop()
+  })
+})
+
 describe('readiness endpoints by role', () => {
   it('removes sessions deleted while a node was disconnected', async () => {
     const computer = {
@@ -1649,10 +1891,10 @@ describe('readiness endpoints by role', () => {
     manager.on('event', (event) => events.push(event as ServerEvent))
 
     // One of them was deleted before it came back, so it is simply absent.
-    await manager['resyncRemoteComputer'](computer, {
-      listSessions: async () => [session('kept-session', 'Kept')],
-      providers: [],
-    } as never)
+    const client = new RemoteNodeClient(computer)
+    vi.spyOn(client, 'listSessions').mockResolvedValue([session('kept-session', 'Kept')])
+    manager['clients'].set(computer.id, client)
+    await manager['resyncRemoteComputer'](computer, client)
 
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -1717,5 +1959,145 @@ describe('readiness endpoints by role', () => {
     } finally {
       await hub.app.close()
     }
+  })
+})
+
+describe('deployed app version', () => {
+  beforeEach(() => {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+  })
+
+  it('keeps non-static startup independent of build metadata', async () => {
+    const directory = await temporaryDirectory('app-version-development')
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', path.join(directory, 'not-built'))
+    const hub = await buildApp({
+      dataDirectory: directory,
+      logger: false,
+      serveStatic: false,
+      service: new FakeSessionService(),
+    })
+    try {
+      const response = await hub.app.inject('/api/version')
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      expect(response.json()).toEqual({ version: hub.identity.info.version })
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it('does not require a UI build on a node', async () => {
+    const directory = await temporaryDirectory('app-version-node')
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', path.join(directory, 'not-built'))
+    const node = await buildApp({
+      dataDirectory: directory,
+      logger: false,
+      role: 'node',
+      serveStatic: true,
+      service: new FakeSessionService(),
+    })
+    try {
+      expect((await node.app.inject('/health')).statusCode).toBe(200)
+      expect((await node.app.inject('/api/version')).statusCode).toBe(404)
+    } finally {
+      await node.app.close()
+    }
+  })
+
+  it('pins the configured static build and restores its original identity on rollback', async () => {
+    const directory = await temporaryDirectory('app-version-releases')
+    const releaseA = path.join(directory, 'release-a')
+    const releaseB = path.join(directory, 'release-b')
+    const current = path.join(directory, 'current')
+    // The static release's version, not this server source's package, is served.
+    const versionA = { version: '91.0.0', buildId: 'build-a' }
+    const versionB = { version: '91.0.0', buildId: 'build-b' }
+    for (const [release, version] of [[releaseA, versionA], [releaseB, versionB]] as const) {
+      await mkdir(release)
+      await writeFile(path.join(release, 'index.html'), version.buildId)
+      await writeFile(path.join(release, 'build-info.json'), JSON.stringify(version))
+    }
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', current)
+    const apps: Awaited<ReturnType<typeof buildApp>>[] = []
+    const start = async () => {
+      const hub = await buildApp({
+        dataDirectory: path.join(directory, `data-${apps.length}`),
+        logger: false,
+        serveStatic: true,
+        service: new FakeSessionService(),
+      })
+      apps.push(hub)
+      return hub.app
+    }
+    const assertRelease = async (
+      app: Awaited<ReturnType<typeof start>>,
+      version: typeof versionA,
+    ) => {
+      const response = await app.inject('/api/version')
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['cache-control']).toBe('no-store')
+      expect(response.json()).toEqual(version)
+      expect((await app.inject('/')).body).toBe(version.buildId)
+    }
+    try {
+      await symlink(releaseA, current)
+      const appA = await start()
+      await assertRelease(appA, versionA)
+
+      await unlink(current)
+      await symlink(releaseB, current)
+      const appB = await start()
+      await assertRelease(appB, versionB)
+      await assertRelease(appA, versionA)
+
+      await unlink(current)
+      await symlink(releaseA, current)
+      await assertRelease(await start(), versionA)
+      await assertRelease(appB, versionB)
+    } finally {
+      await Promise.all(apps.map(({ app }) => app.close()))
+    }
+  })
+
+  it('loads metadata only at startup, not during version requests', async () => {
+    const directory = await temporaryDirectory('app-version-startup')
+    const version = { version: '91.0.0', buildId: 'immutable-build' }
+    const metadata = path.join(directory, 'build-info.json')
+    await writeFile(metadata, JSON.stringify(version))
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', directory)
+    const hub = await buildApp({
+      dataDirectory: path.join(directory, 'data'),
+      logger: false,
+      serveStatic: true,
+      service: new FakeSessionService(),
+    })
+    try {
+      await unlink(metadata)
+      expect((await hub.app.inject('/api/version')).json()).toEqual(version)
+      expect((await hub.app.inject('/api/version')).json()).toEqual(version)
+    } finally {
+      await hub.app.close()
+    }
+  })
+
+  it.each([
+    undefined,
+    '{',
+    '{}',
+    '{"version":"91.0.0"}',
+    '{"version":"91.0.0","buildId":""}',
+    '{"version":"91.0.0","buildId":"/private/path"}',
+  ])('refuses missing or invalid production metadata: %s', async (metadata) => {
+    const directory = await temporaryDirectory('app-version-invalid')
+    if (metadata !== undefined) {
+      await writeFile(path.join(directory, 'build-info.json'), metadata)
+    }
+    vi.stubEnv('AGENTIC_REMOTE_RELEASE_DIR', directory)
+    await expect(buildApp({
+      dataDirectory: path.join(directory, 'data'),
+      logger: false,
+      serveStatic: true,
+      service: new FakeSessionService(),
+    })).rejects.toThrow()
   })
 })

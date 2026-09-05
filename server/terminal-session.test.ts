@@ -107,6 +107,7 @@ describe('TmuxTerminalSessionController', () => {
     ['current', 0, true],
     ['legacy', 0, false],
     ['clipped', 0, false],
+    ['previous-send-clearing', 0, false],
     ['existing-draft', 0, false],
   ] as const)('handles %s paste rendering after %dms (queue=%s) without duplicate input', async (format, delay, enqueue) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'paste-receipt-test-'))
@@ -150,7 +151,8 @@ process.stdin.on('data', (data) => {
     draw('')
   }
 })
-draw(${JSON.stringify(format === 'existing-draft' ? '[Paste #1 - 32 lines][Paste #2 - 32 lines]' : '')})
+draw(${JSON.stringify(format === 'existing-draft' ? '[Paste #1 - 32 lines][Paste #2 - 32 lines]' : format === 'previous-send-clearing' ? 'Previously submitted prompt' : '')})
+if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => draw(''), 200)
 `)
     const tmuxSession = `agentic-paste-${process.pid}`
     tmuxSessions.push(tmuxSession)

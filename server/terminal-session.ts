@@ -842,7 +842,19 @@ export class TmuxTerminalSessionController
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
-      const paneBeforePaste = await capturePane(target)
+      let paneBeforePaste = await capturePane(target)
+      // The previous submitted/queued prompt may still be awaiting repaint.
+      // Wait briefly without typing, but never overwrite a draft that remains.
+      for (
+        let attempt = 0;
+        attempt < 10 &&
+        composerText(paneBeforePaste) !== undefined &&
+        composerHoldsText(paneBeforePaste);
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        paneBeforePaste = await capturePane(target)
+      }
       if (isTerminalSessionInUsePrompt(paneBeforePaste)) {
         throw Object.assign(
           new Error(
@@ -858,6 +870,14 @@ export class TmuxTerminalSessionController
         throw Object.assign(
           new Error(
             'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      if (isTerminalOverlay(paneBeforePaste)) {
+        throw Object.assign(
+          new Error(
+            'The terminal is showing a full-screen view. Close it there, then send this again.',
           ),
           { statusCode: 409 },
         )

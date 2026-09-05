@@ -89,6 +89,72 @@ authentication to the hub or another node.
 - Repositories, credentials, and provider session databases remain on the
   owning computer's persistent local filesystem; recovery does not use NFS.
 
+### Session-store commit boundary
+
+`SessionStore` prepares mutations against private candidates, writes compact
+JSON to the existing replacement file, and installs the candidate only after
+the atomic rename succeeds. All reads, including backend/dispatch metadata and
+streaming snapshots, use the committed view. A failed write rejects every
+mutation covered by that write without publishing or retaining its candidate.
+Later queued mutations prepare against the last committed view. A callback
+that throws is discarded without changing other mutations in its batch.
+
+Writes queued behind an in-flight write still coalesce. The pending batch is
+closed **before** preparing and serializing its snapshot, so a call received
+during I/O waits for a subsequent write rather than receiving an acknowledgement
+for a snapshot that does not include it. Results are read after installation;
+they may include other mutations committed in the same batch. `flush()` waits
+for outstanding writes and propagates write failure.
+
+Session removal and replacement are separate commit boundaries, both before
+and after the destructive operation. Earlier callers receive their successful
+snapshot while its ID still exists; a later replacement can then inherit those
+committed values without retroactively rejecting the earlier caller. Each
+batch settles only its own mutations. This deliberately adds a boundary for
+destructive operations, not for ordinary metadata, queue, or event bursts.
+
+Synchronous text deltas remain volatile. An in-memory change journal preserves
+their order relative to queued mutations, including a transcript replacement
+that has not started writing yet. Adjacent tokens coalesce; the journal holds
+changes, not history snapshots. Live messages detach from a checkpoint once per
+view, rather than taking a transaction copy or serializing history per token.
+The existing outward snapshot boundary and transcript/event-log caches remain
+independent.
+
+Only deltas, never pending durable mutations, are replayed over a newly
+committed view. Deltas received during I/O remain pending for the next
+checkpoint; after a failed write, its deltas are retained but its durable
+mutations are discarded. Commit revisions account for intervening deltas,
+including when the committed mutation clears their message.
+
+Mutation callbacks must be synchronous and confined to the supplied session;
+they run when their batch starts, not when the API call is admitted. Providers
+must derive state-dependent changes and no-op comparisons from that candidate,
+not from a previously returned snapshot. Runtime-event reduction and transcript
+projections therefore merge the candidate's current runtime, notices, working
+directory, and pending question. `updateIf()` can explicitly decline a change;
+it does not turn a write or validation error into a no-op. Reply completion
+clears only the matching request and preserves another request's waiting state.
+
+An SDK object's registration is not admission of its persisted identity.
+Creation and clear buffer SDK metadata until the identity write succeeds, then
+replay it after publishing the created/replacement session. Failed identity
+writes discard dependent metadata, while genuine SDK creation/configuration
+errors retain their existing reporting and recovery behavior.
+
+Providers await mutations before publishing or acting on their results.
+`readAfterWrites()` queues a read behind admitted changes before runtime,
+dispatch, or lifecycle decisions; a read-only batch does not write or
+checkpoint volatile tokens. Admission markers remain held across that wait.
+It is not a lock: later provider work still requires the existing live checks
+and queue/lifecycle ownership rules. Selecting and removing a queue head uses
+one store transaction. Reorder operations use this same boundary and must not
+add per-operation rollback. External provider delivery is not part of the
+filesystem transaction.
+
+The on-disk version and atomic-rename durability boundary are unchanged; this
+requires no stored-state migration or history rewrite.
+
 ## Pairing flow
 
 1. Install the second computer with `--role node`.

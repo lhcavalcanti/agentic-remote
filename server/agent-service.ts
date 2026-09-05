@@ -1479,6 +1479,7 @@ function permissionTitle(request: PermissionRequest): string {
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly client: CopilotClientLike
   private readonly sessions = new Map<string, CopilotSessionLike>()
+  private readonly pendingSessionMetadata = new Map<string, SessionEvent[]>()
   private readonly hydratedSessions = new Set<string>()
   private readonly loadingSessions = new Map<
     string,
@@ -1939,10 +1940,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async openSession(id: string): Promise<SessionDetail> {
-    const stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    const stored = await this.store.readAfterWrites(id)
     if (this.externalSessionIds.has(id)) {
       return stored
     }
@@ -2017,29 +2015,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.requestUserInput(invocation.sessionId, request),
       onElicitationRequest: (context) => this.requestElicitation(context),
     })
-    this.attachSession(sdkSession)
-    this.sessions.set(sdkSession.sessionId, sdkSession)
-    this.hydratedSessions.add(sdkSession.sessionId)
+    this.pendingSessionMetadata.set(sdkSession.sessionId, [])
+    try {
+      this.attachSession(sdkSession)
+      this.sessions.set(sdkSession.sessionId, sdkSession)
+      this.hydratedSessions.add(sdkSession.sessionId)
 
-    const now = new Date().toISOString()
-    const session = await this.store.create(
-      {
-        id: sdkSession.sessionId,
-        cwd,
-        title: path.basename(cwd) || 'New session',
-        updatedAt: now,
-        status: 'idle',
-        isOpen: true,
-        messages: [],
-        runtime: {
-          allowAllPermissions,
-          ...runtime,
+      const now = new Date().toISOString()
+      const session = await this.store.create(
+        {
+          id: sdkSession.sessionId,
+          cwd,
+          title: path.basename(cwd) || 'New session',
+          updatedAt: now,
+          status: 'idle',
+          isOpen: true,
+          messages: [],
+          runtime: {
+            allowAllPermissions,
+            ...runtime,
+          },
         },
-      },
-      { managedOpen: true, backend: 'sdk' },
-    )
-    this.publish(session)
-    return session
+        { managedOpen: true, backend: 'sdk' },
+      )
+      this.publish(session)
+      this.flushSessionMetadata(sdkSession.sessionId)
+      return session
+    } finally {
+      this.pendingSessionMetadata.delete(sdkSession.sessionId)
+    }
   }
 
   uploadFile(
@@ -2051,14 +2055,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async renameSession(id: string, title: string): Promise<SessionDetail> {
-    const stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    const stored = await this.store.readAfterWrites(id)
     // A suspended session is renamed where it is: the name is ours to keep,
     // and telling a runtime about it would mean starting the one that
     // suspending put down. It is carried over whenever the session next runs.
-    if (!this.store.get(id)?.suspended && !this.suspendingSessions.has(id)) {
+    if (!stored.suspended && !this.suspendingSessions.has(id)) {
       if (this.externalSessionIds.has(id)) {
         await this.terminalController.rename?.(id, title)
       } else {
@@ -2090,10 +2091,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async runtimeOptions(id: string): Promise<RuntimeOptions> {
-    let stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    let stored = await this.store.readAfterWrites(id)
     stored = await this.reconcileRuntimeStatus(stored)
     const options = await this.providerRuntimeOptions('copilot')
     return {
@@ -2107,10 +2105,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     id: string,
     input: ConfigureRuntimeInput,
   ): Promise<SessionDetail> {
-    let stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    let stored = await this.store.readAfterWrites(id)
     stored = await this.reconcileRuntimeStatus(stored)
     if (stored.status === 'running' || stored.status === 'waiting') {
       throw new RuntimeConfigurationError(
@@ -2230,24 +2225,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           event.type === 'abort' ||
           event.type === 'session.shutdown'),
     )
-    if (
-      !latestLifecycle ||
-      Date.parse(latestLifecycle.timestamp) < Date.parse(stored.updatedAt)
-    ) {
+    if (!latestLifecycle) {
       return stored
     }
     const status = statusFromEvents(events)
-    if (status === stored.status || status === 'waiting') {
+    if (status === 'waiting') {
       return stored
     }
-    const reconciled = await this.store.update(stored.id, (session) => {
+    const reconciled = await this.store.updateIf(stored.id, (session) => {
+      if (
+        session.pendingPermission ||
+        session.pendingUserInput ||
+        session.suspended ||
+        status === session.status ||
+        Date.parse(latestLifecycle.timestamp) < Date.parse(session.updatedAt)
+      ) {
+        return false
+      }
       session.status = status
       if (status !== 'running') {
         session.activity = undefined
       }
+      return true
     })
-    this.publish(reconciled)
-    return reconciled
+    if (reconciled) {
+      this.publish(reconciled)
+      return reconciled
+    }
+    return this.store.readAfterWrites(stored.id)
   }
 
   /**
@@ -2282,7 +2287,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // is on its way down.
     this.suspendingSessions.add(id)
     try {
-      return await this.suspendClaimedSession(id, stored)
+      return await this.suspendClaimedSession(id, await this.store.readAfterWrites(id))
     } finally {
       this.suspendingSessions.delete(id)
     }
@@ -2519,10 +2524,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async resumeClaimedSession(id: string): Promise<SessionDetail> {
-    const stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    const stored = await this.store.readAfterWrites(id)
     if (!stored.suspended) {
       return stored
     }
@@ -2602,10 +2604,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async restartSerialized(id: string): Promise<SessionDetail> {
-    const stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    const stored = await this.store.readAfterWrites(id)
     if (stored.suspended || this.suspendingSessions.has(id)) {
       // Restarting would start a runtime while the session still says it has
       // none, and for a terminal session leave a second owner behind it. A
@@ -2655,10 +2654,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async moveToTerminalSerialized(id: string): Promise<SessionDetail> {
-    const stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    const stored = await this.store.readAfterWrites(id)
     if (this.store.backend(id) === 'terminal') {
       return stored
     }
@@ -2737,10 +2733,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async clearSerialized(id: string): Promise<SessionDetail> {
-    const stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    const stored = await this.store.readAfterWrites(id)
     if (stored.suspended || this.suspendingSessions.has(id)) {
       // Clearing builds the replacement a session carries on in, which is a
       // live owner. A later resume would then build a second one beside it.
@@ -2775,6 +2768,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.deletedSessionIds.add(id)
     forgetSessionEvents(id)
     this.discoveryGeneration += 1
+    this.pendingSessionMetadata.set(replacementId, [])
     try {
       if (this.externalSessionIds.has(id)) {
         if (!this.terminalController.reset) {
@@ -2898,8 +2892,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         replacedBy: replacementId,
       })
       this.publish(cleared)
+      this.flushSessionMetadata(replacementId)
       return cleared
     } finally {
+      this.pendingSessionMetadata.delete(replacementId)
       if (this.transcriptInFlight) {
         await this.transcriptInFlight
       }
@@ -3298,6 +3294,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // other with a crash possible in between.
     answers?: string,
   ): Promise<SessionDetail> {
+    await this.store.readAfterWrites(sessionId)
+    if (this.admissionClosed.has(sessionId)) {
+      throw Object.assign(new Error('The session is still resuming'), { statusCode: 409 })
+    }
     const terminalBacked = await this.terminalController.has(sessionId)
     // Detection is awaited, and suspending can finish while it is: the guard
     // above spoke for a session that was still running.
@@ -3755,9 +3755,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return undefined
     }
-    // The store changes memory before it writes, so swallowing a failed write
-    // would report a marker as cleared that is still on disk, and start
-    // draining a queue a restart would find blocked again.
+    // Only a durable acknowledgement can release the queue. Propagate a
+    // rejected transaction rather than reporting the marker as cleared.
     const cleared = await this.store.clearFailedPrompt(sessionId)
     this.publish(cleared)
     // The marker was holding the queue shut. Nothing else will come back to
@@ -4362,11 +4361,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.answeredTerminalPermissions.get(sessionId)?.repliedAt,
         )
       : { status: 'running' as const, activity: 'Continuing' }
-    const updated = await this.store.update(sessionId, (session) => {
-      session.pendingPermission = undefined
-      session.status = continuation.status
-      session.activity = continuation.activity
-    })
+    const updated = await this.store.clearPendingRequest(
+      sessionId, 'pendingPermission', requestId, continuation,
+    )
     this.publish(updated)
     return updated
   }
@@ -4397,11 +4394,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sdkElicitation.resolve({ action })
       }
       this.elicitations.delete(requestId)
-      const updated = await this.store.update(sessionId, (session) => {
-        session.pendingUserInput = undefined
-        session.status = 'running'
-        session.activity = 'Continuing'
-      })
+      const updated = await this.store.clearPendingRequest(
+        sessionId, 'pendingUserInput', requestId, { status: 'running', activity: 'Continuing' },
+      )
       this.publish(updated)
       return updated
     }
@@ -4440,11 +4435,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           requestId,
           expiresAt: Date.now() + 60_000,
         })
-        const cleared = await this.store.update(sessionId, (session) => {
-          session.pendingUserInput = undefined
-          session.status = 'idle'
-          session.activity = undefined
-        })
+        const cleared = await this.store.clearPendingRequest(
+          sessionId, 'pendingUserInput', requestId, { status: 'idle' },
+        )
         this.publish(cleared)
         return cleared
       }
@@ -4495,9 +4488,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // belongs to something else, and filling it would answer the wrong
         // prompt; the reply is dropped and the stale request cleared instead.
         this.answeredPersistedInputs.delete(sessionId)
-        const settled = await this.store.update(sessionId, (session) => {
-          session.pendingUserInput = undefined
-        })
+        const settled = await this.store.clearPendingRequest(
+          sessionId, 'pendingUserInput', requestId,
+        )
         this.publish(settled)
         return settled
       }
@@ -4522,22 +4515,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           !filled &&
           (await this.isToolCallComplete(sessionId, toolCallId))
         ) {
-          const submitted = await this.store.update(sessionId, (session) => {
-            session.pendingUserInput = undefined
-            session.status = 'running'
-            session.activity = 'Continuing'
-          })
+          const submitted = await this.store.clearPendingRequest(
+            sessionId, 'pendingUserInput', requestId, { status: 'running', activity: 'Continuing' },
+          )
           this.publish(submitted)
           return submitted
         }
         if (filled) {
-          const answeredSession = await this.store.update(
+          const answeredSession = await this.store.clearPendingRequest(
             sessionId,
-            (session) => {
-              session.pendingUserInput = undefined
-              session.status = 'running'
-              session.activity = 'Continuing'
-            },
+            'pendingUserInput',
+            requestId,
+            { status: 'running', activity: 'Continuing' },
           )
           this.publish(answeredSession)
           return answeredSession
@@ -4570,11 +4559,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           )
         }
       }
-      const cleared = await this.store.update(sessionId, (session) => {
-        session.pendingUserInput = undefined
-        session.status = 'idle'
-        session.activity = undefined
-      })
+      const cleared = await this.store.clearPendingRequest(
+        sessionId, 'pendingUserInput', requestId, { status: 'idle' },
+      )
       this.publish(cleared)
       return this.sendMessage(
         sessionId,
@@ -4618,11 +4605,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.answeredTerminalInputs.get(sessionId)?.repliedAt,
         )
       : { status: 'running' as const, activity: 'Continuing' }
-    const updated = await this.store.update(sessionId, (session) => {
-      session.pendingUserInput = undefined
-      session.status = continuation.status
-      session.activity = continuation.activity
-    })
+    const updated = await this.store.clearPendingRequest(
+      sessionId, 'pendingUserInput', requestId, continuation,
+    )
     this.publish(updated)
     return updated
   }
@@ -4932,19 +4917,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           await this.recoverHiddenUserInput(sessionId, events)
           return
         }
-        const stored = this.store.get(sessionId)
-        const storedUserInput =
-          !this.externalSessionIds.has(sessionId) ||
-          stored?.pendingUserInput?.requestId.startsWith('terminal:')
-            ? stored?.pendingUserInput
-            : undefined
-        const syncedUserInput =
-          storedUserInput || pendingUserInputFromEvents(events) || null
-        const messages = [
-          ...messagesFromHistory(events),
-          ...(stored?.messages.filter((message) => message.role === 'notice') ||
-            []),
-        ].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        const historyMessages = messagesFromHistory(events)
+        const eventUserInput = pendingUserInputFromEvents(events)
+        const external = this.externalSessionIds.has(sessionId)
         const watermark = this.liveTranscriptWatermarks.get(sessionId)
         const lastEventTimestamp = events.at(-1)?.timestamp
         if (
@@ -4956,9 +4931,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           await this.recoverHiddenUserInput(sessionId, events)
           return
         }
-        let status = syncedUserInput
-          ? 'waiting'
-          : statusFromEvents(events)
+        let status = statusFromEvents(events)
         const queueDispatchAt = this.store.queueDispatchAt(sessionId)
         if (queueDispatchAt) {
           const dispatchTime = Date.parse(queueDispatchAt)
@@ -4973,19 +4946,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             status = 'running'
           }
         }
-        const activity = messages
+        const activity = historyMessages
           .findLast(
             (message) =>
               message.role === 'activity' &&
               message.activityStatus === 'running',
           )
           ?.content.split('\n', 1)[0]
-        const runtime = runtimeInfoFromEvents(
-          events,
-          stored?.runtime,
-          this.modelPromptLimits,
-        )
-        const cwd = workingDirectoryFromEvents(events, stored?.cwd)
         const contextCwd = events.some(
           (event) =>
             event.type === 'session.context_changed' &&
@@ -5000,13 +4967,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         const updated = await this.store.replaceTranscript(
           sessionId,
-          messages,
+          (session) => [
+            ...historyMessages,
+            ...session.messages.filter((message) => message.role === 'notice'),
+          ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
           status,
           activity,
-          runtime,
-          cwd,
+          (session) => runtimeInfoFromEvents(events, session.runtime, this.modelPromptLimits),
+          (session) => workingDirectoryFromEvents(events, session.cwd),
           contextCwd,
-          syncedUserInput,
+          (session) => {
+            const storedUserInput =
+              !external || session.pendingUserInput?.requestId.startsWith('terminal:')
+                ? session.pendingUserInput
+                : undefined
+            return storedUserInput || eventUserInput || null
+          },
           queueDispatchAt,
         )
         this.eventLogFingerprints.set(sessionId, fingerprint)
@@ -5049,13 +5025,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         continue
       }
       this.terminalUpdateChecks.delete(sessionId)
-      if (this.store.get(sessionId)?.runtime?.updateAvailable === undefined) {
+      if (!this.store.get(sessionId)) {
         continue
       }
-      const updated = await this.store.update(sessionId, (session) => {
+      const updated = await this.store.updateIf(sessionId, (session) => {
+        if (session.runtime?.updateAvailable === undefined) {
+          return false
+        }
         session.runtime = { ...session.runtime, updateAvailable: undefined }
+        return true
       })
-      this.publish(updated)
+      if (updated) this.publish(updated)
     }
   }
 
@@ -5081,13 +5061,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const updateAvailable = await this.terminalController
       .updateNotice(sessionId)
       .catch(() => undefined)
-    if ((stored.runtime?.updateAvailable ?? undefined) === updateAvailable) {
-      return
+    try {
+      const updated = await this.store.updateIf(sessionId, (session) => {
+        if (session.runtime?.updateAvailable === updateAvailable) {
+          return false
+        }
+        session.runtime = { ...session.runtime, updateAvailable }
+        return true
+      })
+      if (updated) this.publish(updated)
+    } catch (error) {
+      if (this.terminalUpdateChecks.get(sessionId) === now) {
+        this.terminalUpdateChecks.delete(sessionId)
+      }
+      throw error
     }
-    const updated = await this.store.update(sessionId, (session) => {
-      session.runtime = { ...session.runtime, updateAvailable }
-    })
-    this.publish(updated)
   }
 
   /**
@@ -5328,19 +5316,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     const metadata = await this.workspaceReader(sessionId)
-    this.workspaceVersions.set(sessionId, version)
     if (!metadata || this.deletedSessionIds.has(sessionId)) {
       return
     }
-    const stored = this.store.get(sessionId)
-    if (
-      !stored ||
-      (metadata.cwd === stored.cwd &&
-        (!metadata.title || metadata.title === stored.title))
-    ) {
+    if (!this.store.get(sessionId)) {
       return
     }
     const updated = await this.store.syncWorkspaceMetadata(sessionId, metadata)
+    this.workspaceVersions.set(sessionId, version)
     this.publish(updated)
     if (metadata.title && this.terminalController.rename) {
       await this.terminalController
@@ -5546,10 +5529,103 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
   }
 
+  private flushSessionMetadata(sessionId: string): void {
+    const events = this.pendingSessionMetadata.get(sessionId)
+    this.pendingSessionMetadata.delete(sessionId)
+    if (!events?.length) {
+      return
+    }
+    const exists = Boolean(this.store.get(sessionId))
+    for (const event of events) {
+      try {
+        this.handleSessionMetadata(sessionId, event, exists)
+      } catch (error) {
+        this.publishError(sessionId, error)
+      }
+    }
+  }
+
+  private handleSessionMetadata(
+    sessionId: string,
+    event: SessionEvent,
+    exists: boolean,
+  ): void {
+    if (
+      this.deletingSessions.has(sessionId) ||
+      (event.type !== 'session.context_changed' &&
+        event.type !== 'session.title_changed' &&
+        !runtimeEventTypes.has(event.type))
+    ) {
+      return
+    }
+    // Registering an SDK object does not admit its store identity. In particular,
+    // clear configures the new runtime before queuing the replacement. Keep only
+    // metadata here until that operation succeeds, without changing RPC ordering
+    // or allowing an optional metadata write to change the lifecycle's outcome.
+    const pending = this.pendingSessionMetadata.get(sessionId)
+    if (pending) {
+      pending.push(event)
+      return
+    }
+    if (!exists) {
+      return
+    }
+
+    if (
+      event.type === 'session.context_changed' &&
+      !eventAgentId(event)
+    ) {
+      const cwd = event.data.cwd?.trim()
+      if (cwd) {
+        void this.store
+          .updateWorkingDirectory(sessionId, cwd, event.timestamp)
+          .then((session) => this.publish(session))
+          .catch((error: unknown) => this.publishError(sessionId, error))
+      }
+      return
+    }
+
+    if (
+      event.type === 'session.title_changed' &&
+      !eventAgentId(event)
+    ) {
+      const title = event.data.title.trim()
+      if (title) {
+        void this.store
+          .updateAutomaticTitle(sessionId, title, event.timestamp)
+          .then((session) => this.publish(session))
+          .catch((error: unknown) => this.publishError(sessionId, error))
+      }
+      return
+    }
+
+    if (runtimeEventTypes.has(event.type)) {
+      void this.store
+        .updateIf(sessionId, (session) => {
+          const runtime = runtimeInfoFromEvents(
+            [event],
+            session.runtime,
+            this.modelPromptLimits,
+            false,
+          )
+          if (!runtime || runtimeInfoMatches(session.runtime, runtime)) {
+            return false
+          }
+          session.runtime = runtime
+          return true
+        })
+        .then((session) => {
+          if (session) this.publish(session)
+        })
+        .catch((error: unknown) => this.publishError(sessionId, error))
+    }
+  }
+
   private handleSessionEvent(sessionId: string, event: SessionEvent): void {
     const activePrompt = this.activePrompts.get(sessionId)
     const stored = this.store.get(sessionId)
     this.rememberLiveActivityEvent(sessionId, event)
+    this.handleSessionMetadata(sessionId, event, Boolean(stored))
 
     if (
       (event.type === 'session.background_tasks_changed' ||
@@ -5562,59 +5638,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       void this.syncBackgroundTasks(sessionId).catch((error: unknown) =>
         this.publishError(sessionId, error),
       )
-    }
-
-    if (
-      event.type === 'session.context_changed' &&
-      !eventAgentId(event) &&
-      stored &&
-      !this.deletingSessions.has(sessionId)
-    ) {
-      const cwd = event.data.cwd?.trim()
-      if (cwd && cwd !== stored.cwd) {
-        void this.store
-          .updateWorkingDirectory(sessionId, cwd, event.timestamp)
-          .then((session) => this.publish(session))
-          .catch((error: unknown) => this.publishError(sessionId, error))
-      }
-      return
-    }
-
-    if (
-      event.type === 'session.title_changed' &&
-      !eventAgentId(event) &&
-      stored &&
-      !this.deletingSessions.has(sessionId)
-    ) {
-      const title = event.data.title.trim()
-      if (title && title !== stored.title) {
-        void this.store
-          .updateAutomaticTitle(sessionId, title, event.timestamp)
-          .then((session) => this.publish(session))
-          .catch((error: unknown) => this.publishError(sessionId, error))
-      }
-      return
-    }
-
-    if (
-      runtimeEventTypes.has(event.type) &&
-      stored &&
-      !this.deletingSessions.has(sessionId)
-    ) {
-      const runtime = runtimeInfoFromEvents(
-        [event],
-        stored.runtime,
-        this.modelPromptLimits,
-        false,
-      )
-      if (runtime && !runtimeInfoMatches(stored.runtime, runtime)) {
-        void this.store
-          .update(sessionId, (session) => {
-            session.runtime = runtime
-          })
-          .then((session) => this.publish(session))
-          .catch((error: unknown) => this.publishError(sessionId, error))
-      }
     }
 
     if (

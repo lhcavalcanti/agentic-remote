@@ -490,14 +490,7 @@ export class SessionStore {
     sessionId: string,
     order: string[],
   ): Promise<SessionDetail> {
-    // What the queue was, in case writing the new order down fails. Left
-    // rearranged in memory after a failed write, the drain would send in an
-    // order the caller was told had been refused -- and a restart, reading
-    // what is actually on disk, would use another one again.
-    const before = this.state.sessions[sessionId]?.queuedPrompts
-    const beforeRevision = this.state.sessions[sessionId]?.revision
-    try {
-      return await this.mutate(sessionId, (stored) => {
+    return this.mutate(sessionId, (stored) => {
       const queue = stored.queuedPrompts || []
       if (order.length !== queue.length) {
         throw Object.assign(
@@ -524,53 +517,8 @@ export class SessionStore {
         byId.delete(id)
         next.push(prompt)
       }
-        stored.queuedPrompts = next
-      })
-    } catch (error) {
-      const undo = () => {
-        const current = this.state.sessions[sessionId]
-        if (!current || !before) {
-          return
-        }
-        // Whether this reorder's own arrangement is still the one installed,
-        // judged on the queue itself rather than on the revision: an unrelated
-        // in-memory change can move the revision on while leaving the refused
-        // order exactly where it is.
-        const installed =
-          current.queuedPrompts?.length === order.length &&
-          current.queuedPrompts.every(
-            (prompt, index) => prompt.id === order[index],
-          )
-        if (!installed) {
-          return
-        }
-        current.queuedPrompts = before
-        current.queuedCount = before.length
-        // Only if nothing else has written since; otherwise this would take
-        // somebody else's revision backwards.
-        if (
-          beforeRevision !== undefined &&
-          current.revision === beforeRevision + 1
-        ) {
-          current.revision = beforeRevision
-        }
-      }
-      // Put in the write queue rather than run here. `persist` collapses
-      // writes and takes its snapshot when the write starts, so a mutation
-      // queued behind this one would otherwise serialise the refused order to
-      // disk before it had been undone -- and a restart would come back to an
-      // order the caller was told was refused.
-      const settled = this.writeQueue.then(undo, undo)
-      this.writeQueue = settled.catch(() => undefined)
-      await settled
-      // And written down. Undoing it in memory alone left the refused order on
-      // disk if a write queued behind this one had already taken its snapshot,
-      // so a restart came back to exactly the arrangement the caller was told
-      // had failed. A failure here is not reported over the original one:
-      // memory and the caller already agree, and the next write settles disk.
-      await this.persist().catch(() => undefined)
-      throw error
-    }
+      stored.queuedPrompts = next
+    })
   }
 
   /**

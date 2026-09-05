@@ -42,6 +42,7 @@ export default function ReaderWorkspace({
     pointerId: number
     startX: number
     startWidth: number
+    preferredWidth: number | undefined
     width: number
   } | undefined>(undefined)
 
@@ -63,8 +64,12 @@ export default function ReaderWorkspace({
     if (!gesture) return
     gestureRef.current = undefined
     setResizing(false)
-    setPreferredWidth(gesture.width)
-    storeWidth(gesture.width)
+    if (gesture.width !== gesture.startWidth) {
+      setPreferredWidth(gesture.width)
+      storeWidth(gesture.width)
+    } else {
+      setPreferredWidth(gesture.preferredWidth)
+    }
     if (gesture.target.hasPointerCapture?.(gesture.pointerId)) {
       gesture.target.releasePointerCapture?.(gesture.pointerId)
     }
@@ -89,6 +94,7 @@ export default function ReaderWorkspace({
 
   function commitWidth(next: number | undefined) {
     const value = next === undefined ? undefined : clamp(next)
+    if (next !== undefined && value === width) return
     setPreferredWidth(value)
     storeWidth(value)
   }
@@ -101,6 +107,7 @@ export default function ReaderWorkspace({
       pointerId: event.pointerId,
       startX: event.clientX,
       startWidth: width,
+      preferredWidth,
       width,
     }
     event.currentTarget.setPointerCapture?.(event.pointerId)

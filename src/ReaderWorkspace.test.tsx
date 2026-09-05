@@ -83,6 +83,65 @@ describe('reader resizing', () => {
     expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
   })
 
+  it.each(['pointerup', 'pointercancel', 'lostpointercapture'])(
+    'keeps the responsive default after %s without an effective resize',
+    (ending) => {
+      render(workspace())
+      const resizer = handle()
+      const capture = mockCapture(resizer)
+      act(() => {
+        pointer(resizer, 'pointerdown', 800)
+        pointer(resizer, ending, 800)
+      })
+      expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
+      expect(capture.release).toHaveBeenCalledWith(1)
+      expect(resizer).toHaveAttribute('data-resizing', 'false')
+      workspaceWidth = 1500
+      act(() => notifyResize())
+      expect(resizer).toHaveAttribute('aria-valuenow', '510')
+    },
+  )
+
+  it('restores responsive mode after dragging away and back to the original width', () => {
+    render(workspace())
+    const resizer = handle()
+    act(() => {
+      pointer(resizer, 'pointerdown', 800)
+      pointer(resizer, 'pointermove', 700)
+      pointer(resizer, 'pointerup', 800)
+    })
+    expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
+    workspaceWidth = 1500
+    act(() => notifyResize())
+    expect(resizer).toHaveAttribute('aria-valuenow', '510')
+  })
+
+  it('retains a larger saved preference after a click while the viewport clamps it', () => {
+    localStorage.setItem(WIDTH_KEY, '800')
+    workspaceWidth = 900
+    render(workspace())
+    const resizer = handle()
+    expect(resizer).toHaveAttribute('aria-valuenow', '540')
+    act(() => {
+      pointer(resizer, 'pointerdown', 800)
+      pointer(resizer, 'pointerup', 800)
+    })
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('800')
+    workspaceWidth = 1400
+    act(() => notifyResize())
+    expect(resizer).toHaveAttribute('aria-valuenow', '800')
+  })
+
+  it('does not freeze the responsive default for a keyboard step blocked by a limit', () => {
+    workspaceWidth = 800
+    render(workspace())
+    fireEvent.keyDown(handle(), { key: 'ArrowRight' })
+    expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
+    workspaceWidth = 1200
+    act(() => notifyResize())
+    expect(handle()).toHaveAttribute('aria-valuenow', '408')
+  })
+
   it('captures a leftward drag and persists its final position even with batched events', () => {
     const rendered = render(workspace())
     const resizer = handle()

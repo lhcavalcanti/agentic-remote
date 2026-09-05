@@ -377,12 +377,25 @@ type CollapsedPaste = {
   start: number
 }
 
-type ComposerDraft = {
+type ComposerContent = {
   text: string
   pastes: CollapsedPaste[]
 }
 
+type ComposerSubmission = ComposerContent & {
+  id: string
+  acknowledgesFailure?: string
+}
+
+type ComposerDraft = ComposerContent & {
+  pendingSubmission?: ComposerSubmission
+  deliveryUncertain?: boolean
+}
+
 type ComposerDrafts = Record<string, ComposerDraft>
+type ComposerPersistenceResult =
+  | { ok: true }
+  | { ok: false; error: string }
 
 const collapsedPasteLineThreshold = 20
 const composerDraftsStorageKey = 'agentic-remote:composer-drafts-v2'
@@ -439,6 +452,86 @@ function validComposerPastes(
   )
 }
 
+function prependComposerContent(
+  submitted: ComposerContent,
+  existing: ComposerContent,
+): ComposerContent {
+  const submittedKeys = new Set(submitted.pastes.map((paste) => paste.key))
+  const retained = existing.pastes.filter(
+    (paste) => !submittedKeys.has(paste.key),
+  )
+  const usedIds = new Set(retained.map((paste) => paste.id))
+  let nextId = Math.max(0, ...usedIds)
+  let cursor = 0
+  let text = ''
+  const pastes: CollapsedPaste[] = []
+  for (const paste of [...submitted.pastes].sort(
+    (left, right) => left.start - right.start,
+  )) {
+    const oldLabel = collapsedPasteLabel(paste)
+    if (
+      paste.start < cursor ||
+      submitted.text.slice(paste.start, paste.start + oldLabel.length) !== oldLabel
+    ) {
+      continue
+    }
+    text += submitted.text.slice(cursor, paste.start)
+    let id = paste.id
+    if (usedIds.has(id)) {
+      do {
+        nextId += 1
+      } while (usedIds.has(nextId))
+      id = nextId
+    } else {
+      nextId = Math.max(nextId, id)
+    }
+    usedIds.add(id)
+    const restored = { ...paste, id, start: text.length }
+    text += collapsedPasteLabel(restored)
+    pastes.push(restored)
+    cursor = paste.start + oldLabel.length
+  }
+  text += submitted.text.slice(cursor)
+  const separator = text && existing.text
+    ? text.endsWith('\n') ? '\n' : '\n\n'
+    : ''
+  const shift = text.length + separator.length
+  return {
+    text: `${text}${separator}${existing.text}`,
+    pastes: [
+      ...pastes,
+      ...retained.map((paste) => ({ ...paste, start: paste.start + shift })),
+    ],
+  }
+}
+
+function recoverPendingComposerDraft(draft: ComposerDraft): ComposerDraft {
+  const { pendingSubmission, ...remaining } = draft
+  return pendingSubmission
+    ? {
+        ...remaining,
+        ...prependComposerContent(pendingSubmission, remaining),
+        deliveryUncertain: true,
+      }
+    : draft
+}
+
+function writeComposerContent(
+  drafts: ComposerDrafts,
+  key: string,
+  content: ComposerContent,
+): ComposerDrafts {
+  const draft = { ...drafts[key], ...content }
+  if (!draft.text) {
+    delete draft.deliveryUncertain
+    if (!draft.pendingSubmission) {
+      const { [key]: _removed, ...remaining } = drafts
+      return remaining
+    }
+  }
+  return { ...drafts, [key]: draft }
+}
+
 function readComposerDrafts(): ComposerDrafts {
   const stored = readStoredOrder<unknown>(composerDraftsStorageKey, {})
   if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
@@ -454,12 +547,34 @@ function readComposerDrafts(): ComposerDrafts {
     ) {
       continue
     }
-    const text = (value as ComposerDraft).text
-    if (text) {
-      result[key] = {
-        text,
-        pastes: validComposerPastes(text, (value as ComposerDraft).pastes),
+    const candidate = value as ComposerDraft
+    const draft: ComposerDraft = {
+      text: candidate.text,
+      pastes: validComposerPastes(candidate.text, candidate.pastes),
+    }
+    if (candidate.deliveryUncertain === true) {
+      draft.deliveryUncertain = true
+    }
+    const pending = candidate.pendingSubmission
+    if (
+      pending &&
+      typeof pending === 'object' &&
+      typeof pending.id === 'string' &&
+      typeof pending.text === 'string' &&
+      pending.text
+    ) {
+      draft.pendingSubmission = {
+        id: pending.id,
+        text: pending.text,
+        pastes: validComposerPastes(pending.text, pending.pastes),
+        ...(typeof pending.acknowledgesFailure === 'string'
+          ? { acknowledgesFailure: pending.acknowledgesFailure }
+          : {}),
       }
+    }
+    const recovered = recoverPendingComposerDraft(draft)
+    if (recovered.text) {
+      result[key] = recovered
     }
   }
   const legacy = readLegacyComposerDrafts()
@@ -6305,6 +6420,9 @@ function App() {
   const [selectedKey, setSelectedKey] = useState<string>()
   const [composerDrafts, setComposerDrafts] =
     useState<ComposerDrafts>(readComposerDrafts)
+  const [composerStorageError, setComposerStorageError] = useState<string>()
+  const composerDraftsRef = useRef(composerDrafts)
+  const composerMounted = useRef(true)
   const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const composerEditRef = useRef<
     | {
@@ -6415,6 +6533,7 @@ function App() {
   const restoredDraftContents = useRef<Record<string, string>>(
     readStoredOrder('agentic-remote:composer-draft-recovered', {}),
   )
+  const composerRecoveryStorageDirty = useRef(false)
   // The history listener is bound once, so it reads the resolver through a ref
   // rather than closing over the first one.
   const followReplacementsRef = useRef<(key: string) => string>((key) => key)
@@ -7911,35 +8030,89 @@ function App() {
     }
   }, [accentTheme])
 
-  useEffect(() => {
-    localStorage.setItem(composerDraftsGenerationKey, '1')
-    localStorage.setItem(
-      composerDraftsStorageKey,
-      JSON.stringify(composerDrafts),
-    )
-    localStorage.setItem(
-      'agentic-remote:composer-drafts',
-      JSON.stringify(
-        Object.fromEntries(
-          // Written out in full. This is what an older build reads, and it
-          // knows nothing of placeholders -- given the display text it would
-          // show the labels as though the reader had typed them, and the
-          // pasted text would be gone.
-          Object.entries(composerDrafts).map(([key, draft]) => [
-            key,
-            expandComposerPastes(draft.text, draft.pastes),
-          ]),
+  function durableComposerDraft(key: string, draft: ComposerDraft): ComposerDraft {
+    const history = composerHistoryRef.current[key]
+    return history
+      ? { ...draft, text: history.draft, pastes: history.draftPastes }
+      : draft
+  }
+
+  function persistComposerDrafts(drafts: ComposerDrafts): ComposerPersistenceResult {
+    try {
+      if (composerRecoveryStorageDirty.current) {
+        localStorage.setItem(
+          'agentic-remote:composer-draft-failures',
+          JSON.stringify(restoredDraftStamps.current),
+        )
+        localStorage.setItem(
+          'agentic-remote:composer-draft-recovered',
+          JSON.stringify(restoredDraftContents.current),
+        )
+        composerRecoveryStorageDirty.current = false
+      }
+      const durable = Object.fromEntries(
+        Object.entries(drafts).map(([key, draft]) => [
+          key,
+          durableComposerDraft(key, draft),
+        ]),
+      )
+      localStorage.setItem(composerDraftsGenerationKey, '1')
+      localStorage.setItem(
+        composerDraftsStorageKey,
+        JSON.stringify(durable),
+      )
+      localStorage.setItem(
+        'agentic-remote:composer-drafts',
+        JSON.stringify(
+          Object.fromEntries(
+            // Older builds need the expanded text, not just paste labels.
+            Object.entries(durable).map(([key, draft]) => {
+              const recoverable = recoverPendingComposerDraft(draft)
+              return [key, expandComposerPastes(recoverable.text, recoverable.pastes)]
+            }),
+          ),
         ),
-      ),
-    )
-    // Only once nothing is still waiting to be migrated. A legacy draft whose
-    // label appears twice cannot be matched to its payload, so its metadata is
-    // held back -- and removing the payload key then destroyed the only copy
-    // of the pasted text.
-    if (!unmigratedComposerPastes.current) {
-      localStorage.removeItem('agentic-remote:composer-pastes')
+      )
+      // Remove legacy payloads only after all three compatibility writes
+      // succeed and none of the old payloads is still awaiting migration.
+      if (!unmigratedComposerPastes.current) {
+        localStorage.removeItem('agentic-remote:composer-pastes')
+      }
+      return { ok: true }
+    } catch (caught) {
+      return {
+        ok: false,
+        error: caught instanceof Error
+          ? `${caught.name}: ${caught.message}`
+          : String(caught),
+      }
     }
-  }, [composerDrafts])
+  }
+
+  function reportComposerStorageFailure(
+    error: string,
+    admissionBlocked = false,
+    originalRestored = false,
+  ) {
+    setComposerStorageError(
+      `${admissionBlocked ? 'Message was not sent. ' : ''}` +
+      `Draft changes could not be saved (${error}). ` +
+      (originalRestored
+        ? 'Your original draft is still editable. Retry sending when storage is available.'
+        : 'Your text is still editable. Keep this page open and copy it before reloading; the saved copy may be out of date.'),
+    )
+  }
+
+  useEffect(() => {
+    composerMounted.current = true
+    const persisted = persistComposerDrafts(composerDraftsRef.current)
+    if (persisted.ok) {
+      setComposerStorageError(undefined)
+    } else {
+      reportComposerStorageFailure(persisted.error)
+    }
+    return () => { composerMounted.current = false }
+  }, [])
 
   useEffect(() => {
     const handleUpdate = (event: Event) => {
@@ -8592,7 +8765,7 @@ function App() {
             // A clear issued here has not returned its replacement yet. A node
             // on an older build sends no link, so everything this session
             // carries is held until the response names the replacement.
-            setComposerDrafts((current) => {
+            updateComposerDrafts([removedKey], (current) => {
               const { [removedKey]: _removed, ...remaining } = current
               return remaining
             })
@@ -8682,7 +8855,11 @@ function App() {
               ),
             ),
           )
-          setComposerDrafts((current) =>
+          updateComposerDrafts(
+            Object.keys(composerDraftsRef.current).filter(
+              (key) => key.startsWith(`${event.computerId}:`),
+            ),
+            (current) =>
             Object.fromEntries(
               Object.entries(current).filter(
                 ([key]) => !key.startsWith(`${event.computerId}:`),
@@ -8835,13 +9012,9 @@ function App() {
       return
     }
     const targetKey = followReplacementsRef.current(selectedKey)
-    updateComposerDrafts([targetKey], (current) => {
-      if (!value) {
-        const { [targetKey]: _removed, ...remaining } = current
-        return remaining
-      }
-      return { ...current, [targetKey]: { text: value, pastes: [] } }
-    })
+    updateComposerDrafts([targetKey], (current) =>
+      writeComposerContent(current, targetKey, { text: value, pastes: [] }),
+    )
   }
 
   function setComposer(value: string) {
@@ -8851,21 +9024,10 @@ function App() {
     const targetKey = followReplacementsRef.current(selectedKey)
     updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || { text: '', pastes: [] }
-      if (!value) {
-        const { [targetKey]: _removed, ...remaining } = current
-        return remaining
-      }
-      return {
-        ...current,
-        [targetKey]: {
-          text: value,
-          pastes: reconcileComposerPastes(
-            existing.text,
-            value,
-            existing.pastes,
-          ),
-        },
-      }
+      return writeComposerContent(current, targetKey, {
+        text: value,
+        pastes: reconcileComposerPastes(existing.text, value, existing.pastes),
+      })
     })
   }
 
@@ -8903,8 +9065,7 @@ function App() {
     updateComposerDrafts([targetKey], (current) => {
       const existing = current[targetKey] || { text: '', pastes: [] }
       if (!value) {
-        const { [targetKey]: _removed, ...remaining } = current
-        return remaining
+        return writeComposerContent(current, targetKey, { text: '', pastes: [] })
       }
       let pastes: CollapsedPaste[] | undefined
       if (edit?.key === targetKey && edit.before === existing.text) {
@@ -8933,50 +9094,24 @@ function App() {
           )
         }
       }
-      return {
-        ...current,
-        [targetKey]: {
-          text: value,
-          pastes:
-            pastes ??
-            reconcileComposerPastes(existing.text, value, existing.pastes),
-        },
-      }
+      return writeComposerContent(current, targetKey, {
+        text: value,
+        pastes:
+          pastes ??
+          reconcileComposerPastes(existing.text, value, existing.pastes),
+      })
     })
   }
 
-  // Every composer write goes through here so none can skip invalidation. Any
-  // write other than history navigation replaces the draft that navigation is
-  // tracking, so navigating afterwards would overwrite text the user never
-  // typed here and could not recover. Editing a queued prompt, dictation,
-  // uploads, and path insertion all reach the composer by different routes.
-  /**
-   * Puts a prompt the queue could not deliver back in the composer.
-   *
-   * Written through the same path as every other composer write, so history
-   * navigation is invalidated with it: left tracking the empty draft it had
-   * before, an ArrowUp and ArrowDown afterwards would replace the recovered
-   * text with that empty draft, losing the only copy there is.
-   */
-  /**
-   * Puts a failure back on offer after the composer was emptied without it
-   * having been sent anywhere.
-   *
-   * The browser-only commands answer in the page and never reach the server,
-   * so the marker is still waiting and the text has just been cleared from
-   * under it. Forgetting it was handled lets the next pass hand it back.
-   */
   function failureStampFor(key: string): string | undefined {
-    const current = selectedRef.current
-    return current && sessionKey(current) === key
-      ? current.failedPrompt?.failedAt || current.failedPrompt?.content
-      : undefined
+    const current = sessionsRef.current.find((session) => sessionKey(session) === key)
+    return current?.failedPrompt?.failedAt || current?.failedPrompt?.content
   }
 
   function reofferFailedPrompt(key: string) {
-    const current = selectedRef.current
-    const failed =
-      current && sessionKey(current) === key ? current.failedPrompt : undefined
+    const failed = sessionsRef.current.find(
+      (session) => sessionKey(session) === key,
+    )?.failedPrompt
     if (!failed?.content) {
       return
     }
@@ -8988,56 +9123,73 @@ function App() {
     restoreFailedPrompt(key, failed.content, failed.failedAt)
   }
 
-  function restoreFailedPrompt(key: string, content: string, failedAt?: string) {
+  function restoreFailedPrompt(rawKey: string, content: string, failedAt?: string) {
+    const key = followReplacementsRef.current(rawKey)
+    if (removedSessions.current.has(key)) {
+      return
+    }
     const stamp = failedAt || content
     if (handledFailures.current.get(key) === stamp) {
       return
     }
-    // Sending empties the composer before the request is answered, so an
-    // empty composer during one is no evidence that nothing newer was
-    // written. The server clears the marker when that send is accepted, which
-    // is what settles the question; nothing here compares the two clocks.
-    if (submissionsInFlight.current.has(key)) {
+    // An empty editor while a submission is pending is not a free draft.
+    // Only the response to that request can release its ownership.
+    if (
+      submissionsInFlight.current.has(key) ||
+      composerDraftsRef.current[key]?.pendingSubmission
+    ) {
       // Kept rather than dropped: if that submission then fails, nothing else
       // comes back to this, and the text would stay invisible while its
       // marker holds the queue.
       unshownFailures.current.set(key, { content, stamp })
       return
     }
-    updateComposerDrafts([key], (current) => {
-      if (restoredDraftStamps.current[key] === stamp) {
-        // This failure's own text was put in the composer, and recorded as
-        // such when it was. The words are deliberately not compared: a reader
-        // who edits what they were handed is still answering this failure, and
-        // requiring them to match meant an edited draft no longer acknowledged
-        // it -- the prompt came back and went on holding the queue.
-        //
-        // Matching on the words alone was the opposite mistake: newer writing
-        // that happened to be identical took this failure's token.
-        handledFailures.current.set(key, stamp)
-        unshownFailures.current.delete(key)
-        restoredFailures.current.set(key, stamp)
-        // Unless the composer is empty. A recovery edited into a command that
-        // this app answers by itself is cleared without anything being sent,
-        // and leaving the record in place meant the text was never offered
-        // again -- invisible, with the marker still holding the queue.
-        return current[key]?.text
-          ? current
-          : { ...current, [key]: { text: content, pastes: [] } }
-      }
-      if (current[key]?.text) {
-        // Something newer is already there, so this has not been given back
-        // to anyone. Remembered rather than dropped: the composer can empty
-        // again, and until then the marker on the server holds the queue.
-        unshownFailures.current.set(key, { content, stamp })
-        return current
-      }
+    const existing = composerDraftsRef.current[key]
+    const draft = existing ? durableComposerDraft(key, existing) : undefined
+    if (restoredDraftStamps.current[key] === stamp) {
+      // Provenance, rather than matching words, keeps an edited recovery
+      // answering its failure without claiming unrelated newer writing.
       handledFailures.current.set(key, stamp)
       unshownFailures.current.delete(key)
       restoredFailures.current.set(key, stamp)
-      rememberRestoredDraft(key, stamp, content)
-      return { ...current, [key]: { text: content, pastes: [] } }
-    })
+      // A browser-only command can empty a recovery without answering it.
+      if (!draft?.text) {
+        updateComposerDrafts([key], (current) =>
+          writeComposerContent(current, key, { text: content, pastes: [] }),
+        )
+      }
+      return
+    }
+    if (draft?.text) {
+      // Merely observing a failure must not turn a history preview into the
+      // user's draft by invalidating the unsent text behind it.
+      unshownFailures.current.set(key, { content, stamp })
+      return
+    }
+    handledFailures.current.set(key, stamp)
+    unshownFailures.current.delete(key)
+    restoredFailures.current.set(key, stamp)
+    rememberRestoredDraft(key, stamp, content)
+    updateComposerDrafts([key], (current) =>
+      writeComposerContent(current, key, { text: content, pastes: [] }),
+    )
+  }
+
+  function removeUntouchedRecovery(key: string, handed: string) {
+    const existing = composerDraftsRef.current[key]
+    if (!existing) {
+      return
+    }
+    const draft = durableComposerDraft(key, existing)
+    // A missing failure marker does not acknowledge an HTTP submission.
+    // Neither its restored text nor writing begun while it was in flight is
+    // owned by the old failure, even when the words happen to be identical.
+    if (draft.pendingSubmission || draft.deliveryUncertain || draft.text !== handed) {
+      return
+    }
+    updateComposerDrafts([key], (current) =>
+      writeComposerContent(current, key, { text: '', pastes: [] }),
+    )
   }
 
   // A browser that was not listening when the send failed learns about it from
@@ -9057,13 +9209,7 @@ function App() {
         if (held !== undefined && held !== stamp) {
           const handed = restoredDraftContents.current[key]
           if (handed !== undefined) {
-            updateComposerDrafts([], (current) =>
-              current[key]?.text === handed
-                ? Object.fromEntries(
-                    Object.entries(current).filter(([entry]) => entry !== key),
-                  )
-                : current,
-            )
+            removeUntouchedRecovery(key, handed)
           }
           forgetRestoredDraft(key)
           handledFailures.current.delete(key)
@@ -9098,18 +9244,9 @@ function App() {
       // the text that was handed over. Left on screen it reads as something
       // waiting to be sent, and sending it delivers the prompt a second time.
       // Anything the reader has written since is theirs and stays.
-      // Read now, not inside the updater: React runs that later, by which
-      // time the records below have already been cleared and the draft would
-      // be left on screen for good.
       const handed = restoredDraftContents.current[key]
       if (handed !== undefined) {
-        updateComposerDrafts([], (current) => {
-          if (current[key]?.text !== handed) {
-            return current
-          }
-          const { [key]: _removed, ...remaining } = current
-          return remaining
-        })
+        removeUntouchedRecovery(key, handed)
       }
       handledFailures.current.delete(key)
       restoredFailures.current.delete(key)
@@ -9123,7 +9260,8 @@ function App() {
   // went on holding the queue.
   useEffect(() => {
     for (const [key, pending] of unshownFailures.current) {
-      if (composerDrafts[key]?.text) {
+      const draft = composerDrafts[key]
+      if (draft && (draft.pendingSubmission || durableComposerDraft(key, draft).text)) {
         continue
       }
       handledFailures.current.delete(key)
@@ -9140,14 +9278,7 @@ function App() {
       ...restoredDraftContents.current,
       [key]: content,
     }
-    localStorage.setItem(
-      'agentic-remote:composer-draft-failures',
-      JSON.stringify(restoredDraftStamps.current),
-    )
-    localStorage.setItem(
-      'agentic-remote:composer-draft-recovered',
-      JSON.stringify(restoredDraftContents.current),
-    )
+    persistComposerRecoveryIdentity()
   }
 
   function forgetRestoredDraft(key: string) {
@@ -9159,38 +9290,48 @@ function App() {
       restoredDraftContents.current
     restoredDraftStamps.current = remainingStamps
     restoredDraftContents.current = remainingContents
-    localStorage.setItem(
-      'agentic-remote:composer-draft-failures',
-      JSON.stringify(remainingStamps),
-    )
-    localStorage.setItem(
-      'agentic-remote:composer-draft-recovered',
-      JSON.stringify(remainingContents),
-    )
+    persistComposerRecoveryIdentity()
+  }
+
+  function persistComposerRecoveryIdentity() {
+    // A failed identity write must not turn accepted delivery into a send
+    // failure. Keep its in-memory ownership and retry with the next draft save.
+    composerRecoveryStorageDirty.current = true
+    const persisted = persistComposerDrafts(composerDraftsRef.current)
+    if (persisted.ok) {
+      setComposerStorageError(undefined)
+    } else {
+      reportComposerStorageFailure(persisted.error)
+    }
   }
 
   /** Carries a recovery's identity to the session that replaced it. */
   function moveRestoredDraft(fromKey: string, toKey: string) {
     const stamp = restoredDraftStamps.current[fromKey]
-    if (stamp === undefined) {
-      return
+    if (stamp !== undefined) {
+      const content = restoredDraftContents.current[fromKey]
+      forgetRestoredDraft(fromKey)
+      if (restoredDraftStamps.current[toKey] === undefined) {
+        rememberRestoredDraft(toKey, stamp, content ?? '')
+      }
     }
-    const content = restoredDraftContents.current[fromKey]
-    forgetRestoredDraft(fromKey)
-    rememberRestoredDraft(toKey, stamp, content ?? '')
     const handled = handledFailures.current.get(fromKey)
     const restored = restoredFailures.current.get(fromKey)
     const unshown = unshownFailures.current.get(fromKey)
     handledFailures.current.delete(fromKey)
     restoredFailures.current.delete(fromKey)
     unshownFailures.current.delete(fromKey)
-    if (handled !== undefined) {
+    if (handled !== undefined && !handledFailures.current.has(toKey)) {
       handledFailures.current.set(toKey, handled)
     }
-    if (restored !== undefined) {
+    if (
+      restored !== undefined &&
+      restoredDraftStamps.current[toKey] === restored &&
+      !restoredFailures.current.has(toKey)
+    ) {
       restoredFailures.current.set(toKey, restored)
     }
-    if (unshown !== undefined) {
+    if (unshown !== undefined && !unshownFailures.current.has(toKey)) {
       unshownFailures.current.set(toKey, unshown)
     }
   }
@@ -9198,18 +9339,52 @@ function App() {
   function updateComposerDrafts(
     invalidateKeys: string[],
     update: (current: ComposerDrafts) => ComposerDrafts,
+    requirePersistence = false,
   ) {
+    if (!composerMounted.current) {
+      return false
+    }
+    const current = composerDraftsRef.current
+    const next = update(current)
+    if (next === current) {
+      return false
+    }
+    const histories = invalidateKeys.map(
+      (key) => [key, composerHistoryRef.current[key]] as const,
+    )
     for (const key of invalidateKeys) {
       resetComposerHistory(key)
     }
-    setComposerDrafts(update)
+    const persisted = persistComposerDrafts(next)
+    if (!persisted.ok && requirePersistence) {
+      // Admission never owns the editor until every compatibility write has
+      // succeeded. Undo any partial disk write without pretending that this
+      // best-effort repair makes the rejected submission safe to dispatch.
+      for (const [key, history] of histories) {
+        if (history) {
+          composerHistoryRef.current[key] = history
+        }
+      }
+      const restored = persistComposerDrafts(current)
+      reportComposerStorageFailure(persisted.error, true, restored.ok)
+      return false
+    }
+    // Editing remains in memory even when storage is unavailable. Commit the
+    // ref and React state together so a failed save cannot split their text.
+    composerDraftsRef.current = next
+    setComposerDrafts(next)
+    if (persisted.ok) {
+      setComposerStorageError(undefined)
+    } else {
+      reportComposerStorageFailure(persisted.error)
+    }
+    return persisted.ok
   }
 
   function setComposerForKey(
     rawTargetKey: string,
     value: string,
     fromHistory = false,
-    preservePastes = false,
     replacementPastes?: CollapsedPaste[],
   ) {
     // The key was taken before whatever this is finishing awaited. A clear
@@ -9218,25 +9393,10 @@ function App() {
     const targetKey = followReplacementsRef.current(rawTargetKey)
     updateComposerDrafts(fromHistory ? [] : [targetKey], (current) => {
       const existing = current[targetKey] || { text: '', pastes: [] }
-      if (!value) {
-        if (preservePastes && existing.pastes.length > 0) {
-          return {
-            ...current,
-            [targetKey]: { text: '', pastes: existing.pastes },
-          }
-        }
-        const { [targetKey]: _removed, ...remaining } = current
-        return remaining
-      }
-      return {
-        ...current,
-        [targetKey]: {
-          text: value,
-          pastes:
-            replacementPastes ??
-            (fromHistory || preservePastes ? existing.pastes : []),
-        },
-      }
+      return writeComposerContent(current, targetKey, {
+        text: value,
+        pastes: replacementPastes ?? (fromHistory ? existing.pastes : []),
+      })
     })
   }
 
@@ -9268,8 +9428,9 @@ function App() {
         : {
             messages,
             index: messages.length,
-            draft: composer,
-            draftPastes: composerDrafts[selectedKey]?.pastes || [],
+            draft: existing?.draft ?? composer,
+            draftPastes:
+              existing?.draftPastes ?? composerDrafts[selectedKey]?.pastes ?? [],
           }
     const nextIndex = Math.min(
       Math.max(history.index + direction, 0),
@@ -9283,7 +9444,6 @@ function App() {
       selectedKey,
       value,
       true,
-      false,
       nextIndex === messages.length ? history.draftPastes : [],
     )
     window.requestAnimationFrame(() => {
@@ -9301,71 +9461,19 @@ function App() {
 
   function restoreComposerSubmission(
     rawTargetKey: string,
-    value: string,
-    submittedPastes: CollapsedPaste[],
+    submission: ComposerSubmission,
   ) {
     const targetKey = followReplacementsRef.current(rawTargetKey)
     updateComposerDrafts([targetKey], (current) => {
-      const existing = current[targetKey] || { text: '', pastes: [] }
-      const submittedKeys = new Set(submittedPastes.map((paste) => paste.key))
-      const retained = existing.pastes.filter(
-        (paste) => !submittedKeys.has(paste.key),
-      )
-      const usedIds = new Set(retained.map((paste) => paste.id))
-      let nextId = Math.max(0, ...usedIds)
-      let cursor = 0
-      let restoredText = ''
-      const restoredPastes: CollapsedPaste[] = []
-      for (const submitted of [...submittedPastes].sort(
-        (left, right) => left.start - right.start,
-      )) {
-        const oldLabel = collapsedPasteLabel(submitted)
-        if (
-          submitted.start < cursor ||
-          value.slice(submitted.start, submitted.start + oldLabel.length) !==
-            oldLabel
-        ) {
-          continue
-        }
-        restoredText += value.slice(cursor, submitted.start)
-        let id = submitted.id
-        if (usedIds.has(id)) {
-          do {
-            nextId += 1
-          } while (usedIds.has(nextId))
-          id = nextId
-        } else {
-          nextId = Math.max(nextId, id)
-        }
-        usedIds.add(id)
-        const restored = {
-          ...submitted,
-          id,
-          start: restoredText.length,
-        }
-        restoredText += collapsedPasteLabel(restored)
-        restoredPastes.push(restored)
-        cursor = submitted.start + oldLabel.length
+      const existing = current[targetKey]
+      if (existing?.pendingSubmission?.id !== submission.id) {
+        return current
       }
-      restoredText += value.slice(cursor)
-      const separator = existing.text
-        ? restoredText.endsWith('\n')
-          ? '\n'
-          : '\n\n'
-        : ''
-      const shift = restoredText.length + separator.length
       return {
         ...current,
-        [targetKey]: {
-          text: `${restoredText}${separator}${existing.text}`,
-          pastes: [
-            ...restoredPastes,
-            ...retained.map((paste) => ({
-              ...paste,
-              start: paste.start + shift,
-            })),
-          ],
-        },
+        [targetKey]: recoverPendingComposerDraft(
+          durableComposerDraft(targetKey, existing),
+        ),
       }
     })
   }
@@ -9389,13 +9497,10 @@ function App() {
           ? '\n'
           : '\n\n'
         : ''
-      return {
-        ...current,
-        [targetKey]: {
-          text: `${existing.text}${separator}${value}`,
-          pastes: existing.pastes,
-        },
-      }
+      return writeComposerContent(current, targetKey, {
+        text: `${existing.text}${separator}${value}`,
+        pastes: existing.pastes,
+      })
     })
   }
 
@@ -9403,30 +9508,38 @@ function App() {
     if (fromKey === toKey) {
       return
     }
-    // While the reader is walking back through what they sent, the composer
-    // shows an old message and their own unsent text is held in the history
-    // record. Resetting that record here and moving only what is displayed
-    // carried the recalled message across and lost the real draft for good.
-    const history = composerHistoryRef.current[fromKey]
-    const unsent = history ? history.draft : undefined
+    if (submissionsInFlight.current.delete(fromKey)) {
+      submissionsInFlight.current.add(toKey)
+    }
     updateComposerDrafts([fromKey, toKey], (current) => {
       const source = current[fromKey]
-      const { [fromKey]: _removed, ...remaining } = current
-      if (!source || current[toKey]) {
-        return remaining
+        ? durableComposerDraft(fromKey, current[fromKey])
+        : undefined
+      const destination = current[toKey]
+        ? durableComposerDraft(toKey, current[toKey])
+        : undefined
+      if (!source) {
+        return current
       }
-      if (unsent !== undefined) {
+      const { [fromKey]: _removed, ...remaining } = current
+      if (destination) {
+        // A pending request belongs to its submission, not to the empty
+        // composer it left behind. Newer writing at the destination wins the
+        // draft, but cannot throw away a submission still awaiting acceptance.
+        const merged = source.deliveryUncertain
+          ? {
+              ...destination,
+              ...prependComposerContent(source, destination),
+              deliveryUncertain: true,
+            }
+          : destination
         return {
           ...remaining,
-          [toKey]: {
-            text: unsent,
-            pastes: history?.draftPastes || source.pastes,
-          },
+          [toKey]: source.pendingSubmission
+            ? { ...merged, pendingSubmission: source.pendingSubmission }
+            : merged,
         }
       }
-      // Only into an empty destination. A browser that used the replacement
-      // before it learned what it replaced has newer writing there, and the
-      // ancestor's older draft must not be put on top of it.
       return { ...remaining, [toKey]: source }
     })
   }
@@ -10188,6 +10301,7 @@ function App() {
     submissionsInFlight.current.add(targetKey)
     const settleSubmission = () => {
       submissionsInFlight.current.delete(targetKey)
+      submissionsInFlight.current.delete(followReplacementsRef.current(targetKey))
     }
 
     // Asked of the text that is actually sent, not of what the composer shows.
@@ -10258,95 +10372,128 @@ function App() {
       (selected.status === 'running' &&
         isCommand &&
         !command?.allowDuringAgentExecution)
-    setSending(true)
     setError(undefined)
-    setComposerForKey(targetKey, '', false, true)
+    const submission: ComposerSubmission = {
+      id: newCollapsedPasteKey(),
+      text: displayContent,
+      pastes: submittedPastes,
+      acknowledgesFailure: restoredFailures.current.get(targetKey),
+    }
+    const history = composerHistoryRef.current[targetKey]
+    const preview = history && history.index < history.messages.length
+      ? history
+      : undefined
     // Which failure this send is answering, so the recovery that runs after it
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
+    let admitted = false
     try {
+      admitted = updateComposerDrafts([targetKey], (current) => ({
+        ...current,
+        [targetKey]: {
+          // Sending a history preview does not submit the draft behind it.
+          text: preview?.draft || '',
+          pastes: preview?.draftPastes || [],
+          ...(preview && current[targetKey]?.deliveryUncertain
+            ? { deliveryUncertain: true }
+            : {}),
+          pendingSubmission: submission,
+        },
+      }), true)
+      if (!admitted) {
+        return
+      }
+      setSending(true)
       const updated = isCommand
         ? await executeCommand(selected.computerId, selected.id, {
             // A restored prompt can be a slash command, and it answers the
             // failure just as a message does.
-            acknowledgesFailure: restoredFailures.current.get(targetKey),
+            acknowledgesFailure: submission.acknowledgesFailure,
             command: content,
             enqueue: shouldEnqueue,
           })
         : await sendMessage(selected.computerId, selected.id, {
             // Whatever they were handed back is answered by this, whether
             // they sent it as it was, edited it, or replaced it outright.
-            acknowledgesFailure: restoredFailures.current.get(targetKey),
+            acknowledgesFailure: submission.acknowledgesFailure,
             content,
             enqueue: shouldEnqueue,
           })
-      const acknowledged = restoredFailures.current.get(targetKey)
+      if (!composerMounted.current) {
+        return
+      }
+      const liveKey = followReplacementsRef.current(targetKey)
+      const acknowledged = submission.acknowledgesFailure
       acknowledgedStamp = acknowledged
-      restoredFailures.current.delete(targetKey)
-      forgetRestoredDraft(targetKey)
+      if (restoredFailures.current.get(liveKey) === acknowledged) {
+        restoredFailures.current.delete(liveKey)
+      }
+      if (restoredDraftStamps.current[liveKey] === acknowledged) {
+        forgetRestoredDraft(liveKey)
+      }
       // Only the failure this send was answering. A prompt that failed while
       // this one was in flight was held back precisely because the composer
       // was busy, and this answer is older than it: the session rejects the
       // stale record, so dropping the deferred text here left it invisible
       // for good, with the marker on the server still holding the queue.
-      const deferred = unshownFailures.current.get(targetKey)
+      const deferred = unshownFailures.current.get(liveKey)
       if (!deferred || deferred.stamp === acknowledged) {
-        unshownFailures.current.delete(targetKey)
+        unshownFailures.current.delete(liveKey)
       }
-      if (submittedPastes.length > 0) {
-        const submittedKeys = new Set(
-          submittedPastes.map((paste) => paste.key),
+      updateComposerDrafts([], (current) => {
+        const draft = current[liveKey]
+        if (draft?.pendingSubmission?.id !== submission.id) {
+          return current
+        }
+        const { pendingSubmission: _accepted, ...remaining } = draft
+        return writeComposerContent(
+          { ...current, [liveKey]: remaining },
+          liveKey,
+          remaining,
         )
-        updateComposerDrafts([], (current) => {
-          return Object.fromEntries(
-            Object.entries(current).flatMap(([key, draft]) => {
-              const pastes = draft.pastes.filter(
-                (paste) => !submittedKeys.has(paste.key),
-              )
-              return draft.text || pastes.length > 0
-                ? [[key, { ...draft, pastes }]]
-                : []
-            }),
-          )
-        })
+      })
+      const updatedKey = sessionKey(updated)
+      if (
+        !removedSessions.current.has(updatedKey) &&
+        followReplacementsRef.current(updatedKey) === updatedKey
+      ) {
+        setSessions((current) => upsertSession(current, updated))
       }
-      setSessions((current) => upsertSession(current, updated))
     } catch (caught) {
+      if (!composerMounted.current) {
+        return
+      }
       const liveKey = followReplacementsRef.current(targetKey)
       if (!removedSessions.current.has(liveKey)) {
-        restoreComposerSubmission(
-          targetKey,
-          displayContent,
-          submittedPastes,
-        )
+        restoreComposerSubmission(targetKey, submission)
       }
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      settleSubmission()
-      setSending(false)
-      // The composer is free again, so anything held back while it was busy
-      // is offered now. Waiting for the next draft change left a failure
-      // holding the queue with nothing on screen to answer it.
-      const stillDeferred = unshownFailures.current.get(targetKey)
-      if (stillDeferred) {
-        handledFailures.current.delete(targetKey)
-        restoreFailedPromptRef.current(
-          targetKey,
-          stillDeferred.content,
-          stillDeferred.stamp,
-        )
-      } else if (
-        // Only a failure this send did not answer. The session on hand may
-        // still be the one from before the send -- the answer can arrive
-        // before the event that clears the marker, and with the socket down it
-        // never arrives at all -- so offering whatever it still shows put the
-        // prompt that was just sent back in the composer, ready to go twice.
-        acknowledgedStamp === undefined ||
-        failureStampFor(targetKey) !== acknowledgedStamp
-      ) {
-        reofferFailedPrompt(targetKey)
+      if (composerMounted.current) {
+        settleSubmission()
+        setSending(false)
+        // The composer is free again, so anything held back while it was busy
+        // is offered now. Waiting for the next draft change left a failure
+        // holding the queue with nothing on screen to answer it.
+        const liveKey = followReplacementsRef.current(targetKey)
+        const stillDeferred = unshownFailures.current.get(liveKey)
+        if (admitted && stillDeferred) {
+          handledFailures.current.delete(liveKey)
+          restoreFailedPromptRef.current(
+            liveKey,
+            stillDeferred.content,
+            stillDeferred.stamp,
+          )
+        } else if (admitted && (
+          // A response can precede the event that clears its failure marker.
+          // Reoffering that same failure would put an accepted prompt back.
+          acknowledgedStamp === undefined ||
+          failureStampFor(liveKey) !== acknowledgedStamp
+        )) {
+          reofferFailedPrompt(liveKey)
+        }
+        focusComposer(liveKey)
       }
-      focusComposer(targetKey)
     }
   }
 
@@ -10813,13 +10960,10 @@ function App() {
         end,
         inserted.length,
       )
-      return {
-        ...current,
-        [targetKey]: {
-          text: `${value.slice(0, start)}${inserted}${value.slice(end)}`,
-          pastes: paste ? [...retained, paste] : retained,
-        },
-      }
+      return writeComposerContent(current, targetKey, {
+        text: `${value.slice(0, start)}${inserted}${value.slice(end)}`,
+        pastes: paste ? [...retained, paste] : retained,
+      })
     })
     window.requestAnimationFrame(() => {
       textarea.focus()
@@ -11043,7 +11187,15 @@ function App() {
     try {
       await deleteSession(selected.computerId, selected.id)
       const closedKey = sessionKey(selected)
-      setComposerForKey(closedKey, '')
+      removedSessions.current.add(closedKey)
+      updateComposerDrafts([closedKey], (current) => {
+        const { [closedKey]: _removed, ...remaining } = current
+        return remaining
+      })
+      forgetRestoredDraft(closedKey)
+      handledFailures.current.delete(closedKey)
+      restoredFailures.current.delete(closedKey)
+      unshownFailures.current.delete(closedKey)
       // Drafts are cleared for a closed session, and so is everything the
       // knowledge panel remembered about it.
       forgetKnowledgeSession(closedKey)
@@ -11906,6 +12058,20 @@ function App() {
                 ))}
               </div>
             ) : null}
+            {selectedKey && composerDrafts[selectedKey]?.deliveryUncertain ? (
+              <div className="error-banner" id="composer-delivery-warning" role="status">
+                <span>
+                  Delivery could not be confirmed. Your message was restored; it may
+                  already have been sent or queued. Check the conversation and queue
+                  before sending again.
+                </span>
+              </div>
+            ) : null}
+            {composerStorageError ? (
+              <div className="error-banner" id="composer-storage-warning" role="alert">
+                <span>{composerStorageError}</span>
+              </div>
+            ) : null}
             <div
               className={`composer ${
                 selected.status === 'running' ? 'composer--running' : ''
@@ -11920,10 +12086,18 @@ function App() {
               <div className="composer-text-panel">
                 <textarea
                   aria-label="Message"
+                  aria-describedby={
+                    [
+                      selectedKey && composerDrafts[selectedKey]?.deliveryUncertain
+                        ? 'composer-delivery-warning'
+                        : undefined,
+                      composerStorageError ? 'composer-storage-warning' : undefined,
+                    ].filter(Boolean).join(' ') || undefined
+                  }
                   // A suspended session has nothing running to send to. The
                   // conversation stays here to be read; writing to it is what
                   // resuming is for.
-                  disabled={sending || selected.suspended === true}
+                  disabled={selected.suspended === true}
                   onBeforeInput={composerBeforeInput}
                   onChange={(event) => {
                     composerChanged(event.target.value)

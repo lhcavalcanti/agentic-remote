@@ -214,6 +214,29 @@ required to be individually editable.
 
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
+Recalling history MUST preserve the unsent draft durably; a reload restores that
+draft, not the historical preview. Sending a preview MUST NOT discard the draft
+behind it.
+
+A pending submission MUST retain its complete text and paste metadata until its
+request is accepted, independently of anything written in the meantime. Reloads
+and unsuccessful requests MUST restore that submission without automatically
+sending or queuing it. When delivery cannot be confirmed, the composer MUST warn
+that the message may already have been sent or queued. Matching transcript text
+or the absence of a previous failure marker MUST NOT be treated as acceptance of
+an unconfirmed request.
+
+A failure to save composer state MUST leave the current text editable and warn
+that the saved copy may be out of date. Message and queue admission MUST require
+successful writes of the pending state, generation marker, and expanded legacy
+draft copy. Failed admission MUST dispatch nothing, preserve the editor and its
+history draft, and release the sending gate. Repairing partial writes is
+best-effort and MUST NOT turn failed admission into a send; if repair also fails,
+the user MUST be told to copy their text before reloading. A later successful
+save clears the storage warning but MUST NOT automatically send anything.
+Storage failures after confirmed acceptance MUST NOT restore the accepted
+message over newer writing. Unsaved recovery-identity changes are retried with
+the next composer save.
 
 Pastes longer than 20 lines MUST appear in the composer as
 `[Paste #N - L lines]`, numbered within the current session draft. The exact

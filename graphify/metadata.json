@@ -334,8 +334,8 @@
     "src/SessionActions.tsx": "058d8adc943e9f0dcf42cbce3c58c4b5c550b47816a98769c9c894fb2e32d563",
     "src/SessionNavigation.test.tsx": "51a408db701646a0b3bfaee76af8fd95d5a7757b7dedef8fbb36cbbda1eeefd9",
     "src/SessionNavigation.tsx": "bb7de07afc2503dd9f776e85605bdd3b37b964f8de67f8d367ba566d6fc9b485",
-    "src/SessionResources.test.tsx": "0a9e330f4359b039e79c5c2c925c7bc3171f54248fa6c7d8f4310c4348daa9b5",
-    "src/SessionResources.tsx": "78655b2d07a6559cb2df409e6e590641f8000595d7f0886af61d72539385effe",
+    "src/SessionResources.test.tsx": "bf25e1cb9ba969bee47a5a49fc60471b8d37bdb9b9d5e173ae0e4545a8502dad",
+    "src/SessionResources.tsx": "8691377a8ca25dd4100b0a0593ed2b5f17437af46e11bb4832db8999f4eed336",
     "src/WorkspaceFileIcon.tsx": "75fe86ced617e230b30e0100104114d95c1feb49bf2239003416376f761ee868",
     "src/accent-icon.test.ts": "cbbd1e1fd7544f5e9ab88ac50b1cdb8d7dd5b6827ad2323addfc9298ddc447bd",
     "src/accent-icon.ts": "88b76cf4ca66779fa5d1f332479dcb82b8c44ff9aa4b89927291307dc62685f3",
@@ -423,22 +423,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "25baf37f8ed98ba7f906c02823542328da8f072e98e52f67051c2d3eaf34d5c4",
+    "GRAPH_REPORT.md": "e4f816ffd50d20d72d506455e3259087ecb1b86090b00c370176c6330016d0bf",
     "communities.json": "d80309e6dfa7e9c40d5a8bc6b0f981b25e24706aec693d24842053642446414b",
-    "graph.html": "1f8c1bc67321a5abfc669f088a562bf575486ca78b6c34d09a3c9fb1dd1b2c41",
-    "graph.json": "41b1ea8efb3a336cb7dca11bab901fb47ba92c5430f3ddaaedc15e2365a6458e"
+    "graph.html": "2155f657191fe6edcf69cf354d75afe1b0863f8b6b86db33bf8afe81a588dd67",
+    "graph.json": "f259ed9db94eb086ec9857755976cb499797da9f39592a70641fe4ea68791935"
   },
   "schema_version": 1,
-  "source_commit": "091b8aac04a6a252136bf0359425f0450a0199b0",
-  "source_fingerprint": "d32c873d4e5159b8e305d6c9d5ee12d2b394cbd640d8f8f0150dbd1705a1ca8a",
+  "source_commit": "894651abe28c40a87a07d6c6389cf1d04562af3c",
+  "source_fingerprint": "bc4e4860443c6749f3be8534df7f4b48ba1bc639827897314ac4359819b787b0",
   "working_tree_changes": [
-    "README.md",
-    "server/multi-node.test.ts",
-    "server/remote-node-client.test.ts",
-    "server/remote-node-client.ts",
-    "server/remote-node-errors.ts",
-    "server/session-resource-routes.test.ts",
-    "server/session-resources.test.ts",
-    "server/session-resources.ts"
+    "src/SessionResources.test.tsx",
+    "src/SessionResources.tsx"
   ]
 }

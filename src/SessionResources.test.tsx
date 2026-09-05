@@ -50,6 +50,20 @@ afterEach(() => {
 })
 
 describe('session resources', () => {
+  it.each([
+    ['skills', 0, '0 skills'],
+    ['skills', 1, '1 skill'],
+    ['skills', 2, '2 skills'],
+    ['mcp', 0, '0 MCP servers'],
+    ['mcp', 1, '1 MCP server'],
+    ['mcp', 2, '2 MCP servers'],
+  ] as const)('labels %s counts with %s resources', async (tab, count, expected) => {
+    vi.mocked(listSessionSkills).mockResolvedValue({ ...skills, skills: skills.skills.slice(0, count) })
+    vi.mocked(listSessionMcpServers).mockResolvedValue({ ...mcp, servers: mcp.servers.slice(0, count) })
+    render(<SessionResources session={session} online supported initialTab={tab} />)
+    expect(await screen.findByText(expected)).toBeInTheDocument()
+  })
+
   it('loads only the selected resource tab and filters without another request', async () => {
     render(<SessionResources session={session} online supported initialTab="skills" />)
     await screen.findByRole('heading', { name: 'code-review' })
@@ -59,6 +73,7 @@ describe('session resources', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'Filter skills' }), { target: { value: 'release' } })
     expect(screen.queryByRole('heading', { name: 'code-review' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'release-helper' })).toBeInTheDocument()
+    expect(screen.getByText('1 matching skill')).toBeInTheDocument()
     expect(listSessionSkills).toHaveBeenCalledOnce()
     expect(screen.getByText(/No prompt is sent/)).toBeInTheDocument()
   })
@@ -75,6 +90,8 @@ describe('session resources', () => {
     expect(screen.getByText('Connected')).toBeInTheDocument()
     expect(screen.getByText('Needs sign-in')).toBeInTheDocument()
     expect(screen.getByText('5 tools')).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter MCP servers' }), { target: { value: 'github' } })
+    expect(screen.getByText('1 matching MCP server')).toBeInTheDocument()
     expect(listSessionMcpServers).toHaveBeenCalledExactlyOnceWith('computer', 'session', 'copilot', expect.any(AbortSignal))
   })
 

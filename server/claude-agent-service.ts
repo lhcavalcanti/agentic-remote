@@ -30,6 +30,8 @@ import type {
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
+  SessionSkillsSnapshot,
+  SessionMcpServersSnapshot,
   SlashCommand,
   UserInputReplyInput,
   WorkspaceFile,
@@ -63,6 +65,21 @@ import {
   readWorkspaceFile,
   searchWorkspace,
 } from './workspace-browser.js'
+import {
+  claudeMcp,
+  claudeSkillNames,
+  enrichClaudeSkills,
+  isResourceMethodUnavailable,
+  mcpSnapshot,
+  resourceMessages,
+  safeResourceError,
+  sanitizeMcpSnapshot,
+  sanitizeSkillsSnapshot,
+  SessionResourceError,
+  skillsSnapshot,
+  unavailableMcp,
+  unavailableSkills,
+} from './session-resources.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -134,6 +151,7 @@ interface ClaudeAgentServiceEvents {
 interface ActiveClaudeQuery {
   abortController: AbortController
   query: Query
+  resourceOwner: symbol
   /**
    * Settles when the run that owns this entry has finished tearing down.
    *
@@ -143,6 +161,15 @@ interface ActiveClaudeQuery {
   done: Promise<void>
   /** Resolves `done`. */
   finish: () => void
+}
+
+interface ClaudeResources {
+  owner: symbol
+  isCurrent: () => boolean
+  skills?: SessionSkillsSnapshot
+  mcp?: SessionMcpServersSnapshot
+  invalidSkills?: boolean
+  invalidMcp?: boolean
 }
 
 interface PendingClaudePermission {
@@ -236,6 +263,8 @@ export class ClaudeAgentService
   }
 
   private readonly active = new Map<string, ActiveClaudeQuery>()
+  private readonly resourceObservations = new Map<string, ClaudeResources>()
+  private resourceEpoch = 0
   /**
    * Sessions whose turn has been started but has not registered its query yet.
    *
@@ -297,12 +326,15 @@ export class ClaudeAgentService
         supportsTmuxMigration: false,
         supportsBackgroundTasks: false,
         supportsQueuedPromptDispatch: true,
+        supportsSessionResources: true,
         unavailableReason: this.available ? undefined : this.unavailableReason,
       },
     ]
   }
 
   start(): Promise<void> {
+    this.resourceEpoch += 1
+    this.resourceObservations.clear()
     return this.admissions.run('@startup', () => this.startAdmitted())
   }
 
@@ -329,6 +361,8 @@ export class ClaudeAgentService
   }
 
   stop(): Promise<void> {
+    this.resourceEpoch += 1
+    this.resourceObservations.clear()
     this.stopped = true
     this.stopTask ??= this.stopSettled()
     return this.stopTask
@@ -638,6 +672,7 @@ export class ClaudeAgentService
   }
 
   async clearConversation(id: string): Promise<SessionDetail> {
+    this.resourceObservations.delete(id)
     // In the lifecycle queue with the rest: clearing replaces the session with
     // a new id, and a suspension starting while it awaits the provider would
     // then be recorded against a session that no longer exists.
@@ -1185,6 +1220,124 @@ export class ClaudeAgentService
     return []
   }
 
+  private resourceContext(sessionId: string) {
+    if (this.stopped) throw new SessionResourceError('stopped')
+    const session = this.store.get(sessionId)
+    if (!session) throw new SessionResourceError('missing')
+    if (session.provider !== 'claude') throw new SessionResourceError('changed')
+    let observation = this.resourceObservations.get(sessionId)
+    if (observation && !observation.isCurrent()) {
+      this.resourceObservations.delete(sessionId)
+      observation = undefined
+    }
+    const active = this.active.get(sessionId)
+    const ownsSession = this.store.captureOwnership(sessionId)
+    const epoch = this.resourceEpoch
+    const assertCurrent = () => {
+      if (this.stopped || epoch !== this.resourceEpoch) throw new SessionResourceError('stopped')
+      if (!ownsSession() || this.active.get(sessionId) !== active ||
+        this.resourceObservations.get(sessionId) !== observation ||
+        this.lifecycleLocks.has(sessionId) || this.deletingSessions.has(sessionId) ||
+        this.suspendingSessions.has(sessionId) ||
+        (observation && !observation.isCurrent()) ||
+        (active && observation?.owner !== active.resourceOwner)) {
+        throw new SessionResourceError('changed')
+      }
+    }
+    assertCurrent()
+    return { observation, active, assertCurrent }
+  }
+
+  async listSkills(sessionId: string): Promise<SessionSkillsSnapshot> {
+    const { observation, active, assertCurrent } = this.resourceContext(sessionId)
+    if (observation?.invalidSkills) throw new SessionResourceError('invalid')
+    if (!observation?.skills) return unavailableSkills(sessionId, 'claude', resourceMessages.unreported)
+    let snapshot = observation.skills
+    if (active && snapshot.skills.length && typeof active.query.supportedCommands === 'function') {
+      try {
+        const commands = await active.query.supportedCommands()
+        assertCurrent()
+        snapshot = {
+          ...snapshot,
+          skills: enrichClaudeSkills(snapshot.skills, commands),
+          capturedAt: new Date().toISOString(),
+        }
+        observation.skills = snapshot
+      } catch (error) {
+        assertCurrent()
+        if (!isResourceMethodUnavailable(error)) throw safeResourceError(error)
+      }
+    }
+    return sanitizeSkillsSnapshot({
+      ...snapshot,
+      scope: active ? 'session' : 'last-known',
+      message: active ? undefined : resourceMessages.lastKnown,
+    }, sessionId, 'claude')
+  }
+
+  async listMcpServers(sessionId: string): Promise<SessionMcpServersSnapshot> {
+    const { observation, active, assertCurrent } = this.resourceContext(sessionId)
+    if (active && typeof active.query.mcpServerStatus === 'function') {
+      try {
+        const servers = await active.query.mcpServerStatus()
+        assertCurrent()
+        const snapshot = mcpSnapshot(sessionId, 'claude', 'session', claudeMcp(servers))
+        if (observation) {
+          observation.mcp = snapshot
+          observation.invalidMcp = false
+        }
+        return snapshot
+      } catch (error) {
+        assertCurrent()
+        if (!isResourceMethodUnavailable(error)) throw safeResourceError(error)
+      }
+    }
+    if (observation?.invalidMcp) throw new SessionResourceError('invalid')
+    if (!observation?.mcp) return unavailableMcp(sessionId, 'claude', resourceMessages.unreported)
+    return sanitizeMcpSnapshot({
+      ...observation.mcp,
+      scope: active ? 'session' : 'last-known',
+      message: active ? undefined : resourceMessages.lastKnown,
+    }, sessionId, 'claude')
+  }
+
+  private observeResourceInit(
+    sessionId: string,
+    owner: ActiveClaudeQuery,
+    message: Extract<SDKMessage, { type: 'system'; subtype: 'init' }>,
+  ): void {
+    const previous = this.resourceObservations.get(sessionId)
+    if (this.stopped || this.active.get(sessionId) !== owner ||
+      previous?.owner !== owner.resourceOwner || !previous.isCurrent() ||
+      this.deletingSessions.has(sessionId)) return
+    const observation: ClaudeResources = {
+      owner: previous.owner, isCurrent: previous.isCurrent,
+    }
+    this.resourceObservations.set(sessionId, observation)
+    const capturedAt = new Date().toISOString()
+    if (message.session_id !== sessionId || message.cwd !== this.store.get(sessionId)?.cwd) {
+      observation.invalidSkills = true
+      observation.invalidMcp = true
+      return
+    }
+    // Init is observed as part of an existing turn. Bad metadata belongs to the
+    // resource view, never to the inference error path or the session store.
+    if (message.skills !== undefined) {
+      try {
+        observation.skills = skillsSnapshot(sessionId, 'claude', 'session', claudeSkillNames(message.skills), capturedAt)
+      } catch {
+        observation.invalidSkills = true
+      }
+    }
+    if (message.mcp_servers !== undefined) {
+      try {
+        observation.mcp = mcpSnapshot(sessionId, 'claude', 'session', claudeMcp(message.mcp_servers), capturedAt)
+      } catch {
+        observation.invalidMcp = true
+      }
+    }
+  }
+
   async executeCommand(
     _sessionId: string,
     command: string,
@@ -1217,6 +1370,7 @@ export class ClaudeAgentService
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    this.resourceObservations.delete(sessionId)
     // Deleting takes the provider session and the stored state with it, so a
     // resume running beside it could start a query against files that are
     // already going.
@@ -1542,6 +1696,8 @@ export class ClaudeAgentService
   ): Promise<void> {
     if (this.stopped && !this.startingQueries.has(sessionId)) return
     const session = this.requireSession(sessionId)
+    const ownsResources = this.store.captureOwnership(sessionId)
+    const resourceEpoch = this.resourceEpoch
     const abortController = new AbortController()
     // This run's own entry, so cleanup cannot remove a newer one.
     let owned: ActiveClaudeQuery | undefined
@@ -1607,11 +1763,16 @@ export class ClaudeAgentService
       const entry: ActiveClaudeQuery = {
         abortController,
         query: activeQuery,
+        resourceOwner: Symbol(),
         done,
         finish,
       }
       owned = entry
       this.active.set(sessionId, entry)
+      this.resourceObservations.set(sessionId, {
+        owner: entry.resourceOwner,
+        isCurrent: () => ownsResources() && resourceEpoch === this.resourceEpoch && !this.stopped,
+      })
       registered = true
       finishRegistration?.(true)
       if (this.startingQueries.get(sessionId) === registering) {
@@ -1627,7 +1788,11 @@ export class ClaudeAgentService
           (message.type === 'assistant' && !message.error) ||
           (message.type === 'result' && message.subtype === 'success' && !message.is_error)
         ) accept()
-        await this.handleMessage(sessionId, assistantId, message, toolIds)
+        if (message.type === 'system' && message.subtype === 'init') {
+          this.observeResourceInit(sessionId, entry, message)
+        } else {
+          await this.handleMessage(sessionId, assistantId, message, toolIds)
+        }
       }
       if (delivery && !delivery.accepted) {
         throw new Error('Claude ended without confirming that it accepted the prompt.')

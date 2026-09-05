@@ -127,6 +127,7 @@ function ownPrompt(service: AgentService | ClaudeAgentService) {
   const owner = {
     abortController: new AbortController(),
     query: (async function* () {})() as unknown as Query,
+    resourceOwner: Symbol(),
     done: Promise.resolve(),
     finish: () => {},
   }

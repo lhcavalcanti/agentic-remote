@@ -8,6 +8,8 @@ import {
   listBackgroundTasks,
   listHistory,
   listSessionListing,
+  listSessionMcpServers,
+  listSessionSkills,
   removeQueuedPrompt,
   sendMessage,
   sendTestPushNotification,
@@ -104,6 +106,95 @@ describe('API request headers', () => {
         expect.objectContaining({ cache: 'no-store' }),
       ],
     ])
+  })
+
+  describe('session resource reads', () => {
+    const metadata = {
+      computerId: 'computer', sessionId: 'session', provider: 'copilot',
+      scope: 'session', capturedAt: '2026-09-05T00:00:00.000Z',
+    }
+
+    it('uses read-only uncached requests with the caller cancellation signal', async () => {
+      const controller = new AbortController()
+      const payload = {
+        ...metadata, computerId: 'computer/one', sessionId: 'session/one',
+        skills: [{ name: 'review', description: 'Review code', source: 'project' }],
+      }
+      const fetch = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(payload))
+      vi.stubGlobal('fetch', fetch)
+      await expect(listSessionSkills('computer/one', 'session/one', 'copilot', controller.signal))
+        .resolves.toMatchObject(payload)
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(
+        '/api/computers/computer%2Fone/sessions/session%2Fone/skills',
+        expect.objectContaining({ cache: 'no-store', signal: controller.signal }),
+      )
+      expect(fetch.mock.calls[0][1]?.method).toBeUndefined()
+      expect(fetch.mock.calls[0][1]?.body).toBeUndefined()
+    })
+
+    it('strips unsolicited MCP configuration and error fields', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+        ...metadata,
+        host: { fullConfig: { env: { token: 'DO-NOT-RETURN-CONFIG' } } },
+        servers: [{
+          name: 'source-control', status: 'failed', source: 'user',
+          config: { url: 'https://example.invalid/DO-NOT-RETURN-URL' },
+          error: 'DO-NOT-RETURN-ERROR',
+        }],
+      })))
+      const result = await listSessionMcpServers('computer', 'session', 'copilot')
+      expect(result.servers).toEqual([expect.objectContaining({ name: 'source-control', status: 'failed' })])
+      expect(JSON.stringify(result)).not.toContain('DO-NOT-RETURN')
+      expect(result).not.toHaveProperty('host')
+    })
+
+    it('does not retain skill instructions or file paths outside the summary', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+        ...metadata,
+        skills: [{ name: 'review', description: 'A safe description', instructions: 'PRIVATE-INSTRUCTIONS', path: '/private/skill.md' }],
+      })))
+      const result = await listSessionSkills('computer', 'session', 'copilot')
+      expect(result.skills[0].description).toBe('A safe description')
+      expect(JSON.stringify(result)).not.toContain('PRIVATE-INSTRUCTIONS')
+      expect(result.skills[0]).not.toHaveProperty('path')
+    })
+
+    it.each([
+      { ...metadata, computerId: 'other', skills: [] },
+      { ...metadata, sessionId: 'other', skills: [] },
+      { ...metadata, provider: 'claude', skills: [] },
+      { ...metadata, scope: 'invented', skills: [] },
+      { ...metadata, capturedAt: 'not a timestamp', skills: [] },
+      { ...metadata, skills: [{ name: null }] },
+      { ...metadata, scope: 'unavailable', skills: [] },
+      { ...metadata, scope: 'unavailable', message: 'Unavailable', skills: [{ name: 'not really unavailable' }] },
+    ])('rejects a malformed or foreign skills response %#', async (payload) => {
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json(payload)))
+      await expect(listSessionSkills('computer', 'session', 'copilot'))
+        .rejects.toThrow('invalid skills response')
+    })
+
+    it.each([
+      { ...metadata, computerId: 'other', servers: [] },
+      { ...metadata, servers: [{ name: 'server', status: 'not-a-status' }] },
+      { ...metadata, servers: [{ name: 'server', status: 'connected', toolCount: -1 }] },
+    ])('rejects a malformed or foreign MCP response %#', async (payload) => {
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json(payload)))
+      await expect(listSessionMcpServers('computer', 'session', 'copilot'))
+        .rejects.toThrow('invalid MCP response')
+    })
+
+    it('preserves an explicit unavailable reason instead of turning it into an empty catalog', async () => {
+      const payload = { ...metadata, scope: 'unavailable', message: 'The provider has not reported resources.', servers: [] }
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json(payload)))
+      await expect(listSessionMcpServers('computer', 'session', 'copilot')).resolves.toMatchObject(payload)
+    })
+
+    it('does not reflect a malformed JSON body into an error message', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('PRIVATE-MALFORMED-BODY')))
+      await expect(listSessionSkills('computer', 'session', 'copilot'))
+        .rejects.toThrow('invalid resource response')
+    })
   })
 
   it('does not mark a bodyless queue DELETE as JSON', async () => {

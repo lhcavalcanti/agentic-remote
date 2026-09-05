@@ -11,6 +11,19 @@ outright looked identical to one that succeeded. Agentic Remote now captures the
 pane, compares it with the frame taken before the keystrokes were sent, and
 reports what the command actually printed.
 
+## Web-native resource views
+
+The session action menu and `/skill`, `/skills`, and `/mcp` open read-only
+resource views in Agentic Remote. These commands do not invoke the provider,
+type into its terminal, send a prompt, or change configuration. Text following
+the command is a local list filter, not an MCP configuration operation.
+
+The views use structured provider metadata and label session, configured-folder,
+last-known and unavailable data separately. They do not claim parity with the
+CLI's interactive configuration screens. See [Provider compatibility](provider-compatibility.md).
+Editing a queued message into one of these local commands is refused rather
+than opening a view or changing the waiting message.
+
 ## What a command reports
 
 | Outcome | Reported as |
@@ -26,7 +39,8 @@ prompt sent from Agentic Remote would land there instead of the composer.
 
 ## Verified behavior
 
-Checked against Copilot CLI v1.0.82 in a terminal-backed session.
+The following historical table records direct Copilot CLI v1.0.82 behavior
+in a terminal-backed session, not the web-native aliases described above.
 
 | Command | Reports |
 | --- | --- |
@@ -84,5 +98,6 @@ the composer down is therefore ignored; otherwise a changing counter would be
 reported as command output. The startup banner and tip are ignored for the same
 reason, since they can paint after the first capture is taken.
 
-Opening a full-screen view is reported, but the view is not dismissed. A prompt
-sent while one is open still reaches the view rather than the composer.
+Opening a CLI-only full-screen view is reported, but the view is not dismissed.
+The app refuses ordinary prompt delivery while an overlay owns terminal input;
+close the view in the CLI before sending another prompt.

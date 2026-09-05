@@ -488,7 +488,13 @@ describe('Claude unregistered query recovery', () => {
     })
     const draining = runtime.claude['drainQueue'](id).catch((error: unknown) => error)
     await entered.promise
-    const newer = { query: {} as Query, abortController: new AbortController(), done: Promise.resolve(), finish: () => {} }
+    const newer = {
+      query: {} as Query,
+      abortController: new AbortController(),
+      resourceOwner: Symbol(),
+      done: Promise.resolve(),
+      finish: () => {},
+    }
     runtime.claude['active'].set(id, newer)
     await runtime.store.update(id, (session) => {
       session.status = 'waiting'

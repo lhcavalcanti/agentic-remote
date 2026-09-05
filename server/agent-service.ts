@@ -35,6 +35,8 @@ import type {
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
+  SessionSkillsSnapshot,
+  SessionMcpServersSnapshot,
   SessionRuntimeInfo,
   UserInputReplyInput,
   UserInputField,
@@ -103,6 +105,18 @@ import {
   readWorkspaceFile,
   searchWorkspace,
 } from './workspace-browser.js'
+import {
+  copilotSkills,
+  copilotMcp,
+  copilotWorkspaceMcp,
+  isResourceMethodUnavailable,
+  mcpSnapshot,
+  safeResourceError,
+  SessionResourceError,
+  skillsSnapshot,
+  unavailableMcp,
+  unavailableSkills,
+} from './session-resources.js'
 import {
   composerHoldsText,
   isTerminalAgentWorking,
@@ -200,6 +214,8 @@ export interface CopilotSessionLike {
       'list' | 'invoke' | 'enqueue'
     >
     tasks?: CopilotTasksApi
+    skills?: Pick<CopilotSession['rpc']['skills'], 'list'>
+    mcp?: Pick<CopilotSession['rpc']['mcp'], 'list'>
     name: Pick<CopilotSession['rpc']['name'], 'set'>
     model: Pick<CopilotSession['rpc']['model'], 'getCurrent' | 'switchTo'>
     mode: Pick<CopilotSession['rpc']['mode'], 'set'>
@@ -218,6 +234,8 @@ export interface CopilotClientLike {
   deleteSession(sessionId: string): Promise<void>
   rpc: Pick<CopilotClient['rpc'], 'commands'> & {
     models: Pick<CopilotClient['rpc']['models'], 'list'>
+    skills?: Pick<CopilotClient['rpc']['skills'], 'discover'>
+    mcp?: Pick<CopilotClient['rpc']['mcp'], 'discover'>
   }
 }
 
@@ -1594,6 +1612,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly terminalDrainRequested = new Set<string>()
   private readonly terminalQueueWakeups = new Map<string, Promise<void>>()
   private readonly pendingSdkQueueAdmissions = new Map<string, PendingQueueAdmission>()
+  private resourceEpoch = 0
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly terminalAdmissionOperations = new Map<
     string,
@@ -1819,6 +1838,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsTmuxMigration: true,
         supportsBackgroundTasks: true,
         supportsQueuedPromptDispatch: true,
+        supportsSessionResources: true,
       },
     ]
   }
@@ -1828,6 +1848,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return Promise.reject(Object.assign(new Error('The session service is stopping'), { statusCode: 503 }))
     }
     if (this.startTask) return this.startTask
+    this.resourceEpoch += 1
     const starting = this.admissions.run('@startup', () => this.startAdmitted())
     this.startTask = starting
     void starting.catch(() => {
@@ -1944,6 +1965,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   stop(): Promise<void> {
+    this.resourceEpoch += 1
     this.stopped = true
     this.stopTask ??= this.stopSettled()
     return this.stopTask
@@ -4443,6 +4465,90 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       inputRequired: command.input?.required,
       allowDuringAgentExecution: command.allowDuringAgentExecution,
     }))
+  }
+
+  private resourceOwner(sessionId: string) {
+    if (this.stopped) throw new SessionResourceError('stopped')
+    const stored = this.store.get(sessionId)
+    if (!stored) throw new SessionResourceError('missing')
+    if ((stored.provider ?? 'copilot') !== 'copilot') throw new SessionResourceError('changed')
+    const epoch = this.resourceEpoch
+    const ownsSession = this.store.captureOwnership(sessionId)
+    const loaded = this.sessions.get(sessionId)
+    if (loaded && loaded.sessionId !== sessionId) throw new SessionResourceError('changed')
+    const terminal = this.externalSessionIds.has(sessionId)
+    const assertCurrent = () => {
+      if (this.stopped || epoch !== this.resourceEpoch) throw new SessionResourceError('stopped')
+      if (!ownsSession() || this.sessions.get(sessionId) !== loaded ||
+        this.externalSessionIds.has(sessionId) !== terminal ||
+        this.lifecycleLocks.has(sessionId) || this.deletingSessions.has(sessionId) ||
+        this.deletedSessionIds.has(sessionId) || this.suspendingSessions.has(sessionId)) {
+        throw new SessionResourceError('changed')
+      }
+    }
+    assertCurrent()
+    const live = !stored.suspended && stored.executionMode !== 'tmux' && !terminal ? loaded : undefined
+    return { stored, live, assertCurrent }
+  }
+
+  async listSkills(sessionId: string): Promise<SessionSkillsSnapshot> {
+    const { stored, live, assertCurrent } = this.resourceOwner(sessionId)
+    try {
+      if (live?.rpc.skills?.list) {
+        try {
+          const result = await live.rpc.skills.list()
+          assertCurrent()
+          return skillsSnapshot(sessionId, 'copilot', 'session', copilotSkills(result))
+        } catch (error) {
+          assertCurrent()
+          if (!isResourceMethodUnavailable(error)) throw error
+        }
+      }
+      if (this.client.rpc.skills?.discover) {
+        try {
+          assertCurrent()
+          const result = await this.client.rpc.skills.discover({ projectPaths: [stored.cwd] })
+          assertCurrent()
+          return skillsSnapshot(sessionId, 'copilot', 'workspace', copilotSkills(result))
+        } catch (error) {
+          assertCurrent()
+          if (!isResourceMethodUnavailable(error)) throw error
+        }
+      }
+      return unavailableSkills(sessionId, 'copilot')
+    } catch (error) {
+      throw safeResourceError(error)
+    }
+  }
+
+  async listMcpServers(sessionId: string): Promise<SessionMcpServersSnapshot> {
+    const { stored, live, assertCurrent } = this.resourceOwner(sessionId)
+    try {
+      if (live?.rpc.mcp?.list) {
+        try {
+          const result = await live.rpc.mcp.list()
+          assertCurrent()
+          return mcpSnapshot(sessionId, 'copilot', 'session', copilotMcp(result))
+        } catch (error) {
+          assertCurrent()
+          if (!isResourceMethodUnavailable(error)) throw error
+        }
+      }
+      if (this.client.rpc.mcp?.discover) {
+        try {
+          assertCurrent()
+          const result = await this.client.rpc.mcp.discover({ workingDirectory: stored.cwd })
+          assertCurrent()
+          return mcpSnapshot(sessionId, 'copilot', 'workspace', copilotWorkspaceMcp(result))
+        } catch (error) {
+          assertCurrent()
+          if (!isResourceMethodUnavailable(error)) throw error
+        }
+      }
+      return unavailableMcp(sessionId, 'copilot')
+    } catch (error) {
+      throw safeResourceError(error)
+    }
   }
 
   private async commandCatalog(sessionId: string) {

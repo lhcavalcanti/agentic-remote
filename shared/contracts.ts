@@ -12,7 +12,64 @@ export interface AgentProviderCapability {
   supportsTmuxMigration?: boolean
   supportsBackgroundTasks?: boolean
   supportsQueuedPromptDispatch?: boolean
+  supportsSessionResources?: boolean
   unavailableReason?: string
+}
+
+export type SessionResourceScope = 'session' | 'workspace' | 'last-known' | 'unavailable'
+
+export interface SessionResourceSnapshot {
+  sessionId: string
+  provider: AgentProvider
+  scope: SessionResourceScope
+  capturedAt: string
+  message?: string
+  totalCount?: number
+  truncated?: boolean
+}
+
+export type SessionResourceSource =
+  | 'project' | 'inherited' | 'user' | 'plugin' | 'builtin' | 'custom' | 'unknown'
+
+export interface SessionSkillSummary {
+  name: string
+  description?: string
+  commandName?: string
+  argumentHint?: string
+  source?: SessionResourceSource
+  enabled?: boolean
+  userInvocable?: boolean
+  pluginName?: string
+}
+
+export interface SessionSkillsSnapshot extends SessionResourceSnapshot {
+  skills: SessionSkillSummary[]
+}
+
+export interface ManagedSessionSkillsSnapshot extends SessionSkillsSnapshot {
+  computerId: string
+}
+
+export type SessionMcpStatus =
+  | 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
+  | 'stopped' | 'not_configured' | 'unknown'
+
+export interface SessionMcpServerSummary {
+  name: string
+  status: SessionMcpStatus
+  source?: SessionResourceSource
+  transport?: 'stdio' | 'http' | 'sse' | 'memory'
+  enabled?: boolean
+  toolCount?: number
+  pluginName?: string
+}
+
+export interface SessionMcpServersSnapshot extends SessionResourceSnapshot {
+  servers: SessionMcpServerSummary[]
+}
+
+export interface ManagedSessionMcpServersSnapshot extends SessionMcpServersSnapshot {
+  computerId: string
 }
 
 export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'

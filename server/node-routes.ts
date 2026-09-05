@@ -10,6 +10,7 @@ import {
 } from './file-upload-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import type { SessionService } from './session-service.js'
+import { isSessionResourceRoute, readSessionSkills, readSessionMcpServers, safeResourceError } from './session-resources.js'
 import {
   MAX_AUDIO_BYTES,
   TranscriptionError,
@@ -155,6 +156,7 @@ export async function registerNodeRoutes(
         (_request, body, done) => done(null, body),
       )
       node.addHook('onRequest', async (request, reply) => {
+        if (isSessionResourceRoute(request.routeOptions.url)) reply.header('cache-control', 'no-store')
         if (!tokenMatches(request.headers.authorization, identity.token)) {
           return reply.code(401).send({ error: 'Invalid node token' })
         }
@@ -245,6 +247,26 @@ export async function registerNodeRoutes(
         async (request) => ({
           commands: await service.listCommands(request.params.sessionId),
         }),
+      )
+
+      node.get<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/skills',
+        async (request, reply) => {
+          reply.header('cache-control', 'no-store')
+          return readSessionSkills(service, request.params.sessionId).catch((error: unknown) => {
+            throw safeResourceError(error)
+          })
+        },
+      )
+
+      node.get<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/mcp',
+        async (request, reply) => {
+          reply.header('cache-control', 'no-store')
+          return readSessionMcpServers(service, request.params.sessionId).catch((error: unknown) => {
+            throw safeResourceError(error)
+          })
+        },
       )
 
       node.get<{

@@ -1,5 +1,6 @@
 import type {
   AddComputerInput,
+  AgentProvider,
   AudioTranscription,
   BackgroundTaskSnapshot,
   ComputerSummary,
@@ -14,6 +15,11 @@ import type {
   ProviderRuntimeOptions,
   ManagedRemovedQueuedPrompt,
   ManagedQueuedPromptDispatchResult,
+  ManagedSessionSkillsSnapshot,
+  ManagedSessionMcpServersSnapshot,
+  SessionResourceSnapshot,
+  SessionSkillSummary,
+  SessionMcpServerSummary,
   PermissionReplyInput,
   RenameSessionInput,
   RuntimeOptions,
@@ -88,6 +94,134 @@ async function requestVoid(path: string, init: RequestInit): Promise<void> {
 function sessionPath(computerId: string, sessionId?: string): string {
   const base = `/api/computers/${encodeURIComponent(computerId)}/sessions`
   return sessionId ? `${base}/${encodeURIComponent(sessionId)}` : base
+}
+
+const resourceScopes = new Set(['session', 'workspace', 'last-known', 'unavailable'])
+const resourceSources = new Set(['project', 'inherited', 'user', 'plugin', 'builtin', 'custom', 'unknown'])
+const mcpStatuses = new Set(['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured', 'unknown'])
+const mcpTransports = new Set(['stdio', 'http', 'sse', 'memory'])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function optionalText(value: unknown): boolean {
+  return value === undefined || typeof value === 'string'
+}
+
+function optionalBoolean(value: unknown): boolean {
+  return value === undefined || typeof value === 'boolean'
+}
+
+function optionalCount(value: unknown): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+}
+
+function resourceMetadata(
+  value: unknown,
+  computerId: string,
+  sessionId: string,
+  provider: AgentProvider,
+): value is SessionResourceSnapshot & { computerId: string } {
+  return isRecord(value) &&
+    value.computerId === computerId && value.sessionId === sessionId && value.provider === provider &&
+    typeof value.scope === 'string' && resourceScopes.has(value.scope) &&
+    typeof value.capturedAt === 'string' && Number.isFinite(Date.parse(value.capturedAt)) &&
+    optionalText(value.message) && optionalCount(value.totalCount) && optionalBoolean(value.truncated) &&
+    (value.scope !== 'unavailable' || (typeof value.message === 'string' && Boolean(value.message.trim())))
+}
+
+function isSkillSummary(value: unknown): value is SessionSkillSummary {
+  return isRecord(value) && typeof value.name === 'string' && Boolean(value.name.trim()) &&
+    optionalText(value.description) && optionalText(value.commandName) &&
+    optionalText(value.argumentHint) && optionalText(value.pluginName) &&
+    optionalBoolean(value.enabled) && optionalBoolean(value.userInvocable) &&
+    (value.source === undefined || (typeof value.source === 'string' && resourceSources.has(value.source)))
+}
+
+function isMcpSummary(value: unknown): value is SessionMcpServerSummary {
+  return isRecord(value) && typeof value.name === 'string' && Boolean(value.name.trim()) &&
+    typeof value.status === 'string' && mcpStatuses.has(value.status) &&
+    optionalText(value.pluginName) && optionalBoolean(value.enabled) && optionalCount(value.toolCount) &&
+    (value.source === undefined || (typeof value.source === 'string' && resourceSources.has(value.source))) &&
+    (value.transport === undefined || (typeof value.transport === 'string' && mcpTransports.has(value.transport)))
+}
+
+function resourceSummary(value: SessionResourceSnapshot & { computerId: string }) {
+  return {
+    computerId: value.computerId,
+    sessionId: value.sessionId,
+    provider: value.provider,
+    scope: value.scope,
+    capturedAt: value.capturedAt,
+    message: value.message,
+    totalCount: value.totalCount,
+    truncated: value.truncated,
+  }
+}
+
+async function readResourceSnapshot(url: string, signal?: AbortSignal): Promise<unknown> {
+  try {
+    return await request<unknown>(url, { signal, cache: 'no-store' })
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error('The computer returned an invalid resource response.')
+    }
+    throw error
+  }
+}
+
+export async function listSessionSkills(
+  computerId: string,
+  sessionId: string,
+  provider: AgentProvider,
+  signal?: AbortSignal,
+): Promise<ManagedSessionSkillsSnapshot> {
+  const value = await readResourceSnapshot(`${sessionPath(computerId, sessionId)}/skills`, signal)
+  if (!resourceMetadata(value, computerId, sessionId, provider) ||
+    !('skills' in value) || !Array.isArray(value.skills) || !value.skills.every(isSkillSummary) ||
+    (value.scope === 'unavailable' && value.skills.length > 0)) {
+    throw new Error('The computer returned an invalid skills response for this session.')
+  }
+  return {
+    ...resourceSummary(value),
+    skills: value.skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      commandName: skill.commandName,
+      argumentHint: skill.argumentHint,
+      source: skill.source,
+      enabled: skill.enabled,
+      userInvocable: skill.userInvocable,
+      pluginName: skill.pluginName,
+    })),
+  }
+}
+
+export async function listSessionMcpServers(
+  computerId: string,
+  sessionId: string,
+  provider: AgentProvider,
+  signal?: AbortSignal,
+): Promise<ManagedSessionMcpServersSnapshot> {
+  const value = await readResourceSnapshot(`${sessionPath(computerId, sessionId)}/mcp`, signal)
+  if (!resourceMetadata(value, computerId, sessionId, provider) ||
+    !('servers' in value) || !Array.isArray(value.servers) || !value.servers.every(isMcpSummary) ||
+    (value.scope === 'unavailable' && value.servers.length > 0)) {
+    throw new Error('The computer returned an invalid MCP response for this session.')
+  }
+  return {
+    ...resourceSummary(value),
+    servers: value.servers.map((server) => ({
+      name: server.name,
+      status: server.status,
+      source: server.source,
+      transport: server.transport,
+      enabled: server.enabled,
+      toolCount: server.toolCount,
+      pluginName: server.pluginName,
+    })),
+  }
 }
 
 export async function listComputers(): Promise<ComputerSummary[]> {
@@ -311,9 +445,11 @@ export async function searchWorkspace(
 export async function getSession(
   computerId: string,
   sessionId: string,
+  signal?: AbortSignal,
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     sessionPath(computerId, sessionId),
+    { signal, cache: 'no-store' },
   )
   return response.session
 }

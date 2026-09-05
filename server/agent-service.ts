@@ -4298,6 +4298,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (action !== 'accept') {
       if (requestId.startsWith('persisted-user-input:')) {
+        const toolCallId = requestId.slice('persisted-user-input:'.length)
+        if (
+          (await this.terminalController.has(sessionId)) &&
+          !(await this.isToolCallComplete(sessionId, toolCallId))
+        ) {
+          const dismissed =
+            request.form &&
+            (await this.terminalController.dismissUserInput?.(
+              sessionId,
+              {
+                question: request.question,
+                fields: request.form.fields.map((field) => field.title),
+              },
+              action,
+            ))
+          // Hiding the card cannot release the terminal's keyboard. Keep the
+          // question actionable unless the owning CLI confirms it has ended.
+          if (
+            !dismissed ||
+            !(await this.waitForToolCompletion(sessionId, toolCallId))
+          ) {
+            throw Object.assign(
+              new Error(
+                'The agent is still showing its prompt, so it was not dismissed. Try again.',
+              ),
+              { statusCode: 409 },
+            )
+          }
+        }
         this.answeredPersistedInputs.set(sessionId, {
           requestId,
           expiresAt: Date.now() + 60_000,
@@ -4424,8 +4453,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // avoid, so nothing is sent unless the form is known to have closed.
         if (request.form && !closed) {
           this.answeredPersistedInputs.delete(sessionId)
-          throw new Error(
-            'The agent is still showing its prompt, so the answer was not sent. Try again.',
+          throw Object.assign(
+            new Error(
+              'The agent is still showing its prompt, so the answer was not sent. Try again.',
+            ),
+            { statusCode: 409 },
           )
         }
       }

@@ -404,7 +404,7 @@ export class ClaudeAgentService
   }
 
   async renameSession(id: string, title: string): Promise<SessionDetail> {
-    const session = this.requireSession(id)
+    const session = await this.store.readAfterWrites(id)
     try {
       await this.sdk.renameSession(id, title, { dir: session.cwd })
     } catch (error) {
@@ -418,7 +418,7 @@ export class ClaudeAgentService
   }
 
   async runtimeOptions(id: string): Promise<RuntimeOptions> {
-    const session = this.requireSession(id)
+    const session = await this.store.readAfterWrites(id)
     const options = await this.providerRuntimeOptions('claude')
     return {
       current: session.runtime || {},
@@ -446,7 +446,7 @@ export class ClaudeAgentService
     id: string,
     input: ConfigureRuntimeInput,
   ): Promise<SessionDetail> {
-    const session = this.requireSession(id)
+    const session = await this.store.readAfterWrites(id)
     if (session.status !== 'idle') {
       throw new Error('Runtime settings can only change while the session is idle')
     }
@@ -465,6 +465,9 @@ export class ClaudeAgentService
       throw new Error('Claude Agent manages its context window automatically')
     }
     const updated = await this.store.update(id, (stored) => {
+      if (stored.status !== 'idle') {
+        throw new Error('Runtime settings can only change while the session is idle')
+      }
       stored.runtime = {
         ...stored.runtime,
         model: input.model,
@@ -511,11 +514,9 @@ export class ClaudeAgentService
         answers: pending.answers,
       },
     })
-    const updated = await this.store.update(sessionId, (session) => {
-      session.pendingUserInput = undefined
-      session.status = 'running'
-      session.activity = 'Continuing'
-    })
+    const updated = await this.store.clearPendingRequest(
+      sessionId, 'pendingUserInput', requestId, { status: 'running', activity: 'Continuing' },
+    )
     this.publish(updated)
     return updated
   }
@@ -528,6 +529,7 @@ export class ClaudeAgentService
   }
 
   private async clearSerialized(id: string): Promise<SessionDetail> {
+    await this.store.readAfterWrites(id)
     if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
       throw Object.assign(new Error('Resume the session before clearing it'), {
         // Carries a status so the reason reaches the reader. Left
@@ -573,19 +575,21 @@ export class ClaudeAgentService
     this.suspendingSessions.add(id)
     // The conversation is held on disk and a query is started again for the
     // next message, so letting go of it costs nothing but starting one.
-    const active = this.active.get(id)
-    if (active) {
-      active.abortController.abort()
-      if (this.active.get(id) === active) {
-        this.active.delete(id)
-      }
-      // Waited for rather than abandoned. The run tears down after the abort,
-      // and a resume that got in first would have registered its own query by
-      // then -- which the old run's cleanup used to remove, leaving the live
-      // query with nothing able to stop it.
-      await active.done
-    }
     try {
+      await this.store.readAfterWrites(id)
+      this.requireIdle(id)
+      const active = this.active.get(id)
+      if (active) {
+        active.abortController.abort()
+        if (this.active.get(id) === active) {
+          this.active.delete(id)
+        }
+        // Waited for rather than abandoned. The run tears down after the abort,
+        // and a resume that got in first would have registered its own query by
+        // then -- which the old run's cleanup used to remove, leaving the live
+        // query with nothing able to stop it.
+        await active.done
+      }
       const suspended = await this.store.setSuspended(id, true)
       this.publish(suspended)
       return suspended
@@ -599,10 +603,7 @@ export class ClaudeAgentService
   }
 
   private async resumeQueued(id: string): Promise<SessionDetail> {
-    const stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
+    const stored = await this.store.readAfterWrites(id)
     if (!stored.suspended) {
       return stored
     }
@@ -648,6 +649,7 @@ export class ClaudeAgentService
   }
 
   private async restartSerialized(id: string): Promise<SessionDetail> {
+    await this.store.readAfterWrites(id)
     if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
       throw Object.assign(new Error('Resume the session before restarting it'), {
         // Carries a status so the reason reaches the reader. Left
@@ -769,6 +771,10 @@ export class ClaudeAgentService
     enqueue = false,
     fromQueue = false,
   ): Promise<SessionDetail> {
+    await this.store.readAfterWrites(sessionId)
+    if (!fromQueue && this.admissionClosed.has(sessionId)) {
+      throw Object.assign(new Error('The session is still resuming'), { statusCode: 409 })
+    }
     if (
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
@@ -1045,11 +1051,9 @@ export class ClaudeAgentService
         ? { behavior: 'allow', updatedInput: pending.input }
         : { behavior: 'deny', message: 'User denied this tool request' },
     )
-    const updated = await this.store.update(sessionId, (session) => {
-      session.pendingPermission = undefined
-      session.status = 'running'
-      session.activity = 'Continuing'
-    })
+    const updated = await this.store.clearPendingRequest(
+      sessionId, 'pendingPermission', requestId, { status: 'running', activity: 'Continuing' },
+    )
     this.publish(updated)
     return updated
   }
@@ -1627,11 +1631,15 @@ export class ClaudeAgentService
       // and then be refused for being suspended, losing it for good.
       return
     }
-    const next = session.queuedPrompts?.[0]
+    if (!session.queuedPrompts?.length) {
+      return
+    }
+    // Reads expose committed state. An edit may already be waiting to remove
+    // that visible head, so choose and claim the head in the same transaction.
+    const { prompt: next } = await this.store.shiftQueuedPrompt(sessionId)
     if (!next) {
       return
     }
-    await this.store.removeQueuedPrompt(sessionId, next.id)
     // Held from the moment the prompt leaves the queue until its turn has
     // registered. Without it a send arriving in between saw an idle session
     // with an empty queue, started a turn of its own beside this one, and the

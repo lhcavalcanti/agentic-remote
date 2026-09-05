@@ -493,6 +493,22 @@ Persistent state MUST NOT include:
 - Temporary transcription artifacts
 - Live `.env` files or credentials
 
+Awaited session mutations MUST become visible only after their state write
+commits. A refused write MUST NOT leave the mutation in memory, subsequent
+successful writes, snapshots, or queue dispatch decisions. Mutations sharing a
+coalesced write MUST share its commit outcome; a later batch MUST start from
+committed state, not a rejected batch. Validation failures MUST NOT leave
+partially applied changes.
+
+Removing or replacing a session MUST NOT turn an earlier committed mutation
+into a rejected call. State-dependent reductions and equality guards MUST
+respect admitted mutation order, including runtime permission changes, working
+directories, and questions arriving while an earlier reply is being recorded.
+
+Live streamed text MAY remain volatile until the next persisted mutation.
+Publishing a live delta MUST NOT expose unrelated, uncommitted session or queue
+changes.
+
 ## 14. Error handling
 
 - Invalid input MUST produce an explicit user-visible error.

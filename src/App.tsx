@@ -7588,13 +7588,20 @@ function App() {
   useEffect(() => {
     void listKnowledgeRoots()
       .then(async (loaded) => {
-        setRoots(loaded)
+        // This answer was asked for before any computer could be unpaired,
+        // and it names computers rather than being scoped to one. Installing
+        // it as it stands would put back the roots of a computer forgotten
+        // while it was on its way.
+        const live = loaded.filter(
+          (entry) => !forgottenComputers.current.has(entry.computerId),
+        )
+        setRoots(live)
         // Only the root is reopened here. Where a session was reading belongs
         // to that session, and this runs before one is known, so applying it
         // would show one session's document under another.
         const remembered = restoredKnowledge.current
         const root =
-          loaded.find((entry) => entry.id === remembered.rootId) || loaded[0]
+          live.find((entry) => entry.id === remembered.rootId) || live[0]
         if (!root) {
           // Nothing to restore, so later changes are safe to persist.
           knowledgeHydrated.current = true
@@ -7859,6 +7866,7 @@ function App() {
         // without it a deep link to its ancestor has no way through.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(reconciled)
+        rememberComputers(loadedComputers)
         setComputers(loadedComputers)
         // A live removal can arrive before this list does, so the address may
         // name a session that has already been replaced, possibly more than
@@ -8135,6 +8143,7 @@ function App() {
           (computerEventSequenceRef.current.get(computer.id) || 0) <=
           startedAtSequence,
       )
+      rememberComputers(snapshotComputers)
       const answeredFor = new Set(listing.answeredComputerIds)
       if (!claim.whole) {
         // Only the computers this answer reached that the newer one did not.
@@ -9696,6 +9705,17 @@ function App() {
     )
     setAddRootOpen(false)
     await selectRoot(root.id)
+  }
+
+  /**
+   * A computer named by an authoritative list is paired again, whatever the
+   * socket did or did not say. Without this the mark left by removing it
+   * outlives the computer and goes on discarding its answers.
+   */
+  function rememberComputers(present: readonly { id: string }[]) {
+    for (const computer of present) {
+      forgottenComputers.current.delete(computer.id)
+    }
   }
 
   /**
@@ -11789,9 +11809,13 @@ function App() {
       />
       <ComputersDialog
         computers={computers}
-        onAdded={(computer) =>
+        onAdded={(computer) => {
+          // Pairing it again is authoritative, and the socket may not be the
+          // one that says so. Without this the mark set when it was removed
+          // would outlive it and go on discarding its answers.
+          forgottenComputers.current.delete(computer.id)
           setComputers((current) => upsertComputer(current, computer))
-        }
+        }}
         onClose={() => setComputersOpen(false)}
         onRemoved={(computerId) => {
           setComputers((current) =>

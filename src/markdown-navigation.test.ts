@@ -251,6 +251,19 @@ describe('outlineFromMarkdown edge cases', () => {
     ])
   })
 
+  it('keeps counting a heading that has nothing to show', () => {
+    // `#` on its own is still drawn, so an entry after it is one heading
+    // further down the document than its position in this list.
+    const content = ['#', '', '# Real', '', '## Later'].join('\n')
+
+    expect(
+      outlineFromMarkdown(content).map(({ text, index }) => ({ text, index })),
+    ).toEqual([
+      { text: 'Real', index: 1 },
+      { text: 'Later', index: 2 },
+    ])
+  })
+
   it('does not read a rule under a link definition as a heading', () => {
     // A link reference definition is not a paragraph, so the renderer draws a
     // rule here rather than a heading. Reading it as one shifted every later

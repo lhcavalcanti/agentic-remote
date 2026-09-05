@@ -106,15 +106,23 @@ export function inlineText(markdown: string): string {
 export function outlineFromMarkdown(content: string): DocumentHeading[] {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(content)
   const headings: DocumentHeading[] = []
+  // Counted separately from the entries. An outline entry is found in the
+  // document by its position among the rendered headings, and a heading with
+  // nothing to show -- `#` on its own, or one made only of an image with no
+  // alt text -- is still drawn. Leaving it out of the count as well as out of
+  // the list sent every later entry to the heading before its own.
+  let rendered = 0
   const visit = (node: RootContent | Root) => {
     if (node.type === 'heading') {
       const text = nodeText(node)
+      const index = rendered
+      rendered += 1
       if (text) {
         headings.push({
           id: headingSlug(text),
           text,
           level: node.depth,
-          index: headings.length,
+          index,
         })
       }
       return

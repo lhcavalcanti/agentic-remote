@@ -330,6 +330,10 @@ remain on their owning computers and outside Git.
 Paired-node HTTP requests refuse redirects rather than replaying request bodies
 or credentials to another endpoint. Configure the final node URL, including its
 HTTPS scheme when applicable; a redirecting proxy is not a valid pairing endpoint.
+Redirect failures return an explicit `502` message identifying the HTTP redirect
+status and asking for the final node URL. The original node may already have
+admitted an action before sending its redirect response, so check its state
+before retrying; this gateway failure is not proof that the action was refused.
 
 See [Security policy](SECURITY.md) before allowing other users to access a hub.
 

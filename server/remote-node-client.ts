@@ -30,6 +30,7 @@ import type {
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
+import { RemoteNodeRedirectError, RemoteNodeRequestError } from './remote-node-errors.js'
 import {
   safeResourceError,
   sanitizeSkillsSnapshot,
@@ -42,6 +43,7 @@ import {
  * computer, so the caller waits slightly longer than their sum before giving up.
  */
 const TRANSCRIPTION_TIMEOUT_MS = 13 * 60_000
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 const DEFINITE_DISPATCH_REFUSALS = new Set([
   400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 429,
@@ -54,16 +56,6 @@ function headerSafe(value: string): string {
 interface RemoteNodeClientEvents {
   event: [event: ServerEvent]
   status: [online: boolean]
-}
-
-class RemoteNodeRequestError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: number,
-  ) {
-    super(message)
-    this.name = 'RemoteNodeRequestError'
-  }
 }
 
 export function normalizeNodeUrl(value: string): string {
@@ -229,6 +221,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       if (this.stopped) throw new SessionResourceError('stopped')
       return normalize(raw)
     } catch (error) {
+      if (error instanceof RemoteNodeRedirectError) throw error
       if (error instanceof RemoteNodeRequestError) {
         throw new SessionResourceError(
           error.statusCode === 404 ? 'missing' :
@@ -639,12 +632,22 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     try {
       response = await fetch(`${this.computer.baseUrl}${path}`, {
         ...init,
-        redirect: 'error',
+        redirect: 'manual',
         headers,
         signal: init.signal
           ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
           : AbortSignal.timeout(timeoutMs),
       })
+      if (REDIRECT_STATUSES.has(response.status)) {
+        const refusal = new RemoteNodeRedirectError(this.computer.name, response.status)
+        try {
+          await response.body?.cancel()
+        } catch (error) {
+          // Keep the actionable refusal primary without hiding cleanup failure.
+          throw Object.assign(refusal, { cause: error })
+        }
+        throw refusal
+      }
     } catch (error) {
       // A poll that must not flap the online state, and a request the caller
       // abandoned, are both failures that say nothing about the node.

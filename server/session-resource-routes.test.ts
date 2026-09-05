@@ -77,6 +77,19 @@ async function pairedFixture() {
     service: nodeService.service(), transcriptionService: transcription,
   })
   apps.push(node.app)
+  const redirect: { path?: string; status: 307 | 308 } = { status: 307 }
+  let redirected = 0
+  node.app.get('/resource-redirect-target', async () => {
+    redirected += 1
+    return { error: 'Unexpected redirect target' }
+  })
+  node.app.addHook('onSend', async (request, reply, payload) => {
+    if (redirect.path && request.routeOptions.url === redirect.path) {
+      reply.code(redirect.status).header('location', '/resource-redirect-target?secret=PRIVATE_LOCATION')
+      return 'PRIVATE_REDIRECT_BODY'
+    }
+    return payload
+  })
   const baseUrl = await node.app.listen({ host: '127.0.0.1', port: 0 })
   const hub = await buildApp({
     role: 'hub', logger: false, dataDirectory: await dataDirectory(),
@@ -90,7 +103,7 @@ async function pairedFixture() {
       method: 'GET', url: `/api/computers/${id}/sessions/${sessionId}/${kind}`,
       headers: { host: 'localhost' },
     })
-  return { node, hub, nodeService, hubService, computer, pairing, get }
+  return { node, hub, nodeService, hubService, computer, pairing, get, redirect, redirected: () => redirected }
 }
 
 function hold<T>() {
@@ -110,6 +123,24 @@ afterEach(async () => {
 })
 
 describe('session resource hub and authenticated node routes', () => {
+  it.each([
+    ['/node-api/info', 'skills', 307],
+    ['/node-api/history', 'skills', 308],
+    ['/node-api/sessions/:sessionId/skills', 'skills', 307],
+    ['/node-api/sessions/:sessionId/mcp', 'mcp', 308],
+  ] as const)('keeps the safe redirect reason through the hub for %s', async (path, kind, status) => {
+    const fixture = await pairedFixture()
+    fixture.redirect.path = path
+    fixture.redirect.status = status
+    const response = await fixture.get(kind)
+    expect(response.statusCode).toBe(502)
+    expect(response.json().error).toContain(`HTTP ${status} redirect`)
+    expect(response.json().error).toContain('final node URL')
+    expect(response.body).not.toContain('PRIVATE')
+    expect(fixture.redirected()).toBe(0)
+    expect(fixture.nodeService.openSession).not.toHaveBeenCalled()
+  })
+
   it('forwards to the selected computer/provider without opening or prompting either session', async () => {
     const { computer, get, nodeService, hubService, hub } = await pairedFixture()
     const skills = await get('skills')

@@ -202,6 +202,14 @@ Questions and permissions are the highest-priority UI state.
 
 ## 6. Composer and prompt delivery
 
+- Paste receipt MUST recognize both current and legacy CLI collapsed-paste
+  markers, including multiline input shorter than the character collapse limit,
+  and long lines scrolled within the composer. A late confirmed paste MUST NOT
+  be reported as a failure solely because the first wait expired.
+- Sending MUST NOT append to an existing terminal draft or uncertain paste.
+  Such input MUST be left untouched with an actionable conflict, not cleared,
+  duplicated, or submitted automatically.
+
 - Full-screen send protection MUST recognize active terminal dialogs, including
   single-field questions, without treating keyboard hints quoted in transcript
   or composer text as an open dialog.

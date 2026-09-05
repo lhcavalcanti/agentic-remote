@@ -158,6 +158,12 @@ This is the area most likely to be extended, so its current limits matter.
   navigation, session switching, or clear/replacement handling.
 - Root creation starts in Knowledge. With no roots and an active session, its
   initial picker uses that session's owning computer and working folder.
+- Refused paths carry their reason: `400` for a disallowed path, `403` for
+  escaping the root, `404` for a missing file, `413` for excessive size, and
+  `415` for an unsupported preview type.
+- `validateKnowledgeRoot` permits readable directories independently of session
+  execution roots. Removing a computer retires its Knowledge roots and
+  invalidates responses from the old pairing.
 
 ## Deployment topology
 
@@ -315,3 +321,7 @@ Check graph freshness, inspect the current implementation, and reproduce the
 behavior. For a session that appears idle while running, trace the event-log
 status derivation and live transcript watermarks described above; the graph
 locates the code but does not report the live state.
+
+Issue #169 tracks timing-sensitive tmux fixtures. Serialize real-tmux runs,
+scope discovery to fixture-owned processes, and investigate failures rather
+than repeatedly rerunning the promotion gate until it passes.

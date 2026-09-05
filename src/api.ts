@@ -373,7 +373,6 @@ function isQueuedDispatchResult(
   if (
     !result || typeof result !== 'object' ||
     !('promptId' in result) || result.promptId !== promptId ||
-    !('attemptId' in result) || typeof result.attemptId !== 'string' || !result.attemptId ||
     !('outcome' in result) || typeof result.outcome !== 'string' ||
     !['sent', 'refused', 'uncertain'].includes(result.outcome) ||
     ('message' in result && typeof result.message !== 'string') ||
@@ -381,6 +380,14 @@ function isQueuedDispatchResult(
     (result.outcome === 'uncertain' && (!('delivery' in result) ||
       (result.delivery !== 'accepted' && result.delivery !== 'unknown')))
   ) return false
+  const attemptId = 'attemptId' in result ? result.attemptId : undefined
+  if (attemptId === undefined) {
+    if (result.outcome !== 'uncertain' || !('delivery' in result) || result.delivery !== 'unknown') {
+      return false
+    }
+  } else if (typeof attemptId !== 'string' || !attemptId) {
+    return false
+  }
   if (!('session' in result) || result.session === undefined) return result.outcome !== 'sent'
   const session = result.session
   return Boolean(

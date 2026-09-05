@@ -317,6 +317,10 @@ proxy or private encrypted network.
 Pairing tokens, provider credentials, repositories, and session databases must
 remain on their owning computers and outside Git.
 
+Paired-node HTTP requests refuse redirects rather than replaying request bodies
+or credentials to another endpoint. Configure the final node URL, including its
+HTTPS scheme when applicable; a redirecting proxy is not a valid pairing endpoint.
+
 See [Security policy](SECURITY.md) before allowing other users to access a hub.
 
 The hub validates the `Host` and `Origin` headers on every `/api/*` request so

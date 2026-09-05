@@ -6135,6 +6135,30 @@ describe('App', () => {
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
+  it('keeps an explicit remote unknown outcome locked without fabricating an attempt ID', async () => {
+    const { rendered, textarea, key } = await openTargetedQueueEditor()
+    fireEvent.change(textarea, { target: { value: 'Keep this remote rewrite' } })
+    const unknown = {
+      outcome: 'uncertain' as const, promptId: 'q2', delivery: 'unknown' as const,
+      message: 'The owning computer did not confirm dispatch. No automatic retry was made.',
+    }
+    vi.mocked(dispatchQueuedPrompt).mockResolvedValue(unknown)
+    fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+    await waitFor(() => expect(textarea).toHaveValue('Keep this remote rewrite'))
+    await within(screen.getByRole('main')).findByText(unknown.message)
+    expect(unknown).not.toHaveProperty('attemptId')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q2', dispatchPending: true })
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Send edited message' })).toBeDisabled()
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('Keep this remote rewrite')
+    expect(screen.getByRole('button', { name: 'Send edited message' })).toBeDisabled()
+    expect(dispatchQueuedPrompt).toHaveBeenCalledOnce()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it.each(['v2 cleanup', 'every write'])(
     'does not restore accepted queued work as an ordinary send after failing %s',
     async (failure) => {
@@ -10216,7 +10240,7 @@ describe('App', () => {
       expect(retry).toBeEnabled()
       fireEvent.click(retry)
       await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-      expect(refresh).toBeEnabled()
+      await waitFor(() => expect(refresh).toBeEnabled())
       expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
       expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
     })

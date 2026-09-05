@@ -101,6 +101,88 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it.each([
+    ['current', 0, false],
+    ['current', 2400, false],
+    ['current', 0, true],
+    ['legacy', 0, false],
+    ['clipped', 0, false],
+    ['existing-draft', 0, false],
+  ] as const)('handles %s paste rendering after %dms (queue=%s) without duplicate input', async (format, delay, enqueue) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'paste-receipt-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-paste.mjs')
+    const output = path.join(directory, 'received.json')
+    const sessionId = randomUUID()
+    const content = format === 'legacy'
+      ? 'legacy text '.repeat(100)
+      : format === 'clipped'
+        ? 'prefix-' + 'content-'.repeat(160) + '-distinct-tail'
+        : Array.from({ length: 32 }, (_, index) => `line ${index}`).join('\n')
+    await writeFile(output, '')
+    await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+let input = ''
+let pasted
+let enters = 0
+function draw(text) {
+  process.stdout.write('\\x1b[2J\\x1b[H╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\\r\\n┃ ' +
+    text + '\\r\\n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\\r\\n / commands')
+}
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.stdin.on('data', (data) => {
+  input += data.toString()
+  const end = input.indexOf('\\x1b[201~')
+  if (pasted === undefined && end >= 0) {
+    pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
+    input = input.slice(end + 6)
+    setTimeout(() => draw(${JSON.stringify(format)} === 'clipped'
+      ? pasted.slice(-200)
+      : ${JSON.stringify(format)} === 'legacy'
+        ? '[Pasted text #1 +32 lines]'
+        : '[Paste #1 - 32 lines]'), ${delay})
+  }
+  if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
+    enters += 1
+    writeFileSync(${JSON.stringify(output)}, JSON.stringify({ content: pasted, enters, queued: input.includes('\\x11') }))
+    input = ''
+    draw('')
+  }
+})
+draw(${JSON.stringify(format === 'existing-draft' ? '[Paste #1 - 32 lines][Paste #2 - 32 lines]' : '')})
+`)
+    const tmuxSession = `agentic-paste-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session', '-d', '-s', tmuxSession,
+      process.execPath, executable, '--session-id', sessionId,
+    ])
+    const panePid = (await execFileAsync('tmux', [
+      'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+    ])).stdout.trim()
+    await waitForProcessCommand(Number(panePid), [executable])
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    const controller = new TmuxTerminalSessionController()
+    await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('╹')))
+    if (format === 'existing-draft') {
+      await expect(controller.send(sessionId, content, enqueue)).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('already has unsent text'),
+      })
+      expect(await readFile(output, 'utf8')).toBe('')
+      expect(await controller.capture(sessionId)).toContain('[Paste #1 - 32 lines][Paste #2 - 32 lines]')
+    } else {
+      expect(await controller.send(sessionId, content, enqueue)).toBe(true)
+      const received = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
+      expect(JSON.parse(received)).toEqual({ content, enters: 1, queued: enqueue })
+    }
+  })
+
   it('exposes session-use warnings without approving a concurrent takeover', () => {
     const permission = parseTerminalPermission(sessionInUsePane)
     expect(permission).toMatchObject({
@@ -1757,6 +1839,57 @@ describe('composerHoldsOtherText', () => {
         'deploy the thing',
       ),
     ).toBe(false)
+  })
+
+  describe('current CLI paste receipt', () => {
+    const framed = (text = '') => [
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      ...text.split('\n').map((line) => `┃ ${line}`),
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' / commands',
+    ].join('\n')
+    const shortMultiline = Array(32).fill('p').join('\n')
+
+    it('recognizes current markers for small multiline payloads, including trailing newlines', () => {
+      for (const content of [shortMultiline, shortMultiline + '\n']) {
+        const after = framed('[Paste #1 - 32 lines]')
+        expect(composerTookPaste(framed(), after, content, content)).toBe(true)
+        expect(paneShowsText(after, content, 0, content)).toBe(true)
+        expect(composerHoldsOtherText(framed(), after, content)).toBe(false)
+      }
+    })
+
+    it('recognizes markers wrapped inside their labels without crediting an existing marker', () => {
+      const after = framed('[Pa\nste #1 - 32 li\nnes]')
+      expect(composerTookPaste(framed(), after, shortMultiline)).toBe(true)
+      expect(composerTookPaste(after, after, shortMultiline)).toBe(false)
+    })
+
+    it('rejects wrong line counts, two new markers, or unrelated text beside a marker', () => {
+      for (const text of [
+        '[Paste #1 - 31 lines]',
+        '[Paste #1 - 32 lines][Paste #2 - 32 lines]',
+        '[Paste #1 - 32 lines]another draft',
+      ]) {
+        expect(composerTookPaste(framed(), framed(text), shortMultiline)).toBe(false)
+        expect(composerHoldsOtherText(framed(), framed(text), shortMultiline)).toBe(true)
+      }
+    })
+
+    it('does not count marker metadata as receipt of a short literal word', () => {
+      for (const marker of ['[Paste #1 - 32 lines]', '[Pasted text #1 +32 lines]']) {
+        expect(composerTookPaste(framed(), framed(marker), 'Paste')).toBe(false)
+        expect(paneShowsText(framed(marker), 'Paste')).toBe(false)
+      }
+    })
+
+    it('recognizes a scrolled long line only from substantial matching suffix text', () => {
+      const content = 'start-' + 'abcdefgh'.repeat(150) + '-distinct-end'
+      expect(composerTookPaste(framed(), framed(content.slice(-200)), content)).toBe(true)
+      expect(composerTookPaste(framed(), framed(content.slice(0, 200)), content)).toBe(false)
+      expect(composerTookPaste(framed(), framed(content.slice(-12)), content)).toBe(false)
+      expect(composerTookPaste(framed('existing draft'), framed(content.slice(-200)), content)).toBe(false)
+    })
   })
 
   it('sees text typed beside the paste', () => {

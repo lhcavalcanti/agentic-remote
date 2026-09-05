@@ -851,6 +851,17 @@ export class TmuxTerminalSessionController
           { statusCode: 409 },
         )
       }
+      if (
+        composerText(paneBeforePaste) !== undefined &&
+        composerHoldsText(paneBeforePaste)
+      ) {
+        throw Object.assign(
+          new Error(
+            'The terminal already has unsent text or a pending paste. Review it there before sending another message.',
+          ),
+          { statusCode: 409 },
+        )
+      }
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -912,34 +923,19 @@ export class TmuxTerminalSessionController
           paneBeforePaste,
           confirmation,
           content,
-        ))
-      ) {
-        // The prompt never showed the message, so pressing Enter would send
-        // whatever it does hold and still be reported as delivered.
-        //
-        // The paste itself may still have landed, and saying so while leaving
-        // it there is what puts a second copy in the prompt when the message
-        // is sent again — which the queue does on its own, without anyone
-        // deciding to. The prompt is put back the way it was found, so
-        // sending again is sending once.
-        //
-        // The load that makes a send look failed is the same load that makes
-        // the paste arrive late, so one look at this instant would miss it and
-        // leave the text to be concatenated with the retry. It is given a
-        // further moment to appear.
-        // Waited for anyway. The clear that follows refuses to touch a
-        // composer holding anything this paste did not put there, and giving
-        // the paste time to appear is what lets it be recognised as ours
-        // rather than mistaken for somebody else's writing.
-        await waitForComposerPaste(
+        )) &&
+        !(await waitForComposerPaste(
           target,
           paneBeforePaste,
           confirmation,
           content,
           20,
-        )
-        // Nothing is cleared here any more.
+        ))
+      ) {
+        // The prompt never showed the message, so pressing Enter would send
+        // whatever it does hold and still be reported as delivered.
         //
+        // Both waits failed. Never clear the composer or repeat the paste:
         // Reading the composer and then clearing it cannot be made one act:
         // whatever is read, a person at the terminal can type between the
         // reading and the keystroke, and Ctrl+U takes the whole composer.
@@ -1974,9 +1970,10 @@ export function paneEvidenceCount(
   }
   let found = 0
   let index = 0
-  const haystack = compact(
+  const rendered = compact(
     pane.split('\n').map(cleanDialogLine).join(''),
   )
+  const haystack = rendered.replace(PASTED_PLACEHOLDERS, '')
   for (;;) {
     const at = haystack.indexOf(wanted, index)
     if (at < 0) {
@@ -1995,10 +1992,7 @@ export function paneEvidenceCount(
   // end in a short one: judged by that line alone, the placeholder it really
   // did produce went unrecognised and the paste was left behind to be sent
   // twice.
-  if (pasted.length <= PASTE_ECHO_LIMIT) {
-    return found
-  }
-  return found + (pane.match(/\[Pasted text/g) || []).length
+  return found + qualifyingPasteCount(rendered, pasted)
 }
 
 /**
@@ -2090,10 +2084,11 @@ export function composerHoldsOtherText(
   // received, and compaction removes every space and newline: hundreds of
   // one-character lines are a large paste that measures small once joined, and
   // the placeholder it produced was then refused as evidence.
-  const couldHavePlaceholder = pasted.length > PASTE_ECHO_LIMIT
+  const couldHavePlaceholder = pasteCouldCollapse(pasted)
   if (
     couldHavePlaceholder &&
-    pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1
+    pastedPlaceholderCount(remainder) - pastedPlaceholderCount(before) === 1 &&
+    qualifyingPasteCount(remainder, pasted) - qualifyingPasteCount(before, pasted) === 1
   ) {
     remainder = remainder.replace(PASTED_PLACEHOLDER, ' ')
   }
@@ -2118,11 +2113,32 @@ export function composerHoldsOtherText(
 
 // Matched against composer text with its whitespace removed, because the
 // composer wraps inside words and the placeholder is no exception.
-// Roughly where the CLI stops echoing a paste and shows a placeholder for it
-// instead. Only a send past this size can account for one.
+// Legacy CLIs collapse long text; the current CLI also collapses more than ten
+// logical lines, even when those lines contain only a few characters.
 const PASTE_ECHO_LIMIT = 800
+const PASTE_LINE_LIMIT = 10
 
-const PASTED_PLACEHOLDER = /\[Pastedtext[^\]]*\]/u
+const PASTED_PLACEHOLDER = /\[(?:Pastedtext[^\]]*|Paste#\d+-(\d+)lines?)\]/u
+const PASTED_PLACEHOLDERS = new RegExp(PASTED_PLACEHOLDER.source, 'gu')
+
+function pasteCouldCollapse(pasted: string): boolean {
+  return pasted.length > PASTE_ECHO_LIMIT ||
+    pasted.trimEnd().split('\n').length > PASTE_LINE_LIMIT
+}
+
+function qualifyingPasteCount(text: string, pasted: string): number {
+  if (!pasteCouldCollapse(pasted)) {
+    return 0
+  }
+  const lineCounts = new Set([
+    pasted.split('\n').length,
+    pasted.trimEnd().split('\n').length,
+    pasted.trim().split('\n').length,
+  ])
+  return [...text.matchAll(PASTED_PLACEHOLDERS)].filter(
+    (match) => match[1] === undefined || lineCounts.has(Number(match[1])),
+  ).length
+}
 
 function occurrences(text: string, needle: string): number {
   if (!needle) {
@@ -2132,7 +2148,7 @@ function occurrences(text: string, needle: string): number {
 }
 
 function pastedPlaceholderCount(text: string): number {
-  return (text.match(/\[Pastedtext[^\]]*\]/gu) || []).length
+  return (text.match(PASTED_PLACEHOLDERS) || []).length
 }
 
 /** The composer's contents, or nothing when the pane cannot be read. */
@@ -2227,12 +2243,13 @@ export function composerTookPaste(
   const before = composerHoldsText(paneBefore) ? compact(drawnBefore || '') : ''
   // A paste too large to echo is shown as a placeholder instead of its text,
   // and only a send big enough to have produced one may claim it.
-  if (pasted.length > PASTE_ECHO_LIMIT) {
-    const drawn = (after.match(/\[Pastedtext/gu) || []).length
-    const had = (before.match(/\[Pastedtext/gu) || []).length
-    if (drawn > had) {
-      return true
-    }
+  const plainAfter = after.replace(PASTED_PLACEHOLDERS, '').replace(/^[>\u276f]/u, '')
+  const plainBefore = before.replace(PASTED_PLACEHOLDERS, '').replace(/^[>\u276f]/u, '')
+  const newPlaceholders = pastedPlaceholderCount(after) - pastedPlaceholderCount(before)
+  if (newPlaceholders > 0) {
+    return newPlaceholders === 1 &&
+      qualifyingPasteCount(after, pasted) - qualifyingPasteCount(before, pasted) === 1 &&
+      plainAfter === plainBefore
   }
   const occurrences = (haystack: string, needle: string) => {
     let found = 0
@@ -2248,7 +2265,17 @@ export function composerTookPaste(
   }
   // One more than the composer already held. The same text may have been
   // typed there and left, and its mere presence would prove nothing.
-  return occurrences(after, wanted) > occurrences(before, wanted)
+  if (occurrences(plainAfter, wanted) > occurrences(plainBefore, wanted)) {
+    return true
+  }
+  // Long logical lines scroll within the CLI's bounded composer. An empty
+  // composer gaining a substantial suffix of the paste is still evidence;
+  // the caller waits for this rendering to settle before pressing Enter.
+  return drawnBefore !== undefined &&
+    !before &&
+    plainAfter.length >= 64 &&
+    plainAfter.length < wanted.length &&
+    wanted.endsWith(plainAfter)
 }
 
 async function waitForComposerPaste(
@@ -2258,11 +2285,19 @@ async function waitForComposerPaste(
   pasted: string,
   attempts = 40,
 ): Promise<boolean> {
+  let previousMatch: string | undefined
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const pane = await capturePane(target)
     if (
-      composerTookPaste(paneBefore, await capturePane(target), expected, pasted)
+      composerTookPaste(paneBefore, pane, expected, pasted)
     ) {
-      return true
+      const rendered = composerText(pane) ?? pane
+      if (rendered === previousMatch) {
+        return true
+      }
+      previousMatch = rendered
+    } else {
+      previousMatch = undefined
     }
     await new Promise((resolve) => setTimeout(resolve, 50))
   }

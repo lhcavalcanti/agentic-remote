@@ -38,7 +38,10 @@ const renameSessionSchema = z.object({
 
 const sendMessageSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
-  content: z.string().trim().min(1).max(200_000),
+  content: z
+    .string()
+    .max(200_000)
+    .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
   enqueue: z.boolean().optional(),
 })
 
@@ -258,6 +261,10 @@ export async function registerHubRoutes(
     '/api/computers/:computerId',
     async (request, reply) => {
       await manager.removeComputer(request.params.computerId)
+      // A knowledge root is a computer and a path. Unpairing the computer
+      // leaves the root able to answer nothing but "not found", so it goes
+      // with it rather than staying in the list offering to try.
+      await knowledge.removeRootsForComputer(request.params.computerId)
       return reply.code(204).send()
     },
   )
@@ -280,6 +287,7 @@ export async function registerHubRoutes(
     if (!computer) {
       return reply.code(404).send({ error: 'Computer is not registered' })
     }
+    const registrationIsCurrent = manager.captureComputerRegistration(input.computerId)
     // Browse the folder first so an unreachable or refused root is reported
     // before it is stored, and so the owning computer resolves it.
     let listing
@@ -295,6 +303,15 @@ export async function registerHubRoutes(
       }
       throw error
     }
+    if (!registrationIsCurrent()) {
+      const registered = manager.listComputers()
+        .some((entry) => entry.id === input.computerId)
+      return reply.code(registered ? 409 : 404).send({
+        error: registered
+          ? 'Computer pairing changed while validating this folder. Choose the computer again.'
+          : 'Computer is not registered',
+      })
+    }
     const root = await knowledge.addRoot({
       computerId: input.computerId,
       computerName: computer.name,
@@ -304,6 +321,17 @@ export async function registerHubRoutes(
         input.path.split('/').filter(Boolean).at(-1) ||
         input.path,
     })
+    // Persistence can also overlap an unpair/re-pair. A reused ID is not the
+    // registration that validated this root, and its fresh roots must survive.
+    if (!manager.listComputers().some((entry) => entry.id === input.computerId)) {
+      await knowledge.removeRoot(root.id)
+      return reply.code(404).send({ error: 'Computer is not registered' })
+    }
+    if (!registrationIsCurrent()) {
+      return reply.code(409).send({
+        error: 'Computer pairing changed while saving this folder. Choose the computer again.',
+      })
+    }
     return reply.code(201).send({ root, listing })
   })
 

@@ -92,4 +92,96 @@ describe('hub routes', () => {
     expect(mutes.muted).toEqual([])
     await app.close()
   })
+
+  it('does not keep a root for a computer unpaired while it was being added', async () => {
+    let paired = true
+    const stored = new Map<string, { id: string; computerId: string }>()
+    const knowledge = {
+      addRoot: async (root: { computerId: string }) => {
+        const created = { ...root, id: `root-${stored.size + 1}` }
+        stored.set(created.id, created)
+        return created
+      },
+      removeRoot: async (id: string) => stored.delete(id),
+    } as unknown as KnowledgeStore
+    const app = Fastify()
+    await registerHubRoutes(
+      app,
+      {
+        listComputers: () =>
+          paired ? [{ id: 'worker', name: 'worker-node' }] : [],
+        captureComputerRegistration: () => () => paired,
+        // Browsing the folder is a round trip to the other computer, and the
+        // computer can be unpaired while it is in flight.
+        listKnowledge: async () => {
+          paired = false
+          return { path: '.', entries: [] }
+        },
+        on: () => undefined,
+        off: () => undefined,
+      } as unknown as ComputerManager,
+      knowledge,
+    )
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/knowledge/roots',
+      headers: { host: 'localhost' },
+      payload: { computerId: 'worker', path: '/home/tester/docs' },
+    })
+
+    expect(response.statusCode).toBe(404)
+    expect([...stored.keys()]).toEqual([])
+    await app.close()
+  })
+
+  it('rejects an old persisted root without removing a fresh pairing root', async () => {
+    let registration = Symbol('original')
+    let release!: () => void
+    let entered!: () => void
+    const writing = new Promise<void>((resolve) => { entered = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const roots = new Map<string, { id: string; computerId: string }>()
+    const removeRoot = vi.fn(async (id: string) => roots.delete(id))
+    const app = Fastify()
+    await registerHubRoutes(app, {
+      listComputers: () => [{ id: 'worker', name: 'Worker' }],
+      captureComputerRegistration: () => {
+        const captured = registration
+        return () => captured === registration
+      },
+      listKnowledge: async () => ({ path: '.', entries: [] }),
+      on: () => undefined,
+      off: () => undefined,
+    } as unknown as ComputerManager, {
+      addRoot: async (input: { computerId: string }) => {
+        const root = { ...input, id: 'old-root' }
+        roots.set(root.id, root)
+        entered()
+        await gate
+        return root
+      },
+      removeRoot,
+    } as unknown as KnowledgeStore)
+    try {
+      const response = app.inject({
+        method: 'POST', url: '/api/knowledge/roots',
+        headers: { host: 'localhost' },
+        payload: { computerId: 'worker', path: '/home/tester/docs' },
+      }).then((value) => value)
+      await writing
+      roots.clear()
+      registration = Symbol('repaired')
+      roots.set('fresh-root', { id: 'fresh-root', computerId: 'worker' })
+      release()
+      const rejected = await response
+      expect(rejected.statusCode).toBe(409)
+      expect(rejected.json().error).toContain('pairing changed while saving')
+      expect([...roots.keys()]).toEqual(['fresh-root'])
+      expect(removeRoot).not.toHaveBeenCalled()
+    } finally {
+      release()
+      await app.close()
+    }
+  })
 })

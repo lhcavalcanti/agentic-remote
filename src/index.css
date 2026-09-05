@@ -142,12 +142,12 @@ button {
 
 /* Sits on the boundary between the two grid columns. Only meaningful above
    the breakpoint where the sidebar stops being an overlay. */
+.reader-resizer,
 .sidebar-resizer {
   position: absolute;
   z-index: 5;
   top: 0;
   bottom: 0;
-  left: calc(var(--sidebar-width) - 3px);
   width: 6px;
   padding: 0;
   border: 0;
@@ -156,7 +156,16 @@ button {
   touch-action: none;
 }
 
-.sidebar-resizer::after {
+.sidebar-resizer {
+  left: calc(var(--sidebar-width) - 3px);
+}
+
+.reader-resizer {
+  right: calc(var(--knowledge-width) - 3px);
+}
+
+.sidebar-resizer::after,
+.reader-resizer::after {
   content: '';
   position: absolute;
   top: 0;
@@ -169,11 +178,15 @@ button {
 
 .sidebar-resizer:hover::after,
 .sidebar-resizer:focus-visible::after,
-.sidebar-resizer[data-resizing='true']::after {
+.sidebar-resizer[data-resizing='true']::after,
+.reader-resizer:hover::after,
+.reader-resizer:focus-visible::after,
+.reader-resizer[data-resizing='true']::after {
   background: var(--accent, var(--border-strong));
 }
 
-.sidebar-resizer:focus-visible {
+.sidebar-resizer:focus-visible,
+.reader-resizer:focus-visible {
   outline: none;
 }
 
@@ -186,7 +199,6 @@ button {
   padding: 0 16px;
 }
 
-.brand__mark,
 .empty-state__icon,
 .empty-chat__icon {
   display: grid;
@@ -198,8 +210,10 @@ button {
 }
 
 .brand__mark {
-  width: 32px;
-  height: 32px;
+  display: block;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
 }
 
 .brand > div {
@@ -292,6 +306,7 @@ button {
    take room from the conversation or cover it entirely. */
 .workspace {
   display: grid;
+  position: relative;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -304,6 +319,11 @@ button {
   --knowledge-width: clamp(320px, 34%, 560px);
 
   grid-template-columns: minmax(0, 1fr) var(--knowledge-width);
+}
+
+.workspace[data-resizing-reader='true'] {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .workspace--expanded {
@@ -3745,6 +3765,22 @@ button {
   display: none;
 }
 
+/*
+ * The composer decides what Enter does on a coarse pointer as well as on
+ * width, so the hint has to be read the same way. A tablet in landscape is
+ * wider than the breakpoint and still adds a line on Return -- and was being
+ * told the opposite.
+ */
+@media (pointer: coarse) {
+  .composer-hint__desktop {
+    display: none;
+  }
+
+  .composer-hint__mobile {
+    display: inline;
+  }
+}
+
 .dialog-backdrop {
   position: absolute;
   z-index: 30;
@@ -4474,7 +4510,8 @@ button {
     font-size: 16px;
   }
 
-  .sidebar-resizer {
+  .sidebar-resizer,
+  .reader-resizer {
     display: none;
   }
 

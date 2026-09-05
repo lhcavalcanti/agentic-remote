@@ -17,7 +17,7 @@ usage() {
 Usage: agentic-remote <command> [options]
 
 Commands:
-  setup [--host ADDRESS] [--port PORT] [--role hub|node] [--name NAME]
+  setup [--host ADDRESS] [--port PORT] [--role hub|node] [--name NAME] [--release-id ID]
       Install dependencies, build the app, install and start the user service.
   pair-info
       Print this node's URL, identity, and pairing token.
@@ -135,37 +135,76 @@ derived_origins() {
 }
 
 publish_release() {
-  local releases_dir release_id release_dir temporary_link
+  local releases_dir release_id release_dir temporary_link staging_dir
   [[ -s "$REPO_ROOT/dist/build-info.json" ]] ||
     die "production build identity is missing; rebuild the app"
+  release_id="${1:-$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}}"
+  [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] ||
+    die "release ID contains unsupported characters"
   releases_dir="$CONFIG_DIR/releases"
-  release_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p "$releases_dir"
+  releases_dir="$(readlink -f -- "$releases_dir")"
   release_dir="$releases_dir/$release_id"
-  temporary_link="$releases_dir/.current-$$"
+  temporary_link="$releases_dir/.current-$release_id"
+  [[ ! -e "$release_dir" && ! -L "$release_dir" ]] ||
+    die "release already exists: $release_id"
+  staging_dir="$(mktemp -d "$CONFIG_DIR/.release-stage.XXXXXX")"
+  (
+    published=0
+    activated=0
+    cleanup_publication() {
+      local result=$? current=""
+      trap - EXIT
+      if [[ "$result" != 0 && "$published" == 1 && "$activated" == 0 ]]; then
+        if [[ ! -e "$releases_dir/current" && ! -L "$releases_dir/current" ]] ||
+          { current="$(readlink -f -- "$releases_dir/current")" &&
+            [[ "$current" != "$release_dir" ]]; }; then
+          rm -rf -- "$release_dir"
+        else
+          printf 'Warning: retained release %s because activation is indeterminate.\n' "$release_dir" >&2
+        fi
+      fi
+      rm -rf -- "$staging_dir"
+      rm -f -- "$temporary_link"
+      exit "$result"
+    }
+    trap cleanup_publication EXIT
+    mkdir -p "$staging_dir/dist" "$staging_dir/node_modules"
+    # Stage outside rollback inventory, including when a copy is interrupted.
+    cp -a "$REPO_ROOT/dist/." "$staging_dir/dist/"
+    cp -a \
+      "$REPO_ROOT/server" \
+      "$REPO_ROOT/shared" \
+      "$REPO_ROOT/package.json" \
+      "$REPO_ROOT/tsconfig.json" \
+      "$REPO_ROOT/tsconfig.server.json" \
+      "$staging_dir/"
+    cp -a "$REPO_ROOT/node_modules/." "$staging_dir/node_modules/"
+    node -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' \
+      "$staging_dir" "$release_dir"
+    published=1
+    ln -s "$release_dir" "$temporary_link"
+    mv -Tf "$temporary_link" "$releases_dir/current"
+    [[ "$(readlink -f -- "$releases_dir/current")" == "$release_dir" ]] ||
+      die "release activation did not install $release_id"
+    activated=1
+  )
 
-  mkdir -p "$release_dir"
-  mkdir -p "$release_dir/dist"
-  # Copy the generated identity with its bundle; never regenerate it on publish.
-  cp -a "$REPO_ROOT/dist/." "$release_dir/dist/"
-  cp -a \
-    "$REPO_ROOT/server" \
-    "$REPO_ROOT/shared" \
-    "$REPO_ROOT/package.json" \
-    "$REPO_ROOT/tsconfig.json" \
-    "$REPO_ROOT/tsconfig.server.json" \
-    "$release_dir/"
-  cp -a "$REPO_ROOT/node_modules" "$release_dir/node_modules"
-  ln -s "$release_dir" "$temporary_link"
-  mv -Tf "$temporary_link" "$releases_dir/current"
-
-  # Keep the current release plus two rollback candidates.
-  find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
-    sort -nr |
-    tail -n +4 |
-    cut -d' ' -f2- |
-    while IFS= read -r old_release; do
-      rm -rf -- "$old_release"
-    done
+  # Always retain current, regardless of directory timestamps.
+  find "$releases_dir" -mindepth 1 -maxdepth 1 -type d \
+    ! -exec test -e '{}/.promotion-failed' \; -printf '%T@ %p\0' |
+    sort -z -nr |
+    {
+      retained=0
+      while IFS= read -r -d '' entry; do
+        old_release="${entry#* }"
+        [[ "$old_release" != "$release_dir" ]] || continue
+        retained=$((retained + 1))
+        if ((retained > 2)); then
+          rm -rf -- "$old_release"
+        fi
+      done
+    }
 }
 
 enable_linger() {
@@ -185,6 +224,7 @@ setup_service() {
   local host="" port="" role="" name="" data_directory="" allowed_origins=""
   local allowed_roots=""
   local transcription_computer=""
+  local release_id=""
   while (($# > 0)); do
     case "$1" in
       --host)
@@ -205,6 +245,13 @@ setup_service() {
       --name)
         (($# >= 2)) || die "--name requires a value"
         name="$2"
+        shift 2
+        ;;
+      --release-id)
+        (($# >= 2)) || die "--release-id requires a value"
+        release_id="$2"
+        [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] ||
+          die "release ID contains unsupported characters"
         shift 2
         ;;
       *)
@@ -259,7 +306,7 @@ setup_service() {
   pnpm --dir "$REPO_ROOT" build
 
   mkdir -p "$SYSTEMD_DIR" "$CONFIG_DIR" "$(dirname "$COMMAND_LINK")"
-  publish_release
+  publish_release "$release_id"
   local environment_tmp
   environment_tmp="$(mktemp "$CONFIG_DIR/.environment.XXXXXX")"
   printf '%s\n' \
@@ -331,12 +378,13 @@ rollback_service() {
   [[ -d "$releases_dir" ]] || die "no previous release is available"
   current_release="$(readlink -f "$releases_dir/current" 2>/dev/null || true)"
   previous_release="$(
-    find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
-      sort -nr |
-      cut -d' ' -f2- |
-      while IFS= read -r release; do
+    find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\0' |
+      sort -z -nr |
+      while IFS= read -r -d '' entry; do
+        release="${entry#* }"
         release="$(readlink -f "$release")"
-        if [[ "$release" != "$current_release" ]]; then
+        if [[ "$release" != "$current_release" &&
+          ! -e "$release/.promotion-failed" ]]; then
           printf '%s\n' "$release"
           break
         fi

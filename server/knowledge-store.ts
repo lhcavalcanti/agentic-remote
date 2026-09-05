@@ -71,6 +71,25 @@ export class KnowledgeStore {
     return true
   }
 
+  /**
+   * Drops the roots that named folders on a computer that is no longer
+   * paired. A root is only a computer and a path, so once the computer is
+   * gone the root can never answer anything but "not found" -- and it stays
+   * in the list offering to try.
+   */
+  async removeRootsForComputer(computerId: string): Promise<number> {
+    const remaining = this.state.roots.filter(
+      (entry) => entry.computerId !== computerId,
+    )
+    const removed = this.state.roots.length - remaining.length
+    if (removed === 0) {
+      return 0
+    }
+    this.state.roots = remaining
+    await this.persist()
+    return removed
+  }
+
   private persist(): Promise<void> {
     const snapshot = JSON.stringify(this.state, null, 2)
     const task = this.writeQueue.then(async () => {

@@ -27,6 +27,7 @@ const execFileAsync = promisify(execFile)
 const directories: string[] = []
 const tmuxSessions: string[] = []
 let tmuxRoot = ''
+let stubbedServerPid: number | undefined
 
 beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
@@ -41,14 +42,26 @@ beforeEach(async () => {
 
 afterEach(async () => {
   tmuxSessions.splice(0)
-  await stopIsolatedTmuxServer(tmuxRoot)
+  // Restore PATH before teardown: its failure stub cannot kill the server.
+  // Otherwise cleanup unlinks a live socket and leaves discovery indeterminate.
   vi.unstubAllEnvs()
-  await Promise.all(
-    directories.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
-  )
-})
+  try {
+    await stopIsolatedTmuxServer(tmuxRoot)
+    if (stubbedServerPid !== undefined) {
+      const pid = stubbedServerPid
+      expect(
+        await eventually(() => processExists(pid), (running) => !running),
+      ).toBe(false)
+    }
+  } finally {
+    stubbedServerPid = undefined
+    await Promise.all(
+      directories.splice(0).map((directory) =>
+        rm(directory, { recursive: true, force: true }),
+      ),
+    )
+  }
+}, 30_000)
 
 describe('active Copilot processes', () => {
   it('ignores Copilot-shaped descendants owned by the server', async () => {
@@ -102,10 +115,16 @@ describe('active Copilot processes', () => {
     )
     await waitForProcessCommand(pid, [executable, sessionId])
 
+    const processes = await eventually(
+      () => findActiveCopilotProcesses(),
+      (entries) =>
+        entries.some(
+          (processInfo) =>
+            processInfo.pid === pid && processInfo.sessionId === sessionId,
+        ),
+    )
     expect(
-      (await findActiveCopilotProcesses()).filter(
-        (processInfo) => processInfo.sessionId === sessionId,
-      ),
+      processes.filter((processInfo) => processInfo.sessionId === sessionId),
     ).toEqual([{ pid, sessionId, source: 'argument' }])
 
     await stopActiveCopilotSession(sessionId)
@@ -484,7 +503,98 @@ describe('active Copilot processes', () => {
       },
     ])
   })
+
+  it('reports a tmux socket failure instead of reporting nothing running', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    await stubTmux(
+      directory,
+      'echo "error connecting to /tmp/tmux-1000/default (permission denied)" >&2\nexit 1\n',
+    )
+
+    await expect(findActiveCopilotProcesses()).rejects.toThrow(
+      /permission denied/,
+    )
+  })
+
+  it('reports nothing running when tmux has no server to ask', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    await stubTmux(
+      directory,
+      `echo "no server running on ${path.join(directory, 'absent-socket')}" >&2\nexit 1\n`,
+    )
+
+    await expect(findActiveCopilotProcesses()).resolves.toEqual([])
+  })
+
+  it('leaves a session running when tmux cannot say whether it is', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'active-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-unstoppable')
+    await writeFile(executable, '#!/usr/bin/env bash\nsleep 60\n')
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-unstoppable-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      executable,
+    ])
+    const pid = Number.parseInt(
+      (
+        await execFileAsync('tmux', [
+          'display-message',
+          '-p',
+          '-t',
+          tmuxSession,
+          '#{pane_pid}',
+        ])
+      ).stdout,
+      10,
+    )
+    await waitForProcessCommand(pid, [executable])
+    const sessionId = 'a1a1a1a1-1234-1234-1234-123456789abc'
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(path.join(sessionDirectory, `inuse.${pid}.lock`), `${pid}\n`)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    stubbedServerPid = Number.parseInt(
+      (await execFileAsync('tmux', ['display-message', '-p', '#{pid}'])).stdout,
+      10,
+    )
+    expect(stubbedServerPid).toBeGreaterThan(0)
+    await stubTmux(
+      directory,
+      'echo "error connecting to /tmp/tmux-1000/default (permission denied)" >&2\nexit 1\n',
+    )
+
+    // Stopping must not report success it cannot stand behind: the caller
+    // deletes the session afterwards, and a silent no-op leaves the process
+    // running with nothing left pointing at it.
+    await expect(stopActiveCopilotSession(sessionId)).rejects.toThrow(
+      /permission denied/,
+    )
+    expect(await processExists(pid)).toBe(true)
+  })
 })
+
+/**
+ * Puts a tmux that fails in a stated way ahead of the real one on `PATH`, so
+ * the caller's handling of that failure can be observed. `ps` and the rest of
+ * the environment are left reachable.
+ */
+async function stubTmux(directory: string, script: string): Promise<void> {
+  const binDirectory = path.join(directory, 'bin')
+  await mkdir(binDirectory, { recursive: true })
+  const executable = path.join(binDirectory, 'tmux')
+  await writeFile(executable, `#!/usr/bin/env bash\n${script}`)
+  await chmod(executable, 0o755)
+  vi.stubEnv('PATH', `${binDirectory}:${process.env.PATH ?? ''}`)
+}
 
 async function processExists(pid: number): Promise<boolean> {
   try {
@@ -504,11 +614,11 @@ async function processExists(pid: number): Promise<boolean> {
 }
 
 async function waitForProcessExit(pid: number): Promise<boolean> {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     if (!(await processExists(pid))) {
       return true
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
   return false
 }

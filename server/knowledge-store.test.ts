@@ -79,4 +79,36 @@ describe('KnowledgeStore', () => {
     )
     expect(written).not.toHaveProperty('bookmarks')
   })
+
+  it('drops the roots of a computer that is no longer paired', async () => {
+    const directory = await temporaryDirectory()
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    await store.addRoot({
+      computerId: 'worker',
+      computerName: 'worker-node',
+      path: '/home/user/notes',
+      name: 'notes',
+    })
+    await store.addRoot({
+      computerId: 'worker',
+      computerName: 'worker-node',
+      path: '/home/user/specs',
+      name: 'specs',
+    })
+    const kept = await store.addRoot({
+      computerId: 'hub',
+      computerName: 'development',
+      path: '/home/user/reference',
+      name: 'reference',
+    })
+
+    await expect(store.removeRootsForComputer('worker')).resolves.toBe(2)
+    expect(store.listRoots()).toEqual([kept])
+    await expect(store.removeRootsForComputer('worker')).resolves.toBe(0)
+
+    const restored = new KnowledgeStore(directory)
+    await restored.initialize()
+    expect(restored.listRoots()).toEqual([kept])
+  })
 })

@@ -2091,9 +2091,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async runtimeOptions(id: string): Promise<RuntimeOptions> {
-    let stored = await this.store.readAfterWrites(id)
-    stored = await this.reconcileRuntimeStatus(stored)
-    const options = await this.providerRuntimeOptions('copilot')
+    // Join a concurrent catalog refresh before the ordered state read yields.
+    const [stored, options] = await Promise.all([
+      this.store.readAfterWrites(id).then((session) => this.reconcileRuntimeStatus(session)),
+      this.providerRuntimeOptions('copilot'),
+    ])
     return {
       current: stored.runtime || {},
       models: options.models,

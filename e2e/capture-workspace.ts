@@ -16,6 +16,7 @@ import {
   setupWorkspaceFixture,
 } from './workspace-fixtures'
 import type { WorkspaceFixture } from './workspace-fixtures'
+import { screenshotsAreClose } from './screenshot-stability'
 
 // Run with TSX_DISABLE_CACHE=1 pnpm exec node --import tsx e2e/capture-workspace.ts
 // --base-url http://127.0.0.1:4395 --output-dir <media>/before --phase before
@@ -81,11 +82,16 @@ async function capture(page: Page, fixture: WorkspaceFixture, name: string) {
   // The first compositor paint can still be settling after the DOM is ready.
   for (let attempt = 0; attempt < 6; attempt++) {
     const frame = await page.screenshot({ animations: 'disabled', caret: 'hide' })
-    if (previous?.equals(frame)) {
+    if (previous && (previous.equals(frame) || await page.evaluate(screenshotsAreClose, {
+      previous: previous.toString('base64'), current: frame.toString('base64'),
+    }))) {
       stable = frame
       break
     }
     previous = frame
+    await page.evaluate(() => new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    ))
   }
   if (!stable) throw new Error(`The ${name} frame did not settle.`)
   await writeFile(path, stable)

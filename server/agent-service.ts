@@ -10,7 +10,6 @@ import {
   type ElicitationResult,
   type PermissionRequest,
   type PermissionRequestResult,
-  type ModelInfo,
   type ResumeSessionConfig,
   type SessionConfig,
   type SessionEvent,
@@ -84,6 +83,7 @@ import {
 import {
   isTerminalAgentWorking,
   isTerminalOverlay,
+  isTerminalSessionInUsePrompt,
   terminalCommandOutput,
   TmuxTerminalSessionController,
   type TerminalFormStep,
@@ -147,8 +147,9 @@ export interface CopilotClientLike {
   ): Promise<CopilotSessionLike>
   listSessions(): Promise<SessionMetadata[]>
   deleteSession(sessionId: string): Promise<void>
-  listModels?(): Promise<ModelInfo[]>
-  rpc: Pick<CopilotClient['rpc'], 'commands'>
+  rpc: Pick<CopilotClient['rpc'], 'commands'> & {
+    models: Pick<CopilotClient['rpc']['models'], 'list'>
+  }
 }
 
 interface ModelPromptLimits {
@@ -1880,13 +1881,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async loadRuntimeModels(): Promise<void> {
-    if (!this.client.listModels) {
-      throw new RuntimeConfigurationError(
-        'Runtime model discovery is not supported',
-        503,
-      )
-    }
-    const models = await this.client.listModels()
+    // listModels() caches for the client's lifetime. Ask the CLI directly so
+    // opening a settings panel discovers changes without restarting sessions.
+    const { models } = await this.client.rpc.models.list({})
     if (models.length === 0) {
       throw new RuntimeConfigurationError(
         'No runtime models are currently available',
@@ -3327,7 +3324,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // them no better off than the silent loss this replaces.
         throw Object.assign(
           new Error(
-            'The terminal is showing a full-screen view. Close it there, then send this again.',
+            isTerminalSessionInUsePrompt(pane)
+              ? 'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
+              : 'The terminal is showing a full-screen view. Close it there, then send this again.',
           ),
           { statusCode: 409 },
         )

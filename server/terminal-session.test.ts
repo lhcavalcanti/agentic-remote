@@ -39,6 +39,17 @@ const directories: string[] = []
 const tmuxSessions: string[] = []
 let tmuxRoot = ''
 
+const sessionInUsePane = [
+  '╭──────────────────────────────────────────────────────────────────────╮',
+  '│ Session in use                                                       │',
+  '│ This session was last active just now and appears to be in use by     │',
+  '│ another CLI or application. Resuming it here may cause conflicts.     │',
+  '│ ❯ 1. Resume anyway                                                   │',
+  '│   2. Go back (Esc)                                                    │',
+  '│ ↑/↓ to navigate · enter to select · esc to cancel                     │',
+  '╰──────────────────────────────────────────────────────────────────────╯',
+].join('\n')
+
 const folderTrustPane = [
   '╭────────────────────────────────────────────────────────────────────────╮',
   '│ Confirm folder trust                                                   │',
@@ -90,6 +101,118 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it('exposes session-use warnings without approving a concurrent takeover', () => {
+    const permission = parseTerminalPermission(sessionInUsePane)
+    expect(permission).toMatchObject({
+      title: expect.stringContaining('may conflict'),
+      choiceCount: 2,
+      options: [
+        { optionId: 'terminal:allow', name: 'Resume anyway', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Go back', kind: 'reject_once' },
+      ],
+    })
+    expect(isTerminalSessionInUsePrompt(sessionInUsePane)).toBe(true)
+    expect(parseTerminalPermission(sessionInUsePane
+      .replace('just now', 'a minute ago')
+      .replace('❯ 1.', '  1.')
+      .replace('  2.', '❯ 2.'))?.requestId).toBe(permission?.requestId)
+    expect(parseTerminalPermission(
+      sessionInUsePane.replace('1. Resume anyway', '1. Delete session'),
+    )).toBeUndefined()
+  })
+
+  it('ignores a prior session-use confirmation above the active composer', () => {
+    const pane = [
+      sessionInUsePane,
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃ Unsaved draft',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n')
+    expect(isTerminalSessionInUsePrompt(pane)).toBe(false)
+    expect(parseTerminalPermission(pane)).toBeUndefined()
+    expect(isTerminalOverlay(pane)).toBe(false)
+  })
+
+  it.each(['terminal:allow', 'terminal:stop'])(
+    'delivers only the explicit %s decision to the session-use confirmation',
+    async (optionId) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'session-use-test-'))
+      directories.push(directory)
+      const executable = path.join(directory, 'copilot-confirm.mjs')
+      const output = path.join(directory, 'decision.json')
+      const sessionId = randomUUID()
+      await writeFile(output, '')
+      await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+let selected = 1
+let pending = ''
+function finish(decision) {
+  writeFileSync(${JSON.stringify(output)}, JSON.stringify({ decision }))
+  process.stdout.write('\\x1b[2J\\x1b[HReady\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
+}
+process.stdin.setRawMode(true)
+process.stdin.on('data', (data) => {
+  pending += data.toString()
+  while (pending) {
+    if (pending[0] === '\\x1b') {
+      if (pending.length < 3) {
+        setTimeout(() => {
+          if (pending === '\\x1b') { pending = ''; finish('back') }
+        }, 25)
+        return
+      }
+      selected = pending[2] === 'A' ? Math.max(0, selected - 1) : Math.min(1, selected + 1)
+      pending = pending.slice(3)
+    } else if (pending[0] === '\\r' || pending[0] === '\\n') {
+      pending = pending.slice(1)
+      finish(selected === 0 ? 'resume' : 'back')
+    } else {
+      finish('unexpected text')
+      pending = ''
+    }
+  }
+})
+process.stdout.write(${JSON.stringify(sessionInUsePane.replace('❯ 1.', '  1.').replace('  2.', '❯ 2.'))}.replaceAll('\\n', '\\r\\n'))
+`)
+      const tmuxSession = `agentic-session-use-${process.pid}`
+      tmuxSessions.push(tmuxSession)
+      await execFileAsync('tmux', [
+        'new-session', '-d', '-s', tmuxSession,
+        process.execPath, executable, '--session-id', sessionId,
+      ])
+      const panePid = (await execFileAsync('tmux', [
+        'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+      ])).stdout.trim()
+      await waitForProcessCommand(Number(panePid), [executable])
+      const copilotHome = path.join(directory, 'copilot-home')
+      const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+      await mkdir(sessionDirectory, { recursive: true })
+      await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+      vi.stubEnv('COPILOT_HOME', copilotHome)
+      const controller = new TmuxTerminalSessionController()
+      const request = await eventually(
+        () => controller.pendingPermission(sessionId),
+        (value) => Boolean(value),
+      )
+      if (!request) throw new Error('Session-use prompt was not detected')
+      await expect(controller.send(sessionId, 'Do not paste this', false))
+        .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('confirmation') })
+      expect(await readFile(output, 'utf8')).toBe('')
+      await expect(controller.replyPermission(
+        sessionId, { ...request, requestId: 'stale-request' }, optionId,
+      )).rejects.toThrow('no longer active')
+      expect(await readFile(output, 'utf8')).toBe('')
+
+      expect(await controller.replyPermission(sessionId, request, optionId)).toBe(true)
+      const decision = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
+      expect(JSON.parse(decision)).toEqual({
+        decision: optionId === 'terminal:allow' ? 'resume' : 'back',
+      })
+      expect(isTerminalSessionInUsePrompt(await controller.capture(sessionId) || '')).toBe(false)
+    },
+  )
+
   it('exposes the folder-trust prompt as an explicit one-session permission', () => {
     const permission = parseTerminalPermission(folderTrustPane)
     expect(permission).toMatchObject({
@@ -387,7 +510,7 @@ Permission request (1 remaining)
       'Project workspace',
       true,
       {
-        model: 'gpt-boot',
+        model: 'fixture-boot',
         reasoningEffort: 'medium',
         contextTier: 'default',
         mode: 'plan',
@@ -407,16 +530,16 @@ Permission request (1 remaining)
         (await readFile(`/proc/${initialPanePid}/cmdline`, 'utf8'))
           .replaceAll('\0', ' ')
           .trim(),
-      (line) => line.includes('--model gpt-boot'),
+      (line) => line.includes('--model fixture-boot'),
     )
-    expect(initialCommandLine).toContain('--model gpt-boot')
+    expect(initialCommandLine).toContain('--model fixture-boot')
     expect(initialCommandLine).toContain('--effort medium')
     expect(initialCommandLine).toContain('--context default')
     expect(initialCommandLine).toContain('--mode plan')
     expect(await controller.rename(sessionId, 'Renamed project')).toBe(true)
     expect(
       await controller.configure(sessionId, directory, {
-        model: 'gpt-test',
+        model: 'fixture-test',
         reasoningEffort: 'high',
         contextTier: 'long_context',
         mode: 'autopilot',
@@ -457,13 +580,13 @@ Permission request (1 remaining)
       .replaceAll('\0', ' ')
       .trim()
     expect(commandLine).toContain('--yolo')
-    expect(commandLine).toContain('--model gpt-test')
+    expect(commandLine).toContain('--model fixture-test')
     expect(commandLine).toContain('--effort high')
     expect(commandLine).toContain('--context long_context')
     expect(commandLine).toContain('--mode autopilot')
     await expect(
       controller.configure(sessionId, path.join(directory, 'missing'), {
-        model: 'gpt-broken',
+        model: 'fixture-broken',
         reasoningEffort: 'low',
         contextTier: 'default',
         mode: 'interactive',
@@ -479,7 +602,7 @@ Permission request (1 remaining)
         replacementId,
         directory,
         {
-          model: 'gpt-test',
+          model: 'fixture-test',
           reasoningEffort: 'high',
           contextTier: 'long_context',
           mode: 'plan',
@@ -827,7 +950,7 @@ describe('paneShowsText', () => {
   })
 
   it('does not claim an empty prompt is showing the message', () => {
-    expect(paneShowsText('> \n', 'Deploy the treatment engine')).toBe(false)
+    expect(paneShowsText('> \n', 'Deploy the staging service')).toBe(false)
   })
 
   it('treats a message of only whitespace as already shown', () => {
@@ -859,7 +982,7 @@ describe('terminal update notice', () => {
       ' \u25cf Ready',
       composer,
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -886,7 +1009,7 @@ describe('terminal update notice', () => {
       ' ~/src/project',
       composer,
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -921,7 +1044,7 @@ describe('terminal update notice', () => {
       '\u2503 v9.9.9 available \u00b7 run /update',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(parseTerminalUpdateNotice(pane)).toBeUndefined()
@@ -944,7 +1067,7 @@ describe('terminal slash command output', () => {
     '┃',
     '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
     ' ← open sidebar · / commands · ? help · tab next tab',
-    ' GPT-5.6 Sol · High · 1.1M context (0%)',
+    ' Fixture Model · High · 1.1M context (0%)',
   ].join('\n')
 
   it('reports the response a command printed', () => {
@@ -983,7 +1106,7 @@ describe('terminal slash command output', () => {
       '┃',
       '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
       ' Changes    +0 -0',
-      ' GPT-5.6 Sol · High · 1.1M context (0%)',
+      ' Fixture Model · High · 1.1M context (0%)',
     ].join('\n')
     const after = [
       ' ● Tip: /plugin',
@@ -991,7 +1114,7 @@ describe('terminal slash command output', () => {
       '┃',
       '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
       ' Changes    +12 -3',
-      ' GPT-5.6 Sol · High · 1.1M context (7%)',
+      ' Fixture Model · High · 1.1M context (7%)',
     ].join('\n')
 
     expect(terminalCommandOutput(before, after, '/config')).toBeUndefined()
@@ -1088,7 +1211,7 @@ describe('terminal slash command output', () => {
       '\u2503',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u25c9 Working - autopilot \u00b7 132.7 KiB esc interrupt',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (18%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (18%)',
     ].join('\n')
 
     expect(isTerminalAgentWorking(working)).toBe(true)
@@ -1101,7 +1224,7 @@ describe('terminal slash command output', () => {
       '\u2503',
       '\u2579\u2580\u2580\u2580\u2580',
       ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help \u00b7 tab next tab',
-      ' GPT-5.6 Sol \u00b7 High \u00b7 1.1M context (0%)',
+      ' Fixture Model \u00b7 High \u00b7 1.1M context (0%)',
     ].join('\n')
 
     expect(isTerminalAgentWorking(idle)).toBe(false)
@@ -1200,6 +1323,85 @@ const singleFieldPane = [
   '',
   ' \u2191/\u2193 select \u00B7 enter accept \u00B7 ctrl+d decline \u00B7 esc cancel',
 ].join('\n')
+
+// A neutral reproduction of a CLI form whose focused tab is bracketed.
+const bracketedTabPane = [
+  ' Copilot needs information.',
+  ' Choose how to handle the unpublished work.',
+  '',
+  ' [Active project]  Service configuration   App changes',
+  '',
+  ' Active project:',
+  ' \u276F Preserve local changes (Recommended)',
+  '   Commit and push the project changes',
+  '   Other (type your answer)',
+  '',
+  ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+].join('\n')
+
+describe('forms whose focused tab is marked', () => {
+  const form = {
+    question: 'Choose how to handle the unpublished work.',
+    fields: [
+      'Active project',
+      'Service configuration',
+      'App changes',
+    ],
+  }
+
+  it('reads the tab name from under its marking', () => {
+    expect(terminalFormShowsFields(bracketedTabPane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(bracketedTabPane, form)).toBe(0)
+  })
+
+  it('keeps wrapped-question matching with bracketed focus tabs', () => {
+    const pane = bracketedTabPane.replace(
+      'Choose how to handle the unpublished work.',
+      'Choose how to handle the\n unpublished work.',
+    )
+    expect(terminalFormShowsFields(pane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, form)).toBe(0)
+    expect(terminalFormShowsFields(pane, {
+      ...form, question: 'Choose how to handle the',
+    })).toBe(false)
+  })
+
+  it('keeps a title that is written in brackets of its own', () => {
+    const pane = [
+      ' Copilot needs information.',
+      ' Configure the run.',
+      '',
+      ' [Environment]  Region',
+      '',
+      ' [Environment]:',
+      ' \u276F Production',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+    ].join('\n')
+
+    // The brackets belong to the name here, not to the marking, and the two
+    // are written identically.
+    expect(
+      terminalFormShowsFields(pane, {
+        question: 'Configure the run.',
+        fields: ['[Environment]', 'Region'],
+      }),
+    ).toBe(true)
+  })
+
+  it('still refuses a marked form belonging to another question', () => {
+    expect(
+      terminalFormShowsFields(bracketedTabPane, {
+        question: 'Something else entirely?',
+        fields: [
+          'Active project',
+          'Service configuration',
+          'App changes',
+        ],
+      }),
+    ).toBe(false)
+  })
+})
 
 describe('single field forms', () => {
   const form = {

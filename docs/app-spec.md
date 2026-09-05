@@ -179,6 +179,10 @@ Questions and permissions are the highest-priority UI state.
 - CLI folder-trust prompts MUST be shown as permission cards with the folder
   path, an explicit one-session trust action, and Stop. The app MUST NOT
   silently trust folders or select persistent trust.
+- A CLI Session in use confirmation MUST expose Resume anyway and Go back in
+  a permission card, including its warning about concurrent clients. Sending
+  a message MUST NOT implicitly approve a takeover; an old confirmation in
+  scrollback MUST NOT block an active composer.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
 - Question identity matching MUST tolerate terminal line wrapping, including
   breaks within words, while still requiring the complete question and field
@@ -314,6 +318,11 @@ switches, failed sends, and clear replacement IDs.
 
 - Knowledge MUST be the single place for reading files; there is no separate
   saved-paths panel.
+- Root creation MUST be entered from Knowledge itself, not from the Sessions
+  sidebar.
+- Opening Knowledge with an active session and no configured roots MUST open
+  the root picker on that session's computer and current working folder. The
+  user MAY add that folder directly or browse to another readable folder.
 - A knowledge root is a computer plus an absolute folder and MUST be browsable
   with no session in existence.
 - Choosing a root MUST allow any folder on the owning computer that the user can
@@ -374,6 +383,13 @@ switches, failed sends, and clear replacement IDs.
   success.
 - Provider-specific capabilities MUST be derived from advertised runtime
   options rather than assuming Copilot and Claude have identical controls.
+- Model IDs, names, and capabilities MUST come from Copilot CLI or Claude
+  discovery, not an embedded model list. Documentation examples and test
+  fixtures MUST use neutral synthetic models rather than named offerings.
+- Opening Model and context or App settings MUST request a fresh catalog from
+  the owning providers, bypassing browser and SDK lifetime caches without
+  restarting sessions. Concurrent discovery requests MAY share one in-flight
+  request; a subsequent opening MUST trigger another discovery request.
 - A transient provider-authentication failure during startup MUST NOT leave the
   runtime model catalog permanently empty; model discovery MUST retry when
   runtime options are requested.
@@ -391,6 +407,8 @@ switches, failed sends, and clear replacement IDs.
   original Agentic green.
 - The selected accent MUST apply to primary actions, focus states, activity
   indicators, and other non-semantic accent treatments.
+- The browser-tab icon MUST track the selected accent immediately and after
+  reload, without changing other tabs or the shared installed-app icons.
 - Warning, error, computer-identity, and background-task colors MUST retain
   their semantic meaning.
 - The accent choice MUST be scoped to the current browser tab, persist across

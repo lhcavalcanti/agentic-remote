@@ -178,6 +178,13 @@ function isRuntimeReasoningEffort(
   )
 }
 
+function isUncertainDelivery(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'uncertainDelivery' in error)
+}
+
+const sessionInUseMessage =
+  'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
+
 class RuntimeConfigurationError extends Error {
   constructor(
     message: string,
@@ -3217,7 +3224,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // persistence failure after the text has gone in leaves the same
       // ambiguity, so anything thrown once the send is known to have gone out
       // keeps the reservation.
-      if (this.deliveredSends.has(sessionId)) {
+      if (this.deliveredSends.has(sessionId) || isUncertainDelivery(error)) {
         this.deliveredSends.delete(sessionId)
         claim?.release(true)
         // The failure this answered has been dealt with as far as anyone can
@@ -3536,13 +3543,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           )
         }
         const canHandleStartup =
-          ownsStartup ||
-          (pane
-            ? ((await this.terminalController.canHandleStartupPrompt?.(
-                sessionId,
-                pane,
-              )) ?? false)
-            : false)
+          !(pane && isTerminalSessionInUsePrompt(pane)) &&
+          (ownsStartup ||
+            (pane
+              ? ((await this.terminalController.canHandleStartupPrompt?.(
+                  sessionId,
+                  pane,
+                )) ?? false)
+              : false))
         resolvedStartup =
           canHandleStartup &&
           ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??
@@ -3554,7 +3562,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw Object.assign(
             new Error(
               pane && isTerminalSessionInUsePrompt(pane)
-                ? 'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
+                ? sessionInUseMessage
                 : 'The terminal is showing a full-screen view. Close it there, then send this again.',
             ),
             { statusCode: 409 },
@@ -3984,11 +3992,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         claim ? before : undefined,
       )
     } catch (error) {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'uncertainDelivery' in error
-      ) {
+      if (isUncertainDelivery(error)) {
         // Already taken by the terminal, so this cannot simply be run again.
         claim?.release(true)
         await this.acknowledgeFailedPrompt(
@@ -4117,11 +4121,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.terminalController.ownsStartupPrompt?.(sessionId) ?? false
     if (ownsStartup || isTerminalOverlay(currentPane)) {
       const canHandle =
-        ownsStartup ||
-        ((await this.terminalController.canHandleStartupPrompt?.(
-          sessionId,
-          currentPane,
-        )) ?? false)
+        !isTerminalSessionInUsePrompt(currentPane) &&
+        (ownsStartup ||
+          ((await this.terminalController.canHandleStartupPrompt?.(
+            sessionId,
+            currentPane,
+          )) ?? false))
       const resolved =
         canHandle &&
         ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??
@@ -4129,7 +4134,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!resolved) {
         throw Object.assign(
           new Error(
-            'The terminal is showing a full-screen view. Close it there, then run this command again.',
+            isTerminalSessionInUsePrompt(currentPane)
+              ? sessionInUseMessage
+              : 'The terminal is showing a full-screen view. Close it there, then run this command again.',
           ),
           { statusCode: 409 },
         )
@@ -6251,11 +6258,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             // arrive, so this is not known to have failed. Carried with the
             // text, because after a reload a bare draft looks like anything
             // else waiting to be sent.
-            Boolean(
-              error &&
-                typeof error === 'object' &&
-                'uncertainDelivery' in error,
-            ),
+            isUncertainDelivery(error),
           )
         } catch {
           session = undefined

@@ -187,9 +187,10 @@ Questions and permissions are the highest-priority UI state.
   path, an explicit one-session trust action, and Stop. The app MUST NOT
   silently trust folders or select persistent trust.
 - A CLI Session in use confirmation MUST expose Resume anyway and Go back in
-  a permission card, including its warning about concurrent clients. Sending
-  a message MUST NOT implicitly approve a takeover; an old confirmation in
-  scrollback MUST NOT block an active composer.
+  a permission card, including its warning about concurrent clients. Creating,
+  recovering, or restarting a terminal, sending a message, or running a command
+  MUST NOT implicitly approve a takeover. An old confirmation in scrollback
+  MUST NOT block an active composer.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
 - Question identity matching MUST tolerate terminal line wrapping, including
   breaks within words, while still requiring the complete question and field
@@ -220,9 +221,14 @@ Questions and permissions are the highest-priority UI state.
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject
   startup screens, dialogs, non-composer frames, and existing drafts.
+- A complete model, effort, and context footer MUST NOT make an otherwise live
+  composer appear unavailable. Unrelated output below the frame MUST still
+  prevent it from being treated as a live composer.
 - Losing a paste acknowledgement MUST report uncertain delivery rather than
   authorize an automatic retry. Readiness MUST be checked again after owner
   validation and before the paste.
+- A recovered prompt with an uncertain terminal receipt MUST retain its resend
+  claim. Failed acknowledgement writes MUST be retried without repeating delivery.
 - Form identity MUST preserve word boundaries. Terminal form reads MUST use
   tmux's joined soft-wrap capture instead of guessing whether a line break
   separated words or split an identifier.

@@ -80,7 +80,7 @@ function readyComposer(text = '', working = false): string {
 const shellReadyComposer =
   "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
 
-async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?: string) {
+async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?: string, footer = '') {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
   const executable = path.join(directory, 'copilot-delivery.mjs')
@@ -93,7 +93,8 @@ let input = ''
 let pasted
 const received = { pastes: [], submits: [] }
 const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
-const composer = ${readyComposer.toString()}
+const makeComposer = ${readyComposer.toString()}
+const composer = (text = '', working = false) => makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const repaint = ${JSON.stringify(repaintPane)}
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
@@ -141,6 +142,64 @@ draw(composer('', ${working}))
   return { controller, sessionId, output, directory, tmuxSession }
 }
 
+async function ownedStartupFixture(initialPane?: string, footer = '') {
+  const directory = await mkdtemp(path.join(tmpdir(), 'terminal-startup-consent-'))
+  directories.push(directory)
+  const executable = path.join(directory, 'copilot-startup.mjs')
+  const output = path.join(directory, 'received.json')
+  await writeFile(output, JSON.stringify({ keys: '', pastes: [], submits: 0 }))
+  await writeFile(executable, `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs'
+const state = { keys: '', pastes: [], submits: 0 }
+const save = () => writeFileSync(${JSON.stringify(output)}, JSON.stringify(state))
+const makeComposer = ${readyComposer.toString()}
+const composer = (text = '') => makeComposer(text) + ${JSON.stringify(footer ? `\n${footer}` : '')}
+const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
+let confirmed = ${initialPane === undefined}
+let input = ''
+let pasted
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.stdin.on('data', (data) => {
+  const text = data.toString()
+  if (!confirmed) {
+    state.keys += text
+    save()
+    if (/[\\r\\n]/.test(text)) {
+      confirmed = true
+      draw(composer())
+    }
+    return
+  }
+  input += text
+  const end = input.indexOf('\\x1b[201~')
+  if (pasted === undefined && end >= 0) {
+    pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
+    input = input.slice(end + 6)
+    state.pastes.push(pasted)
+    save()
+    draw(composer(pasted))
+  }
+  if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
+    state.submits += 1
+    save()
+    pasted = undefined
+    input = ''
+    draw(composer())
+  }
+})
+draw(${JSON.stringify(initialPane)} ?? composer())
+`)
+  await chmod(executable, 0o755)
+  vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', '')
+  vi.stubEnv('COPILOT_BIN', executable)
+  vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+  const controller = new TmuxTerminalSessionController()
+  const sessionId = randomUUID()
+  await controller.create(sessionId, directory, 'Owned startup', false)
+  return { controller, sessionId, output }
+}
+
 beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
   vi.stubEnv('HOME', tmuxRoot)
@@ -176,6 +235,56 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it.each([
+    ['Fixture Model · High · 1.1M context (0%)', false, false],
+    ['Fixture preview · 128k context (37%)', false, false],
+    ['Fixture Model · Medium · 262,144 context (100%)', false, false],
+    ['Fixture Model · High · 1.1M context (7.5%)', true, true],
+  ] as const)('admits a complete model/context footer: %s (working=%s, queue=%s)', async (footer, working, enqueue) => {
+    const { controller, sessionId, output } = await deliveryFixture(working, undefined, undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(!working)
+    await expect(controller.send(sessionId, 'One footer-aware message', enqueue)).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['One footer-aware message'], submits: [enqueue ? 'queue' : 'enter'],
+    })
+  }, 15_000)
+
+  it('returns a fresh owned session with the complete model/context footer', async () => {
+    const footer = 'Fixture Model · High · 1.1M context (0%)'
+    const { controller, sessionId } = await ownedStartupFixture(undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(true)
+  }, 15_000)
+
+  it('requires explicit consent for session-use confirmation in an owned startup', async () => {
+    const { controller, sessionId, output } = await ownedStartupFixture(sessionInUsePane)
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('')
+    const permission = await controller.pendingPermission(sessionId)
+    expect(permission).toMatchObject({
+      options: [
+        { optionId: 'terminal:allow', name: 'Resume anyway' },
+        { optionId: 'terminal:stop', name: 'Go back' },
+      ],
+    })
+    expect(await controller.canHandleStartupPrompt(sessionId, sessionInUsePane)).toBe(false)
+    expect(await controller.resolveStartupPrompt(sessionId)).toBe(false)
+    await expect(controller.send(sessionId, 'Do not consent for me', false))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: '', pastes: [], submits: 0 })
+    if (!permission) throw new Error('The startup fixture did not expose its permission')
+    expect(await controller.replyPermission(sessionId, permission, 'terminal:allow')).toBe(true)
+    expect(await controller.resolveStartupPrompt(sessionId)).toBe(true)
+    await controller.send(sessionId, 'Only after explicit consent', false)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      JSON.parse(value).submits === 1,
+    )
+    expect(JSON.parse(received)).toMatchObject({ pastes: ['Only after explicit consent'], submits: 1 })
+  }, 15_000)
+
   async function clearFixture() {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-clear-test-'))
     directories.push(directory)
@@ -352,6 +461,7 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
     ['a non-composer frame', '╭────────╮\n│        │\n╰────────╯', 'Queue this', true, undefined],
     ['an incomplete composer frame', '╻▄▄▄▄\n┃', 'Queue this', true, undefined],
     ['a replaced composer', `${readyComposer()}\nLoading a new view…`, '/usage', false, { allowDuringAgentExecution: true }],
+    ['a footer with unrelated output', `${readyComposer()}\nFixture Model · High · 1.1M context (0%)\nLoading a different view...`, 'Must not be pasted', false, undefined],
     ['working hints without a composer', 'Working\nesc interrupt', 'Queue this', true, undefined],
   ] as const)('does not paste into %s after a previously ready send', async (_name, pane, content, enqueue, options) => {
     const { controller, sessionId, output } = await deliveryFixture(false, pane)

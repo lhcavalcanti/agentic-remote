@@ -717,8 +717,7 @@ export class TmuxTerminalSessionController
       owner !== undefined &&
       automaticOwner?.pid === owner.pid &&
       automaticOwner.target === owner.target &&
-      (isTerminalSessionInUsePrompt(pane) ||
-        isTerminalDesktopInstallPrompt(pane))
+      isTerminalDesktopInstallPrompt(pane)
     )
   }
 
@@ -1782,24 +1781,13 @@ async function clearAutomaticStartupPrompts(
     const pane = await capture()
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
-      (parseTerminalPermission(pane) && !isTerminalSessionInUsePrompt(pane)) ||
+      parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
       return
     }
-    if (isTerminalSessionInUsePrompt(pane)) {
-      // The terminal user can leave the cursor on "Go back". Normalize to the
-      // first row before accepting, rather than confirming whichever row they
-      // happened to leave selected.
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
-      await waitUntilClosed(isTerminalSessionInUsePrompt)
-    } else if (isTerminalDesktopInstallPrompt(pane)) {
+    if (isTerminalDesktopInstallPrompt(pane)) {
       // Agentic Remote already supplies the remote supervision UI. Opening a
       // browser to install a separate desktop app cannot help this headless
       // terminal and keeps the first real prompt from reaching the composer.
@@ -1823,16 +1811,13 @@ async function waitForTerminalStartup(
     const pane = await capturePane(target)
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
-      (parseTerminalPermission(pane) && !isTerminalSessionInUsePrompt(pane)) ||
+      parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
       return 'action-required'
     }
-    if (
-      isTerminalSessionInUsePrompt(pane) ||
-      isTerminalDesktopInstallPrompt(pane)
-    ) {
+    if (isTerminalDesktopInstallPrompt(pane)) {
       if (!handleAutomaticPrompts) {
         return 'action-required'
       }
@@ -1933,6 +1918,16 @@ function isTerminalChrome(line: string): boolean {
 // border of the composer marks where it begins.
 const COMPOSER_TOP = /^\s*[╻╭][\u2580-\u259f\u2500-\u257f]*\s*$/u
 
+function isTerminalContextFooter(line: string): boolean {
+  const parts = line.trim().split('·').map((part) => part.trim())
+  return (
+    parts.length >= 2 &&
+    parts.every(Boolean) &&
+    /^\d+(?:,\d{3})*(?:\.\d+)?[kKmMgG]?\s+context\s*\(\d+(?:\.\d+)?%\)$/u
+      .test(parts.at(-1) ?? '')
+  )
+}
+
 function hasLiveTerminalComposer(pane: string): boolean {
   const lines = pane.split('\n')
   const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
@@ -1964,6 +1959,7 @@ function hasLiveTerminalComposer(pane: string): boolean {
   return lines.slice(bottom + 1).every(
     (line) =>
       isTerminalChrome(line) ||
+      isTerminalContextFooter(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||
       (/\/update\b/u.test(line) && /\b\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),

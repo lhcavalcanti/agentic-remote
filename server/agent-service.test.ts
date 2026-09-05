@@ -4374,6 +4374,63 @@ describe('AgentService deletion', () => {
     ).rejects.toThrow(/already been sent/)
   })
 
+  it.each([
+    [true, false],
+    [true, true],
+    [false, false],
+  ] as const)('settles a recovered terminal resend according to uncertainty (%s, acknowledgement failure=%s)', async (uncertain, failAcknowledgement) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-uncertain-recovery-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const failure = Object.assign(new Error('Terminal delivery was not confirmed'), {
+      statusCode: 409,
+      ...(uncertain ? { uncertainDelivery: true } : {}),
+    })
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true).mockRejectedValueOnce(failure),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client,
+      async () => [{
+        id: client.session.sessionId, cwd: directory, title: 'Recovered terminal',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined, async () => [], async () => undefined, terminal,
+    )
+    await service.start()
+    const failedAt = new Date().toISOString()
+    await service.store.update(client.session.sessionId, (stored) => {
+      stored.failedPrompt = { content: 'Recovered prompt', failedAt, uncertain: true }
+    })
+    const acknowledgement = failAcknowledgement
+      ? vi.spyOn(service.store, 'clearFailedPrompt').mockRejectedValue(new Error('Acknowledgement storage is unavailable'))
+      : undefined
+    try {
+      await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
+        .rejects.toBe(failure)
+      if (uncertain) {
+        if (!failAcknowledgement) {
+          expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
+        }
+        await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
+          .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been sent') })
+        expect(terminal.send).toHaveBeenCalledOnce()
+        acknowledgement?.mockRestore()
+        await vi.waitFor(() => expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined())
+      } else {
+        expect(service.store.get(client.session.sessionId)?.failedPrompt?.failedAt).toBe(failedAt)
+        await service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt)
+        expect(terminal.send).toHaveBeenCalledTimes(2)
+      }
+    } finally {
+      acknowledgement?.mockRestore()
+      await service.stop()
+    }
+  })
+
   it('does not clear a failure the sender never said they had', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-same-'))
     directories.push(directory)
@@ -5330,7 +5387,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('does not send into a session-use startup dialog', async () => {
+  it.each(['external', 'owned-message', 'owned-command'] as const)('requires explicit session-use consent for %s admission', async (mode) => {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-resume-prompt-'),
     )
@@ -5346,11 +5403,18 @@ describe('AgentService deletion', () => {
       ' ↑/↓ to navigate · enter to select · esc to cancel',
       ' ╰────────────────────────────────────────────────────────────╯',
     ].join('\n')
+    let currentPane = pane
     const terminal = {
       has: vi.fn(async () => true),
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
-      capture: vi.fn(async () => pane),
+      capture: vi.fn(async () => currentPane),
+      ownsStartupPrompt: vi.fn(() => mode !== 'external'),
+      canHandleStartupPrompt: vi.fn(async () => mode !== 'external'),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
     }
     const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
@@ -5370,11 +5434,18 @@ describe('AgentService deletion', () => {
     )
     await service.start()
 
-    await expect(
-      service.sendMessage(client.session.sessionId, 'Continue the work'),
-    ).rejects.toMatchObject({ statusCode: 409 })
-    expect(terminal.send).not.toHaveBeenCalled()
-    await service.stop()
+    try {
+      await expect(mode === 'owned-command'
+        ? service.executeCommand(client.session.sessionId, '/usage')
+        : service.sendMessage(client.session.sessionId, 'Continue the work'),
+      ).rejects.toMatchObject({
+        statusCode: 409, message: expect.stringContaining('permission card'),
+      })
+      expect(terminal.resolveStartupPrompt).not.toHaveBeenCalled()
+      expect(terminal.send).not.toHaveBeenCalled()
+    } finally {
+      await service.stop()
+    }
   })
 
   it('does not send into a desktop-app promotion', async () => {

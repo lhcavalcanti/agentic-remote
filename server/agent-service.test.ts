@@ -31,7 +31,11 @@ import { SessionStore } from './session-store.js'
 import { parseTerminalPermission } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
-  readonly sessionId = 'active-session'
+  readonly sessionId: string
+
+  constructor(sessionId = 'active-session') {
+    this.sessionId = sessionId
+  }
   readonly backgroundTasks: CopilotTaskInfo[] = []
   readonly taskProgress = new Map<string, CopilotTaskProgress>()
   readonly sentPrompts: string[] = []
@@ -2426,6 +2430,10 @@ describe('AgentService deletion', () => {
     ).toEqual({ kind: 'approve-once' })
     expect(allowAll.runtime?.allowAllPermissions).toBe(true)
 
+    vi.spyOn(client, 'createSession').mockImplementationOnce(async (config) => {
+      client.createdConfigs.push(config)
+      return new DeferredSession('guarded-session')
+    })
     const guarded = await service.createSession(directory, false, false)
     const guardedHandler = client.createdConfigs.at(-1)?.onPermissionRequest
     if (!guardedHandler) {
@@ -2454,6 +2462,7 @@ describe('AgentService deletion', () => {
     await service.replyPermission(guarded.id, request.requestId, 'allow-once')
     await expect(response).resolves.toEqual({ kind: 'approve-once' })
     expect(guarded.runtime?.allowAllPermissions).toBe(false)
+    expect(service.getSession(allowAll.id)?.runtime?.allowAllPermissions).toBe(true)
 
     await service.stop()
   })

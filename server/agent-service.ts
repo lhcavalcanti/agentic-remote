@@ -3985,12 +3985,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     let currentPane = pane
-    if (isTerminalOverlay(currentPane)) {
+    const ownsStartup =
+      this.terminalController.ownsStartupPrompt?.(sessionId) ?? false
+    if (ownsStartup || isTerminalOverlay(currentPane)) {
       const canHandle =
-        (await this.terminalController.canHandleStartupPrompt?.(
+        ownsStartup ||
+        ((await this.terminalController.canHandleStartupPrompt?.(
           sessionId,
           currentPane,
-        )) ?? false
+        )) ?? false)
       const resolved =
         canHandle &&
         ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??

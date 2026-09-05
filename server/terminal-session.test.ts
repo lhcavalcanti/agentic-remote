@@ -1298,7 +1298,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nprintf '╻▄▄▄▄\\n┃\\n'\nIFS= read -r line\nprintf '%s' "$line" >"${output}"\nsleep 60\n`,
+      `#!/usr/bin/env bash\nprintf '╻▄▄▄▄\\n┃\\n'\nIFS= read -r line\nprintf '%s' "$line" >"${output}"\nsleep 0.5\nprintf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = `agentic-test-${process.pid}`

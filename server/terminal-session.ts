@@ -1113,6 +1113,14 @@ export class TmuxTerminalSessionController
         target: currentOwner.target,
       })
       this.automaticStartupSessions.delete(sessionId)
+      if (!(await this.inputReady(sessionId))) {
+        throw Object.assign(
+          new Error(
+            'The terminal is not ready for input. Wait for its composer before sending this message again.',
+          ),
+          { statusCode: 409 },
+        )
+      }
       // What the pane already holds is not evidence that this message
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.

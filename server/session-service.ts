@@ -14,6 +14,7 @@ import type {
   WorkspaceSearchResponse,
   UserInputReplyInput,
   RemovedQueuedPrompt,
+  QueuedPromptDispatchResult,
   ServerEvent,
   SessionDetail,
   SlashCommand,
@@ -62,6 +63,7 @@ export interface SessionService {
   removeQueuedPrompt(
     sessionId: string,
     promptId: string,
+    acknowledgesDispatch?: string,
   ): Promise<RemovedQueuedPrompt>
   updateQueuedPrompt(
     sessionId: string,
@@ -72,6 +74,11 @@ export interface SessionService {
     sessionId: string,
     order: string[],
   ): Promise<SessionDetail>
+  dispatchQueuedPrompt?(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<QueuedPromptDispatchResult>
   sendMessage(
     sessionId: string,
     content: string,

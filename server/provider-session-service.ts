@@ -9,6 +9,7 @@ import type {
   ProviderRuntimeOptions,
   RuntimeReasoningEffort,
   RemovedQueuedPrompt,
+  QueuedPromptDispatchResult,
   RuntimeOptions,
   ServerEvent,
   SessionDetail,
@@ -179,8 +180,23 @@ export class ProviderSessionService
   removeQueuedPrompt(
     sessionId: string,
     promptId: string,
+    acknowledgesDispatch?: string,
   ): Promise<RemovedQueuedPrompt> {
-    return this.serviceFor(sessionId).removeQueuedPrompt(sessionId, promptId)
+    return this.serviceFor(sessionId).removeQueuedPrompt(sessionId, promptId, acknowledgesDispatch)
+  }
+
+  dispatchQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<QueuedPromptDispatchResult> {
+    const service = this.serviceFor(sessionId)
+    const provider = service.getSession(sessionId)?.provider || 'copilot'
+    if (!service.dispatchQueuedPrompt || !service.providers().some((capability) =>
+      capability.id === provider && capability.supportsQueuedPromptDispatch === true)) {
+      throw Object.assign(new Error('Update the owning runtime to dispatch queued edits.'), { statusCode: 409 })
+    }
+    return service.dispatchQueuedPrompt(sessionId, promptId, content)
   }
 
   updateQueuedPrompt(

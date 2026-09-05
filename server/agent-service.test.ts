@@ -28,7 +28,7 @@ import type {
   CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
-import { parseTerminalPermission } from './terminal-session.js'
+import { parseTerminalPermission, TmuxTerminalSessionController } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId: string
@@ -185,6 +185,20 @@ class DeferredSession implements CopilotSessionLike {
     })
   }
 
+  async send({ prompt, mode }: { prompt: string; mode: 'immediate' }): Promise<string> {
+    expect(mode).toBe('immediate')
+    this.sentPrompts.push(prompt)
+    if (this.sendError) throw this.sendError
+    this.responseResolvers.push((response) => {
+      if (response) this.emit(response)
+      this.emit({
+        id: randomUUID(), type: 'session.idle', timestamp: new Date().toISOString(),
+        parentId: null, data: {},
+      } as SessionEvent)
+    })
+    return randomUUID()
+  }
+
   resolvePrompt(response?: AssistantMessageEvent): void {
     this.responseResolvers.shift()?.(response)
   }
@@ -263,6 +277,8 @@ class FakeCopilotClient implements CopilotClientLike {
 }
 
 const directories: string[] = []
+const services = new Set<AgentService>()
+const startService = AgentService.prototype.start
 
 function configurableModel(): ModelInfo {
   return {
@@ -301,17 +317,30 @@ function configurableModel(): ModelInfo {
 }
 
 afterEach(async () => {
+  await Promise.allSettled([...services].map((service) => service.stop()))
+  services.clear()
   vi.unstubAllEnvs()
   await Promise.all(
     directories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
   )
+  vi.restoreAllMocks()
 })
 
 // Sessions are confined to the home directory; these fixtures run in tmpdir.
 beforeEach(() => {
   vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', tmpdir())
+  vi.spyOn(AgentService.prototype, 'start').mockImplementation(function (this: AgentService) {
+    services.add(this)
+    return startService.call(this)
+  })
+  // SDK fixtures must never inspect or type into the developer's tmux server.
+  // Terminal behavior is exercised with the explicit controllers below.
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'has').mockResolvedValue(false)
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'send').mockResolvedValue(false)
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'capture').mockResolvedValue(undefined)
+  vi.spyOn(TmuxTerminalSessionController.prototype, 'cancel').mockResolvedValue(false)
 })
 
 describe('AgentService deletion', () => {
@@ -4649,10 +4678,7 @@ describe('AgentService deletion', () => {
     ).toEqual(['only'])
   })
 
-  it('gives back a queued prompt whose send failed', async () => {
-    // The browser cleared its draft the moment the queue accepted this, so the
-    // text only exists on the queue. Taking it off without handing it back
-    // loses what the reader wrote.
+  it('restores a definitively refused queued prompt unchanged', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -4724,23 +4750,16 @@ describe('AgentService deletion', () => {
     eventVersion = 'events-v1'
     await service.refreshTranscripts()
 
-    // Off the retryable queue, so nothing sends it a second time by itself.
     expect(
       service.store
         .get(client.session.sessionId)
-        ?.queuedPrompts?.map((prompt) => prompt.content) ?? [],
-    ).not.toContain('work the queue lost')
-    // ...and handed back, so the draft can be restored.
-    expect(
-      errors.map((event) => event.failedPrompt),
-    ).toContain('work the queue lost')
-    // Also recorded on the session, so a browser that was not listening when
-    // it failed still finds it in the next snapshot it reads.
-    expect(
-      service.store.get(client.session.sessionId)?.failedPrompt?.content,
-    ).toBe('work the queue lost')
+        ?.queuedPrompts,
+    ).toEqual(queued.queuedPrompts)
+    expect(errors.map((event) => event.message).join('\n')).toContain('original queued message is unchanged')
+    expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
+    expect(service.store.get(client.session.sessionId)?.queuedDispatch).toBeUndefined()
+    expect(terminal.send).toHaveBeenCalledTimes(1)
 
-    // Recorded and dequeued in one write, so a restart can never find both.
     const onDisk = JSON.parse(
       await readFile(
         path.join(directory, 'state', 'state.json'),
@@ -4748,8 +4767,8 @@ describe('AgentService deletion', () => {
       ),
     ) as { sessions: Record<string, { queuedPrompts?: unknown[]; failedPrompt?: unknown }> }
     const persisted = onDisk.sessions[client.session.sessionId]
-    expect(persisted?.failedPrompt).toBeTruthy()
-    expect(persisted?.queuedPrompts ?? []).toHaveLength(0)
+    expect(persisted?.failedPrompt).toBeUndefined()
+    expect(persisted?.queuedPrompts).toEqual(queued.queuedPrompts)
     await service.stop()
   })
 

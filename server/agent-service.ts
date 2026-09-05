@@ -28,6 +28,7 @@ import type {
   PendingUserInput,
   ProviderRuntimeOptions,
   QueuedPrompt,
+  QueuedPromptDispatchResult,
   RemovedQueuedPrompt,
   ServerEvent,
   SessionDetail,
@@ -47,6 +48,18 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
 } from '../shared/contracts.js'
+import { isAppOnlyQueuedCommand } from '../shared/queued-commands.js'
+import {
+  acceptanceReceipt,
+  explicitlyRefused,
+  preparePrompt,
+  queueConflict,
+  QueuedDelivery,
+  QueuedDispatches,
+  terminalRefused,
+  type QueuedDispatchTarget,
+} from './queued-dispatch.js'
+import { queuedSdkPrompt } from './queued-sdk-prompt.js'
 import {
   backgroundTasksFromEvents,
   MAX_BACKGROUND_TASKS,
@@ -118,6 +131,7 @@ interface PendingSdkElicitation {
 export interface CopilotSessionLike {
   sessionId: string
   on(handler: (event: SessionEvent) => void): () => void
+  send?(options: { prompt: string; mode: 'immediate' }): Promise<string>
   sendAndWait(
     content: string,
     timeout?: number,
@@ -1479,6 +1493,9 @@ function permissionTitle(request: PermissionRequest): string {
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly client: CopilotClientLike
   private readonly sessions = new Map<string, CopilotSessionLike>()
+  private readonly queuedDispatches: QueuedDispatches
+  private readonly queuedPromptStops = new Map<string, () => void>()
+  private readonly queuedPromptRuns = new Map<string, Promise<void>>()
   private readonly pendingSessionMetadata = new Map<string, SessionEvent[]>()
   private readonly sessionCreations = new Set<Promise<void>>()
   private readonly hydratedSessions = new Set<string>()
@@ -1718,6 +1735,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ) {
     super()
     this.client = client
+    this.queuedDispatches = new QueuedDispatches(store, (session) => this.publish(session))
   }
 
   providers(): AgentProviderCapability[] {
@@ -1729,11 +1747,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         terminalBacked: true,
         supportsTmuxMigration: true,
         supportsBackgroundTasks: true,
+        supportsQueuedPromptDispatch: true,
       },
     ]
   }
 
   async start(): Promise<void> {
+    this.stopped = false
     await this.store.initialize()
     await this.client.start()
     await this.ensureRuntimeModels().catch((error: unknown) => {
@@ -1774,6 +1794,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async stop(): Promise<void> {
     this.stopped = true
+    for (const stop of this.queuedPromptStops.values()) stop()
     for (const timer of this.acknowledgementTimers) {
       clearTimeout(timer)
     }
@@ -1834,6 +1855,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // refuse the ones a prompt still finishing has yet to make. Once stop()
     // resolves no further write can land, which is what lets a caller safely
     // tear down the data directory.
+    await Promise.allSettled([...this.queuedPromptRuns.values(), ...this.queueOperations.values()])
     await this.store.close()
     const runtimeTimeouts = errors.filter((error) =>
       error.message.startsWith(
@@ -1855,14 +1877,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       .list()
       .filter((session) => session.isOpen)
       .map((session) => ({
-        ...session,
+        ...this.queuedDispatches.view(session),
         messages: [],
       }))
   }
 
   listHistory(): SessionDetail[] {
     return this.store.list().map((session) => ({
-      ...session,
+      ...this.queuedDispatches.view(session),
       messages: [],
     }))
   }
@@ -2003,22 +2025,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   getSession(id: string): SessionDetail | undefined {
-    return this.store.get(id)
+    const session = this.store.get(id)
+    return session ? this.queuedDispatches.view(session) : undefined
   }
 
   async openSession(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
+    if (stored.queuedDispatch) {
+      return this.queuedDispatches.view(stored)
+    }
     if (this.externalSessionIds.has(id)) {
-      return stored
+      return this.queuedDispatches.view(stored)
     }
     if (this.hydratedSessions.has(id)) {
-      return stored
+      return this.queuedDispatches.view(stored)
     }
     if (stored.suspended) {
       // Having nothing running is what was asked for, not evidence that the
       // session is gone. Closing it here would drop it from recovery and take
       // the conversation with it.
-      return stored
+      return this.queuedDispatches.view(stored)
     }
     if (this.store.backend(id) === 'terminal') {
       const closed = await this.store.setOpen(id, false, true)
@@ -2028,12 +2054,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     const inFlight = this.hydratingSessions.get(id)
     if (inFlight) {
-      return inFlight
+      return this.queuedDispatches.view(await inFlight)
     }
     const hydration = this.hydrateSession(id)
     this.hydratingSessions.set(id, hydration)
     try {
-      return await hydration
+      return this.queuedDispatches.view(await hydration)
     } finally {
       this.hydratingSessions.delete(id)
     }
@@ -2044,7 +2070,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const opened = await this.store.setOpen(id, true, true)
     this.publish(opened)
     return {
-      ...opened,
+      ...this.queuedDispatches.view(opened),
       messages: session.messages,
     }
   }
@@ -2163,7 +2189,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const renamed = await this.store.renameSession(id, title)
     this.publish(renamed)
-    return renamed
+    return this.queuedDispatches.view(renamed)
   }
 
   async providerRuntimeOptions(
@@ -2202,6 +2228,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     input: ConfigureRuntimeInput,
   ): Promise<SessionDetail> {
     let stored = await this.store.readAfterWrites(id)
+    this.queuedDispatches.assertAvailable(id)
     stored = await this.reconcileRuntimeStatus(stored)
     if (stored.status === 'running' || stored.status === 'waiting') {
       throw new RuntimeConfigurationError(
@@ -2256,7 +2283,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       })
       this.publish(updated)
-      return updated
+      return this.queuedDispatches.view(updated)
     }
     if (this.externalSessionIds.has(id)) {
       if (!this.terminalController.configure) {
@@ -2359,7 +2386,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * history, which is what makes a machine full of sessions affordable.
    */
   async suspendSession(id: string): Promise<SessionDetail> {
-    return this.serializeLifecycle(id, () => this.suspendSerialized(id))
+    return this.queuedDispatches.view(await this.serializeLifecycle(id, () => this.suspendSerialized(id)))
   }
 
   private async suspendSerialized(id: string): Promise<SessionDetail> {
@@ -2393,6 +2420,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     id: string,
     stored: SessionDetail,
   ): Promise<SessionDetail> {
+    this.queuedDispatches.assertAvailable(id)
     if (
       stored.status === 'running' ||
       stored.status === 'waiting' ||
@@ -2602,7 +2630,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // stored flag on the way in saw a session that suspension was still in
     // the middle of putting down, and returned success for a resume the
     // suspension then wrote over.
-    return this.serializeLifecycle(id, () => this.resumeQueued(id))
+    return this.queuedDispatches.view(await this.serializeLifecycle(id, () => this.resumeQueued(id)))
   }
 
   private async resumeQueued(id: string): Promise<SessionDetail> {
@@ -2621,6 +2649,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async resumeClaimedSession(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
+    this.queuedDispatches.assertAvailable(id)
     if (!stored.suspended) {
       return stored
     }
@@ -2696,11 +2725,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async restartSession(id: string): Promise<SessionDetail> {
-    return this.serializeLifecycle(id, () => this.restartSerialized(id))
+    return this.queuedDispatches.view(await this.serializeLifecycle(id, () => this.restartSerialized(id)))
   }
 
   private async restartSerialized(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
+    this.queuedDispatches.assertAvailable(id)
     if (stored.suspended || this.suspendingSessions.has(id)) {
       // Restarting would start a runtime while the session still says it has
       // none, and for a terminal session leave a second owner behind it. A
@@ -2746,11 +2776,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async moveToTerminal(id: string): Promise<SessionDetail> {
-    return this.serializeLifecycle(id, () => this.moveToTerminalSerialized(id))
+    return this.queuedDispatches.view(await this.serializeLifecycle(id, () => this.moveToTerminalSerialized(id)))
   }
 
   private async moveToTerminalSerialized(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
+    this.queuedDispatches.assertAvailable(id)
     if (this.store.backend(id) === 'terminal') {
       return stored
     }
@@ -2825,11 +2856,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async clearConversation(id: string): Promise<SessionDetail> {
-    return this.serializeLifecycle(id, () => this.clearSerialized(id))
+    return this.queuedDispatches.view(await this.serializeLifecycle(id, () => this.clearSerialized(id)))
   }
 
   private async clearSerialized(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
+    this.queuedDispatches.assertAvailable(id)
     if (stored.suspended || this.suspendingSessions.has(id)) {
       // Clearing builds the replacement a session carries on in, which is a
       // live owner. A later resume would then build a second one beside it.
@@ -3140,6 +3172,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
+    if (this.stopped) throw queueConflict('The session service is stopping.')
+    if (this.store.get(sessionId)?.queuedDispatch && (!enqueue || acknowledgedFailure)) {
+      this.queuedDispatches.assertAvailable(sessionId)
+    }
     // Emptiness is judged on the trimmed text; what is sent is what was
     // written. Trimming the message itself quietly rewrote it, which matters
     // for pasted text whose leading indentation or trailing newline is part of
@@ -3235,7 +3271,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
       claim?.release()
-      return sent
+      return this.queuedDispatches.view(sent)
     }
     // The snapshot above still carries the failure that this send answers, so
     // whatever comes back from clearing it is what the caller is given. Left
@@ -3262,7 +3298,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return undefined
     })
     claim?.release(true)
-    return settled ?? sent
+    return this.queuedDispatches.view(settled ?? sent)
   }
 
   /**
@@ -3424,6 +3460,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     answers?: string,
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(sessionId)
+    if (
+      this.drainingSessions.has(sessionId) ||
+      this.store.get(sessionId)?.queuedDispatch
+    ) {
+      if (enqueue && !this.suspendingSessions.has(sessionId) &&
+        !this.store.get(sessionId)?.suspended) {
+        return this.enqueuePrompt(sessionId, content, false, answers)
+      }
+      throw queueConflict('The queue is dispatching or awaiting delivery confirmation. This message was not sent.')
+    }
     if (this.admissionClosed.has(sessionId)) {
       throw Object.assign(new Error('The session is still resuming'), { statusCode: 409 })
     }
@@ -3461,6 +3507,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     terminalBacked: boolean,
     startupLocked = false,
   ): Promise<SessionDetail> {
+    if (!enqueue) {
+      if (this.drainingSessions.has(sessionId)) {
+        throw queueConflict('The queue is dispatching. This message was not sent.')
+      }
+      this.queuedDispatches.assertAvailable(sessionId)
+    }
+    if (this.stopped || this.deletingSessions.has(sessionId)) {
+      throw queueConflict('The session is no longer available.')
+    }
     // Detection is awaited, and suspending can finish while it is: the guard
     // above spoke for a session that was still running.
     if (
@@ -3663,8 +3718,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async removeQueuedPrompt(
     sessionId: string,
     promptId: string,
+    acknowledgesDispatch?: string,
   ): Promise<RemovedQueuedPrompt> {
+    if (this.queuedDispatches.isActive(sessionId)) throw queueConflict('The queue is still dispatching.')
     return this.serializeQueue(sessionId, async () => {
+      const original = this.getSession(sessionId)?.queuedPrompts
+        ?.find((prompt) => prompt.id === promptId)
+      const discarded = await this.queuedDispatches.discard(sessionId, promptId, acknowledgesDispatch)
+      if (discarded && original) return { session: discarded, prompt: original }
       const { session, prompt } = await this.store.removeQueuedPrompt(
         sessionId,
         promptId,
@@ -3682,15 +3743,36 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     promptId: string,
     rawContent: string,
   ): Promise<RemovedQueuedPrompt> {
-    let content = rawContent.trim()
-    if (!content) {
+    const content = await this.normalizeQueuedContent(sessionId, rawContent)
+    return this.serializeQueue(sessionId, async () => {
+      this.queuedDispatches.assertAvailable(sessionId)
+      const { session, prompt } = await this.store.updateQueuedPrompt(
+        sessionId, promptId, content,
+      )
+      if (!prompt) throw queueConflict('Queued prompt not found')
+      this.publish(session)
+      return { session, prompt }
+    })
+  }
+
+  private async normalizeQueuedContent(
+    sessionId: string,
+    rawContent: string,
+    command = rawContent.trimStart().startsWith('/'),
+  ): Promise<string> {
+    let content = command ? rawContent.trim() : rawContent
+    if (!content.trim()) {
       throw new Error('Message cannot be empty')
+    }
+    if (command && isAppOnlyQueuedCommand(content)) {
+      throw queueConflict('That command is answered by this app, not the queued provider. Cancel the edit before running it.')
     }
     // Asked here rather than trusted from the browser. This is reachable
     // directly, and a client can be holding the command list of a session it
     // no longer has open -- and a command this session does not have stops the
     // drain when it reaches it, with everything behind it waiting.
-    if (content.startsWith('/')) {
+    if (command) {
+      if (content.length > 10_000) throw queueConflict('Queued commands cannot exceed 10000 characters.')
       const name = content.slice(1).split(/\s+/, 1)[0]
       // A catalog that cannot be read is not permission to store anything: an
       // invalid command goes back to the head of the queue after every failed
@@ -3708,24 +3790,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // Written out in full. A shortcut is expanded on the way to the runtime
       // and the queue's drain expands nothing, so one stored as typed reached
       // the runtime as a command it has never heard of.
-      if (name.toLowerCase() !== known.toLowerCase()) {
+      if (name !== known) {
         content = `/${known}${content.slice(name.length + 1)}`
       }
-    }
-    // In the queue's own lane, so a rewrite cannot land while a drain is
-    // taking the same prompt off to send it.
-    return this.serializeQueue(sessionId, async () => {
-      const { session, prompt } = await this.store.updateQueuedPrompt(
-        sessionId,
-        promptId,
-        content,
-      )
-      if (!prompt) {
-        throw new Error('Queued prompt not found')
+      if (isAppOnlyQueuedCommand(content)) {
+        throw queueConflict('An app-only command cannot be dispatched from this queue.')
       }
-      this.publish(session)
-      return { session, prompt }
-    })
+    }
+    return content
   }
 
   async reorderQueuedPrompts(
@@ -3733,6 +3805,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     order: string[],
   ): Promise<SessionDetail> {
     return this.serializeQueue(sessionId, async () => {
+      this.queuedDispatches.assertAvailable(sessionId)
       const session = await this.store.reorderQueuedPrompts(sessionId, order)
       this.publish(session)
       return session
@@ -3847,6 +3920,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     fromQueue = false,
+    delivery?: QueuedDelivery,
   ): Promise<SessionDetail> {
     // Anything already waiting goes first. A resume whose drain failed leaves
     // the prompt back on the queue, and a message written afterwards would
@@ -3860,44 +3934,62 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return queued
     }
     const sdkSession = await this.ensureLoaded(sessionId)
-    const createdAt = new Date().toISOString()
-    await this.store.addMessage(sessionId, {
-      id: randomUUID(),
-      role: 'user',
-      content,
-      createdAt,
-    })
+    if (
+      delivery?.closed || this.deletingSessions.has(sessionId) || this.suspendingSessions.has(sessionId) ||
+      this.stopped || (!fromQueue && this.drainingSessions.has(sessionId))
+    ) {
+      throw queueConflict('The session is no longer available for this dispatch.')
+    }
+    this.queuedDispatches.assertAvailable(sessionId, delivery?.attemptId)
+    if (delivery && !sdkSession.send) {
+      throw queueConflict('This SDK cannot confirm prompt acceptance. Update the runtime before dispatching queued work.')
+    }
+    const userMessageId = randomUUID()
     const assistantMessageId = randomUUID()
-    await this.store.addMessage(sessionId, {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      createdAt: new Date().toISOString(),
-      streaming: true,
-    })
-    const updated = await this.store.update(sessionId, (session) => {
-      session.status = 'running'
-      session.activity = 'Thinking'
-      if (session.messages.filter((message) => message.role === 'user').length === 1) {
-        // From a trimmed copy. The message keeps its own leading whitespace,
-        // which is part of what was written, but a title made of it is blank.
-        const forTitle = content.trim()
-        session.title =
-          forTitle.length > 52 ? `${forTitle.slice(0, 52)}…` : forTitle
-      }
-    })
+    const updated = await preparePrompt(
+      this.store, sessionId, content, userMessageId, assistantMessageId,
+      (session) => {
+        if (
+          this.stopped || this.deletingSessions.has(sessionId) ||
+          this.suspendingSessions.has(sessionId) || session.suspended
+        ) throw queueConflict('The session is no longer available for this dispatch.')
+        if (
+          this.activePrompts.has(sessionId) || session.status === 'running' ||
+          session.status === 'waiting' || session.pendingPermission || session.pendingUserInput
+        ) throw queueConflict('The session is already running; queue this message instead.')
+      },
+      delivery,
+    )
+    if (
+      delivery?.closed || this.stopped || this.deletingSessions.has(sessionId) ||
+      this.suspendingSessions.has(sessionId) || this.store.get(sessionId)?.suspended
+    ) throw queueConflict('The session is no longer available for this dispatch.')
     this.activePrompts.set(sessionId, { assistantMessageId })
     this.publish(updated)
 
     // runPrompt writes to the store from its own catch and finally paths, so a
     // failure there would escape this fire-and-forget call as an unhandled
     // rejection and abort the process.
-    void this.runPrompt(sdkSession, content, assistantMessageId).catch(
+    const receipt = delivery ? acceptanceReceipt() : undefined
+    const run = this.runPrompt(sdkSession, content, assistantMessageId, delivery, receipt).catch(
       (error: unknown) => {
         this.publishError(sessionId, error)
       },
     )
-    return updated
+    if (delivery) {
+      this.queuedPromptRuns.set(sessionId, run)
+      void run.finally(() => {
+        if (this.queuedPromptRuns.get(sessionId) === run) this.queuedPromptRuns.delete(sessionId)
+      })
+    }
+    if (receipt) {
+      try {
+        await receipt.promise
+      } finally {
+        receipt.dispose()
+      }
+    }
+    return this.store.get(sessionId) || updated
   }
 
   /** The full name of a command this session has, by name, shortcut or alias. */
@@ -4056,6 +4148,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
+    if (this.stopped) throw queueConflict('The session service is stopping.')
+    this.queuedDispatches.assertAvailable(sessionId)
     const command = rawCommand.trim()
     // Answered only once the command has actually been taken, like a message,
     // and reserved before it is taken for the same reason.
@@ -4095,7 +4189,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (this.store.get(sessionId)?.failedPrompt?.failedAt !== before) {
       claim?.release()
-      return ran
+      return this.queuedDispatches.view(ran)
     }
     // The command has already run or been queued, so a marker that will not
     // clear is not a failed command. Rejecting here had the browser hand back
@@ -4114,7 +4208,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return undefined
     })
     claim?.release(true)
-    return settled ?? ran
+    return this.queuedDispatches.view(settled ?? ran)
   }
 
   private async runCommand(
@@ -4128,6 +4222,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // the whole of it, and that marker reads as busy, so a command taken off
     // the queue would be refused and put back for ever.
     fromQueue = false,
+    delivery?: QueuedDelivery,
   ): Promise<SessionDetail> {
 
     if (!command.startsWith('/')) {
@@ -4164,6 +4259,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         statusCode: 409,
       })
     }
+    if (!fromQueue && this.drainingSessions.has(sessionId)) {
+      throw queueConflict('The queue is dispatching a prompt. This command was not sent.')
+    }
+    this.queuedDispatches.assertAvailable(sessionId, delivery?.attemptId)
     // Kept exactly as it was written. Splitting on whitespace and rejoining
     // with single spaces rewrote the argument, and `/cwd` carries a directory
     // that was validated before it got here: a folder whose name holds two
@@ -4185,6 +4284,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             argument,
             enqueue,
             answers,
+            fromQueue,
+            delivery,
           )
         })
       }
@@ -4195,6 +4296,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         enqueue,
         answers,
         fromQueue,
+        delivery,
       )
     } finally {
       releaseDispatch()
@@ -4271,6 +4373,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // answers are written together rather than one after the other.
     answers?: string,
     fromQueue = false,
+    delivery?: QueuedDelivery,
   ): Promise<SessionDetail> {
     const catalog = await this.sessionCommandCatalog(sessionId)
     const commandInfo = catalog.commands.find(
@@ -4282,6 +4385,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         commandShortcut(candidate.name) === name.toLowerCase(),
     )
     const canonicalName = commandInfo?.name || name
+    if (fromQueue && !commandInfo) {
+      throw queueConflict(`This session has no /${name}. The queued message was not sent.`)
+    }
     const canonicalCommand = `/${canonicalName}${
       argument ? ` ${argument}` : ''
     }`
@@ -4350,8 +4456,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error(`/${name} must be queued while the agent is running`)
       }
     }
-    if (
-      await this.terminalController.send(
+    if (delivery) {
+      const current = await this.store.readAfterWrites(sessionId)
+      if (
+        this.stopped || this.deletingSessions.has(sessionId) ||
+        this.suspendingSessions.has(sessionId) || current.suspended ||
+        current.status !== 'idle' || current.pendingPermission || current.pendingUserInput ||
+        this.activePrompts.has(sessionId) ||
+        current.queuedDispatch?.attemptId !== delivery.attemptId
+      ) throw queueConflict('The session is no longer idle and available for this command.')
+    }
+    let terminalSent: boolean
+    try {
+      delivery?.submit()
+      terminalSent = await this.terminalController.send(
         sessionId,
         canonicalCommand,
         nativeEnqueue,
@@ -4359,7 +4477,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           ? [{ allowDuringAgentExecution: true }]
           : []),
       )
-    ) {
+      if (!terminalSent) delivery?.refuse()
+    } catch (error) {
+      if (terminalRefused(error)) delivery?.refuse()
+      throw error
+    }
+    if (terminalSent) {
+      delivery?.accept()
       const feedback = await this.terminalCommandFeedback(
         sessionId,
         canonicalCommand,
@@ -4390,17 +4514,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('External terminal is no longer available')
     }
     if (enqueue) {
+      delivery?.submit()
       const result = await session.rpc.commands.enqueue({
         command: canonicalCommand,
       })
       if (!result.queued) {
+        delivery?.refuse()
         throw new Error('This session does not support command queueing')
       }
+      delivery?.accept()
     } else {
+      delivery?.submit()
       const result = await session.rpc.commands.invoke({
         name: canonicalName,
         input: argument,
       })
+      delivery?.accept()
       if (result.kind === 'agent-prompt') {
         const notice = await this.store.addMessage(sessionId, {
           id: randomUUID(),
@@ -4414,7 +4543,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // prompt this command generated is the same piece of work, so it goes
         // in the way the queue's own messages do -- otherwise the command ran,
         // said so, and then produced nothing.
-        if (fromQueue) return this.startMessage(sessionId, result.prompt, true)
+        if (fromQueue) return this.startMessage(sessionId, result.prompt, true, delivery)
         // Command dispatch already owns the terminal-admission slot. Re-entering
         // sendMessage here can queue behind that same slot when a stale terminal
         // owner disappeared and the command fell back to the SDK.
@@ -4627,6 +4756,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     forgetSessionEvents(sessionId)
     let completed = false
     try {
+      this.queuedPromptStops.get(sessionId)?.()
+      await this.queueOperations.get(sessionId)?.catch(() => undefined)
+      await this.queuedPromptRuns.get(sessionId)?.catch(() => undefined)
       await this.activeSessionStopper(sessionId)
       const active = this.sessions.get(sessionId)
       if (active) {
@@ -4759,7 +4891,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sessionId, 'pendingPermission', requestId, continuation,
     )
     this.publish(updated)
-    return updated
+    return this.queuedDispatches.view(updated)
   }
 
   async replyUserInput(
@@ -4792,7 +4924,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId, 'pendingUserInput', requestId, { status: 'running', activity: 'Continuing' },
       )
       this.publish(updated)
-      return updated
+      return this.queuedDispatches.view(updated)
     }
     if (action !== 'accept') {
       if (requestId.startsWith('persisted-user-input:')) {
@@ -4833,7 +4965,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           sessionId, 'pendingUserInput', requestId, { status: 'idle' },
         )
         this.publish(cleared)
-        return cleared
+        return this.queuedDispatches.view(cleared)
       }
       throw new Error('This user input request cannot be dismissed')
     }
@@ -4886,7 +5018,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           sessionId, 'pendingUserInput', requestId,
         )
         this.publish(settled)
-        return settled
+        return this.queuedDispatches.view(settled)
       }
       if (terminalBacked && request.form) {
         // Filling the agent's own form answers the tool it is waiting on, so
@@ -4913,7 +5045,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             sessionId, 'pendingUserInput', requestId, { status: 'running', activity: 'Continuing' },
           )
           this.publish(submitted)
-          return submitted
+          return this.queuedDispatches.view(submitted)
         }
         if (filled) {
           const answeredSession = await this.store.clearPendingRequest(
@@ -4923,9 +5055,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             { status: 'running', activity: 'Continuing' },
           )
           this.publish(answeredSession)
-          return answeredSession
+          return this.queuedDispatches.view(answeredSession)
         }
       }
+      this.queuedDispatches.assertAvailable(sessionId)
       if (terminalBacked) {
         const dismissed =
           (await this.terminalController
@@ -5003,7 +5136,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sessionId, 'pendingUserInput', requestId, continuation,
     )
     this.publish(updated)
-    return updated
+    return this.queuedDispatches.view(updated)
   }
 
   private async ensureLoaded(sessionId: string): Promise<CopilotSessionLike> {
@@ -5152,13 +5285,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async hydrateSession(sessionId: string): Promise<SessionDetail> {
     const session = await this.ensureLoaded(sessionId)
-    const hydrated = await this.store.replaceMessages(
-      sessionId,
-      messagesFromHistory(await session.getEvents()),
-    )
-    this.hydratedSessions.add(sessionId)
-    this.publish(hydrated)
-    return hydrated
+    const before = this.store.get(sessionId)
+    const messages = messagesFromHistory(await session.getEvents())
+    const hydrated = await this.store.updateIf(sessionId, (current) => {
+      if (
+        this.stopped || this.deletingSessions.has(sessionId) ||
+        current.queuedDispatch || current.revision !== before?.revision ||
+        this.activePrompts.has(sessionId)
+      ) return false
+      current.messages = messages
+      return true
+    })
+    if (hydrated) {
+      this.hydratedSessions.add(sessionId)
+      this.publish(hydrated)
+      return hydrated
+    }
+    const current = this.store.get(sessionId)
+    if (!current) throw queueConflict('The session is no longer available.')
+    return current
   }
 
   private async discoverSessions(): Promise<void> {
@@ -6095,7 +6240,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     if (event.type === 'tool.execution_start') {
-      if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       const toolName = event.data.toolName
@@ -6128,7 +6273,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     if (event.type === 'tool.execution_complete') {
-      if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       const completionKey = `${sessionId}:${event.data.toolCallId}`
@@ -6168,10 +6313,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sdkSession: CopilotSessionLike,
     content: string,
     assistantMessageId: string,
+    delivery?: QueuedDelivery,
+    receipt?: ReturnType<typeof acceptanceReceipt>,
   ): Promise<void> {
     const sessionId = sdkSession.sessionId
     try {
-      const response = await sdkSession.sendAndWait(content, 60 * 60 * 1000)
+      const response = delivery && receipt
+        ? await queuedSdkPrompt(sdkSession, content, delivery, receipt, (stop) => {
+            this.queuedPromptStops.set(sessionId, stop)
+            return () => {
+              if (this.queuedPromptStops.get(sessionId) === stop) this.queuedPromptStops.delete(sessionId)
+            }
+          })
+        : await sdkSession.sendAndWait(content, 60 * 60 * 1000)
       if (response?.timestamp) {
         this.liveTranscriptWatermarks.set(sessionId, response.timestamp)
       }
@@ -6200,6 +6354,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       this.publish(updated)
     } catch (error) {
+      receipt?.reject(error)
+      if (delivery && !delivery.accepted &&
+        (!delivery.submitted || delivery.refused || explicitlyRefused(error))) {
+        return
+      }
       if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
@@ -6230,129 +6389,117 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.emit('event', { type: 'error', sessionId, message })
     } finally {
       this.activePrompts.delete(sessionId)
-      await this.drainSdkQueue(sessionId)
+      if (!delivery || delivery.accepted) await this.drainSdkQueue(sessionId)
     }
   }
 
-  private async drainSdkQueue(sessionId: string): Promise<void> {
-    if (this.drainingSessions.has(sessionId)) {
-      return
+  async dispatchQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<QueuedPromptDispatchResult> {
+    const result = await this.drainSdkQueue(sessionId, { promptId, content })
+    if (!result) throw queueConflict('The named queued prompt was not dispatched.')
+    return result
+  }
+
+  private async drainSdkQueue(
+    sessionId: string,
+    target?: QueuedDispatchTarget,
+  ): Promise<QueuedPromptDispatchResult | undefined> {
+    const { result, continueQueue } = await this.drainQueuedOnce(sessionId, target)
+    if (continueQueue && !this.stopped) {
+      void this.drainSdkQueue(sessionId).catch((error) => this.publishError(sessionId, error))
     }
-    if (
-      this.suspendingSessions.has(sessionId) ||
-      this.store.get(sessionId)?.suspended
-    ) {
-      // As above: a drain starting beside a suspension marks the session as
-      // working after the runtime has gone.
-      return
-    }
-    this.drainingSessions.add(sessionId)
-    // Whether this pass took a prompt off the queue and it stayed off. A
-    // prompt that failed goes back, and treating that as progress is what
-    // turns "carry on" into a loop.
-    let consumed = false
-    try {
-      if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
-        const { session: queued, prompt: next } = await this.serializeQueue(
-          sessionId,
-          () => this.store.shiftQueuedPrompt(sessionId),
-        )
-        // Held back until the outcome is known. Announced here, the queue
-        // arrives at the browser without this prompt while it is still only in
-        // hand -- and if the dispatch fails it goes straight back, so what was
-        // announced was never true. Anything watching had no way to tell that
-        // moment from the message being gone.
-        //
-        // Nothing is hidden by waiting: a dispatch that succeeds publishes the
-        // running session itself, and one that fails publishes the restored
-        // queue below.
-        if (!next) {
-          this.publish(queued)
-        }
-        if (next) {
-          try {
-            if (next.command) {
-              // A queued slash command has to run as one. Handed to the
-              // ordinary message path it reaches the model as text, so a
-              // queued `/clear` became a sentence about clearing rather than
-              // the command it was queued as.
-              await this.runCommand(
-                sessionId,
-                next.content,
-                false,
-                undefined,
-                true,
-              )
-            } else {
-              await this.startMessage(sessionId, next.content, true)
-            }
-            consumed = true
-          } catch (error) {
-            const restored = await this.serializeQueue(
-              sessionId,
-              () => this.store.enqueuePrompt(sessionId, next, true),
-            )
-            this.publish(restored)
-            this.publishError(sessionId, error)
-          }
-        }
-      }
-    } catch (error) {
-      this.publishError(sessionId, error)
-    } finally {
-      this.drainingSessions.delete(sessionId)
-    }
-    // A command that answered without starting a turn leaves nothing to call
-    // this again when the turn ends, because there was no turn. Everything
-    // behind it would wait for an unrelated send, resume or restart.
-    //
-    // Only when this pass actually consumed something. Carrying on regardless
-    // retried a prompt that had just failed and been put back -- for ever,
-    // repeating whatever it had already done on the way.
-    //
-    // Whether anything is running, rather than whether the session is idle. A
-    // turn that failed leaves it reading `error`, and a command consumed after
-    // that started nothing of its own to change that -- so everything behind
-    // it waited for an unrelated send, resume or restart.
-    const remaining = this.store.get(sessionId)
-    if (
-      consumed &&
-      remaining?.queuedPrompts?.length &&
-      remaining.status !== 'running' &&
-      remaining.status !== 'waiting' &&
-      !this.activePrompts.has(sessionId) &&
-      !this.drainingSessions.has(sessionId)
-    ) {
-      void this.drainSdkQueue(sessionId).catch(() => undefined)
-    }
+    return result
   }
 
   private async drainTerminalQueue(sessionId: string): Promise<void> {
-    if (this.drainingSessions.has(sessionId)) {
-      return
+    while (!this.stopped) {
+      const { continueQueue } = await this.drainQueuedOnce(sessionId, undefined, true)
+      if (!continueQueue) return
     }
-    if (
-      this.suspendingSessions.has(sessionId) ||
-      this.store.get(sessionId)?.suspended
-    ) {
-      // A drain starting now would wait behind the teardown and then mark the
-      // session as working, which the last idleness check reads as a turn
-      // having begun -- the pane already killed, and the suspension abandoned
-      // with nothing running it.
-      return
+  }
+
+  private async drainQueuedOnce(
+    sessionId: string,
+    target?: QueuedDispatchTarget,
+    terminalHint = false,
+  ): Promise<{ result?: QueuedPromptDispatchResult; continueQueue: boolean }> {
+    if (this.stopped || this.drainingSessions.has(sessionId)) {
+      if (target) throw queueConflict('This queue is already dispatching. Your rewrite was not sent.')
+      return { continueQueue: false }
     }
     this.drainingSessions.add(sessionId)
+    const releaseDispatch = this.holdDispatch(sessionId)
     try {
-      // A command answers in the pane instead of starting a turn, so it adds
-      // no completion event and nothing else would drain what is queued behind
-      // it. Draining continues here until the queue is empty or a turn begins.
-      while (await this.drainNextTerminalPrompt(sessionId)) {
-        // Keep draining while commands keep answering.
-      }
+      return await this.serializeQueue(sessionId, async () => {
+        const stored = await this.store.readAfterWrites(sessionId)
+        if (!target && (
+          stored.queuedDispatch || !stored.queuedPrompts?.length ||
+          stored.suspended || stored.status === 'running' || stored.status === 'waiting' ||
+          stored.failedPrompt || this.suspendingSessions.has(sessionId)
+        )) return { continueQueue: false }
+        this.queuedDispatches.assertAvailable(sessionId)
+        let checkedTerminal = false
+        let hasTerminal = false
+        let terminal = terminalHint ||
+          this.store.backend(sessionId) === 'terminal' || this.externalSessionIds.has(sessionId)
+        const assertIdle = (session: SessionDetail) => {
+          if (
+            this.stopped || this.deletingSessions.has(sessionId) ||
+            this.suspendingSessions.has(sessionId) || session.suspended ||
+            this.activePrompts.has(sessionId) || session.failedPrompt ||
+            session.pendingPermission || session.pendingUserInput ||
+            session.status === 'running' || session.status === 'waiting' ||
+            ((target || terminal) && session.status !== 'idle') ||
+            (target && !session.isOpen) ||
+            this.terminalController.sending?.(sessionId)
+          ) throw queueConflict('The session is not idle and available. The original queued message has not been sent.')
+          if (checkedTerminal && terminal && !hasTerminal) {
+            throw queueConflict('The owning terminal is no longer available.')
+          }
+        }
+        let mayContinue = true
+        const result = await this.queuedDispatches.run(
+          sessionId, target,
+          async (content, command) => {
+            hasTerminal = await this.terminalController.has(sessionId)
+            checkedTerminal = true
+            terminal ||= hasTerminal
+            return target ? this.normalizeQueuedContent(sessionId, content, command) : content
+          },
+          async (prompt, delivery) => {
+            const current = this.store.get(sessionId)
+            if (!current) throw queueConflict('The session was removed before dispatch.')
+            assertIdle(this.queuedDispatches.view(current))
+            if (terminal) {
+              mayContinue = await this.drainNextTerminalPrompt(sessionId, prompt, delivery)
+            } else if (prompt.command) {
+              await this.runCommand(sessionId, prompt.content, false, undefined, true, delivery)
+            } else {
+              await this.startMessage(sessionId, prompt.content, true, delivery)
+            }
+          },
+          assertIdle,
+        )
+        if (result && result.outcome !== 'sent') this.publishError(sessionId, new Error(result.message))
+        const remaining = this.store.get(sessionId)
+        return {
+          result,
+          continueQueue: result?.outcome === 'sent' && mayContinue &&
+            Boolean(remaining?.queuedPrompts?.length) && !remaining?.queuedDispatch &&
+            remaining?.status !== 'running' && remaining?.status !== 'waiting' &&
+            !this.activePrompts.has(sessionId),
+        }
+      })
     } catch (error) {
+      if (target) throw error
       this.publishError(sessionId, error)
+      return { continueQueue: false }
     } finally {
       this.drainingSessions.delete(sessionId)
+      releaseDispatch()
     }
   }
 
@@ -6362,142 +6509,45 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * without starting a turn: a dispatched prompt and a command that began a
    * turn both leave the terminal busy, and their completion drains the rest.
    */
-  private async drainNextTerminalPrompt(sessionId: string): Promise<boolean> {
-    return await this.serializeQueue(sessionId, async () => {
-      const stored = this.store.get(sessionId)
-      const next = stored?.queuedPrompts?.[0]
-      if (!next || stored.status !== 'idle') {
-        return false
+  private async drainNextTerminalPrompt(
+    sessionId: string,
+    prompt: QueuedPrompt,
+    delivery: QueuedDelivery,
+  ): Promise<boolean> {
+    const before = await this.terminalController.capture?.(sessionId)
+    if (before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
+      throw queueConflict('The terminal is busy or showing a dialog. Close it or wait before sending this edit.')
+    }
+    const current = await this.store.readAfterWrites(sessionId)
+    if (
+      this.stopped || this.deletingSessions.has(sessionId) ||
+      this.suspendingSessions.has(sessionId) || current.suspended ||
+      current.status !== 'idle' || current.pendingPermission || current.pendingUserInput
+    ) {
+      throw queueConflict('The session is changing state. This edit was not sent.')
+    }
+    const dispatchedAt = new Date().toISOString()
+    try {
+      delivery.submit()
+      if (!(await this.terminalController.send(sessionId, prompt.content, false))) {
+        delivery.refuse()
+        throw queueConflict('The owning terminal is no longer available.')
       }
-      // One unacknowledged failure at a time. Sending the next prompt while
-      // the previous one is still waiting to be handed back would overwrite
-      // it, and the first would be gone with nothing holding it.
-      if (stored.failedPrompt) {
-        return false
-      }
-      const dispatchedAt = new Date().toISOString()
-      // A command reports what it printed instead of starting a turn, so its
-      // pane is captured before the keystrokes go in, exactly as it would be
-      // had the command not been queued.
-      const before = next.command
-        ? await this.terminalController.capture?.(sessionId)
-        : undefined
-      try {
-        if (
-          !(await this.terminalController.send(sessionId, next.content, false))
-        ) {
-          throw new Error('External terminal is no longer available')
-        }
-      } catch (error) {
-        // The queue drains again whenever the session next falls idle, so a
-        // prompt left on it after a failed send is sent a second time without
-        // anyone asking. It is taken off and reported instead, which is what
-        // the reader can act on.
-        // Recorded on the session before the queue entry goes, so the text is
-        // never absent from both at once. A snapshot carries it to a browser
-        // that was not listening when it failed, which a one-off event
-        // cannot.
-        // One write: the prompt leaves the queue and is recorded as needing
-        // recovery together. Done separately, a restart between them finds
-        // both copies on disk, and the prompt is delivered again while the
-        // reader has already been handed the text back.
-        let session: SessionDetail | undefined
-        try {
-          session = await this.store.setFailedPrompt(
-            sessionId,
-            next.id,
-            next.content,
-            // tmux may have taken the paste even though it was never seen to
-            // arrive, so this is not known to have failed. Carried with the
-            // text, because after a reload a bare draft looks like anything
-            // else waiting to be sent.
-            Boolean(
-              error &&
-                typeof error === 'object' &&
-                'uncertainDelivery' in error,
-            ),
-          )
-        } catch {
-          session = undefined
-        }
-        const recovered = Boolean(session)
-        if (session) {
-          // The queue changed, and a browser told only about the error would
-          // go on showing a prompt that is no longer waiting for anything.
-          this.publish(session)
-        }
-        // Announced only when it was actually recorded. Saying the text is
-        // being held while the write that holds it failed hands a browser a
-        // draft the server cannot answer for, and leaves the queued copy on
-        // disk to be delivered again after a restart.
-        if (!recovered) {
-          throw new Error(
-            `${
-              error instanceof Error ? error.message : String(error)
-            } The prompt could not be set aside for recovery, so it may still be queued.`,
-          )
-        }
-        this.emit('event', {
-          type: 'error',
-          sessionId,
-          message: error instanceof Error ? error.message : String(error),
-          failedPrompt: next.content,
-          // The same identity the snapshot uses, so a client that sees both
-          // knows they are one failure rather than two.
-          failedPromptAt: session?.failedPrompt?.failedAt,
-        })
-        if (!recovered) {
-          // Saying the prompt was taken off the queue while it may still be on
-          // disk would let a restart deliver it again beside the draft the
-          // reader has been handed back.
-          throw new Error(
-            `${
-              error instanceof Error ? error.message : String(error)
-            } The prompt could not be set aside for recovery, so it may still be queued.`,
-          )
-        }
-        throw error
-      }
-      const { prompt } = await this.store.removeQueuedPrompt(sessionId, next.id)
-      if (!prompt) {
-        return false
-      }
-      if (next.command) {
-        const feedback = await this.terminalCommandFeedback(
-          sessionId,
-          next.content,
-          before,
-        )
-        const notice = await this.store.addMessage(sessionId, {
-          id: randomUUID(),
-          role: 'notice',
-          content: feedback.notice,
-          createdAt: new Date().toISOString(),
-        })
-        this.publish(notice)
-        if (feedback.startedTurn) {
-          // The command began a turn instead of answering, so the terminal is
-          // busy until it ends. Recording the dispatch now keeps anything else
-          // from being sent into that turn before polling observes it.
-          const started = await this.store.markTerminalPromptDispatched(
-            sessionId,
-            dispatchedAt,
-          )
-          this.publish(started)
-          return false
-        }
-        // A full-screen view owns the keyboard without starting a turn, so the
-        // session stays idle while the rest of the queue waits for it to close
-        // rather than being typed into its search box.
-        return !feedback.overlayOpen
-      }
-      const running = await this.store.markTerminalPromptDispatched(
-        sessionId,
-        dispatchedAt,
-      )
-      this.publish(running)
-      return false
-    })
+    } catch (error) {
+      if (terminalRefused(error)) delivery.refuse()
+      throw error
+    }
+    delivery.accept()
+    if (prompt.command) {
+      const feedback = await this.terminalCommandFeedback(sessionId, prompt.content, before)
+      this.publish(await this.store.addMessage(sessionId, {
+        id: randomUUID(), role: 'notice', content: feedback.notice,
+        createdAt: new Date().toISOString(),
+      }))
+      if (!feedback.startedTurn) return !feedback.overlayOpen
+    }
+    this.publish(await this.store.markTerminalPromptDispatched(sessionId, dispatchedAt))
+    return false
   }
 
   private async serializeQueue<T>(
@@ -6645,7 +6695,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private publish(session: SessionDetail): void {
-    this.emit('event', { type: 'session.upserted', session })
+    this.emit('event', { type: 'session.upserted', session: this.queuedDispatches.view(session) })
   }
 
   private publishError(sessionId: string, error: unknown): void {

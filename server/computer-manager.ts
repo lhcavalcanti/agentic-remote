@@ -13,6 +13,7 @@ import type {
   HubEvent,
   ManagedSession,
   ManagedRemovedQueuedPrompt,
+  ManagedQueuedPromptDispatchResult,
   PermissionReplyInput,
   ProviderRuntimeOptions,
   RenameSessionInput,
@@ -479,18 +480,41 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     sessionId: string,
     promptId: string,
+    acknowledgesDispatch?: string,
   ): Promise<ManagedRemovedQueuedPrompt> {
     const computer = this.requireComputer(computerId)
     const result =
       computerId === this.identity.info.id
-        ? await this.localService.removeQueuedPrompt(sessionId, promptId)
+        ? await this.localService.removeQueuedPrompt(sessionId, promptId, acknowledgesDispatch)
         : await this.requireClient(computerId).removeQueuedPrompt(
             sessionId,
             promptId,
+            acknowledgesDispatch,
           )
     return {
       session: managedSession(result.session, computer),
       prompt: result.prompt,
+    }
+  }
+
+  async dispatchQueuedPrompt(
+    computerId: string,
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<ManagedQueuedPromptDispatchResult> {
+    const computer = this.requireComputer(computerId)
+    const service = computerId === this.identity.info.id
+      ? this.localService
+      : this.requireClient(computerId)
+    if (!service.dispatchQueuedPrompt || !computer.providers?.some((provider) =>
+      provider.supportsQueuedPromptDispatch === true)) {
+      throw Object.assign(new Error('Update the owning runtime to dispatch queued edits.'), { statusCode: 409 })
+    }
+    const result = await service.dispatchQueuedPrompt(sessionId, promptId, content)
+    return {
+      ...result,
+      session: result.session ? managedSession(result.session, computer) : undefined,
     }
   }
 

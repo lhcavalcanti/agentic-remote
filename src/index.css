@@ -2189,6 +2189,7 @@ button {
 
 .queued-edit-banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
@@ -2201,7 +2202,7 @@ button {
 }
 
 .queued-edit-banner span {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
 }
 
@@ -4344,6 +4345,21 @@ button {
 
   .queued-prompts__list {
     max-height: 82px;
+  }
+
+  .queued-edit-banner {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .queued-edit-banner__save,
+  .queued-edit-banner > .icon-button {
+    min-height: 44px;
+  }
+
+  .queued-edit-banner > .icon-button {
+    min-width: 44px;
+    margin-left: auto;
   }
 
   .command-menu {

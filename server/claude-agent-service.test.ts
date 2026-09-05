@@ -718,19 +718,12 @@ describe('ClaudeAgentService', () => {
     const session = await service.createSession(directory, false, true, 'claude')
     const before = service.getSession(session.id)?.messages.length ?? 0
 
-    // Suspension takes hold between the two writes.
-    const addMessage = service.store.addMessage.bind(service.store)
-    let writes = 0
-    vi.spyOn(service.store, 'addMessage').mockImplementation(
-      async (id, message) => {
-        const result = await addMessage(id, message)
-        writes += 1
-        if (writes === 2) {
-          await service.store.setSuspended(id, true)
-        }
-        return result
-      },
-    )
+    // Suspension commits before the atomic turn-preparation transaction.
+    const update = service.store.update.bind(service.store)
+    vi.spyOn(service.store, 'update').mockImplementationOnce(async (id, mutation) => {
+      await service.store.setSuspended(id, true)
+      return update(id, mutation)
+    })
 
     await expect(
       service.sendMessage(session.id, 'lost to a suspension'),
@@ -764,7 +757,9 @@ describe('ClaudeAgentService', () => {
   })
 
   it('restarts a queue left standing by a drain that failed', async () => {
-    const { directory, service } = await fixture(async function* () {})
+    const { directory, service } = await fixture(async function* () {
+      yield* textResult('fixture-session')
+    })
     const session = await service.createSession(directory, false, true, 'claude')
     // A queue left standing: the prompt is back on it and the session is idle,
     // with no query running to take it off again.
@@ -793,7 +788,9 @@ describe('ClaudeAgentService', () => {
   })
 
   it('drains a standing queue once however many sends arrive', async () => {
-    const { directory, service } = await fixture(async function* () {})
+    const { directory, service } = await fixture(async function* () {
+      yield* textResult('fixture-session')
+    })
     const session = await service.createSession(directory, false, true, 'claude')
     await service.store.enqueuePrompt(session.id, {
       id: 'waiting-1',
@@ -863,18 +860,11 @@ describe('ClaudeAgentService', () => {
     const session = await service.createSession(directory, false, true, 'claude')
     const before = service.getSession(session.id)?.updatedAt
 
-    const addMessage = service.store.addMessage.bind(service.store)
-    let writes = 0
-    vi.spyOn(service.store, 'addMessage').mockImplementation(
-      async (id, message) => {
-        const result = await addMessage(id, message)
-        writes += 1
-        if (writes === 2) {
-          await service.store.setSuspended(id, true)
-        }
-        return result
-      },
-    )
+    const update = service.store.update.bind(service.store)
+    vi.spyOn(service.store, 'update').mockImplementationOnce(async (id, mutation) => {
+      await service.store.setSuspended(id, true)
+      return update(id, mutation)
+    })
 
     await expect(
       service.sendMessage(session.id, 'lost to a suspension'),

@@ -68,7 +68,12 @@ const updateQueuedPromptSchema = z.object({
   // The same shape a message has to take. Without it a whitespace-only edit
   // became a generic server error, and an edit could hold more than any
   // message was ever allowed to.
-  content: z.string().trim().min(1).max(200_000),
+  content: z.string().max(200_000)
+    .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
+})
+
+const discardQueuedDispatchSchema = z.object({
+  acknowledgesDispatch: z.string().uuid().optional(),
 })
 
 const reorderQueueSchema = z.object({
@@ -603,12 +608,28 @@ export async function registerHubRoutes(
 
   app.delete<{ Params: SessionParams & { promptId: string } }>(
     '/api/computers/:computerId/sessions/:sessionId/queue/:promptId',
-    async (request) =>
-      manager.removeQueuedPrompt(
+    async (request) => {
+      const input = discardQueuedDispatchSchema.parse(request.body ?? {})
+      return manager.removeQueuedPrompt(
         request.params.computerId,
         request.params.sessionId,
         request.params.promptId,
-      ),
+        input.acknowledgesDispatch,
+      )
+    },
+  )
+
+  app.post<{ Params: SessionParams & { promptId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/queue/:promptId/dispatch',
+    async (request) => {
+      const input = updateQueuedPromptSchema.parse(request.body)
+      return manager.dispatchQueuedPrompt(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.promptId,
+        input.content,
+      )
+    },
   )
 
   app.patch<{ Params: SessionParams & { promptId: string } }>(

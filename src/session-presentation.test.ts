@@ -171,6 +171,26 @@ describe('session presentation', () => {
     })
   })
 
+  it('keeps an uncertain queued dispatch in Needs you without implying it was unsent', () => {
+    const held = {
+      ...session,
+      queuedDispatch: {
+        promptId: 'q2', attemptId: 'attempt-1', state: 'uncertain' as const,
+        content: 'Check this delivery', startedAt: '2026-09-05T00:00:00Z',
+      },
+    }
+    expect(sessionPresentation(held, tasks)).toMatchObject({
+      state: 'unconfirmed', label: 'Check delivery', needsAttention: true, working: false,
+    })
+    expect(sessionPresentation(held, tasks, false)).toMatchObject({
+      state: 'offline', needsAttention: true, working: false,
+    })
+    expect(sessionPresentation({
+      ...held,
+      pendingUserInput: { requestId: 'question', question: 'Still waiting?', choices: [], allowFreeform: true },
+    }, tasks)).toMatchObject({ state: 'question', needsAttention: true })
+  })
+
   it('can search the current computer name without rewriting cached session metadata', () => {
     expect(matchesSessionSearch(session, 'renamed studio', 'Renamed Studio')).toBe(true)
     expect(session.computerName).toBe('Studio')

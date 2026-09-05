@@ -19,6 +19,7 @@ import type {
   UserInputReplyInput,
   RuntimeOptions,
   ProviderRuntimeOptions,
+  QueuedPromptDispatchResult,
   RuntimeReasoningEffort,
   SessionFileUpload,
   WorkspaceFile,
@@ -62,6 +63,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
         available: true,
         terminalBacked: true,
         supportsBackgroundTasks: true,
+        supportsQueuedPromptDispatch: true,
       },
     ]
   }
@@ -339,18 +341,64 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
-  async removeQueuedPrompt(sessionId: string, promptId: string) {
+  async updateQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ) {
     const session = this.sessions.get(sessionId)
     const prompt = session?.queuedPrompts?.find((entry) => entry.id === promptId)
     if (!session || !prompt) {
       throw new Error('Queued prompt not found')
     }
+    prompt.content = content
+    this.emitEvent({ type: 'session.upserted', session })
+    return { session: structuredClone(session), prompt }
+  }
+
+  async reorderQueuedPrompts(sessionId: string, order: string[]) {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    const queue = session.queuedPrompts || []
+    session.queuedPrompts = order.map(
+      (id) => queue.find((entry) => entry.id === id)!,
+    )
+    this.emitEvent({ type: 'session.upserted', session })
+    return structuredClone(session)
+  }
+
+  async removeQueuedPrompt(sessionId: string, promptId: string, acknowledgesDispatch?: string) {
+    const session = this.sessions.get(sessionId)
+    const prompt = session?.queuedPrompts?.find((entry) => entry.id === promptId)
+    if (!session || !prompt) {
+      throw new Error('Queued prompt not found')
+    }
+    if (session.queuedDispatch && session.queuedDispatch.attemptId !== acknowledgesDispatch) {
+      throw Object.assign(new Error('A fresh dispatch acknowledgement is required'), { statusCode: 409 })
+    }
     session.queuedPrompts = session.queuedPrompts?.filter(
       (entry) => entry.id !== promptId,
     )
     session.queuedCount = session.queuedPrompts?.length || 0
+    session.queuedDispatch = undefined
     this.emitEvent({ type: 'session.upserted', session })
     return { session: structuredClone(session), prompt }
+  }
+
+  async dispatchQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    _content: string,
+  ): Promise<QueuedPromptDispatchResult> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.queuedPrompts?.some((prompt) => prompt.id === promptId)) {
+      throw Object.assign(new Error('Queued prompt not found'), { statusCode: 409 })
+    }
+    session.queuedPrompts = session.queuedPrompts.filter((prompt) => prompt.id !== promptId)
+    session.queuedCount = session.queuedPrompts.length
+    return { outcome: 'sent', promptId, attemptId: randomUUID(), session: structuredClone(session) }
   }
 
   async sendMessage(sessionId: string, content: string): Promise<SessionDetail> {
@@ -1867,6 +1915,295 @@ describe('remote snapshot consistency', () => {
       .toEqual([])
     manager.stop()
   })
+})
+
+describe('queued dispatch routing', () => {
+  beforeEach(() => {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+  })
+
+  async function routingFixture(capability = true) {
+    const queued = {
+      ...session('queued-session', 'Queued'),
+      queuedPrompts: ['first', 'middle/id', 'last'].map((id) => ({
+        id, content: `original ${id}`, createdAt: '2026-09-05T00:00:00.000Z',
+      })),
+      queuedCount: 3,
+    }
+    const remoteService = new FakeSessionService(queued)
+    const localService = new FakeSessionService(queued)
+    if (!capability) {
+      for (const service of [remoteService, localService]) {
+        const providers = service.providers().map((provider) => ({
+          ...provider, supportsQueuedPromptDispatch: false,
+        }))
+        vi.spyOn(service, 'providers').mockReturnValue(providers)
+      }
+    }
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('queued-routing-node'),
+      logger: false, role: 'node', service: remoteService,
+    })
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('queued-routing-hub'),
+      logger: false, role: 'hub', service: localService,
+    })
+    const close = async () => {
+      await hub.app.close()
+      await remote.app.close()
+    }
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address() as AddressInfo
+      const registered = await hub.app.inject({
+        method: 'POST', url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          token: remote.identity.token,
+          name: 'Queue worker',
+        },
+      })
+      expect(registered.statusCode).toBe(201)
+      await vi.waitFor(async () => {
+        const computers = (await hub.app.inject({ method: 'GET', url: '/api/computers' })).json().computers
+        const computer = computers.find((entry: { id: string }) => entry.id === registered.json().computer.id)
+        expect(computer.providers?.[0]?.supportsQueuedPromptDispatch).toBe(capability)
+      })
+      return {
+        hub, remote, remoteService, localService, close,
+        remoteComputerId: registered.json().computer.id as string,
+        original: queued,
+      }
+    } catch (error) {
+      await close()
+      throw error
+    }
+  }
+
+  it('routes typed outcomes and exact rewritten content through the authenticated hub-to-node chain', async () => {
+    const { hub, remote, remoteService, localService, remoteComputerId, original, close } = await routingFixture()
+    const dispatch = vi.spyOn(remoteService, 'dispatchQueuedPrompt')
+    const localDispatch = vi.spyOn(localService, 'dispatchQueuedPrompt')
+    const content = '  exact rewrite\n    preserve indentation\n'
+    try {
+      const computers = (await hub.app.inject({ method: 'GET', url: '/api/computers' })).json().computers
+      expect(computers.find((computer: { id: string }) => computer.id === remoteComputerId).providers)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ supportsQueuedPromptDispatch: true })]))
+      const unauthorized = await remote.app.inject({
+        method: 'POST', url: '/node-api/sessions/queued-session/queue/middle%2Fid/dispatch',
+        payload: { content },
+      })
+      expect(unauthorized.statusCode).toBe(401)
+      expect(dispatch).not.toHaveBeenCalled()
+      for (const outcome of ['sent', 'refused', 'uncertain'] as const) {
+        const attemptId = randomUUID()
+        dispatch.mockResolvedValueOnce({
+          outcome, promptId: 'middle/id', attemptId, session: original,
+          ...(outcome === 'refused' ? { restored: false } : {}),
+          ...(outcome === 'uncertain' ? { delivery: 'unknown' as const } : {}),
+        })
+        const response = await hub.app.inject({
+          method: 'POST',
+          url: `/api/computers/${remoteComputerId}/sessions/queued-session/queue/middle%2Fid/dispatch`,
+          payload: { content },
+        })
+        expect(response.statusCode).toBe(200)
+        expect(response.json()).toMatchObject({
+          outcome, promptId: 'middle/id', attemptId,
+          session: { ...original, computerId: remoteComputerId },
+          ...(outcome === 'refused' ? { restored: false } : {}),
+          ...(outcome === 'uncertain' ? { delivery: 'unknown' } : {}),
+        })
+        expect(dispatch).toHaveBeenLastCalledWith('queued-session', 'middle/id', content)
+      }
+      expect(dispatch).toHaveBeenCalledTimes(3)
+      expect(localDispatch).not.toHaveBeenCalled()
+    } finally {
+      await close()
+    }
+  })
+
+  it('rejects blank/oversized rewrites at both route boundaries without changing raw valid text', async () => {
+    const { hub, remote, remoteService, remoteComputerId, close } = await routingFixture()
+    const dispatch = vi.spyOn(remoteService, 'dispatchQueuedPrompt')
+    try {
+      for (const content of [' \n\t ', 'a'.repeat(200_001)]) {
+        const hubResponse = await hub.app.inject({
+          method: 'POST',
+          url: `/api/computers/${remoteComputerId}/sessions/queued-session/queue/middle%2Fid/dispatch`,
+          payload: { content },
+        })
+        expect(hubResponse.statusCode).toBe(400)
+        const nodeResponse = await remote.app.inject({
+          method: 'POST', url: '/node-api/sessions/queued-session/queue/middle%2Fid/dispatch',
+          headers: { authorization: `Bearer ${remote.identity.token}` }, payload: { content },
+        })
+        expect(nodeResponse.statusCode).toBe(400)
+      }
+      expect(dispatch).not.toHaveBeenCalled()
+    } finally {
+      await close()
+    }
+  })
+
+  it('requires the advertised capability for local, remote, and direct-node dispatch', async () => {
+    const { hub, remote, remoteService, localService, remoteComputerId, close } = await routingFixture(false)
+    const local = vi.spyOn(localService, 'dispatchQueuedPrompt')
+    const remoteDispatch = vi.spyOn(remoteService, 'dispatchQueuedPrompt')
+    try {
+      for (const computerId of [hub.identity.info.id, remoteComputerId]) {
+        const response = await hub.app.inject({
+          method: 'POST',
+          url: `/api/computers/${computerId}/sessions/queued-session/queue/middle%2Fid/dispatch`,
+          payload: { content: 'rewrite' },
+        })
+        expect(response.statusCode).toBe(409)
+      }
+      const direct = await remote.app.inject({
+        method: 'POST', url: '/node-api/sessions/queued-session/queue/middle%2Fid/dispatch',
+        headers: { authorization: `Bearer ${remote.identity.token}` }, payload: { content: 'rewrite' },
+      })
+      expect(direct.statusCode).toBe(409)
+      expect(local).not.toHaveBeenCalled()
+      expect(remoteDispatch).not.toHaveBeenCalled()
+    } finally {
+      await close()
+    }
+  })
+
+  it('forwards exact dispatch-discard acknowledgement without sending or cancelling work', async () => {
+    const { hub, remote, remoteService, remoteComputerId, original, close } = await routingFixture()
+    const attemptId = randomUUID()
+    const remove = vi.spyOn(remoteService, 'removeQueuedPrompt')
+    const dispatch = vi.spyOn(remoteService, 'dispatchQueuedPrompt')
+    const cancel = vi.spyOn(remoteService, 'cancel')
+    remove.mockImplementation(async (_sessionId, promptId, acknowledgement) => {
+      if (acknowledgement !== attemptId) {
+        throw Object.assign(new Error('Fresh dispatch acknowledgement required'), { statusCode: 409 })
+      }
+      return {
+        session: { ...original, queuedPrompts: original.queuedPrompts.filter((prompt) => prompt.id !== promptId) },
+        prompt: original.queuedPrompts.find((prompt) => prompt.id === promptId)!,
+      }
+    })
+    try {
+      const url = `/api/computers/${remoteComputerId}/sessions/queued-session/queue/middle%2Fid`
+      const invalid = await hub.app.inject({
+        method: 'DELETE', url, payload: { acknowledgesDispatch: 'not-a-uuid' },
+      })
+      expect(invalid.statusCode).toBe(400)
+      expect(remove).not.toHaveBeenCalled()
+      const wrong = await hub.app.inject({
+        method: 'DELETE', url, payload: { acknowledgesDispatch: randomUUID() },
+      })
+      expect(wrong.statusCode).toBe(409)
+      const unauthorized = await remote.app.inject({
+        method: 'DELETE', url: '/node-api/sessions/queued-session/queue/middle%2Fid',
+        payload: { acknowledgesDispatch: attemptId },
+      })
+      expect(unauthorized.statusCode).toBe(401)
+      const response = await hub.app.inject({
+        method: 'DELETE', url, payload: { acknowledgesDispatch: attemptId },
+      })
+      expect(response.statusCode).toBe(200)
+      expect(remove).toHaveBeenLastCalledWith('queued-session', 'middle/id', attemptId)
+      expect(response.json()).toMatchObject({
+        prompt: original.queuedPrompts[1],
+        session: { computerId: remoteComputerId },
+      })
+      expect(dispatch).not.toHaveBeenCalled()
+      expect(cancel).not.toHaveBeenCalled()
+    } finally {
+      await close()
+    }
+  })
+
+  it('returns typed uncertainty for an owning-node server failure but preserves preflight conflicts', async () => {
+    const { hub, remoteService, remoteComputerId, close } = await routingFixture()
+    const dispatch = vi.spyOn(remoteService, 'dispatchQueuedPrompt')
+    try {
+      dispatch.mockRejectedValueOnce(new Error('Provider connection failed'))
+      const uncertain = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/queued-session/queue/middle%2Fid/dispatch`,
+        payload: { content: 'rewrite' },
+      })
+      expect(uncertain.statusCode).toBe(200)
+      expect(uncertain.json()).toMatchObject({ outcome: 'uncertain', delivery: 'unknown', promptId: 'middle/id' })
+      dispatch.mockRejectedValueOnce(Object.assign(new Error('Session is not idle'), { statusCode: 409 }))
+      const refused = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteComputerId}/sessions/queued-session/queue/middle%2Fid/dispatch`,
+        payload: { content: 'rewrite' },
+      })
+      expect(refused.statusCode).toBe(409)
+      expect(dispatch).toHaveBeenCalledTimes(2)
+    } finally {
+      await close()
+    }
+  })
+
+  it.each(['transport', 'bad JSON', 'wrong target', 'wrong session', 'missing receipt'])(
+    'conservatively rejects a remote %s response without a transport retry', async (failure) => {
+      const client = new RemoteNodeClient({
+        id: 'node', name: 'Fake node', baseUrl: 'http://127.0.0.1:1', token: 'test-only-token',
+      })
+      const fetch = vi.spyOn(globalThis, 'fetch')
+      if (failure === 'transport') fetch.mockRejectedValueOnce(new Error('Transport timeout'))
+      else if (failure === 'bad JSON') fetch.mockResolvedValueOnce(new Response('invalid JSON'))
+      else fetch.mockResolvedValueOnce(Response.json({
+        outcome: 'sent', promptId: failure === 'wrong target' ? 'other' : 'middle',
+        ...(failure !== 'missing receipt' ? { attemptId: randomUUID() } : {}),
+        ...(failure === 'wrong session' ? { session: session('other-session', 'Wrong owner') } : {}),
+      }))
+      try {
+        expect(await client.dispatchQueuedPrompt('session', 'middle', 'rewrite'))
+          .toMatchObject({ outcome: 'uncertain', delivery: 'unknown', promptId: 'middle' })
+        expect(fetch).toHaveBeenCalledTimes(1)
+      } finally {
+        fetch.mockRestore()
+        client.stop()
+      }
+    },
+  )
+
+  it.each([408, 418, 499, 500, 502, 503])(
+    'keeps non-admission HTTP %s unconfirmed rather than reporting a definitive refusal', async (status) => {
+      const client = new RemoteNodeClient({
+        id: 'node', name: 'Fake node', baseUrl: 'http://127.0.0.1:1', token: 'test-only-token',
+      })
+      const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        Response.json({ error: 'No confirmed dispatch outcome' }, { status }),
+      )
+      try {
+        expect(await client.dispatchQueuedPrompt('session', 'middle', 'rewrite'))
+          .toMatchObject({ outcome: 'uncertain', delivery: 'unknown', promptId: 'middle' })
+        expect(fetch).toHaveBeenCalledTimes(1)
+      } finally {
+        fetch.mockRestore()
+        client.stop()
+      }
+    },
+  )
+
+  it.each([400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 429])(
+    'preserves explicit HTTP %s admission refusal without retrying', async (status) => {
+      const client = new RemoteNodeClient({
+        id: 'node', name: 'Fake node', baseUrl: 'http://127.0.0.1:1', token: 'test-only-token',
+      })
+      const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        Response.json({ error: 'Dispatch was not admitted' }, { status }),
+      )
+      try {
+        await expect(client.dispatchQueuedPrompt('session', 'middle', 'rewrite'))
+          .rejects.toMatchObject({ statusCode: status })
+        expect(fetch).toHaveBeenCalledTimes(1)
+      } finally {
+        fetch.mockRestore()
+        client.stop()
+      }
+    },
+  )
 })
 
 describe('readiness endpoints by role', () => {

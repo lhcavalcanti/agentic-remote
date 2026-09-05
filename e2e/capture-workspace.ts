@@ -224,6 +224,9 @@ async function desktop(page: Page, fixture: WorkspaceFixture) {
     await handle.focus()
     await page.keyboard.press('Space')
     await expect(page.locator('.session-item.sortable-dragging')).toHaveCount(1)
+    await page.evaluate(() => new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    ))
     await page.keyboard.press('ArrowDown')
     await expect(page.getByRole('status')).toContainText(
       'was moved over droppable area session:fixture-studio:fixture-review-recovery',
@@ -234,6 +237,9 @@ async function desktop(page: Page, fixture: WorkspaceFixture) {
     await handle.focus()
     await page.keyboard.press('Space')
     await expect(page.locator('.session-item.sortable-dragging')).toHaveCount(1)
+    await page.evaluate(() => new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    ))
     await page.keyboard.press('ArrowUp')
     await expect(page.getByRole('status')).toContainText(
       'was moved over droppable area session:fixture-studio:fixture-review-recovery',

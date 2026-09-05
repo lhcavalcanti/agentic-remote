@@ -266,8 +266,8 @@ underlying state rather than being recreated for the visuals.
 
 This draft does not implement every idea from #116. Light appearance, inline
 session creation, a complete command palette, and deeper composer organization
-remain separate design slices. There are no new provider capabilities or
-state migrations.
+remain separate design slices. The UI design itself adds no provider transport,
+credential or topology migration; frozen core integrations are recorded below.
 
 At the history-review snapshot, these open PRs already owned adjacent changes:
 [#191](https://github.com/lhcavalcanti/agentic-remote/pull/191) (reader resizing and
@@ -277,14 +277,24 @@ and [#171](https://github.com/lhcavalcanti/agentic-remote/pull/171) (queue contr
 and [#160](https://github.com/lhcavalcanti/agentic-remote/pull/160) (collapsed paste).
 This draft does not cherry-pick or reimplement those changes.
 
-The coordinated local review candidate now integrates reviewed core commit
+The first coordinated local review candidate integrated reviewed core commit
 `125ec298fdc6748cca5fde8a49690030f41bf739` through the PR #191 reader/branding
 candidate with normal merges. The reader retains its responsive/saved-width
 contract and the 36px shared accent-aware SVG. The existing capture comparator
 still permits at most 12 differing decoded RGBA pixels and rejects larger or
 dimension-changing frames. The synthetic fixture can optionally seed storage
 only once to exercise real reload persistence without accessing a live service.
-Queue APIs remain unchanged for the parent review's separate #150 integration.
+Queue APIs were left unchanged in that pass for the separate #150 integration.
+
+The complete frozen #150 core is now integrated through #191 into this client
+candidate. Queued rewrites retain structured ownership, collapsed pastes and
+pending/accepted submission receipts through Knowledge/file handoffs and hidden
+history. The primary action says Save on runtimes without immediate queued
+dispatch and Send now when that capability is advertised. Unconfirmed server
+dispatches appear as Check delivery in Needs you, never as definitely unsent.
+Queue context and warnings can scroll above the editor on short viewports;
+command suggestions remain anchored outside that scroller, and banner actions
+retain the core's 44px phone targets.
 
 The branch is intentionally a **draft**. Development browser evidence uses
 synthetic API fixtures on a loopback UI runtime. It is not a claim to have

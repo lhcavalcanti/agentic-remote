@@ -50,6 +50,7 @@ type SessionState =
   | 'question'
   | 'permission'
   | 'waiting'
+  | 'unconfirmed'
   | 'error'
   | 'suspended'
   | 'tasks'
@@ -69,6 +70,7 @@ const stateLabels: Record<SessionState, string> = {
   question: 'Question',
   permission: 'Permission',
   waiting: 'Waiting',
+  unconfirmed: 'Check delivery',
   error: 'Error',
   suspended: 'Suspended',
   tasks: 'Tasks',
@@ -89,16 +91,18 @@ export function sessionPresentation(
       ? 'permission'
       : session.status === 'waiting'
         ? 'waiting'
-        : session.status === 'error' || session.failedPrompt
-          ? 'error'
-          : session.suspended
-            ? 'suspended'
-            : (snapshot?.runningCount || 0) > 0
-              ? 'tasks'
-              : session.status === 'running'
-                ? 'running'
-                : 'idle'
-  const needsAttention = ['question', 'permission', 'waiting', 'error'].includes(
+        : session.queuedDispatch?.state === 'uncertain'
+          ? 'unconfirmed'
+          : session.status === 'error' || session.failedPrompt
+            ? 'error'
+            : session.suspended
+              ? 'suspended'
+              : (snapshot?.runningCount || 0) > 0
+                ? 'tasks'
+                : session.status === 'running'
+                  ? 'running'
+                  : 'idle'
+  const needsAttention = ['question', 'permission', 'waiting', 'unconfirmed', 'error'].includes(
     state,
   )
   return {
@@ -142,6 +146,7 @@ const attentionRank: Record<SessionState, number> = {
   question: 0,
   permission: 1,
   waiting: 2,
+  unconfirmed: 3,
   error: 3,
   tasks: 4,
   running: 4,

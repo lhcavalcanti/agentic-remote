@@ -137,6 +137,81 @@ async function waitForIdle(
 }
 
 describe('ClaudeAgentService', () => {
+  it('persists streamed text after an aborted turn settles and before closing', async () => {
+    let sessionId = ''
+    let finishTurn = () => {}
+    const finishing = new Promise<void>((resolve) => { finishTurn = resolve })
+    let allowStream = () => {}
+    const streaming = new Promise<void>((resolve) => { allowStream = resolve })
+    let runs = 0
+    const { directory, service } = await fixture(async function* (options) {
+      runs += 1
+      await streaming
+      yield textResult(sessionId)[0]
+      await new Promise<void>((resolve) => {
+        options.abortController?.signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      await finishing
+    })
+    const created = await service.createSession(directory, false, true, 'claude')
+    sessionId = created.id
+    await service.sendMessage(sessionId, 'Keep the streamed answer')
+    await service.store.enqueuePrompt(sessionId, {
+      id: 'waiting', content: 'Do not start during shutdown',
+      createdAt: '2026-09-05T00:00:00.000Z',
+    })
+    allowStream()
+    await vi.waitFor(() =>
+      expect(service.getSession(sessionId)?.messages.at(-1)?.content).toBe('Hello from Claude'),
+    )
+    const close = vi.spyOn(service.store, 'close')
+    const stopped = service.stop()
+    try {
+      await Promise.resolve()
+      expect(close).not.toHaveBeenCalled()
+      await expect(service.sendMessage(sessionId, 'Not admitted during shutdown'))
+        .rejects.toThrow('shutting down')
+    } finally {
+      finishTurn()
+      await stopped
+    }
+    const reloaded = new SessionStore(path.join(directory, 'state'))
+    await reloaded.initialize()
+    expect(reloaded.get(sessionId)?.messages.at(-1)).toMatchObject({
+      content: 'Hello from Claude', streaming: false,
+    })
+    expect(reloaded.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.id)).toEqual(['waiting'])
+    expect(runs).toBe(1)
+  })
+
+  it('settles a starting turn without launching the provider after shutdown begins', async () => {
+    let runs = 0
+    const { directory, service, getSessionInfo } = await fixture(async function* () {
+      runs += 1
+      yield* []
+    })
+    const created = await service.createSession(directory, false, true, 'claude')
+    let finishLookup = () => {}
+    getSessionInfo.mockImplementationOnce(() =>
+      new Promise((resolve) => { finishLookup = () => resolve(undefined) }),
+    )
+    await service.sendMessage(created.id, 'Pending startup')
+    await vi.waitFor(() => expect(getSessionInfo).toHaveBeenCalled())
+    const close = vi.spyOn(service.store, 'close')
+    const stopped = service.stop()
+    try {
+      await Promise.resolve()
+      expect(close).not.toHaveBeenCalled()
+    } finally {
+      finishLookup()
+      await stopped
+    }
+    expect(runs).toBe(0)
+    const reloaded = new SessionStore(path.join(directory, 'state'))
+    await reloaded.initialize()
+    expect(reloaded.get(created.id)?.messages.every((message) => !message.streaming)).toBe(true)
+  })
+
   it('creates, streams, resumes, configures, and deletes Claude sessions', async () => {
     let sessionId = ''
     const fixtureResult = await fixture(async function* () {

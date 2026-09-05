@@ -2864,6 +2864,41 @@ describe('App', () => {
     )
   })
 
+  it('forgets loaded Knowledge when a reconnect discovers a missed computer removal', async () => {
+    const remote: ComputerSummary = {
+      ...computer, id: 'computer-2', name: 'worker-node', isLocal: false,
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+      id: 'root-remote', computerId: remote.id, computerName: remote.name,
+      path: '/home/tester/docs', name: 'worker docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    }])
+    vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
+      '.': {
+        path: '.',
+        entries: [{ name: 'guide.md', path: 'guide.md', kind: 'markdown' }],
+      },
+    }))
+    vi.mocked(readKnowledgeFile).mockResolvedValue({
+      name: 'guide.md', path: 'guide.md', kind: 'markdown',
+      mimeType: 'text/markdown', size: 20, content: '# Remote guide',
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+    await screen.findByRole('heading', { name: 'Remote guide' })
+
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+    })
+    await waitFor(() => expect(screen.queryAllByText('worker docs')).toHaveLength(0))
+    expect(screen.queryByRole('heading', { name: 'Remote guide' })).not.toBeInTheDocument()
+  })
+
   it('takes the focus it claims and gives it back on Escape', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

@@ -264,6 +264,15 @@ describe('outlineFromMarkdown edge cases', () => {
     ])
   })
 
+  it('uses reference-style image alt text in heading outlines', () => {
+    expect(outlineFromMarkdown(
+      '# ![Architecture][diagram]\n\n## Later\n\n[diagram]: diagram.png\n',
+    )).toEqual([
+      { id: 'architecture', text: 'Architecture', level: 1, index: 0 },
+      { id: 'later', text: 'Later', level: 2, index: 1 },
+    ])
+  })
+
   it('does not read a rule under a link definition as a heading', () => {
     // A link reference definition is not a paragraph, so the renderer draws a
     // rule here rather than a heading. Reading it as one shifted every later

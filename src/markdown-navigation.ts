@@ -142,7 +142,7 @@ function nodeText(node: RootContent): string {
   if (node.type === 'text' || node.type === 'inlineCode') {
     return node.value
   }
-  if (node.type === 'image') {
+  if (node.type === 'image' || node.type === 'imageReference') {
     return node.alt || ''
   }
   if (node.type === 'break') {

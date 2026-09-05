@@ -8282,6 +8282,25 @@ function App() {
       // first. Selection is only set when nothing has been chosen yet, so
       // this never moves a reader who is already somewhere.
       applyInitialSelection(reconciledForClaim, answeredFor)
+      // A reconnect may be the first notice of an unpairing. The complete
+      // computer list owns that absence, unless a newer event superseded it.
+      const listedComputerIds = new Set(loadedComputers.map((computer) => computer.id))
+      const knownComputerIds = new Set([
+        ...computersRef.current.map((computer) => computer.id),
+        ...rootsRef.current.map((root) => root.computerId),
+      ])
+      for (const id of knownComputerIds) {
+        const changedAt = Math.max(
+          computerEventSequenceRef.current.get(id) || 0,
+          computerRecordSequenceRef.current.get(id) || 0,
+        )
+        if (
+          !listedComputerIds.has(id) && changedAt <= startedAtSequence &&
+          !forgottenComputers.current.has(id)
+        ) {
+          forgetComputerKnowledge(id)
+        }
+      }
       setComputers((current) => {
         let reconciled = snapshotComputers
         for (const existing of current) {

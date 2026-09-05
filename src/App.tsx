@@ -10547,7 +10547,7 @@ function App() {
         try {
           const fresh = await getSession(target.computerId, target.id)
           if (stillListed(fresh)) {
-            setSessions((current) => upsertSession(current, fresh))
+            applySession(fresh)
           }
         } catch {
           // Even the re-read failed, so the best available answer is the queue
@@ -11801,6 +11801,7 @@ function App() {
                   <span>{selected.queuedPrompts.length}</span>
                 </header>
                 <DndContext
+                  id="prompt-queue"
                   collisionDetection={closestCenter}
                   onDragEnd={(event) => void queueDragEnded(event)}
                   sensors={sensors}

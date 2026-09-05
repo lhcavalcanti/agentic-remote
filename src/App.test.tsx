@@ -11,6 +11,8 @@ import {
   within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import type { DragEndEvent } from '@dnd-kit/core'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
@@ -64,6 +66,46 @@ import {
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
 import { PWA_UPDATE_EVENT } from './pwa'
+
+type DndProps = ComponentProps<typeof import('@dnd-kit/core').DndContext>
+const dragHandlers = vi.hoisted(() =>
+  new Map<string, NonNullable<DndProps['onDragEnd']>>(),
+)
+
+vi.mock('@dnd-kit/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>()
+  return {
+    ...actual,
+    DndContext(props: DndProps) {
+      if (props.id && props.onDragEnd) {
+        dragHandlers.set(props.id, props.onDragEnd)
+      }
+      return <actual.DndContext {...props} />
+    },
+  }
+})
+
+function finishQueueReorder(from: string, to: string) {
+  const handler = dragHandlers.get('prompt-queue')
+  if (!handler) throw new Error('The queue drag handler is not mounted')
+  const event: DragEndEvent = {
+    activatorEvent: new Event('pointerup'),
+    active: {
+      id: `queued:${from}`,
+      data: { current: {} },
+      rect: { current: { initial: null, translated: null } },
+    },
+    over: {
+      id: `queued:${to}`,
+      data: { current: {} },
+      rect: new DOMRect(0, 0, 10, 10),
+      disabled: false,
+    },
+    collisions: [],
+    delta: { x: 0, y: 0 },
+  }
+  handler(event)
+}
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
@@ -327,6 +369,7 @@ describe('App', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    dragHandlers.clear()
     localStorage.clear()
     sessionStorage.clear()
     // The address now carries the selected session, so it has to be reset or
@@ -2875,12 +2918,7 @@ describe('App', () => {
     expect(await screen.findAllByText('Renamed project')).not.toHaveLength(0)
   })
 
-  it('works a deferred drag out from the queue as it then stands', async () => {
-    // A drag that waits its turn must not act on the list it saw when it
-    // ended. Between then and its turn the queue can have been refused, or
-    // changed by the drag ahead of it -- and an order built from that stale
-    // display is one the server never agreed to, whether it is persisted or
-    // put back when the recovery read also fails.
+  it('applies a live queue removal without requesting a reorder', async () => {
     const first = { id: 'q1', content: 'one', createdAt: '2026-07-25T01:00:00.000Z' }
     const second = { id: 'q2', content: 'two', createdAt: '2026-07-25T01:00:01.000Z' }
     const queuedSession = {
@@ -2895,7 +2933,7 @@ describe('App', () => {
     render(<App />)
     await screen.findByText('one')
 
-    // The queue changes underneath: the head is sent while a drag is waiting.
+    // Receiving a queue update is not itself a user reorder request.
     await act(async () => {
       MockWebSocket.instances[0]?.onmessage?.({
         data: JSON.stringify({
@@ -2906,12 +2944,11 @@ describe('App', () => {
     })
     await waitFor(() => expect(screen.queryByText('one')).not.toBeInTheDocument())
 
-    // Nothing is asked of the server for a drag whose ends have gone.
     expect(reorderQueuedPrompts).not.toHaveBeenCalled()
     expect(screen.getByText('two')).toBeInTheDocument()
   })
 
-  it('puts the queue in the order it is dragged into', async () => {
+  it('exposes a reorder handle for each queued prompt', async () => {
     const first = { id: 'q1', content: 'one', createdAt: '2026-07-25T01:00:00.000Z' }
     const second = { id: 'q2', content: 'two', createdAt: '2026-07-25T01:00:01.000Z' }
     const queuedSession = {
@@ -2938,6 +2975,52 @@ describe('App', () => {
     expect(
       screen.getByRole('button', { name: 'Reorder queued prompt 2' }),
     ).toBeInTheDocument()
+  })
+
+  it('starts the next queued reorder from the successful recovery response', async () => {
+    const prompts = ['one', 'two', 'three'].map((content, index) => ({
+      id: `q${index + 1}`, content, createdAt: '2026-07-25T01:00:00.000Z',
+    }))
+    const queuedSession: ManagedSession = {
+      ...session, status: 'running', queuedCount: 3, queuedPrompts: prompts,
+    }
+    vi.mocked(listSessions).mockResolvedValue([queuedSession])
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+    render(<App />)
+    await screen.findByText('one')
+    await waitFor(() => expect(getSession).toHaveBeenCalled())
+    vi.mocked(getSession).mockClear()
+
+    let refuseFirst: (error: Error) => void = () => {
+      throw new Error('The first reorder has not started')
+    }
+    let recover: (value: ManagedSession) => void = () => {
+      throw new Error('The recovery request has not started')
+    }
+    vi.mocked(reorderQueuedPrompts)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        refuseFirst = reject
+      }))
+      .mockResolvedValueOnce(queuedSession)
+    vi.mocked(getSession).mockImplementationOnce(() =>
+      new Promise((resolve) => { recover = resolve }),
+    )
+
+    act(() => finishQueueReorder('q1', 'q3'))
+    await waitFor(() => expect(reorderQueuedPrompts).toHaveBeenCalledTimes(1))
+    act(() => finishQueueReorder('q3', 'q2'))
+    expect(reorderQueuedPrompts).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      refuseFirst(new Error('The queue changed'))
+      await Promise.resolve()
+      expect(getSession).toHaveBeenCalledOnce()
+      recover({ ...queuedSession, queuedPrompts: [prompts[2], prompts[0], prompts[1]] })
+      for (let index = 0; index < 8; index += 1) await Promise.resolve()
+    })
+
+    expect(reorderQueuedPrompts).toHaveBeenNthCalledWith(
+      2, computer.id, session.id, ['q1', 'q2', 'q3'],
+    )
   })
 
   it('keeps the text when the message being edited leaves the queue', async () => {

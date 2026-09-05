@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -26,6 +26,22 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it.each([
+    { name: 'null document', value: null },
+    { name: 'array document', value: [] },
+    { name: 'null sessions', value: { version: 1, sessions: null } },
+    { name: 'array sessions', value: { version: 1, sessions: [] } },
+    { name: 'populated array sessions', value: { version: 1, sessions: [{}] } },
+  ])('rejects a $name without installing or rewriting it', async ({ value }) => {
+    const { directory, store } = await createStore()
+    const filename = path.join(directory, 'state.json')
+    const contents = JSON.stringify(value)
+    await writeFile(filename, contents)
+    await expect(store.initialize()).rejects.toThrow('Unsupported Agentic Remote state format')
+    expect(store.list()).toEqual([])
+    expect(await readFile(filename, 'utf8')).toBe(contents)
+  })
+
   it('keeps a suspended session in the list when nothing is running for it', async () => {
     const { store } = await createStore()
     await store.create(

@@ -1043,6 +1043,38 @@ describe('Provider queue persistence boundaries', () => {
       })])
     })
 
+    it.each([false, true])(
+      'keeps cleared identities retired after deleting their last descendant (stale deleted replacement: %s)',
+      async (staleReplacement) => {
+        const { store, directory, service, client } = await clearFixture()
+        const providerIds = new Set(['session'])
+        client.deleteSession = vi.fn(async (id) => {
+          if (id === 'session') throw new Error('Original provider cleanup is unavailable')
+          if (!staleReplacement) providerIds.delete(id)
+        })
+        client.listSessions = vi.fn(async () =>
+          [...providerIds].map((id) => metadata(id, directory)),
+        )
+        const replacement = await service.clearConversation('session')
+        providerIds.add(replacement.id)
+        await store.flush()
+        expect(replacement.replacedSessionIds).toContain('session')
+        await service.deleteSession(replacement.id)
+        expect(store.list()).toEqual([])
+        expect(providerIds.has('session')).toBe(true)
+        await service.stop()
+
+        const reloaded = new SessionStore(directory)
+        await reloaded.initialize()
+        const restarted = copilot(reloaded)
+        restarted.client.listSessions = client.listSessions
+        await restarted.service.refreshDiscovery()
+        expect(reloaded.get('session')).toBeUndefined()
+        expect(reloaded.get(replacement.id)).toBeUndefined()
+        expect(reloaded.list()).toEqual([])
+      },
+    )
+
     it('settles in-flight creation before stopping the SDK', async () => {
       const { store, directory } = await fixture()
       const { service, client } = copilot(store)

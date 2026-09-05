@@ -5085,11 +5085,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     const storedBeforeDiscovery = this.store.list()
-    const retiredIds = new Set(storedBeforeDiscovery.flatMap(
-      (session) => session.replacedSessionIds || [],
-    ))
     const excluded = (id: string) =>
-      this.deletedSessionIds.has(id) || retiredIds.has(id)
+      this.deletedSessionIds.has(id) || this.store.isRetiredSession(id)
     activeSessions = activeSessions.filter((session) => !excluded(session.id))
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
     const previouslyExternal = this.externalSessionIds

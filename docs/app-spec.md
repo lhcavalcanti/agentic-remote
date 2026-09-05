@@ -134,6 +134,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   folder before reporting that refusal, or explicitly report restoration failure.
 - Cleanup failures after a replacement commits MUST be surfaced on the new
   session; they MUST NOT roll back the accepted identity or destroy its runtime.
+- Cleared and deleted session identities MUST stay retired across restart,
+  including after their last replacement is deleted. Retirement metadata MUST
+  commit atomically with the identity change, and stale provider listings MUST
+  NOT recreate those identities.
 - Delete MUST close the owning provider process/session after confirmation and
   remove Agentic Remote state and session uploads.
 

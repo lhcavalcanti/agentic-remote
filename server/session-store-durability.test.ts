@@ -108,6 +108,7 @@ describe('SessionStore durability', () => {
     ['queue shift', (store) => store.shiftQueuedPrompt('session')],
     ['session removal', (store) => store.remove('session')],
     ['creation', (store) => store.create(session('new'))],
+    ['lineage creation', (store) => store.create({ ...session('replacement'), replacedSessionIds: ['session'] })],
     ['replacement', (store) => store.replaceWithClearedSession('session', 'new')],
     ['discovery', (store) => store.syncDiscovered([
       { id: 'session', cwd: '/new', title: 'Discovered', updatedAt: timestamp },
@@ -138,6 +139,7 @@ describe('SessionStore durability', () => {
       expect(store.list()).toEqual(before)
       expect(store.get('session')).toEqual(before[0])
       expect(store.get('new')).toBeUndefined()
+      expect(store.isRetiredSession('session')).toBe(false)
       expect(store.backend('session')).toBe('sdk')
       expect(store.terminalRecoverySessions()).toEqual([])
       expect(await contents()).toBe(onDisk)
@@ -146,10 +148,101 @@ describe('SessionStore durability', () => {
       await rejected
     }
     expect(store.list()).toEqual(before)
+    expect(store.isRetiredSession('session')).toBe(false)
     expect(await contents()).toBe(onDisk)
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
     expect(reloaded.list()).toEqual(before)
+    expect(reloaded.isRetiredSession('session')).toBe(false)
+  })
+
+  it('persists retirement independently of the last descendant and rejects stale admission', async () => {
+    const { store, contents } = await fixture()
+    await store.replaceWithClearedSession('session', 'replacement')
+    await store.remove('replacement')
+    expect(JSON.parse(await contents()).retiredSessionIds).toEqual(['session', 'replacement'])
+    await store.syncDiscovered(['session', 'replacement', 'new'].map((id) => ({
+      id, cwd: '/project', title: id, updatedAt: timestamp,
+    })))
+    expect(store.list().map(({ id }) => id)).toEqual(['new'])
+    await expect(store.create(session())).rejects.toThrow('identity has been retired')
+    await expect(store.replaceWithClearedSession('new', 'session'))
+      .rejects.toThrow('Replacement session identity is not available')
+    expect(store.get('new')).toBeDefined()
+    await store.remove('unknown')
+    expect(store.isRetiredSession('unknown')).toBe(false)
+    await expect(store.create(session('unknown'))).resolves.toMatchObject({ id: 'unknown' })
+  })
+
+  it('indexes legacy lineage without rewriting the file and retains it after deletion', async () => {
+    const { directory } = await fixture()
+    const filename = path.join(directory, 'state.json')
+    const legacy = JSON.stringify({
+      version: 1,
+      sessions: { descendant: { ...session('descendant'), replacedSessionIds: ['ancestor'] } },
+    })
+    await disk.writeFile(filename, legacy)
+    const loaded = new SessionStore(directory)
+    await loaded.initialize()
+    expect(await readFile(filename, 'utf8')).toBe(legacy)
+    expect(loaded.isRetiredSession('ancestor')).toBe(true)
+    await loaded.remove('descendant')
+    const restarted = new SessionStore(directory)
+    await restarted.initialize()
+    expect(restarted.isRetiredSession('ancestor')).toBe(true)
+    expect(restarted.isRetiredSession('descendant')).toBe(true)
+    await restarted.syncDiscovered(['ancestor', 'descendant'].map((id) => ({
+      id, cwd: '/project', title: id, updatedAt: timestamp,
+    })))
+    expect(restarted.list()).toEqual([])
+  })
+
+  it('does not expose or recover a cached row whose identity is already retired', async () => {
+    const { directory } = await fixture()
+    await disk.writeFile(path.join(directory, 'state.json'), JSON.stringify({
+      version: 1,
+      retiredSessionIds: ['retired'],
+      sessions: {
+        retired: { ...session('retired'), backend: 'terminal', managedOpen: true },
+        active: session('active'),
+      },
+    }))
+    const loaded = new SessionStore(directory)
+    await loaded.initialize()
+    expect(loaded.get('retired')).toBeUndefined()
+    expect(loaded.backend('retired')).toBeUndefined()
+    expect(loaded.list().map(({ id }) => id)).toEqual(['active'])
+    expect(loaded.terminalRecoverySessions()).toEqual([])
+    await expect(loaded.readAfterWrites('retired')).rejects.toThrow('does not exist')
+    await expect(loaded.renameSession('retired', 'Must not return')).rejects.toThrow('does not exist')
+    await expect(loaded.updateIf('retired', () => true)).rejects.toThrow('does not exist')
+    expect(() => loaded.streamMessage('retired', 'assistant', 'Must not return')).toThrow('does not exist')
+  })
+
+  it.each([
+    { retiredSessionIds: null },
+    { retiredSessionIds: 'retired' },
+    { retiredSessionIds: [''] },
+  ])('refuses malformed retirement metadata: $retiredSessionIds', async ({ retiredSessionIds }) => {
+    const { directory } = await fixture()
+    await disk.writeFile(path.join(directory, 'state.json'), JSON.stringify({
+      version: 1, sessions: {}, retiredSessionIds,
+    }))
+    await expect(new SessionStore(directory).initialize()).rejects.toThrow('Unsupported Agentic Remote state format')
+  })
+
+  it('separates a lineage creation from writes whose identity it retires', async () => {
+    const { store } = await fixture()
+    const gate = holdWrite()
+    const first = store.renameSession('session', 'Before retirement')
+    await gate.started
+    const creating = store.create({ ...session('replacement'), replacedSessionIds: ['session'] })
+    const later = expect(store.renameSession('session', 'After retirement')).rejects.toThrow('does not exist')
+    gate.finish()
+    await expect(first).resolves.toMatchObject({ id: 'session', title: 'Before retirement' })
+    await expect(creating).resolves.toMatchObject({ id: 'replacement' })
+    await later
+    expect(store.list().map(({ id }) => id)).toEqual(['replacement'])
   })
 
   it('isolates a validation failure even after its callback changed nested data', async () => {

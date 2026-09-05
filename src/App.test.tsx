@@ -214,6 +214,15 @@ const secondSession: ManagedSession = {
   messages: [],
 }
 
+const knowledgeRoot = {
+  id: 'root-1',
+  computerId: computer.id,
+  computerName: computer.name,
+  path: '/home/tester/docs',
+  name: 'docs',
+  createdAt: '2026-08-01T00:00:00.000Z',
+}
+
 /**
  * Knowledge listings have to answer per path. A single fixed listing makes
  * every folder contain itself, so expanding one recurses until the stack is
@@ -887,9 +896,9 @@ describe('App', () => {
     expect(sidebarSettings).toContainElement(
       screen.getByRole('button', { name: 'App settings' }),
     )
-    expect(sidebarSettings).toContainElement(
-      screen.getByRole('button', { name: 'Add knowledge root' }),
-    )
+    expect(
+      screen.queryByRole('button', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
 
   it('persists the sidebar width from the final pointer position', async () => {
@@ -5483,12 +5492,19 @@ describe('App', () => {
 
   it('adds a knowledge root by picking a computer folder', async () => {
     vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => ({
+        path,
+        parent: path === '~' ? undefined : '~',
+        directories: [],
+      }),
+    )
     vi.mocked(addKnowledgeRoot).mockResolvedValue({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
-      path: '~/src',
-      name: 'src',
+      path: session.cwd,
+      name: 'project',
       createdAt: '2026-08-01T00:00:00.000Z',
     })
     vi.mocked(listKnowledgeEntries).mockResolvedValue({
@@ -5499,15 +5515,18 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
-    )
     // Sessions stay visible beside the panel, so the folder has to be picked
     // inside the dialog rather than anywhere on screen.
     const rootDialog = await screen.findByRole('dialog', {
       name: 'Add knowledge root',
     })
-    fireEvent.click(await within(rootDialog).findByRole('button', { name: /src/ }))
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        session.cwd,
+        'all',
+      ),
+    )
     const addFolder = within(rootDialog).getByRole('button', {
       name: 'Add this folder',
     })
@@ -5517,9 +5536,144 @@ describe('App', () => {
     await waitFor(() =>
       expect(addKnowledgeRoot).toHaveBeenCalledWith({
         computerId: computer.id,
-        path: '~/src',
+        path: session.cwd,
       }),
     )
+  })
+
+  it('falls back to home when the active session folder is unavailable', async () => {
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => {
+        if (path === session.cwd) {
+          throw new Error('Folder does not exist')
+        }
+        return {
+          path: '~',
+          directories: [{ name: 'src', path: '~/src' }],
+        }
+      },
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenNthCalledWith(
+        2,
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+    expect(
+      within(rootDialog).getByText(
+        `Could not open ${session.cwd}: Folder does not exist. Showing the home folder instead.`,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(rootDialog).getByRole('button', { name: 'Add this folder' }),
+    ).toBeEnabled()
+  })
+
+  it('uses the session folder only before the root picker computer changes', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (_computerId, path = '~') => ({ path, directories: [] }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    const computerSelect = within(rootDialog).getByLabelText('Computer')
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        computer.id,
+        session.cwd,
+        'all',
+      ),
+    )
+
+    fireEvent.change(computerSelect, {
+      target: { value: secondComputer.id },
+    })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(
+        secondComputer.id,
+        '~',
+        'all',
+      ),
+    )
+    fireEvent.change(computerSelect, { target: { value: computer.id } })
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenLastCalledWith(
+        computer.id,
+        '~',
+        'all',
+      ),
+    )
+  })
+
+  it('ignores a stale root browse after switching computers', async () => {
+    let finishStaleBrowse:
+      | ((listing: {
+          path: string
+          parent: string
+          directories: []
+        }) => void)
+      | undefined
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listDirectories).mockImplementation(
+      async (computerId, path = '~') => {
+        if (computerId === computer.id && path === session.cwd) {
+          return {
+            path,
+            directories: [{ name: 'slow', path: `${path}/slow` }],
+          }
+        }
+        if (computerId === computer.id && path.endsWith('/slow')) {
+          return await new Promise((resolve) => {
+            finishStaleBrowse = resolve
+          })
+        }
+        return { path: '/home/worker', directories: [] }
+      },
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(
+      await within(rootDialog).findByRole('button', { name: 'slow' }),
+    )
+    fireEvent.change(within(rootDialog).getByLabelText('Computer'), {
+      target: { value: secondComputer.id },
+    })
+    await within(rootDialog).findByText('/home/worker')
+
+    await act(async () => {
+      finishStaleBrowse?.({
+        path: `${session.cwd}/slow`,
+        parent: session.cwd,
+        directories: [],
+      })
+    })
+    expect(within(rootDialog).getByText('/home/worker')).toBeInTheDocument()
+    expect(
+      within(rootDialog).queryByText(`${session.cwd}/slow`),
+    ).not.toBeInTheDocument()
   })
   it('renders an image referenced from a workspace document', async () => {
     vi.mocked(readWorkspaceFile).mockImplementation(async (_c, _s, target) =>
@@ -5799,7 +5953,16 @@ describe('App', () => {
   })
 
   it('picks a knowledge root from anywhere on the computer', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+      {
+        id: 'root-existing',
+        computerId: computer.id,
+        computerName: computer.name,
+        path: '/home/tester/docs',
+        name: 'docs',
+        createdAt: '2026-08-01T00:00:00.000Z',
+      },
+    ])
     vi.mocked(listDirectories).mockResolvedValue({
       path: '/srv',
       parent: '/',
@@ -5817,23 +5980,107 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
+      await screen.findByRole('button', { name: 'New knowledge root' }),
     )
+    const rootDialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
     // The picker walks the whole filesystem, not just the home directory.
     await waitFor(() =>
       expect(listDirectories).toHaveBeenCalledWith(computer.id, '~', 'all'),
     )
-    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Add this folder' }),
-    )
+    fireEvent.click(await within(rootDialog).findByRole('button', { name: /docs/ }))
+    const addFolder = within(rootDialog).getByRole('button', {
+      name: 'Add this folder',
+    })
+    await waitFor(() => expect(addFolder).toBeEnabled())
+    fireEvent.click(addFolder)
     await waitFor(() =>
       expect(addKnowledgeRoot).toHaveBeenCalledWith({
         computerId: computer.id,
         path: '/srv',
       }),
     )
+  })
+
+  it('keeps the general root picker available without a selected session', async () => {
+    vi.mocked(listSessions).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findByText('No sessions here.')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(listKnowledgeRoots).toHaveBeenCalled())
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+    expect(
+      await screen.findByRole('dialog', { name: 'Add knowledge root' }),
+    ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(listDirectories).toHaveBeenCalledWith(computer.id, '~', 'all'),
+    )
+  })
+
+  it('does not choose another computer for an offline session knowledge root', async () => {
+    const offlineComputer = { ...computer, online: false }
+    const offlineSession = {
+      ...session,
+      computerName: offlineComputer.name,
+    }
+    vi.mocked(listComputers).mockResolvedValue([
+      offlineComputer,
+      secondComputer,
+    ])
+    vi.mocked(listSessions).mockResolvedValue([offlineSession])
+    vi.mocked(getSession).mockResolvedValue(offlineSession)
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    await waitFor(() => expect(listKnowledgeRoots).toHaveBeenCalled())
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
+    expect(listDirectories).not.toHaveBeenCalledWith(
+      secondComputer.id,
+      '~',
+      'all',
+    )
+  })
+
+  it('does not reopen a cancelled root picker after root loading finishes', async () => {
+    let finishRoots: (() => void) | undefined
+    vi.mocked(listKnowledgeRoots).mockReturnValue(
+      new Promise((resolve) => {
+        finishRoots = () => resolve([])
+      }),
+    )
+
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Add knowledge root',
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await act(async () => {
+      finishRoots?.()
+    })
+
+    expect(
+      screen.queryByRole('dialog', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
 
   it('keeps knowledge open across sessions and follows the new one', async () => {
@@ -6315,7 +6562,7 @@ describe('App', () => {
     // One press puts away one thing, in the order they are stacked.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -6339,7 +6586,7 @@ describe('App', () => {
     // composer while the menu stayed exactly where it was.
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'clear',
@@ -6377,7 +6624,7 @@ describe('App', () => {
     // reader could not see, and left the thing they were looking at.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -6429,7 +6676,7 @@ describe('App', () => {
     // something invisible and left what was in front of the reader open.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
     const setWidth = (width: number) => {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,
@@ -6484,7 +6731,7 @@ describe('App', () => {
   it('drives sessions and the knowledge panel from the keyboard', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -8183,7 +8430,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Add knowledge root' }),
+      await screen.findByRole('button', { name: 'New knowledge root' }),
     )
     const rootDialog = await screen.findByRole('dialog', {
       name: 'Add knowledge root',
@@ -9280,8 +9527,8 @@ describe('App', () => {
     // Knowledge is a per-session panel now, closed until the session opens it.
     expect(document.querySelector('.knowledge-panel')).toHaveAttribute('hidden')
     expect(
-      screen.getByRole('button', { name: 'Add knowledge root' }),
-    ).toBeInTheDocument()
+      screen.queryByRole('button', { name: 'Add knowledge root' }),
+    ).not.toBeInTheDocument()
   })
   it('keeps the remembered position when it cannot be restored', async () => {
     const remembered = {

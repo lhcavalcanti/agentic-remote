@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "cfcff436508acf2eb2cd978e584ef0884a6460f4",
+  "built_at_commit": "f8a2fd3887fcd20f0c37da9f83d98edcc5fc14d5",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -58060,7 +58060,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L595",
+      "source_location": "L602",
       "target": "src_api_cancelbackgroundtask",
       "weight": 1.0
     },
@@ -58071,7 +58071,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L576",
+      "source_location": "L583",
       "target": "src_api_cancelsession",
       "weight": 1.0
     },
@@ -58082,7 +58082,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L450",
+      "source_location": "L457",
       "target": "src_api_clearconversation",
       "weight": 1.0
     },
@@ -58093,7 +58093,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L435",
+      "source_location": "L442",
       "target": "src_api_configureruntime",
       "weight": 1.0
     },
@@ -58126,7 +58126,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L664",
+      "source_location": "L671",
       "target": "src_api_deletepushsubscription",
       "weight": 1.0
     },
@@ -58137,7 +58137,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L609",
+      "source_location": "L616",
       "target": "src_api_deletesession",
       "weight": 1.0
     },
@@ -58159,7 +58159,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L561",
+      "source_location": "L568",
       "target": "src_api_executecommand",
       "weight": 1.0
     },
@@ -58181,7 +58181,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L648",
+      "source_location": "L655",
       "target": "src_api_getpushpublickey",
       "weight": 1.0
     },
@@ -58192,7 +58192,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L672",
+      "source_location": "L679",
       "target": "src_api_getpushsettings",
       "weight": 1.0
     },
@@ -58203,7 +58203,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L425",
+      "source_location": "L432",
       "target": "src_api_getruntimeoptions",
       "weight": 1.0
     },
@@ -58236,7 +58236,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L586",
+      "source_location": "L593",
       "target": "src_api_listbackgroundtasks",
       "weight": 1.0
     },
@@ -58346,7 +58346,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L506",
+      "source_location": "L513",
       "target": "src_api_movesessiontotmux",
       "weight": 1.0
     },
@@ -58412,7 +58412,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L413",
+      "source_location": "L420",
       "target": "src_api_reorderqueuedprompts",
       "weight": 1.0
     },
@@ -58423,7 +58423,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L616",
+      "source_location": "L623",
       "target": "src_api_replypermission",
       "weight": 1.0
     },
@@ -58434,7 +58434,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L632",
+      "source_location": "L639",
       "target": "src_api_replyuserinput",
       "weight": 1.0
     },
@@ -58478,7 +58478,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L492",
+      "source_location": "L499",
       "target": "src_api_restartsession",
       "weight": 1.0
     },
@@ -58489,7 +58489,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L478",
+      "source_location": "L485",
       "target": "src_api_resumesession",
       "weight": 1.0
     },
@@ -58500,7 +58500,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L655",
+      "source_location": "L662",
       "target": "src_api_savepushsubscription",
       "weight": 1.0
     },
@@ -58522,7 +58522,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L520",
+      "source_location": "L527",
       "target": "src_api_sendmessage",
       "weight": 1.0
     },
@@ -58533,7 +58533,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L687",
+      "source_location": "L694",
       "target": "src_api_sendtestpushnotification",
       "weight": 1.0
     },
@@ -58566,7 +58566,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L676",
+      "source_location": "L683",
       "target": "src_api_setsessionnotificationsmuted",
       "weight": 1.0
     },
@@ -58577,7 +58577,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L464",
+      "source_location": "L471",
       "target": "src_api_suspendsession",
       "weight": 1.0
     },
@@ -58588,7 +58588,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L535",
+      "source_location": "L542",
       "target": "src_api_transcribeaudio",
       "weight": 1.0
     },
@@ -58599,7 +58599,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L401",
+      "source_location": "L408",
       "target": "src_api_updatequeuedprompt",
       "weight": 1.0
     },
@@ -58610,7 +58610,7 @@
       "relation": "contains",
       "source": "src_api",
       "source_file": "src/api.ts",
-      "source_location": "L544",
+      "source_location": "L551",
       "target": "src_api_uploadsessionfile",
       "weight": 1.0
     },
@@ -58645,7 +58645,7 @@
       "relation": "calls",
       "source": "src_api_cancelbackgroundtask",
       "source_file": "src/api.ts",
-      "source_location": "L600",
+      "source_location": "L607",
       "target": "src_api_request",
       "weight": 1.0
     },
@@ -58657,7 +58657,7 @@
       "relation": "calls",
       "source": "src_api_cancelbackgroundtask",
       "source_file": "src/api.ts",
-      "source_location": "L601",
+      "source_location": "L608",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -58669,7 +58669,7 @@
       "relation": "calls",
       "source": "src_api_cancelsession",
       "source_file": "src/api.ts",
-      "source_location": "L580",
+      "source_location": "L587",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -58681,7 +58681,7 @@
       "relation": "calls",
       "source": "src_api_clearconversation",
       "source_file": "src/api.ts",
-      "source_location": "L455",
+      "source_location": "L462",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -58693,7 +58693,7 @@
       "relation": "calls",
       "source": "src_api_configureruntime",
       "source_file": "src/api.ts",
-      "source_location": "L441",
+      "source_location": "L448",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -58729,7 +58729,7 @@
       "relation": "calls",
       "source": "src_api_deletepushsubscription",
       "source_file": "src/api.ts",
-      "source_location": "L665",
+      "source_location": "L672",
       "target": "src_api_requestvoid",
       "weight": 1.0
     },
@@ -58741,7 +58741,7 @@
       "relation": "calls",
       "source": "src_api_deletesession",
       "source_file": "src/api.ts",
-      "source_location": "L613",
+      "source_location": "L620",
       "target": "src_api_requestvoid",
       "weight": 1.0
     },
@@ -58753,7 +58753,7 @@
       "relation": "calls",
       "source": "src_api_deletesession",
       "source_file": "src/api.ts",
-      "source_location": "L613",
+      "source_location": "L620",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -58801,7 +58801,7 @@
       "relation": "calls",
       "source": "src_api_executecommand",
       "source_file": "src/api.ts",
-      "source_location": "L567",
+      "source_location": "L574",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -58825,7 +58825,7 @@
       "relation": "calls",
       "source": "src_api_getpushsettings",
       "source_file": "src/api.ts",
-      "source_location": "L673",
+      "source_location": "L680",
       "target": "src_api_request",
       "weight": 1.0
     },
@@ -58837,7 +58837,7 @@
       "relation": "calls",
       "source": "src_api_getruntimeoptions",
       "source_file": "src/api.ts",
-      "source_location": "L429",
+      "source_location": "L436",
       "target": "src_api_request",
       "weight": 1.0
     },
@@ -58849,7 +58849,7 @@
       "relation": "calls",
       "source": "src_api_getruntimeoptions",
       "source_file": "src/api.ts",
-      "source_location": "L430",
+      "source_location": "L437",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -58873,7 +58873,7 @@
       "relation": "calls",
       "source": "src_api_listbackgroundtasks",
       "source_file": "src/api.ts",
-      "source_location": "L590",
+      "source_location": "L597",
       "target": "src_api_request",
       "weight": 1.0
     },
@@ -58885,7 +58885,7 @@
       "relation": "calls",
       "source": "src_api_listbackgroundtasks",
       "source_file": "src/api.ts",
-      "source_location": "L591",
+      "source_location": "L598",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -58969,7 +58969,7 @@
       "relation": "calls",
       "source": "src_api_movesessiontotmux",
       "source_file": "src/api.ts",
-      "source_location": "L511",
+      "source_location": "L518",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59065,7 +59065,7 @@
       "relation": "calls",
       "source": "src_api_reorderqueuedprompts",
       "source_file": "src/api.ts",
-      "source_location": "L419",
+      "source_location": "L426",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59077,7 +59077,7 @@
       "relation": "calls",
       "source": "src_api_replypermission",
       "source_file": "src/api.ts",
-      "source_location": "L623",
+      "source_location": "L630",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59089,7 +59089,7 @@
       "relation": "calls",
       "source": "src_api_replyuserinput",
       "source_file": "src/api.ts",
-      "source_location": "L639",
+      "source_location": "L646",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59125,7 +59125,7 @@
       "relation": "calls",
       "source": "src_api_restartsession",
       "source_file": "src/api.ts",
-      "source_location": "L497",
+      "source_location": "L504",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59137,7 +59137,7 @@
       "relation": "calls",
       "source": "src_api_resumesession",
       "source_file": "src/api.ts",
-      "source_location": "L483",
+      "source_location": "L490",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59173,7 +59173,7 @@
       "relation": "calls",
       "source": "src_api_sendmessage",
       "source_file": "src/api.ts",
-      "source_location": "L526",
+      "source_location": "L533",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59185,7 +59185,7 @@
       "relation": "calls",
       "source": "src_api_sendtestpushnotification",
       "source_file": "src/api.ts",
-      "source_location": "L688",
+      "source_location": "L695",
       "target": "src_api_request",
       "weight": 1.0
     },
@@ -59209,7 +59209,7 @@
       "relation": "calls",
       "source": "src_api_setsessionnotificationsmuted",
       "source_file": "src/api.ts",
-      "source_location": "L681",
+      "source_location": "L688",
       "target": "src_api_request",
       "weight": 1.0
     },
@@ -59221,7 +59221,7 @@
       "relation": "calls",
       "source": "src_api_suspendsession",
       "source_file": "src/api.ts",
-      "source_location": "L469",
+      "source_location": "L476",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59340,7 +59340,7 @@
       "relation": "contains",
       "source": "src_api_test",
       "source_file": "src/api.test.ts",
-      "source_location": "L267",
+      "source_location": "L278",
       "target": "src_api_test_failwith",
       "weight": 1.0
     },
@@ -59388,7 +59388,7 @@
       "relation": "calls",
       "source": "src_api_test_failwith",
       "source_file": "src/api.test.ts",
-      "source_location": "L275",
+      "source_location": "L286",
       "target": "src_api_sendmessage",
       "weight": 1.0
     },
@@ -59400,7 +59400,7 @@
       "relation": "calls",
       "source": "src_api_transcribeaudio",
       "source_file": "src/api.ts",
-      "source_location": "L538",
+      "source_location": "L545",
       "target": "src_api_request",
       "weight": 1.0
     },
@@ -59412,7 +59412,7 @@
       "relation": "calls",
       "source": "src_api_updatequeuedprompt",
       "source_file": "src/api.ts",
-      "source_location": "L407",
+      "source_location": "L414",
       "target": "src_api_request",
       "weight": 1.0
     },
@@ -59424,7 +59424,7 @@
       "relation": "calls",
       "source": "src_api_updatequeuedprompt",
       "source_file": "src/api.ts",
-      "source_location": "L408",
+      "source_location": "L415",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -59436,7 +59436,7 @@
       "relation": "calls",
       "source": "src_api_uploadsessionfile",
       "source_file": "src/api.ts",
-      "source_location": "L552",
+      "source_location": "L559",
       "target": "src_api_sessionpath",
       "weight": 1.0
     },
@@ -96233,7 +96233,7 @@
       "label": "cancelBackgroundTask()",
       "norm_label": "cancelbackgroundtask()",
       "source_file": "src/api.ts",
-      "source_location": "L595"
+      "source_location": "L602"
     },
     {
       "_callable": true,
@@ -96245,7 +96245,7 @@
       "label": "cancelSession()",
       "norm_label": "cancelsession()",
       "source_file": "src/api.ts",
-      "source_location": "L576"
+      "source_location": "L583"
     },
     {
       "_callable": true,
@@ -96257,7 +96257,7 @@
       "label": "clearConversation()",
       "norm_label": "clearconversation()",
       "source_file": "src/api.ts",
-      "source_location": "L450"
+      "source_location": "L457"
     },
     {
       "_callable": true,
@@ -96269,7 +96269,7 @@
       "label": "configureRuntime()",
       "norm_label": "configureruntime()",
       "source_file": "src/api.ts",
-      "source_location": "L435"
+      "source_location": "L442"
     },
     {
       "_callable": true,
@@ -96305,7 +96305,7 @@
       "label": "deletePushSubscription()",
       "norm_label": "deletepushsubscription()",
       "source_file": "src/api.ts",
-      "source_location": "L664"
+      "source_location": "L671"
     },
     {
       "_callable": true,
@@ -96317,7 +96317,7 @@
       "label": "deleteSession()",
       "norm_label": "deletesession()",
       "source_file": "src/api.ts",
-      "source_location": "L609"
+      "source_location": "L616"
     },
     {
       "_callable": true,
@@ -96341,7 +96341,7 @@
       "label": "executeCommand()",
       "norm_label": "executecommand()",
       "source_file": "src/api.ts",
-      "source_location": "L561"
+      "source_location": "L568"
     },
     {
       "_callable": true,
@@ -96365,7 +96365,7 @@
       "label": "getPushPublicKey()",
       "norm_label": "getpushpublickey()",
       "source_file": "src/api.ts",
-      "source_location": "L648"
+      "source_location": "L655"
     },
     {
       "_callable": true,
@@ -96377,7 +96377,7 @@
       "label": "getPushSettings()",
       "norm_label": "getpushsettings()",
       "source_file": "src/api.ts",
-      "source_location": "L672"
+      "source_location": "L679"
     },
     {
       "_callable": true,
@@ -96389,7 +96389,7 @@
       "label": "getRuntimeOptions()",
       "norm_label": "getruntimeoptions()",
       "source_file": "src/api.ts",
-      "source_location": "L425"
+      "source_location": "L432"
     },
     {
       "_callable": true,
@@ -96425,7 +96425,7 @@
       "label": "listBackgroundTasks()",
       "norm_label": "listbackgroundtasks()",
       "source_file": "src/api.ts",
-      "source_location": "L586"
+      "source_location": "L593"
     },
     {
       "_callable": true,
@@ -96545,7 +96545,7 @@
       "label": "moveSessionToTmux()",
       "norm_label": "movesessiontotmux()",
       "source_file": "src/api.ts",
-      "source_location": "L506"
+      "source_location": "L513"
     },
     {
       "_callable": true,
@@ -96617,7 +96617,7 @@
       "label": "reorderQueuedPrompts()",
       "norm_label": "reorderqueuedprompts()",
       "source_file": "src/api.ts",
-      "source_location": "L413"
+      "source_location": "L420"
     },
     {
       "_callable": true,
@@ -96629,7 +96629,7 @@
       "label": "replyPermission()",
       "norm_label": "replypermission()",
       "source_file": "src/api.ts",
-      "source_location": "L616"
+      "source_location": "L623"
     },
     {
       "_callable": true,
@@ -96641,7 +96641,7 @@
       "label": "replyUserInput()",
       "norm_label": "replyuserinput()",
       "source_file": "src/api.ts",
-      "source_location": "L632"
+      "source_location": "L639"
     },
     {
       "_callable": true,
@@ -96689,7 +96689,7 @@
       "label": "restartSession()",
       "norm_label": "restartsession()",
       "source_file": "src/api.ts",
-      "source_location": "L492"
+      "source_location": "L499"
     },
     {
       "_callable": true,
@@ -96701,7 +96701,7 @@
       "label": "resumeSession()",
       "norm_label": "resumesession()",
       "source_file": "src/api.ts",
-      "source_location": "L478"
+      "source_location": "L485"
     },
     {
       "_callable": true,
@@ -96713,7 +96713,7 @@
       "label": "savePushSubscription()",
       "norm_label": "savepushsubscription()",
       "source_file": "src/api.ts",
-      "source_location": "L655"
+      "source_location": "L662"
     },
     {
       "_callable": true,
@@ -96737,7 +96737,7 @@
       "label": "sendMessage()",
       "norm_label": "sendmessage()",
       "source_file": "src/api.ts",
-      "source_location": "L520"
+      "source_location": "L527"
     },
     {
       "_callable": true,
@@ -96749,7 +96749,7 @@
       "label": "sendTestPushNotification()",
       "norm_label": "sendtestpushnotification()",
       "source_file": "src/api.ts",
-      "source_location": "L687"
+      "source_location": "L694"
     },
     {
       "_callable": true,
@@ -96786,7 +96786,7 @@
       "label": "setSessionNotificationsMuted()",
       "norm_label": "setsessionnotificationsmuted()",
       "source_file": "src/api.ts",
-      "source_location": "L676"
+      "source_location": "L683"
     },
     {
       "_callable": true,
@@ -96798,7 +96798,7 @@
       "label": "suspendSession()",
       "norm_label": "suspendsession()",
       "source_file": "src/api.ts",
-      "source_location": "L464"
+      "source_location": "L471"
     },
     {
       "_origin": "ast",
@@ -96821,7 +96821,7 @@
       "label": "failWith()",
       "norm_label": "failwith()",
       "source_file": "src/api.test.ts",
-      "source_location": "L267"
+      "source_location": "L278"
     },
     {
       "_callable": true,
@@ -96833,7 +96833,7 @@
       "label": "transcribeAudio()",
       "norm_label": "transcribeaudio()",
       "source_file": "src/api.ts",
-      "source_location": "L535"
+      "source_location": "L542"
     },
     {
       "_callable": true,
@@ -96845,7 +96845,7 @@
       "label": "updateQueuedPrompt()",
       "norm_label": "updatequeuedprompt()",
       "source_file": "src/api.ts",
-      "source_location": "L401"
+      "source_location": "L408"
     },
     {
       "_callable": true,
@@ -96857,7 +96857,7 @@
       "label": "uploadSessionFile()",
       "norm_label": "uploadsessionfile()",
       "source_file": "src/api.ts",
-      "source_location": "L544"
+      "source_location": "L551"
     },
     {
       "_callable": true,

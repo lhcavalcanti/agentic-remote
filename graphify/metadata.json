@@ -232,7 +232,7 @@
     "server/queued-sdk-prompt.test.ts": "ec6e50b35a7809a8f34d21d7c22f62c7965a979aac1f9b043708c99c09b776c0",
     "server/queued-sdk-prompt.ts": "8ef72860a70edb1c45be0d37b269f95ef208fca2acb30da8d8732bc18170561c",
     "server/release-publication.test.ts": "658bc1f13f849868106e8521b03c8676f27419d2db19b14c81ab2a9b6096a234",
-    "server/remote-node-client.test.ts": "0a25b04ae1d21335cde284f2f5029cedef1389f2e87064442328d3ccb920221d",
+    "server/remote-node-client.test.ts": "57df6851ff89435372424fd0fbee105abe80c7d21cd15a723943275189cc9d2e",
     "server/remote-node-client.ts": "c2044433f7079ac349bf9258d062dff25f9bb080ad1383a5903ddb7ba2ca2954",
     "server/safe-area.test.ts": "27f0f0799111c8737c9137fa35a8b15bf7c65f563195668398a8ae01cf291cdc",
     "server/service-unit.test.ts": "3cb178d3458e34a9079ff6aa096aedfa79512459faa7be069c522394d984ecb1",
@@ -283,8 +283,8 @@
     "src/MermaidDiagram.tsx": "98849de396761797dad407e96ea609fe233756b156462b349150fbb6f69f16a2",
     "src/accent-icon.test.ts": "cbbd1e1fd7544f5e9ab88ac50b1cdb8d7dd5b6827ad2323addfc9298ddc447bd",
     "src/accent-icon.ts": "1a060492927b5226ce18e312df2bc7aef8fbd67095b2c5df81c5f50bca1d61b6",
-    "src/api.test.ts": "e41fc9b4aab1a0f2a58e8165827d9ac014e7bedaf2ee4e96325188dbdbb1867a",
-    "src/api.ts": "9179d511eab888a8d358f9d36e318828c9c67ee7ed63dbbb2e90073bf4823148",
+    "src/api.test.ts": "1a3137f0ddbd02b399193521d95dd3ee07854c40be56511d6a3bb90938f9d26d",
+    "src/api.ts": "97182cb1f51c042d138f3d5493c730ffb2123f15b2141806d4f014cea22ecb3e",
     "src/composer-sizing.ts": "287d9a67a40dffb32161e6867173ffd3d51ae35d7942b7b0c456478bf2082d8d",
     "src/env.d.ts": "7dfb7763ec2101e5d66963c95cb8f938ea84fa576f0055dcd1922f6572add894",
     "src/index.css": "4afc757501d20303abcad0bff3132d6b048b064143328fc55d3315916e188196",
@@ -361,34 +361,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5d52de53670643af6d841398a2dae5ecb7a34da088e1ffaffb65359e3e92ae31",
+    "GRAPH_REPORT.md": "63ae21729ad4bf75594b3f8c61985c71c7da3394a1484913fdfdb9db2e5bac5d",
     "communities.json": "b71ba86627a0c5c246c5d30ad6be91286221fa08bd84a1188e35d2f45f48db85",
-    "graph.html": "a57736b6263830e6cec9d8dca95063b7d3945cdcdf20eb2546f9358735807602",
-    "graph.json": "a42bed8f8c29597a9750a57d6b4e81cc10f932db4df8648863c95bf07e9e219f"
+    "graph.html": "fa0dc619954d33f626181821fd1b5b91c3c86c43bf43c2b98cc5fcb18ff4a50e",
+    "graph.json": "8e34d07bb1607c01b093281f18c4ea59ae73162ca49a3c3b120929d014ee5d8e"
   },
   "schema_version": 1,
-  "source_commit": "cfcff436508acf2eb2cd978e584ef0884a6460f4",
-  "source_fingerprint": "c0020d03ab58b2255a01e448c778d45bfb664a6bb3362231a1f8110d2c65794c",
+  "source_commit": "f8a2fd3887fcd20f0c37da9f83d98edcc5fc14d5",
+  "source_fingerprint": "56b26a12b99cb27f37190a4f049a23c5423e04fd8b080660f223117a21b5cf39",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    ".github/skills/frontend-design/LICENSE.txt",
-    ".github/skills/frontend-design/SKILL.md",
-    ".github/skills/frontend-design/SOURCE.md",
-    ".github/skills/frontend-design/UI-SKILLS.md",
-    ".github/skills/frontend-design/licenses/antfu-skills-MIT.txt",
-    ".github/skills/frontend-design/licenses/better-ui-MIT.txt",
-    ".github/skills/frontend-design/licenses/frontend-ui-engineering-MIT.txt",
-    ".github/skills/frontend-design/licenses/improve-ui-MIT.txt",
-    ".github/skills/frontend-design/licenses/interface-design-MIT.txt",
-    ".github/skills/frontend-design/licenses/vercel-guidelines-MIT.txt",
-    ".github/skills/frontend-design/references/accessibility-and-input.md",
-    ".github/skills/frontend-design/references/agentic-remote.md",
-    ".github/skills/frontend-design/references/evidence-and-review.md",
-    ".github/skills/frontend-design/references/motion-and-performance.md",
-    ".github/skills/frontend-design/references/product-workspaces.md",
-    ".oxlintrc.json",
-    "README.md",
     "server/remote-node-client.test.ts",
-    "server/remote-node-client.ts"
+    "src/api.test.ts",
+    "src/api.ts"
   ]
 }

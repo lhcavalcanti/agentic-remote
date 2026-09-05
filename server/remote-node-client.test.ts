@@ -36,6 +36,31 @@ afterEach(async () => {
 })
 
 describe('paired-node redirect isolation', () => {
+  it.each([307, 308])('keeps redirected queued delivery unknown without touching the hub after HTTP %i', async (status) => {
+    let localMutations = 0
+    const target = await listen((request, response) => {
+      request.resume()
+      localMutations += 1
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ session }))
+    })
+    let attempts = 0
+    const node = await listen((request, response) => {
+      attempts += 1
+      request.resume()
+      request.on('end', () => {
+        response.writeHead(status, { location: `${target}/api/computers/hub/sessions/local/messages` })
+        response.end()
+      })
+    })
+
+    const result = await client(node).dispatchQueuedPrompt('remote-session', 'queued', 'Only for the node')
+    expect(localMutations).toBe(0)
+    expect(attempts).toBe(1)
+    expect(result).toMatchObject({ outcome: 'uncertain', promptId: 'queued', delivery: 'unknown' })
+    expect(result.attemptId).toBeUndefined()
+  })
+
   it.each([307, 308])('does not replay a POST into a hub-local route after HTTP %i', async (status) => {
     const mutations: { url?: string; body: string }[] = []
     const target = await listen((request, response) => {

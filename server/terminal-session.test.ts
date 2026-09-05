@@ -1324,6 +1324,85 @@ const singleFieldPane = [
   ' \u2191/\u2193 select \u00B7 enter accept \u00B7 ctrl+d decline \u00B7 esc cancel',
 ].join('\n')
 
+// A neutral reproduction of a CLI form whose focused tab is bracketed.
+const bracketedTabPane = [
+  ' Copilot needs information.',
+  ' Choose how to handle the unpublished work.',
+  '',
+  ' [Active project]  Service configuration   App changes',
+  '',
+  ' Active project:',
+  ' \u276F Preserve local changes (Recommended)',
+  '   Commit and push the project changes',
+  '   Other (type your answer)',
+  '',
+  ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+].join('\n')
+
+describe('forms whose focused tab is marked', () => {
+  const form = {
+    question: 'Choose how to handle the unpublished work.',
+    fields: [
+      'Active project',
+      'Service configuration',
+      'App changes',
+    ],
+  }
+
+  it('reads the tab name from under its marking', () => {
+    expect(terminalFormShowsFields(bracketedTabPane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(bracketedTabPane, form)).toBe(0)
+  })
+
+  it('keeps wrapped-question matching with bracketed focus tabs', () => {
+    const pane = bracketedTabPane.replace(
+      'Choose how to handle the unpublished work.',
+      'Choose how to handle the\n unpublished work.',
+    )
+    expect(terminalFormShowsFields(pane, form)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, form)).toBe(0)
+    expect(terminalFormShowsFields(pane, {
+      ...form, question: 'Choose how to handle the',
+    })).toBe(false)
+  })
+
+  it('keeps a title that is written in brackets of its own', () => {
+    const pane = [
+      ' Copilot needs information.',
+      ' Configure the run.',
+      '',
+      ' [Environment]  Region',
+      '',
+      ' [Environment]:',
+      ' \u276F Production',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+    ].join('\n')
+
+    // The brackets belong to the name here, not to the marking, and the two
+    // are written identically.
+    expect(
+      terminalFormShowsFields(pane, {
+        question: 'Configure the run.',
+        fields: ['[Environment]', 'Region'],
+      }),
+    ).toBe(true)
+  })
+
+  it('still refuses a marked form belonging to another question', () => {
+    expect(
+      terminalFormShowsFields(bracketedTabPane, {
+        question: 'Something else entirely?',
+        fields: [
+          'Active project',
+          'Service configuration',
+          'App changes',
+        ],
+      }),
+    ).toBe(false)
+  })
+})
+
 describe('single field forms', () => {
   const form = {
     question: 'Which meaning of \u201Csucceeded\u201D should the status file use?',

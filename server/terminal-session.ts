@@ -1476,6 +1476,19 @@ function terminalFormQuestionEnd(
  * nothing about which request it belongs to; the tabs are what distinguish one
  * prompt from the next.
  */
+/**
+ * Whether a tab on screen is the field of that name.
+ *
+ * The CLI writes the tab holding focus inside brackets, and a name compared
+ * with that mark still on it never matches, so the form is not recognised as
+ * the one being answered. A title can also contain brackets of its own, so
+ * the name as written is tried first and the mark only taken off when that
+ * leaves nothing.
+ */
+function tabNames(tab: string, field: string): boolean {
+  return tab === field || tab.replace(/^\[(.*)\]$/, '$1') === field
+}
+
 function terminalFormTabsIndex(
   lines: string[],
   form: TerminalFormIdentity,
@@ -1511,7 +1524,7 @@ function terminalFormTabsIndex(
       : -1
   }
   return tabs.length === form.fields.length &&
-    tabs.every((tab, slot) => tab === form.fields[slot])
+    tabs.every((tab, slot) => tabNames(tab, form.fields[slot]))
     ? index
     : -1
 }

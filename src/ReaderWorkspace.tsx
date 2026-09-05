@@ -44,6 +44,7 @@ export default function ReaderWorkspace({
     startWidth: number
     preferredWidth: number | undefined
     width: number
+    delta: number
   } | undefined>(undefined)
 
   // Preserve 360px for chat where possible. With a wide sidebar on a small
@@ -56,7 +57,7 @@ export default function ReaderWorkspace({
   const minimum = Math.min(WIDTH_MIN, maximum)
   const clamp = (value: number) =>
     Math.min(maximum, Math.max(minimum, Math.round(value)))
-  const defaultWidth = Math.min(560, Math.max(WIDTH_MIN, workspaceWidth * 0.34))
+  const defaultWidth = workspaceWidth > 0 ? workspaceWidth / 2 : WIDTH_MIN
   const width = clamp(preferredWidth ?? defaultWidth)
 
   const finishResize = useCallback(() => {
@@ -64,7 +65,7 @@ export default function ReaderWorkspace({
     if (!gesture) return
     gestureRef.current = undefined
     setResizing(false)
-    if (gesture.width !== gesture.startWidth) {
+    if (gesture.delta !== 0 && gesture.width !== gesture.startWidth) {
       setPreferredWidth(gesture.width)
       storeWidth(gesture.width)
     } else {
@@ -109,6 +110,7 @@ export default function ReaderWorkspace({
       startWidth: width,
       preferredWidth,
       width,
+      delta: 0,
     }
     event.currentTarget.setPointerCapture?.(event.pointerId)
     setResizing(true)
@@ -117,7 +119,8 @@ export default function ReaderWorkspace({
   function resizeMove(event: PointerEvent<HTMLDivElement>) {
     const gesture = gestureRef.current
     if (!gesture || gesture.pointerId !== event.pointerId) return
-    const next = clamp(gesture.startWidth + gesture.startX - event.clientX)
+    gesture.delta = gesture.startX - event.clientX
+    const next = clamp(gesture.startWidth + gesture.delta)
     // Keep the release correct even when React batches the final pointer move.
     gesture.width = next
     setPreferredWidth(next)

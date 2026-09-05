@@ -18,7 +18,9 @@ import type { DragEndEvent } from '@dnd-kit/core'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
+  KnowledgeRoot,
   ManagedSession,
+  SessionKnowledgeBinding,
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
@@ -36,6 +38,9 @@ import {
   getPushSettings,
   getProviderRuntimeOptions,
   getSession,
+  getSessionKnowledgeRoot,
+  updateSessionKnowledgeRoot,
+  SessionKnowledgeRequestError,
   getRuntimeOptions,
   listBackgroundTasks,
   listCommands,
@@ -46,6 +51,7 @@ import {
   listKnowledgeEntries,
   readKnowledgeFile,
   addKnowledgeRoot,
+  deleteKnowledgeRoot,
   listSessions,
   listSessionListing,
   listWorkspace,
@@ -88,6 +94,7 @@ vi.mock('@dnd-kit/core', async (importOriginal) => {
   }
 })
 
+
 function finishQueueReorder(from: string, to: string) {
   const handler = dragHandlers.get('prompt-queue')
   if (!handler) throw new Error('The queue drag handler is not mounted')
@@ -110,7 +117,8 @@ function finishQueueReorder(from: string, to: string) {
   handler(event)
 }
 
-vi.mock('./api', () => ({
+vi.mock('./api', async (importOriginal) => ({
+  SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   listSessions: vi.fn(),
   listSessionListing: vi.fn(),
   listBackgroundTasks: vi.fn(),
@@ -133,6 +141,8 @@ vi.mock('./api', () => ({
   readWorkspaceFile: vi.fn(),
   searchWorkspace: vi.fn(),
   getSession: vi.fn(),
+  getSessionKnowledgeRoot: vi.fn(),
+  updateSessionKnowledgeRoot: vi.fn(),
   listCommands: vi.fn(),
   addComputer: vi.fn(),
   removeComputer: vi.fn(),
@@ -273,6 +283,63 @@ const knowledgeRoot = {
   createdAt: '2026-08-01T00:00:00.000Z',
 }
 
+let fixtureKnowledgeRoots: KnowledgeRoot[] = []
+const fixtureKnowledgeBindings = new Map<string, SessionKnowledgeBinding>()
+
+function mockKnowledgeRoots(roots: KnowledgeRoot[]) {
+  fixtureKnowledgeRoots = structuredClone(roots)
+  vi.mocked(listKnowledgeRoots).mockImplementation(async () => structuredClone(fixtureKnowledgeRoots))
+}
+
+function mockAddedKnowledgeRoot(root: KnowledgeRoot) {
+  vi.mocked(addKnowledgeRoot).mockImplementation(async () => {
+    fixtureKnowledgeRoots = [
+      ...fixtureKnowledgeRoots.filter((candidate) => candidate.id !== root.id),
+      structuredClone(root),
+    ]
+    return structuredClone(root)
+  })
+}
+
+async function chooseKnowledgeRoot(id: string) {
+  const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === id)
+  if (!root) throw new Error(`Unknown fixture root: ${id}`)
+  fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+  const dialog = await screen.findByRole('dialog', { name: /Choose a (session root|Knowledge folder)/ })
+  const choice = within(dialog).queryByRole('radio', {
+    name: `${root.name} on ${root.computerName}: ${root.path}`,
+  }) || within(dialog).getByRole('radio', { name: "Use this session's folder" })
+  await waitFor(() => expect(choice).toBeEnabled())
+  fireEvent.click(choice)
+  const apply = within(dialog).getByRole('button', { name: /^(Use for this session|Open folder)$/ })
+  await waitFor(() => expect(apply).toBeEnabled())
+  fireEvent.click(apply)
+  await waitFor(() => expect(dialog).not.toBeInTheDocument())
+}
+
+function fixtureKnowledgeBinding(computerId: string, sessionId: string): SessionKnowledgeBinding {
+  const key = `${computerId}:${sessionId}`
+  let saved = fixtureKnowledgeBindings.get(key)
+  if (!saved) {
+    // Older tests specify their initial reading context in browser storage.
+    // Mirror that fixture configuration as an existing hub link; new tests
+    // explicitly override this API to exercise unbound/legacy-only sessions.
+    const positions = JSON.parse(localStorage.getItem('agentic-remote:knowledge-session-positions') || '{}') as
+      Record<string, { rootId?: string }>
+    const root = localStorage.getItem('agentic-remote:knowledge-position')
+      ? undefined
+      : fixtureKnowledgeRoots.find((candidate) => candidate.id === positions[key]?.rootId) ||
+        fixtureKnowledgeRoots[0]
+    saved = {
+      computerId, sessionId, rootId: root?.id || null,
+      revision: root ? 1 : 0, available: Boolean(root), root,
+    }
+    fixtureKnowledgeBindings.set(key, saved)
+  }
+  const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === saved.rootId)
+  return { ...saved, root: root || saved.root, available: Boolean(root) }
+}
+
 /**
  * Knowledge listings have to answer per path. A single fixed listing makes
  * every folder contain itself, so expanding one recurses until the stack is
@@ -306,6 +373,161 @@ async function findSessionAction(name: string) {
 }
 
 describe('App', () => {
+  it('initializes a chooser opened during lookup from the confirmed root, not a stale local default', async () => {
+    const other = { ...knowledgeRoot, id: 'other-root', name: 'Other notes', path: '/srv/other' }
+    mockKnowledgeRoots([knowledgeRoot, other])
+    const key = `${computer.id}:${session.id}`
+    localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+      [key]: { rootId: knowledgeRoot.id, path: '.' },
+    }))
+    let finishLookup!: (binding: SessionKnowledgeBinding) => void
+    vi.mocked(getSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishLookup = resolve }))
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    const old = within(chooser).getByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    })
+    expect(old).toBeDisabled()
+    const confirmed: SessionKnowledgeBinding = {
+      computerId: computer.id, sessionId: session.id, rootId: other.id,
+      root: other, revision: 2, available: true,
+    }
+    fixtureKnowledgeBindings.set(key, confirmed)
+    await act(async () => finishLookup(confirmed))
+    expect(within(chooser).getByRole('radio', {
+      name: `${other.name} on ${other.computerName}: ${other.path}`,
+    })).toBeChecked()
+    expect(old).not.toBeChecked()
+    expect(within(chooser).getByRole('button', { name: 'Use for this session' })).toBeEnabled()
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+  })
+
+  it('leaves an unassigned session explicit and saves a root only after confirmation', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    const key = `${computer.id}:${session.id}`
+    fixtureKnowledgeBindings.set(key, {
+      computerId: computer.id, sessionId: session.id, rootId: null, revision: 0, available: false,
+    })
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('heading', { name: 'Give this session a place to read' })
+    expect(screen.queryByRole('tree')).toBeNull()
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+    expect(addKnowledgeRoot).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Cancel' }))
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+    await chooseKnowledgeRoot(knowledgeRoot.id)
+    await screen.findByText('Saved for this session')
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+      rootId: knowledgeRoot.id, expectedRevision: 0,
+    })
+    expect(addKnowledgeRoot).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+  })
+
+  it('uses the hub root rather than a document remembered under another root', async () => {
+    const other = { ...knowledgeRoot, id: 'other-root', name: 'Other notes', path: '/srv/other' }
+    mockKnowledgeRoots([knowledgeRoot, other])
+    const key = `${computer.id}:${session.id}`
+    localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+      [key]: { rootId: knowledgeRoot.id, path: '.', file: 'old.md' },
+    }))
+    fixtureKnowledgeBindings.set(key, {
+      computerId: computer.id, sessionId: session.id, rootId: other.id,
+      root: other, revision: 3, available: true,
+    })
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findAllByText('Other notes')
+    await screen.findByRole('tree')
+    expect(readKnowledgeFile).not.toHaveBeenCalled()
+    expect(vi.mocked(listKnowledgeEntries).mock.calls.every(([id]) => id === other.id)).toBe(true)
+    expect(JSON.parse(localStorage.getItem('agentic-remote:knowledge-session-positions') || '{}')[key])
+      .toEqual({ rootId: other.id, path: '.' })
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+  })
+
+  it('keeps a pending root choice after a conflict and retries the reviewed revision', async () => {
+    const other = { ...knowledgeRoot, id: 'other-root', name: 'Other notes', path: '/srv/other' }
+    mockKnowledgeRoots([knowledgeRoot, other])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    const candidate = within(chooser).getByRole('radio', {
+      name: `${other.name} on ${other.computerName}: ${other.path}`,
+    })
+    fireEvent.click(candidate)
+    const key = `${computer.id}:${session.id}`
+    const changed = { ...fixtureKnowledgeBinding(computer.id, session.id), revision: 2 }
+    fixtureKnowledgeBindings.set(key, changed)
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: changed,
+      }),
+    } as MessageEvent))
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
+    await within(chooser).findByText('Root changed in another client')
+    expect(candidate).toBeChecked()
+    expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+    const retry = within(chooser).getByRole('button', { name: 'Use for this session' })
+    await waitFor(() => expect(retry).toBeEnabled())
+    fireEvent.click(retry)
+    await waitFor(() => expect(chooser).not.toBeInTheDocument())
+    expect(updateSessionKnowledgeRoot).toHaveBeenLastCalledWith(computer.id, session.id, {
+      rootId: other.id, expectedRevision: 2,
+    })
+    expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(other.id)
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('does not overwrite a newer binding while validating the session folder', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    let finishAdding!: (root: KnowledgeRoot) => void
+    vi.mocked(addKnowledgeRoot).mockReturnValue(new Promise((resolve) => { finishAdding = resolve }))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    fireEvent.click(within(chooser).getByRole('radio', { name: "Use this session's folder" }))
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
+    await waitFor(() => expect(addKnowledgeRoot).toHaveBeenCalledWith({
+      computerId: computer.id, path: session.cwd,
+    }))
+    const key = `${computer.id}:${session.id}`
+    const newer = { ...fixtureKnowledgeBinding(computer.id, session.id), revision: 2 }
+    fixtureKnowledgeBindings.set(key, newer)
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: newer,
+      }),
+    } as MessageEvent))
+    const added = { ...knowledgeRoot, id: 'new-root', name: 'Project files', path: session.cwd }
+    fixtureKnowledgeRoots.push(added)
+    await act(async () => finishAdding(added))
+    await within(chooser).findByText('Root changed in another client')
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+      rootId: added.id, expectedRevision: 1,
+    })
+    expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+    expect(fixtureKnowledgeBindings.get(key)?.revision).toBe(2)
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   afterEach(() => {
     restoreScrollTop?.()
     restoreScrollTop = undefined
@@ -315,6 +537,46 @@ describe('App', () => {
     expect(composerMaximumHeight(true, 844)).toBe(104)
     expect(composerMaximumHeight(true, 430)).toBe(72)
     expect(composerMaximumHeight(false, 430)).toBe(180)
+  })
+
+  it('keeps the chosen reading appearance independent from the tab accent', async () => {
+    const rendered = render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(await screen.findByRole('radio', { name: 'Graphite appearance' })).toBeChecked()
+    fireEvent.click(screen.getByRole('radio', { name: 'Ocean accent' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Light appearance' }))
+    expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'light')
+    expect(document.querySelector('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
+    expect(document.documentElement).toHaveAttribute('data-appearance', 'light')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:appearance') || 'null')).toBe('light')
+    rendered.unmount()
+    render(<App />)
+    await screen.findByLabelText('Message')
+    expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'light')
+    expect(document.querySelector('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
+  })
+
+  it('keeps the previous appearance and reports an unavailable preference store', async () => {
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const light = await screen.findByRole('radio', { name: 'Light appearance' })
+    const original = Storage.prototype.setItem
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage, key: string, value: string,
+    ) {
+      if (key === 'agentic-remote:appearance') throw new Error('Storage unavailable')
+      original.call(this, key, value)
+    })
+    try {
+      fireEvent.click(light)
+      expect(screen.getByText('Could not save appearance: Storage unavailable')).toBeVisible()
+      expect(screen.getByRole('radio', { name: 'Graphite appearance' })).toBeChecked()
+      expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'graphite')
+    } finally {
+      save.mockRestore()
+    }
   })
 
   it('tracks the visual viewport at normal and keyboard-open sizes', async () => {
@@ -405,6 +667,7 @@ describe('App', () => {
     dragHandlers.clear()
     localStorage.clear()
     sessionStorage.clear()
+    fixtureKnowledgeBindings.clear()
     // The address now carries the selected session, so it has to be reset or
     // one test's deep link selects a session in the next.
     window.history.replaceState({}, '', '/')
@@ -428,7 +691,26 @@ describe('App', () => {
     })
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
+    vi.mocked(getSessionKnowledgeRoot).mockImplementation(async (computerId, sessionId) =>
+      fixtureKnowledgeBinding(computerId, sessionId))
+    vi.mocked(updateSessionKnowledgeRoot).mockImplementation(async (computerId, sessionId, input) => {
+      const previous = fixtureKnowledgeBinding(computerId, sessionId)
+      if (input.expectedRevision !== previous.revision) {
+        throw new SessionKnowledgeRequestError('Root changed in another client', 409, previous)
+      }
+      const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
+      if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
+      const binding: SessionKnowledgeBinding = {
+        computerId, sessionId, rootId: input.rootId, revision: previous.revision + 1,
+        root, available: Boolean(root),
+      }
+      fixtureKnowledgeBindings.set(`${computerId}:${sessionId}`, binding)
+      return binding
+    })
+    vi.mocked(deleteKnowledgeRoot).mockImplementation(async (id) => {
+      fixtureKnowledgeRoots = fixtureKnowledgeRoots.filter((root) => root.id !== id)
+    })
     vi.mocked(listWorkspace).mockImplementation(
       async (_computerId, _sessionId, path = '.') =>
         path === 'docs'
@@ -5190,7 +5472,7 @@ describe('App', () => {
       isLocal: false,
     }
     vi.mocked(listComputers).mockResolvedValue([computer, remote])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-remote',
         computerId: remote.id,
@@ -5213,11 +5495,11 @@ describe('App', () => {
       } as MessageEvent)
     })
 
-    // The hub drops the roots of a computer that has been unpaired, so a tab
-    // still listing one would offer a document it can no longer fetch.
-    await waitFor(() =>
-      expect(screen.queryByText('worker docs')).not.toBeInTheDocument(),
-    )
+    // Keep the saved reference recognizable, but never offer the removed
+    // computer's files as though the root were still available.
+    await screen.findByText('Saved folder unavailable')
+    expect(screen.getByText('worker docs')).toBeVisible()
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
   })
 
   it('forgets loaded Knowledge when a reconnect discovers a missed computer removal', async () => {
@@ -5225,7 +5507,7 @@ describe('App', () => {
       ...computer, id: 'computer-2', name: 'worker-node', isLocal: false,
     }
     vi.mocked(listComputers).mockResolvedValue([computer, remote])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+    mockKnowledgeRoots([{
       id: 'root-remote', computerId: remote.id, computerName: remote.name,
       path: '/home/tester/docs', name: 'worker docs',
       createdAt: '2026-08-01T00:00:00.000Z',
@@ -5251,7 +5533,8 @@ describe('App', () => {
     await act(async () => {
       MockWebSocket.instances[0]?.onopen?.()
     })
-    await waitFor(() => expect(screen.queryAllByText('worker docs')).toHaveLength(0))
+    await screen.findByText('Saved folder unavailable')
+    expect(screen.getByText('worker docs')).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Remote guide' })).not.toBeInTheDocument()
   })
 
@@ -5376,7 +5659,7 @@ describe('App', () => {
   it('rejects a root creation response from an earlier pairing lifetime', async () => {
     let finishRoot!: (value: Awaited<ReturnType<typeof addKnowledgeRoot>>) => void
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(addKnowledgeRoot).mockReturnValue(new Promise((resolve) => {
       finishRoot = resolve
     }))
@@ -5466,8 +5749,8 @@ describe('App', () => {
 
   it('accepts fresh Knowledge after another tab announces a re-pairing', async () => {
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
-    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+    mockKnowledgeRoots([])
+    mockAddedKnowledgeRoot({
       id: 'fresh-pairing-root', computerId: secondComputer.id,
       computerName: secondComputer.name, path: '/home/worker/docs',
       name: 'Fresh pairing docs', createdAt: '2026-09-05T00:00:00.000Z',
@@ -9183,7 +9466,7 @@ describe('App', () => {
   })
 
   it('follows Knowledge Markdown links on the owning root and reports failed reads', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+    mockKnowledgeRoots([{
       id: 'root-1',
       computerId: computer.id,
       computerName: computer.name,
@@ -9365,7 +9648,7 @@ describe('App', () => {
     }
 
     beforeEach(() => {
-      vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+      mockKnowledgeRoots([knowledgeRoot])
       vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
         '.': {
           path: '.',
@@ -9998,7 +10281,7 @@ describe('App', () => {
 
     it('does not give a session a path on a different computer', async () => {
       vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-      vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+      mockKnowledgeRoots([{
         ...knowledgeRoot, computerId: secondComputer.id, computerName: secondComputer.name,
       }])
       render(<App />)
@@ -10083,15 +10366,16 @@ describe('App', () => {
           if (failure) reject(new Error('Stale refresh failed'))
           else resolve({ path: '.', entries: [{ name: 'stale.md', path: 'stale.md', kind: 'markdown' }] })
         })
-        await waitFor(() => expect(refresh).toBeEnabled())
+        const currentRefresh = screen.getByRole('button', { name: 'Refresh current folder' })
+        await waitFor(() => expect(currentRefresh).toBeEnabled())
         expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
         expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
         expect(screen.queryByText('stale.md')).toBeNull()
         expect(screen.queryByText('Stale refresh failed')).toBeNull()
         expect(screen.queryByText('Refreshing folder...')).toBeNull()
         expect(localStorage.getItem('agentic-remote:composer-drafts-v2')).toBe(savedDraft)
-        fireEvent.click(refresh)
-        await waitFor(() => expect(refresh).toBeEnabled())
+        fireEvent.click(currentRefresh)
+        await waitFor(() => expect(currentRefresh).toBeEnabled())
         expect(sendMessage).not.toHaveBeenCalled()
       },
     )
@@ -10152,7 +10436,7 @@ describe('App', () => {
         }
         const otherRoot = { ...knowledgeRoot, id: 'root-other', name: 'Other docs' }
         vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-        vi.mocked(listKnowledgeRoots).mockResolvedValue([originalRoot, otherRoot])
+        mockKnowledgeRoots([originalRoot, otherRoot])
         const listing: WorkspaceListing = {
           path: '.', entries: [{ name: note.name, path: note.path, kind: 'markdown' }],
         }
@@ -10168,10 +10452,8 @@ describe('App', () => {
               data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
             } as MessageEvent)
           })
-          await waitFor(() => expect(screen.getByRole('combobox', { name: 'Knowledge root' })).toHaveValue(''))
-          fireEvent.change(screen.getByRole('combobox', { name: 'Knowledge root' }), {
-            target: { value: otherRoot.id },
-          })
+          await screen.findByText('Saved folder unavailable')
+          await chooseKnowledgeRoot(otherRoot.id)
           await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh current folder' })).toBeEnabled())
           act(() => {
             MockWebSocket.instances.at(-1)?.onmessage?.({
@@ -10179,14 +10461,12 @@ describe('App', () => {
             } as MessageEvent)
           })
         } else if (change === 'root-return') {
-          fireEvent.change(screen.getByRole('combobox', { name: 'Knowledge root' }), {
-            target: { value: otherRoot.id },
-          })
+          await chooseKnowledgeRoot(otherRoot.id)
           await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh current folder' })).toBeEnabled())
         }
         vi.mocked(listKnowledgeEntries).mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve }))
         if (change === 'pairing') {
-          vi.mocked(addKnowledgeRoot).mockResolvedValue({ ...originalRoot, name: 'Repaired docs' })
+          mockAddedKnowledgeRoot({ ...originalRoot, name: 'Repaired docs' })
           fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
           const dialog = await screen.findByRole('dialog', { name: 'Add knowledge root' })
           fireEvent.change(within(dialog).getByLabelText('Computer'), {
@@ -10195,11 +10475,9 @@ describe('App', () => {
           const add = within(dialog).getByRole('button', { name: 'Add this folder' })
           await waitFor(() => expect(add).toBeEnabled())
           fireEvent.click(add)
-          await screen.findByRole('option', { name: /Repaired docs/ })
+          await screen.findAllByText('Repaired docs')
         } else {
-          fireEvent.change(screen.getByRole('combobox', { name: 'Knowledge root' }), {
-            target: { value: change === 'root' ? otherRoot.id : originalRoot.id },
-          })
+          await chooseKnowledgeRoot(change === 'root' ? otherRoot.id : originalRoot.id)
         }
         await waitFor(() => expect(resolveNew).toBeDefined())
         const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
@@ -10283,6 +10561,44 @@ describe('App', () => {
     expect(titles()).toEqual(['Zulu', 'Mike', 'Alpha'])
   })
 
+  it('keeps session shortcuts inside the visible search and attention results', async () => {
+    const items = [
+      { ...session, id: 'visible-first', title: 'Visible first', messages: [] },
+      { ...session, id: 'hidden-session', title: 'Hidden conversation', messages: [] },
+      {
+        ...session, id: 'visible-last', title: 'Visible last', messages: [],
+        status: 'error' as const,
+      },
+    ]
+    localStorage.setItem('agentic-remote:session-order', JSON.stringify({
+      [computer.id]: items.map((item) => `${computer.id}:${item.id}`),
+    }))
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = items.find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Hidden conversation,/ }))
+    await waitFor(() => expect(window.location.search).toContain('session=hidden-session'))
+    const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+    fireEvent.change(search, { target: { value: 'Visible' } })
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=visible-first'))
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=visible-last'))
+    fireEvent.keyDown(window, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=visible-first'))
+    fireEvent.change(search, { target: { value: 'Missing' } })
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    expect(window.location.search).toContain('session=visible-first')
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
+    fireEvent.keyDown(window, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=visible-last'))
+  })
+
   it('reports a refused sort preference without claiming the order was saved', async () => {
     render(<App />)
     await screen.findByLabelText('Message')
@@ -10322,7 +10638,7 @@ describe('App', () => {
   })
 
   it('dismisses session actions before the open Knowledge panel on Escape', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
     vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
     render(<App />)
     await screen.findByLabelText('Message')
@@ -10385,7 +10701,7 @@ describe('App', () => {
         cwd: input.command.slice('/cwd '.length),
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10443,7 +10759,7 @@ describe('App', () => {
     const sdkSession = { ...session, executionMode: 'sdk' as const }
     vi.mocked(listSessions).mockResolvedValue([sdkSession])
     vi.mocked(getSession).mockResolvedValue(sdkSession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10488,7 +10804,7 @@ describe('App', () => {
     const busySession = { ...session, status: 'running' as const }
     vi.mocked(listSessions).mockResolvedValue([busySession])
     vi.mocked(getSession).mockResolvedValue(busySession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10532,7 +10848,7 @@ describe('App', () => {
     const claudeSession = { ...session, provider: 'claude' as const }
     vi.mocked(listSessions).mockResolvedValue([claudeSession])
     vi.mocked(getSession).mockResolvedValue(claudeSession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10573,7 +10889,7 @@ describe('App', () => {
     vi.mocked(validateSessionDirectory).mockRejectedValue(
       new Error('Sessions are restricted to the user home directory'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10618,7 +10934,7 @@ describe('App', () => {
   })
 
   it('browses a knowledge root from the sidebar switch', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10707,7 +11023,7 @@ describe('App', () => {
   })
 
   it('expands knowledge folders in place and remembers them', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10799,7 +11115,7 @@ describe('App', () => {
   })
 
   it('keeps the tree usable when one folder cannot be read', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10841,7 +11157,7 @@ describe('App', () => {
   })
 
   it('expands and collapses knowledge folders from the keyboard', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10898,7 +11214,7 @@ describe('App', () => {
   })
 
   it('adds a knowledge root by picking a computer folder', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') => ({
         path,
@@ -10906,7 +11222,7 @@ describe('App', () => {
         directories: [],
       }),
     )
-    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+    mockAddedKnowledgeRoot({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
@@ -10949,7 +11265,7 @@ describe('App', () => {
   })
 
   it('falls back to home when the active session folder is unavailable', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') => {
         if (path === session.cwd) {
@@ -10989,7 +11305,7 @@ describe('App', () => {
 
   it('uses the session folder only before the root picker computer changes', async () => {
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') => ({ path, directories: [] }),
     )
@@ -11038,7 +11354,7 @@ describe('App', () => {
         }) => void)
       | undefined
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockImplementation(
       async (computerId, path = '~') => {
         if (computerId === computer.id && path === session.cwd) {
@@ -11201,7 +11517,7 @@ describe('App', () => {
         file: 'guides/setup.md',
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11284,7 +11600,7 @@ describe('App', () => {
       }),
     )
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11305,7 +11621,8 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Second chat')
-    await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
+    await screen.findByRole('heading', { name: 'Give this session a place to read' })
+    expect(listKnowledgeEntries).not.toHaveBeenCalled()
 
     // The link says which session to open, not where that session was
     // reading, so the position an older build kept is discarded.
@@ -11358,7 +11675,7 @@ describe('App', () => {
   })
 
   it('picks a knowledge root from anywhere on the computer', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-existing',
         computerId: computer.id,
@@ -11373,7 +11690,7 @@ describe('App', () => {
       parent: '/',
       directories: [{ name: 'docs', path: '/srv/docs' }],
     })
-    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+    mockAddedKnowledgeRoot({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
@@ -11415,7 +11732,7 @@ describe('App', () => {
 
   it('keeps the general root picker available without a selected session', async () => {
     vi.mocked(listSessions).mockResolvedValue([])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findByText('No sessions here.')
@@ -11446,7 +11763,7 @@ describe('App', () => {
     ])
     vi.mocked(listSessions).mockResolvedValue([offlineSession])
     vi.mocked(getSession).mockResolvedValue(offlineSession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -11492,7 +11809,7 @@ describe('App', () => {
     localStorage.setItem('agentic-remote:reader-width', '420')
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11559,7 +11876,7 @@ describe('App', () => {
   })
 
   it('expands the knowledge panel over the conversation', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11603,7 +11920,7 @@ describe('App', () => {
   })
 
   it('restores the knowledge scroll position when the panel reopens', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11857,7 +12174,7 @@ describe('App', () => {
     // shown as one thing and answer to another.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -11976,7 +12293,7 @@ describe('App', () => {
     // One press puts away one thing, in the order they are stacked.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -12000,7 +12317,7 @@ describe('App', () => {
     // composer while the menu stayed exactly where it was.
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'clear',
@@ -12038,7 +12355,7 @@ describe('App', () => {
     // reader could not see, and left the thing they were looking at.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -12090,7 +12407,7 @@ describe('App', () => {
     // something invisible and left what was in front of the reader open.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
     const setWidth = (width: number) => {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,
@@ -12145,7 +12462,7 @@ describe('App', () => {
   it('drives sessions and the knowledge panel from the keyboard', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -12241,7 +12558,7 @@ describe('App', () => {
 
   it('keeps knowledge reachable with no session selected', async () => {
     vi.mocked(listSessions).mockResolvedValue([])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -12284,7 +12601,7 @@ describe('App', () => {
         'computer-1:session-2': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -12354,7 +12671,7 @@ describe('App', () => {
   })
 
   it('shows errors in the knowledge panel that covers the conversation', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -12461,7 +12778,7 @@ describe('App', () => {
       }),
     )
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13560,7 +13877,7 @@ describe('App', () => {
         'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13605,7 +13922,7 @@ describe('App', () => {
   })
 
   it('reaches the file tree while the panel covers the conversation', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13648,7 +13965,7 @@ describe('App', () => {
     }
     vi.mocked(listSessions).mockResolvedValue([historySession])
     vi.mocked(getSession).mockResolvedValue(historySession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13673,7 +13990,8 @@ describe('App', () => {
     await screen.findByRole('navigation', { name: 'Knowledge' })
     // The root selector and breadcrumbs sit outside the tree's own key
     // handling, so they are where a stray recall would surface.
-    const rootButton = screen.getByRole('combobox', { name: 'Knowledge root' })
+    const rootButton = screen.getByRole('button', { name: 'Choose Knowledge root' })
+    await waitFor(() => expect(rootButton).toBeEnabled())
     rootButton.focus()
 
     fireEvent.keyDown(rootButton, { key: 'ArrowUp' })
@@ -13701,7 +14019,7 @@ describe('App', () => {
         'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13744,7 +14062,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13807,13 +14125,13 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockResolvedValue({
       path: '/srv',
       parent: '/',
       directories: [{ name: 'docs', path: '/srv/docs' }],
     })
-    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+    mockAddedKnowledgeRoot({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
@@ -13907,7 +14225,7 @@ describe('App', () => {
   })
 
   it('colours the knowledge toggles while they are on', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13964,7 +14282,7 @@ describe('App', () => {
         },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14104,7 +14422,7 @@ describe('App', () => {
         },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14170,9 +14488,7 @@ describe('App', () => {
     await waitFor(() => expect(releaseGuides).toBeDefined())
 
     // The reader switches root while the remembered branch is still loading.
-    fireEvent.change(within(tree).getByRole('combobox', { name: 'Knowledge root' }), {
-      target: { value: 'root-2' },
-    })
+    await chooseKnowledgeRoot('root-2')
     await within(tree).findByRole('treeitem', { name: /only-here.md/ })
 
     releaseGuides?.()
@@ -14203,7 +14519,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14259,7 +14575,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14344,7 +14660,7 @@ describe('App', () => {
         'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -14384,7 +14700,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14455,7 +14771,7 @@ describe('App', () => {
         'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     render(<App />)
@@ -14501,7 +14817,7 @@ describe('App', () => {
         'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -14535,7 +14851,7 @@ describe('App', () => {
   it('carries the draft across a clear on every client', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
@@ -14574,7 +14890,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14634,7 +14950,7 @@ describe('App', () => {
     vi.mocked(getPushSettings).mockResolvedValue({
       mutedSessions: ['computer-1:session-1'],
     })
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -14689,7 +15005,7 @@ describe('App', () => {
       'agentic-remote:knowledge-position',
       JSON.stringify({ rootId: 'root-1', path: '.' }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14759,7 +15075,7 @@ describe('App', () => {
         'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     render(<App />)
@@ -14869,7 +15185,7 @@ describe('App', () => {
       }),
     )
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14942,7 +15258,7 @@ describe('App', () => {
       'agentic-remote:knowledge-position',
       JSON.stringify(remembered),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14956,6 +15272,7 @@ describe('App', () => {
     vi.mocked(listKnowledgeEntries).mockRejectedValue(new Error('offline'))
     render(<App />)
     await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
 
     // A failed restore must not erase where the reader was. The position now

@@ -455,10 +455,19 @@ clear replacement IDs without losing, duplicating, or reordering content.
 
 ### 8.2 Phone reading mode
 
+- Sessions, Knowledge file navigation, and the reader MUST fill the available
+  phone viewport, rather than leaving an unused strip beside a narrow drawer.
+  File navigation MUST have its own full-height phone surface, not share the
+  visible height with the session list.
+- Layout MUST honor the visual viewport and safe areas when the keyboard opens.
+  Phone text inputs and selects MUST use at least 16px text without disabling
+  browser zoom.
 - Selecting a file on phone MUST hide the tree and search controls.
 - The preview MUST use the full workspace panel with readable 16px-or-larger
   text.
 - Back to files MUST restore folder navigation.
+  Switching from files to Sessions and back MUST preserve the file tree's
+  scroll position; a CSS-hidden surface MUST NOT overwrite it with zero.
 - PDF page controls MUST remain reachable without overlapping the home
   indicator.
 
@@ -473,6 +482,20 @@ clear replacement IDs without losing, duplicating, or reordering content.
   user MAY add that folder directly or browse to another readable folder.
 - A knowledge root is a computer plus an absolute folder and MUST be browsable
   with no session in existence.
+- A session MAY explicitly link one root from the shared Knowledge catalog.
+  The association MUST belong to its owning computer and stable session ID,
+  survive hub/client restarts, and remain separate from the session's cwd.
+  Several sessions MAY link the same root while keeping separate reading
+  positions. Linking MUST NOT copy files, mount a remote folder, activate an
+  agent, or send a prompt.
+- Root associations MUST use separate hub metadata. Opening Knowledge MUST NOT
+  silently promote browser-local reading positions into hub associations.
+  An unassigned session with no remembered position MUST offer an explicit
+  working-folder suggestion or root choice, not another session's document.
+- Root updates MUST compare the persisted revision. A rejected update MUST
+  retain the pending choice for review/retry instead of silently overwriting
+  another client's change. An explicit unlink MUST remain distinguishable
+  from a session that has never had an association.
 - Choosing a root MUST allow any folder on the owning computer that the user can
   read, not only the home directory. Session working directories remain
   confined; a root is read-only.
@@ -503,7 +526,10 @@ clear replacement IDs without losing, duplicating, or reordering content.
   document — and switching sessions MUST show that session's position.
 - Clearing a conversation replaces a session rather than deleting it, so the
   removal event MUST name the replacement and every client MUST carry that
-  session's reading position across rather than discard it.
+  session's reading position across rather than discard it. The hub root
+  association MUST follow the same replacement lineage, including
+  reconciliation after missed events, without overwriting an explicit
+  association on the recipient.
 - File navigation MUST stay in the same place in every mode, so choosing a
   file does not depend on how much room the reader is taking.
 - Reopening the panel MUST resume the tree where it was left rather than
@@ -515,8 +541,12 @@ clear replacement IDs without losing, duplicating, or reordering content.
   expansion and reused afterwards.
 - File listings SHOULD put folders before files and sort names naturally.
   Root selection MUST identify the owning computer and keep full paths
-  available. A compact root selector MAY replace a permanently expanded root
-  list; root metadata and per-session reading positions remain unchanged.
+  available. A compact selector MAY open a scoped chooser instead of keeping
+  every root permanently expanded.
+- Removing a shared root MUST require an explicit impact confirmation and
+  MUST NOT delete files. Referencing sessions MUST retain a named unavailable
+  association rather than silently switch to another root. Deleting a session
+  removes its association, not a root shared with other sessions.
 - Refreshing a folder MUST preserve the open document. Failed refreshes MUST
   remain visible beside their branch, with existing loaded entries retained
   and a reachable retry action.

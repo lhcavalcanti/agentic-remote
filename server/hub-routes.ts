@@ -3,6 +3,8 @@ import { z } from 'zod'
 import type { HubEvent } from '../shared/contracts.js'
 import { ComputerManager } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
+import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
+import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 
 const addComputerSchema = z.object({
   baseUrl: z.string().trim().url().max(2048),
@@ -244,6 +246,7 @@ export async function registerHubRoutes(
   manager: ComputerManager,
   knowledge: KnowledgeStore,
   mutes?: SessionMuteCarrier,
+  sessionKnowledge?: SessionKnowledgeStore,
 ): Promise<void> {
   const policy = originPolicy()
   app.addHook('onRequest', async (request, reply) => {
@@ -260,6 +263,10 @@ export async function registerHubRoutes(
       return reply.code(403).send({ error: 'Origin is not allowed' })
     }
   })
+
+  const sessionKnowledgeLifecycle = sessionKnowledge
+    ? await registerSessionKnowledgeRoutes(app, manager, knowledge, sessionKnowledge)
+    : undefined
 
   app.get('/api/health', async () => ({ ok: true }))
 
@@ -281,6 +288,7 @@ export async function registerHubRoutes(
       // leaves the root able to answer nothing but "not found", so it goes
       // with it rather than staying in the list offering to try.
       await knowledge.removeRootsForComputer(request.params.computerId)
+      await sessionKnowledgeLifecycle?.removeComputer(request.params.computerId)
       return reply.code(204).send()
     },
   )
@@ -357,6 +365,7 @@ export async function registerHubRoutes(
       if (!(await knowledge.removeRoot(request.params.rootId))) {
         return reply.code(404).send({ error: 'Knowledge root not found' })
       }
+      await sessionKnowledgeLifecycle?.rootRemoved(request.params.rootId)
       return reply.code(204).send()
     },
   )
@@ -536,9 +545,12 @@ export async function registerHubRoutes(
         mutes?.settings().mutedSessions.includes(`${computerId}:${sessionId}`) ??
         false
       const session = await manager.clearConversation(computerId, sessionId)
-      if (silenced && session.id !== sessionId) {
-        await mutes?.setSessionMuted(computerId, session.id, true)
-      }
+      await Promise.all([
+        sessionKnowledgeLifecycle?.replaceSession(computerId, sessionId, session),
+        silenced && session.id !== sessionId
+          ? mutes?.setSessionMuted(computerId, session.id, true)
+          : undefined,
+      ])
       return { session }
     },
   )
@@ -720,6 +732,10 @@ export async function registerHubRoutes(
     '/api/computers/:computerId/sessions/:sessionId',
     async (request, reply) => {
       await manager.deleteSession(
+        request.params.computerId,
+        request.params.sessionId,
+      )
+      await sessionKnowledgeLifecycle?.removeSession(
         request.params.computerId,
         request.params.sessionId,
       )

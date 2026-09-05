@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
+import { useState } from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { DndContext } from '@dnd-kit/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +11,7 @@ import type {
 } from '../shared/contracts'
 import { SessionNavigation } from './SessionNavigation'
 import type { SessionSort } from './session-presentation'
+import { sessionNavigationView, type SessionFilter } from './session-navigation-view'
 
 const computers: ComputerSummary[] = [
   { id: 'studio', name: 'Studio', isLocal: true, online: true },
@@ -62,22 +64,42 @@ const actions = {
   onToggleSessionSuspended: vi.fn(),
   suspending: false,
   onSortChange: vi.fn(),
+  onNewSession: vi.fn(),
 }
 
-function navigation(sessions = sessionsByComputer, sort: SessionSort = 'custom') {
+function NavigationHarness({
+  sessions = sessionsByComputer,
+  sort = 'custom',
+  computerList = computers,
+  snapshots = backgroundTasks,
+}: {
+  sessions?: Map<string, ManagedSession[]>
+  sort?: SessionSort
+  computerList?: ComputerSummary[]
+  snapshots?: Record<string, BackgroundTaskSnapshot>
+}) {
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<SessionFilter>('all')
   return (
     <DndContext>
       <SessionNavigation
         {...actions}
-        backgroundTasks={backgroundTasks}
-        computers={computers}
+        backgroundTasks={snapshots}
+        view={sessionNavigationView(computerList, sessions, snapshots, query, filter)}
+        query={query}
+        filter={filter}
+        onQueryChange={setQuery}
+        onFilterChange={setFilter}
         loading={false}
         selectedKey="studio:review"
-        sessionsByComputer={sessions}
         sort={sort}
       />
     </DndContext>
   )
+}
+
+function navigation(sessions = sessionsByComputer, sort: SessionSort = 'custom') {
+  return <NavigationHarness sessions={sessions} sort={sort} />
 }
 
 afterEach(() => {
@@ -179,17 +201,10 @@ describe('session navigation', () => {
       'travel:offline': { tasks: [], runningCount: 2, supported: true },
     }
     render(
-      <DndContext>
-        <SessionNavigation
-          {...actions}
-          backgroundTasks={offlineTasks}
-          computers={[...computers, { ...computers[0], id: 'empty', name: 'Empty computer' }]}
-          loading={false}
-          selectedKey="studio:review"
-          sessionsByComputer={sessionsByComputer}
-          sort="custom"
-        />
-      </DndContext>,
+      <NavigationHarness
+        snapshots={offlineTasks}
+        computerList={[...computers, { ...computers[0], id: 'empty', name: 'Empty computer' }]}
+      />,
     )
     expect(screen.getByRole('region', { name: 'Empty computer' })).toHaveTextContent('No open sessions')
     const cachedTasks = screen.getByRole('button', { name: 'View background tasks for Last known work' })
@@ -215,19 +230,11 @@ describe('session navigation', () => {
 
   it('uses authoritative computer names for filtering and accessible ownership labels', () => {
     render(
-      <DndContext>
-        <SessionNavigation
-          {...actions}
-          backgroundTasks={backgroundTasks}
-          computers={computers.map((computer) =>
-            computer.id === 'studio' ? { ...computer, name: 'Renamed Studio' } : computer,
-          )}
-          loading={false}
-          selectedKey="studio:review"
-          sessionsByComputer={sessionsByComputer}
-          sort="custom"
-        />
-      </DndContext>,
+      <NavigationHarness
+        computerList={computers.map((computer) =>
+          computer.id === 'studio' ? { ...computer, name: 'Renamed Studio' } : computer,
+        )}
+      />,
     )
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), {
       target: { value: 'Renamed Studio' },

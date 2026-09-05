@@ -58,6 +58,13 @@ if ([outputDir, runtimeDir].some((path) => /^\/(?:var\/)?tmp(?:\/|$)/.test(path)
 }
 
 const frames: string[] = []
+const geometry: Array<{
+  name: string
+  viewport: { width: number; height: number }
+  shell: { x: number; y: number; width: number; height: number }
+  surface: { x: number; y: number; width: number; height: number }
+  readerHeight?: number
+}> = []
 const audit: Array<{ viewport: string; requests: string[]; sockets: string[] }> = []
 const expect = playwrightExpect.configure({ timeout: 15_000 })
 
@@ -78,6 +85,31 @@ async function capture(page: Page, fixture: WorkspaceFixture, name: string) {
   await page.evaluate(() => document.fonts.ready)
   await assertLayout(page)
   await page.mouse.move(0, 0)
+  const viewport = page.viewportSize()!
+  if (viewport.width <= 960) {
+    const sidebar = page.locator('.sidebar.sidebar--open')
+    if (await sidebar.count()) await expect(sidebar).toBeInViewport({ ratio: 1 })
+    const surface = await page.evaluate(() => {
+      const element = document.querySelector('.sidebar.sidebar--open') ||
+        document.querySelector('.knowledge-panel:not([hidden])') ||
+        document.querySelector('.conversation:not([hidden])')
+      const shell = document.querySelector('.app-shell')!
+      if (!element) throw new Error('The phone surface is missing.')
+      const shellRect = shell.getBoundingClientRect()
+      const surfaceRect = element.getBoundingClientRect()
+      return {
+        shell: { x: shellRect.x, y: shellRect.y, width: shellRect.width, height: shellRect.height },
+        surface: { x: surfaceRect.x, y: surfaceRect.y, width: surfaceRect.width, height: surfaceRect.height },
+        readerHeight: document.querySelector('.knowledge-panel:not([hidden]) .workspace-preview__content')?.getBoundingClientRect().height,
+      }
+    })
+    expect(Math.abs(surface.shell.width - viewport.width)).toBeLessThanOrEqual(1)
+    expect(Math.abs(surface.surface.width - surface.shell.width)).toBeLessThanOrEqual(1)
+    expect(Math.abs(surface.surface.height - surface.shell.height)).toBeLessThanOrEqual(1)
+    expect(Math.abs(surface.surface.x - surface.shell.x)).toBeLessThanOrEqual(1)
+    expect(Math.abs(surface.surface.y - surface.shell.y)).toBeLessThanOrEqual(1)
+    geometry.push({ name, viewport, ...surface })
+  }
   const path = join(outputDir, `${name}.png`)
   let previous: Buffer | undefined
   let stable: Buffer | undefined
@@ -389,9 +421,10 @@ async function phone(page: Page, fixture: WorkspaceFixture) {
   await openGuide(page)
   await expect(documentHeading(page)).toBeInViewport()
   await capture(page, fixture, 'phone-reading')
-  await page.getByRole('button', { name: 'Show files', exact: true }).click()
+  await page.getByRole('button', { name: /^(Show files|Back to files)$/ }).click()
   await expect(page.getByRole('treeitem', { name: 'agent-workspace.md', exact: true })).toBeVisible()
   await capture(page, fixture, 'phone-files-drawer')
+  await expect(page.getByRole('navigation', { name: 'Sessions', exact: true })).toBeHidden()
   await page.getByRole('treeitem', { name: 'release-checklist.md', exact: true }).click()
   await expect(documentHeading(page, 'Release checklist')).toBeVisible()
   await capture(page, fixture, 'phone-release-checklist')
@@ -406,7 +439,7 @@ async function phone(page: Page, fixture: WorkspaceFixture) {
     expect(fixture.requests.some((request) => request.path.endsWith('/messages'))).toBe(false)
     await capture(page, fixture, 'phone-file-question-draft')
   } else {
-    await page.getByRole('button', { name: 'Close knowledge panel', exact: true }).click()
+    await page.getByRole('button', { name: /^(Close knowledge panel|Return to conversation)$/ }).click()
   }
   await assertConversation(page)
   await capture(page, fixture, 'phone-return-to-conversation')
@@ -501,6 +534,7 @@ try {
     fixtureNotice: 'All computers, sessions, messages, models, tasks, paths, and documents are fictional fixtures.',
     frames,
     audit,
+    geometry,
     pageErrors: 0,
     unmockedRequests: 0,
   }, null, 2))

@@ -71,15 +71,15 @@ afterEach(() => {
 })
 
 describe('reader resizing', () => {
-  it('starts at the existing responsive width and exposes bounded accessible controls', () => {
+  it('balances reading and conversation by default and exposes bounded controls', () => {
     render(workspace())
-    expect(handle()).toHaveAttribute('aria-valuenow', '408')
+    expect(handle()).toHaveAttribute('aria-valuenow', '600')
     expect(handle()).toHaveAttribute('aria-valuemin', '320')
     expect(handle()).toHaveAttribute('aria-valuemax', '840')
     expect(handle()).toHaveAttribute('aria-orientation', 'vertical')
     expect(handle()).toHaveAttribute('aria-controls', 'knowledge-panel')
     expect(handle()).toHaveAttribute('tabindex', '0')
-    expect(document.querySelector('.workspace')).toHaveStyle('--knowledge-width: 408px')
+    expect(document.querySelector('.workspace')).toHaveStyle('--knowledge-width: 600px')
     expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
   })
 
@@ -98,7 +98,7 @@ describe('reader resizing', () => {
       expect(resizer).toHaveAttribute('data-resizing', 'false')
       workspaceWidth = 1500
       act(() => notifyResize())
-      expect(resizer).toHaveAttribute('aria-valuenow', '510')
+      expect(resizer).toHaveAttribute('aria-valuenow', '750')
     },
   )
 
@@ -113,7 +113,7 @@ describe('reader resizing', () => {
     expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
     workspaceWidth = 1500
     act(() => notifyResize())
-    expect(resizer).toHaveAttribute('aria-valuenow', '510')
+    expect(resizer).toHaveAttribute('aria-valuenow', '750')
   })
 
   it('retains a larger saved preference after a click while the viewport clamps it', () => {
@@ -132,14 +132,56 @@ describe('reader resizing', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '800')
   })
 
+  it('preserves a saved preference when bounds narrow during a stationary gesture', () => {
+    localStorage.setItem(WIDTH_KEY, '800')
+    render(workspace())
+    const resizer = handle()
+    act(() => pointer(resizer, 'pointerdown', 800))
+    workspaceWidth = 900
+    act(() => notifyResize())
+    expect(resizer).toHaveAttribute('aria-valuenow', '540')
+    act(() => pointer(resizer, 'pointerup', 800))
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('800')
+    workspaceWidth = 1400
+    act(() => notifyResize())
+    expect(resizer).toHaveAttribute('aria-valuenow', '800')
+  })
+
+  it('keeps the responsive default when bounds change without pointer movement', () => {
+    render(workspace())
+    const resizer = handle()
+    act(() => pointer(resizer, 'pointerdown', 800))
+    workspaceWidth = 640
+    act(() => notifyResize())
+    act(() => pointer(resizer, 'pointerup', 800))
+    expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
+    workspaceWidth = 1200
+    act(() => notifyResize())
+    expect(resizer).toHaveAttribute('aria-valuenow', '600')
+  })
+
+  it('keeps the original preference when a drag returns to its origin after a bounds change', () => {
+    render(workspace())
+    const resizer = handle()
+    act(() => {
+      pointer(resizer, 'pointerdown', 800)
+      pointer(resizer, 'pointermove', 700)
+    })
+    workspaceWidth = 900
+    act(() => notifyResize())
+    act(() => pointer(resizer, 'pointerup', 800))
+    expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
+    expect(resizer).toHaveAttribute('aria-valuenow', '450')
+  })
+
   it('does not freeze the responsive default for a keyboard step blocked by a limit', () => {
-    workspaceWidth = 800
+    workspaceWidth = 640
     render(workspace())
     fireEvent.keyDown(handle(), { key: 'ArrowRight' })
     expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
     workspaceWidth = 1200
     act(() => notifyResize())
-    expect(handle()).toHaveAttribute('aria-valuenow', '408')
+    expect(handle()).toHaveAttribute('aria-valuenow', '600')
   })
 
   it('captures a leftward drag and persists its final position even with batched events', () => {
@@ -153,13 +195,13 @@ describe('reader resizing', () => {
       pointer(resizer, 'pointermove', 760)
       pointer(resizer, 'pointerup', 720)
     })
-    expect(resizer).toHaveAttribute('aria-valuenow', '488')
+    expect(resizer).toHaveAttribute('aria-valuenow', '680')
     expect(resizer).toHaveAttribute('data-resizing', 'false')
-    expect(localStorage.getItem(WIDTH_KEY)).toBe('488')
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('680')
     expect(capture.release).toHaveBeenCalledWith(1)
     rendered.unmount()
     render(workspace())
-    expect(handle()).toHaveAttribute('aria-valuenow', '488')
+    expect(handle()).toHaveAttribute('aria-valuenow', '680')
   })
 
   it.each(['pointercancel', 'lostpointercapture'])(
@@ -174,9 +216,9 @@ describe('reader resizing', () => {
         pointer(resizer, event, 0)
         pointer(resizer, 'pointermove', 500)
       })
-      expect(resizer).toHaveAttribute('aria-valuenow', '508')
+      expect(resizer).toHaveAttribute('aria-valuenow', '700')
       expect(resizer).toHaveAttribute('data-resizing', 'false')
-      expect(localStorage.getItem(WIDTH_KEY)).toBe('508')
+      expect(localStorage.getItem(WIDTH_KEY)).toBe('700')
       expect(capture.release).toHaveBeenCalledTimes(1)
     },
   )
@@ -196,19 +238,19 @@ describe('reader resizing', () => {
       pointer(resizer, 'pointermove', 500, 2)
       pointer(resizer, 'pointercancel', 0, 2)
     })
-    expect(resizer).toHaveAttribute('aria-valuenow', '408')
+    expect(resizer).toHaveAttribute('aria-valuenow', '600')
     expect(resizer).toHaveAttribute('data-resizing', 'true')
     act(() => pointer(resizer, 'pointerup', 780))
-    expect(localStorage.getItem(WIDTH_KEY)).toBe('428')
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('620')
   })
 
   it('supports reversed arrow-key direction, Shift steps, limits, and Home reset', () => {
     render(workspace())
     const resizer = handle()
     fireEvent.keyDown(resizer, { key: 'ArrowLeft' })
-    expect(localStorage.getItem(WIDTH_KEY)).toBe('416')
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('608')
     fireEvent.keyDown(resizer, { key: 'ArrowRight', shiftKey: true })
-    expect(localStorage.getItem(WIDTH_KEY)).toBe('384')
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('576')
     for (let index = 0; index < 20; index++) {
       fireEvent.keyDown(resizer, { key: 'ArrowLeft', shiftKey: true })
     }
@@ -218,7 +260,7 @@ describe('reader resizing', () => {
     }
     expect(resizer).toHaveAttribute('aria-valuenow', '320')
     fireEvent.keyDown(resizer, { key: 'Home' })
-    expect(resizer).toHaveAttribute('aria-valuenow', '408')
+    expect(resizer).toHaveAttribute('aria-valuenow', '600')
     expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
   })
 
@@ -237,11 +279,11 @@ describe('reader resizing', () => {
     })
     expect(resizer).toHaveAttribute('aria-valuenow', '320')
     fireEvent.doubleClick(resizer)
-    expect(resizer).toHaveAttribute('aria-valuenow', '544')
+    expect(resizer).toHaveAttribute('aria-valuenow', '800')
     expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
     workspaceWidth = 1800
     act(() => notifyResize())
-    expect(resizer).toHaveAttribute('aria-valuenow', '560')
+    expect(resizer).toHaveAttribute('aria-valuenow', '900')
   })
 
   it('protects chat when the window or sidebar changes without overwriting the preference', () => {
@@ -274,11 +316,11 @@ describe('reader resizing', () => {
     rendered.rerender(workspace('expanded'))
     expect(screen.queryByRole('separator')).not.toBeInTheDocument()
     expect(capture.release).toHaveBeenCalledWith(1)
-    expect(localStorage.getItem(WIDTH_KEY)).toBe('508')
+    expect(localStorage.getItem(WIDTH_KEY)).toBe('700')
     rendered.rerender(workspace('hidden'))
     expect(screen.queryByRole('separator')).not.toBeInTheDocument()
     rendered.rerender(workspace())
-    expect(handle()).toHaveAttribute('aria-valuenow', '508')
+    expect(handle()).toHaveAttribute('aria-valuenow', '700')
     expect(handle()).toHaveAttribute('data-resizing', 'false')
   })
 
@@ -287,7 +329,7 @@ describe('reader resizing', () => {
     (stored) => {
       localStorage.setItem(WIDTH_KEY, stored)
       render(workspace())
-      expect(handle()).toHaveAttribute('aria-valuenow', '408')
+      expect(handle()).toHaveAttribute('aria-valuenow', '600')
     },
   )
 
@@ -308,9 +350,9 @@ describe('reader resizing', () => {
     const rendered = render(workspace())
     const resizer = handle()
     fireEvent.keyDown(resizer, { key: 'ArrowLeft' })
-    expect(resizer).toHaveAttribute('aria-valuenow', '416')
+    expect(resizer).toHaveAttribute('aria-valuenow', '608')
     fireEvent.doubleClick(resizer)
-    expect(resizer).toHaveAttribute('aria-valuenow', '408')
+    expect(resizer).toHaveAttribute('aria-valuenow', '600')
     const capture = mockCapture(resizer)
     act(() => {
       pointer(resizer, 'pointerdown', 800)

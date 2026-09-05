@@ -1,4 +1,5 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
+import type { KnowledgePosition } from '../src/knowledge-position'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
@@ -6,6 +7,7 @@ import type {
   KnowledgeRoot,
   ManagedSession,
   RuntimeModelOption,
+  SessionKnowledgeBinding,
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
@@ -18,6 +20,7 @@ export const BACKGROUND_SESSION_ID = 'fixture-check-links'
 export const IDLE_SESSION_ID = 'fixture-draft-summary'
 export const SUSPENDED_SESSION_ID = 'fixture-sketch-handoff'
 export const KNOWLEDGE_ROOT_ID = 'fixture-field-notes'
+export const SECOND_KNOWLEDGE_ROOT_ID = 'fixture-build-playbooks'
 export const KNOWLEDGE_FILE_PATH = 'handbook/agent-workspace.md'
 export const KNOWLEDGE_DOCUMENT_TITLE = 'Agent workspace field guide'
 export const CONTEXT_EXAMPLE = '{\n  "computer": "Studio",\n  "folder": "~/field-notes",\n  "mode": "plan"\n}\n'
@@ -284,6 +287,14 @@ export const fixtureKnowledgeRoots: KnowledgeRoot[] = [
     name: 'Field notes',
     createdAt: '2026-09-01T09:00:00.000Z',
   },
+  {
+    id: SECOND_KNOWLEDGE_ROOT_ID,
+    computerId: 'fixture-build',
+    computerName: 'Build node',
+    path: '/home/demo/workspace-checks/docs',
+    name: 'Build playbooks',
+    createdAt: '2026-09-01T09:00:00.000Z',
+  },
 ]
 
 const documents: Record<string, string> = {
@@ -443,6 +454,40 @@ export interface WorkspaceFixtureOptions {
   selectedSessionId?: string
   knowledgeMode?: 'hidden' | 'docked' | 'expanded'
   preserveStorageOnReload?: boolean
+  appearance?: 'graphite' | 'light'
+  state?: WorkspaceFixtureState
+  knowledgePositions?: Record<string, KnowledgePosition>
+  extraKnowledgeFiles?: number
+}
+
+export interface WorkspaceFixtureState {
+  roots: KnowledgeRoot[]
+  sessions: ManagedSession[]
+  bindings: Map<string, SessionKnowledgeBinding>
+  eventSockets: Set<WebSocketRoute>
+  nextRootId: number
+}
+
+export function createWorkspaceFixtureState(): WorkspaceFixtureState {
+  const roots = structuredClone(fixtureKnowledgeRoots)
+  const sessions = structuredClone(fixtureSessions)
+  return {
+    roots,
+    sessions,
+    bindings: new Map(sessions.map((session) => [
+      `${session.computerId}:${session.id}`,
+      {
+        computerId: session.computerId,
+        sessionId: session.id,
+        rootId: KNOWLEDGE_ROOT_ID,
+        root: roots[0],
+        revision: 1,
+        available: true,
+      },
+    ])),
+    eventSockets: new Set(),
+    nextRootId: 1,
+  }
 }
 
 export interface WorkspaceFixture {
@@ -487,7 +532,12 @@ export async function setupWorkspaceFixture(
   options: WorkspaceFixtureOptions,
 ): Promise<WorkspaceFixture> {
   const baseUrl = fixtureBaseUrl(options.baseUrl)
-  const sessions = structuredClone(fixtureSessions)
+  const state = options.state ?? createWorkspaceFixtureState()
+  const extraKnowledgeFiles = options.extraKnowledgeFiles ?? 0
+  if (!Number.isInteger(extraKnowledgeFiles) || extraKnowledgeFiles < 0 || extraKnowledgeFiles > 200) {
+    throw new Error('Use between 0 and 200 synthetic extra Knowledge files.')
+  }
+  const sessions = state.sessions
   const selected = sessions.find(
     (session) => session.id === (options.selectedSessionId ?? SELECTED_SESSION_ID),
   )
@@ -497,7 +547,7 @@ export async function setupWorkspaceFixture(
   const requests: WorkspaceFixture['requests'] = []
   const sockets: string[] = []
   const failures: string[] = []
-  const eventSockets = new Set<WebSocketRoute>()
+  const eventSockets = state.eventSockets
   const context = page.context()
 
   page.on('pageerror', (error) => failures.push(`Page error: ${error.message}`))
@@ -518,11 +568,12 @@ export async function setupWorkspaceFixture(
       origin: baseUrl.origin,
       preserveStorageOnReload: options.preserveStorageOnReload ?? false,
       storage: {
+        appearance: options.appearance ?? 'graphite',
         'knowledge-mode': options.knowledgeMode ?? 'docked',
         'knowledge-root': KNOWLEDGE_ROOT_ID,
         'knowledge-roots-open': true,
         'knowledge-expanded': { [KNOWLEDGE_ROOT_ID]: ['handbook'] },
-        'knowledge-session-positions': fixtureKnowledgePositions,
+        'knowledge-session-positions': options.knowledgePositions ?? fixtureKnowledgePositions,
         'computer-order': fixtureComputers.map((computer) => computer.id),
         'session-order': Object.fromEntries(
           fixtureComputers.map((computer) => [
@@ -586,7 +637,7 @@ export async function setupWorkspaceFixture(
     if (path !== '/api' && !path.startsWith('/api/')) {
       const asset =
         path === '/' ||
-        /^\/(?:src|shared|node_modules|assets|icons)\//.test(path) ||
+        /^\/(?:src|shared|node_modules|assets|icons|fonts)\//.test(path) ||
         /^\/@(?:vite|id|fs)\//.test(path) ||
         path === '/@react-refresh' ||
         /^\/(?:public\/)?(?:favicon\.ico|icon[^/]*\.(?:svg|png)|manifest\.webmanifest)$/.test(path)
@@ -599,9 +650,9 @@ export async function setupWorkspaceFixture(
     }
 
     requests.push({ method, path: `${path}${url.search}` })
-    const respond = async (body: unknown) =>
+    const respond = async (body: unknown, status = 200) =>
       route.fulfill({
-        status: 200,
+        status,
         contentType: 'application/json',
         body: JSON.stringify(body),
       })
@@ -632,18 +683,114 @@ export async function setupWorkspaceFixture(
       return
     }
     if (method === 'GET' && path === '/api/knowledge/roots') {
-      await respond({ roots: fixtureKnowledgeRoots })
+      await respond({ roots: state.roots })
+      return
+    }
+    if (method === 'POST' && path === '/api/knowledge/roots') {
+      const input = request.postDataJSON() as { computerId: string; path: string; name?: string }
+      const owner = fixtureComputers.find((computer) => computer.id === input.computerId && computer.online)
+      const allowed = input.path === '/home/demo' ||
+        sessions.some((session) => session.computerId === input.computerId && session.cwd === input.path) ||
+        state.roots.some((root) => root.computerId === input.computerId && root.path === input.path)
+      if (!owner || !allowed) {
+        await reject(route, 'Unexpected fixture Knowledge folder creation')
+        return
+      }
+      let root = state.roots.find((root) => root.computerId === input.computerId && root.path === input.path)
+      if (!root) {
+        root = {
+          id: `fixture-created-${state.nextRootId++}`,
+          computerId: owner.id,
+          computerName: owner.name,
+          path: input.path,
+          name: input.name || input.path.split('/').at(-1) || 'Workspace',
+          createdAt: FIXTURE_NOW,
+        }
+        state.roots.push(root)
+      }
+      await respond({ root, listing: fixtureKnowledgeListings['.'] }, 201)
+      return
+    }
+    const removedRoot = path.match(/^\/api\/knowledge\/roots\/([^/]+)$/)
+    if (method === 'DELETE' && removedRoot) {
+      const id = decodeURIComponent(removedRoot[1])
+      if (!state.roots.some((root) => root.id === id)) {
+        await respond({ error: 'Knowledge root not found' }, 404)
+        return
+      }
+      state.roots = state.roots.filter((root) => root.id !== id)
+      for (const binding of state.bindings.values()) {
+        if (binding.rootId === id) emit({ type: 'session.knowledge.updated',
+          computerId: binding.computerId, sessionId: binding.sessionId,
+          binding: { ...binding, available: false } })
+      }
+      await route.fulfill({ status: 204 })
       return
     }
     const knowledge = path.match(/^\/api\/knowledge\/roots\/([^/]+)\/(entries|file)$/)
-    if (method === 'GET' && knowledge?.[1] === KNOWLEDGE_ROOT_ID) {
+    if (method === 'GET' && knowledge && state.roots.some((root) => root.id === knowledge[1])) {
       const requestedPath = url.searchParams.get('path') ?? '.'
-      const body =
+      let body =
         knowledge[2] === 'entries'
           ? fixtureValue(fixtureKnowledgeListings, requestedPath)
           : fixtureValue(fixtureKnowledgeFiles, requestedPath)
+      if (knowledge[2] === 'entries' && requestedPath === 'handbook' && extraKnowledgeFiles > 0) {
+        body = {
+          ...fixtureKnowledgeListings.handbook,
+          entries: [
+            ...fixtureKnowledgeListings.handbook.entries,
+            ...Array.from({ length: extraKnowledgeFiles }, (_, index) => {
+              const name = `design-note-${String(index + 1).padStart(3, '0')}.md`
+              return { name, path: `handbook/${name}`, kind: 'markdown' as const }
+            }),
+          ],
+        }
+      }
+      const extraFile = requestedPath.match(/^handbook\/design-note-(\d{3})\.md$/)
+      if (knowledge[2] === 'file' && extraFile && Number(extraFile[1]) > 0 && Number(extraFile[1]) <= extraKnowledgeFiles) {
+        const content = `# Design note ${Number(extraFile[1])}\n\nSynthetic content for checking long Knowledge trees.\n`
+        body = {
+          name: requestedPath.split('/').at(-1)!, path: requestedPath,
+          kind: 'markdown', mimeType: 'text/markdown', content, size: Buffer.byteLength(content),
+        }
+      }
+      if (body && knowledge[1] === SECOND_KNOWLEDGE_ROOT_ID && knowledge[2] === 'file') {
+        const content = '# Build verification guide\n\n' +
+          'This document lives in Build playbooks on Build node, not in Field notes on Studio.\n\n' +
+          '## A separate reading context\n\nThe session keeps its own root, document, and draft.\n\n' +
+          '## Before a release\n\n- Confirm the owning computer.\n- Keep a reversible checkpoint.\n- Record the result.\n'
+        body = {
+          name: requestedPath.split('/').at(-1)!,
+          path: requestedPath,
+          kind: 'markdown',
+          mimeType: 'text/markdown',
+          content,
+          size: Buffer.byteLength(content),
+        }
+      }
       if (body) {
         await respond(body)
+        return
+      }
+      const directory = path.match(/^\/api\/computers\/([^/]+)\/directories$/)
+      if (method === 'GET' && directory && fixtureComputers.some((computer) => computer.id === directory[1])) {
+        const requested = url.searchParams.get('path')
+        const current = !requested || requested === '~' ? '/home/demo' : requested
+        const allowed = current === '/home/demo' ||
+          sessions.some((session) => session.computerId === directory[1] && session.cwd === current) ||
+          state.roots.some((root) => root.computerId === directory[1] && root.path === current)
+        if (!allowed) {
+          await reject(route, `Unknown fixture directory ${current}`)
+          return
+        }
+        await respond({
+          path: current,
+          parent: current === '/home/demo' ? undefined : '/home/demo',
+          directories: current === '/home/demo'
+            ? [...new Set(sessions.filter((session) => session.computerId === directory[1]).map((session) => session.cwd))]
+              .map((path) => ({ name: path.split('/').at(-1), path }))
+            : [],
+        })
         return
       }
     }
@@ -670,6 +817,36 @@ export async function setupWorkspaceFixture(
       : undefined
     if (session && match) {
       const action = match[3] ?? ''
+      if (action === '/knowledge-root' && (method === 'GET' || method === 'PUT')) {
+        const key = `${session.computerId}:${session.id}`
+        const saved = state.bindings.get(key) ?? {
+          computerId: session.computerId, sessionId: session.id,
+          rootId: null, revision: 0, available: false,
+        }
+        const current = { ...saved, available: state.roots.some((root) => root.id === saved.rootId) }
+        if (method === 'GET') {
+          await respond({ binding: current })
+          return
+        }
+        const input = request.postDataJSON() as { rootId: string | null; expectedRevision: number }
+        if (input.expectedRevision !== current.revision) {
+          await respond({ error: 'The saved root changed in another client. Review it before retrying.', binding: current }, 409)
+          return
+        }
+        const root = state.roots.find((root) => root.id === input.rootId)
+        if (input.rootId !== null && !root) {
+          await respond({ error: 'Knowledge root not found' }, 404)
+          return
+        }
+        const binding: SessionKnowledgeBinding = {
+          computerId: session.computerId, sessionId: session.id,
+          rootId: input.rootId, revision: current.revision + 1, root, available: Boolean(root),
+        }
+        state.bindings.set(key, binding)
+        emit({ type: 'session.knowledge.updated', computerId: session.computerId, sessionId: session.id, binding })
+        await respond({ binding })
+        return
+      }
       if (
         (method === 'GET' && action === '') ||
         (method === 'POST' && action === '/open')
@@ -735,8 +912,13 @@ export async function setupWorkspaceFixture(
     assertHealthy() {
       if (failures.length) throw new Error(failures.join('\n'))
     },
-    emit(event) {
-      for (const socket of eventSockets) socket.send(JSON.stringify(event))
-    },
+    emit,
+  }
+
+  function emit(event: HubEvent) {
+    if (event.type === 'session.knowledge.updated') {
+      state.bindings.set(`${event.computerId}:${event.sessionId}`, event.binding)
+    }
+    for (const socket of eventSockets) socket.send(JSON.stringify(event))
   }
 }

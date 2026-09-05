@@ -11,10 +11,65 @@ generic chat client or a second IDE. The central loop should be:
 
 **Find the work that needs you -> understand its context -> act deliberately.**
 
-This draft implements a coherent first slice of the broader polish request.
-The mockups are captures of the actual React implementation with synthetic
-data, not a separate interface that cannot be used. No provider conversation,
-private document, real machine name, or credential appears in the fixtures.
+The PR contains earlier visual proposals and captures of the implemented React
+application; those two forms of evidence are labeled separately. Application
+captures use synthetic data. No provider conversation, private document, real
+machine name, or credential appears in the fixtures.
+
+## Full-viewport workbench and session roots
+
+The implemented follow-up removes the phone sidebar's `min(86vw, 310px)` cap.
+Sessions, Knowledge files, the document reader, and the root chooser use the
+available phone width. Files have their own full-height surface instead of
+being squeezed underneath the sessions list. Back to files and returning from
+Sessions retain the tree's position, including a dense tree with many files.
+
+The phone reader combines repeated chrome into one compact document header.
+Safe-area and visual-viewport handling remain in place, and phone inputs use
+16px text without disabling zoom. Desktop reading starts with balanced panes;
+saved reader/sidebar widths and resize controls remain authoritative.
+
+The paired Graphite and Light appearances use the same type and component
+hierarchy. Graphite remains the default. A separate saved appearance preference
+does not overwrite the per-tab accent or favicon identity. Mona Sans is served
+locally from `public/fonts/MonaSans.woff2`, from `github/mona-sans` revision
+`0f7dc66ddd766605eb0e75c3f47bf9d1dd38ceca`; its SIL Open Font License is retained
+in `public/fonts/OFL.txt`. The existing Agentic mark and installed icon identity
+are preserved.
+
+### One shared catalog, one optional root per session
+
+The root chooser names the affected session, its working-folder suggestion,
+and the computer/path of every saved root. **Use for this session** saves only
+that session's association. Choosing a root does not change cwd, copy or mount
+files, start an agent, or send a prompt. Root removal is behind a separate
+impact confirmation rather than beside the everyday switch control.
+
+| State | Owner |
+| --- | --- |
+| Knowledge root catalog | Existing hub `knowledge.json`; files remain on the root's computer |
+| Root association | Additive hub `session-knowledge.json`, keyed by session computer and ID |
+| Root/folder/document position | Existing browser-local per-session state |
+| Expanded folders | Browser-local, per root |
+| Reader mode and preferred sizes | Browser workspace, unchanged by session switching |
+| Appearance | Browser preference, separate from tab-local accent |
+
+Revision-checked writes detect conflicting clients, including a change that
+arrives while a new folder is being validated. Rejected choices remain in the
+chooser for an explicit retry. A removed root keeps its last metadata as an
+unavailable association; it is never replaced silently with a convenient
+default. Session clear/replacement and missed-event lineage preserve the link,
+while explicit session deletion removes only its association.
+
+Older per-session reading positions remain usable but are not automatically
+imported into hub metadata. Explicit unlinking remains distinct from never
+having linked a root, so old browser state cannot relink it. A second client
+gets the same hub root; it restores only its own matching local document
+position, or starts at that root if it has none.
+
+The session search/filter selector is also shared with next/previous
+shortcuts. Keyboard navigation cannot open a conversation hidden by the
+displayed filter, and changing views does not rewrite custom ordering.
 
 ## Professional workspace revision
 
@@ -27,13 +82,14 @@ reference, not a reason to remove Agentic Remote's computer/provider identity.
 | --- | --- |
 | Sessions | More readable titles, quiet provider/runtime metadata, explicit status treatments, local activity times, and flatter computer groups. A new default sidebar width of 320px gives titles room; saved user widths remain respected. |
 | Ordering | Explicit Custom, Recent activity, Attention first, and Name views. Custom order is not overwritten; drag is unavailable in computed/filtered session views, and next/previous shortcuts follow the visible order. |
-| File explorer | A compact native root selector replaces stacked root cards, keeping owner/path context and selected-root removal. File-kind icons, consistent indentation, natural folder-first ordering, and branch-local refresh/retry support a real explorer rather than a bookmark list. |
+| File explorer | A compact root trigger opens a session-scoped chooser, retaining owner/path context and separating shared-root removal from selection. File-kind icons, indentation, natural folder-first ordering, and branch-local refresh/retry remain in place. |
 | Markdown | Shared Preview/Source controls in Knowledge and workspace previews, an overlay outline with proper focus behavior, a measured reading column, clearer heading/table/quote hierarchy, and explicit exact-text code copying. |
 
 The old `knowledge-roots-open` display preference is no longer read or written;
-it is left intact for rollback rather than migrated or deleted. No Knowledge
-root or session state is rewritten. Folder refresh updates the listing, not
-the document being read. Source view remains read-only.
+it is left intact for rollback rather than migrated or deleted. Existing root
+catalog and node session files are not migrated. New associations use their
+own metadata file. Folder refresh updates the listing, not the document being
+read; source view remains read-only.
 
 The browser walkthrough exercises real ordering selection and keyboard
 drag-and-drop, outline navigation, source view, and clipboard copying using
@@ -51,7 +107,7 @@ are copied into Agentic Remote.
 | [GitHub Copilot app](https://github.com/features/ai/github-app) and [session documentation](https://docs.github.com/en/copilot/how-tos/github-copilot-app/agent-sessions) | A quiet navigation hierarchy, parallel sessions, visible execution context, and secondary actions kept out of the primary workspace. | Searchable sessions grouped by their owning **computer**, visible provider/runtime labels, and a labeled session-actions disclosure. No invented repository/worktree ownership model. |
 | [Codex app introduction](https://openai.com/index/introducing-the-codex-app/) | Supervision of parallel work and switching between independent threads without losing context. | All / Needs you / Working views over existing session metadata. Filtering does not select a different session or reset its reading position. This is inspiration, not an added Codex provider. |
 | [Claude Code Desktop](https://code.claude.com/docs/en/desktop) | Environment and session context are explicit, and permission decisions remain part of the working flow. | Question, permission, waiting, and error states are named rather than encoded only by a colored dot. Existing approval, takeover, and cancellation semantics remain intact. |
-| Obsidian [workspace](https://obsidian.md/help/workspace), [tabs](https://obsidian.md/help/tabs), [outline](https://obsidian.md/help/plugins/outline), and [quick switcher](https://obsidian.md/help/plugins/quick-switcher) | Stable file navigation, persistent reading arrangements, quick retrieval, and documents with their own navigation. | Keep the existing tree in its established place, improve document typography, and add a safe document-to-draft handoff. Do not add note editing, a graph, sync, or a second Knowledge tab. |
+| Obsidian [workspace](https://obsidian.md/help/workspace), [tabs](https://obsidian.md/help/tabs), [outline](https://obsidian.md/help/plugins/outline), and [quick switcher](https://obsidian.md/help/plugins/quick-switcher) | Stable file navigation, persistent reading arrangements, quick retrieval, and documents with their own navigation. | Keep the tree in its established place and preserve a safe document-to-draft handoff. Do not add note editing, file-content synchronization, or a second Knowledge tab. |
 
 The user's reference to "Obsidia markdown" is interpreted as Obsidian.
 
@@ -101,10 +157,10 @@ Desktop: one workspace, three coordinated areas.
 +-----------------------+--------------------------------+-----------------------+
 ```
 
-Phone: reuse the same model, never squeeze the desktop split into two columns.
+Phone: full-width surfaces, never a narrowed desktop split.
 
 ```text
-Sessions drawer       Conversation           Full-width Knowledge
+Full-width sessions   Conversation           Full-width Knowledge
 +------------------+  +--------------------+ +----------------------+
 | Find a session   |  | = Session    Book :+| | Files  Knowledge  + X|
 | All / Needs you  |  | Provider / folder  | | Root / document      |
@@ -112,8 +168,8 @@ Sessions drawer       Conversation           Full-width Knowledge
 | Every computer   |->| Question / reply   | | Read the note        |
 | remains visible  |  | or conversation    | | with the existing    |
 |                  |  |                    | | tree one tap away    |
-| Existing tree    |  |--------------------| |----------------------|
-| and settings     |  | Draft and actions  |<| Read-only / Ask agent|
+| Knowledge opens |  |--------------------| |----------------------|
+| its own files   |  | Draft and actions  |<| Read-only / Add draft|
 +------------------+  +--------------------+ +----------------------+
 ```
 
@@ -191,14 +247,15 @@ background tasks, and computer identity colors.
 Computer groups are labels rather than nested cards. Provider and runtime
 badges remain above the title; folder context stays visible. Drag handles are
 quiet for a mouse but revealed on focus and remain available on touch.
-New session is a neutral action in the sidebar, leaving Send visually primary.
+New session is a compact action in the Sessions heading, leaving Send visually
+primary. Computer management remains directly reachable in the sidebar footer.
 On a phone, Send is explicitly labeled and header actions have 40px targets.
 The desktop sidebar gives sessions more space while retaining an independently
 scrollable Knowledge tree. Offline sessions cannot be suspended or resumed
 until their computer reconnects.
 Cached task counts are identified as last known while offline. Short viewports
-allow the outer drawer to scroll, keeping both navigation panes usable below
-the fixed search controls. The session-actions disclosure is bounded by the
+remain scrollable; phone session and file navigation do not compete for the
+same visible height. The session-actions disclosure is bounded by the
 conversation's actual width, including a wide sidebar and a resized reader.
 It stays above the composer on short screens; the capture checks pointer
 actionability without executing a destructive action, not only bounding boxes.
@@ -208,22 +265,27 @@ There are no invented dashboards, usage metrics, or empty decorative charts.
 
 ## Reproduce the mockups
 
-The capture uses the repository's existing Playwright dependency. Start a
-frontend-only development server in the feature worktree:
+The capture uses the repository's existing Playwright dependency. Build and
+serve static frontend assets without a proxy to a running hub:
 
 ```bash
-pnpm exec vite --host 127.0.0.1 --port 4396 --strictPort
+pnpm build
+python3 -m http.server 4397 --bind 127.0.0.1 --directory dist
 ```
 
 In another terminal, from the same worktree:
 
 ```bash
 TSX_DISABLE_CACHE=1 pnpm exec node --import tsx e2e/capture-workspace.ts \
-  --base-url http://127.0.0.1:4396 \
+  --base-url http://127.0.0.1:4397 \
   --output-dir /path/to/ux-media/after --phase after
 
 pnpm exec node --import tsx e2e/render-workspace-gifs.ts \
   --frames-dir /path/to/ux-media/after
+
+TSX_DISABLE_CACHE=1 pnpm exec node --import tsx e2e/capture-workbench-review.ts \
+  --base-url http://127.0.0.1:4397 \
+  --output /path/to/ux-media/review
 ```
 
 Chromium must be installed with its normal runtime libraries. A minimal host
@@ -234,9 +296,20 @@ The harness refuses production ports 4317/4318 and non-loopback origins,
 intercepts every API request and WebSocket, blocks service workers, and fails
 on unmocked traffic or browser errors. It uses a fresh disposable browser
 profile, fixed time, and fictional fixtures. No running provider is contacted.
-Screenshots cover 1440x900 and 390x844; additional interaction assertions cover
-360x780 and a short 390x430 viewport. Short-viewport emulation is not a claim
-of testing a physical iPhone keyboard.
+The review harness measures 320x568, 360x740, 390x844, 430x932, and 844x390
+surfaces, dense-tree scroll restoration, a full-height phone root chooser,
+root changes across sessions, a second client, both appearances, and a
+simulated keyboard/safe-top viewport. It records geometry instead of relying
+only on an absence of horizontal overflow. Server tests cover actual metadata
+persistence separately from these browser API fixtures.
+
+Short-viewport and VisualViewport simulation are not a claim of physical
+iPhone/Android keyboard or assistive-technology certification. Development and
+production rollout still follow the repository's approval and continuity gates.
+
+The review can also run with `--browser webkit`. For an existing browser in an
+isolated environment, `--executable-path` selects its executable; native library
+and resource paths remain machine-local rather than hard-coded in the repository.
 
 The GIFs are three-second-per-step walkthroughs assembled from actual captured
 interaction states, not recordings of a live fleet. Static images accompany

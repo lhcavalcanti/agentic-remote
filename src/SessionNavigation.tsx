@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState } from 'react'
+import { useRef } from 'react'
 import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ChevronDown, GripVertical, Monitor, Pause, Play, Search, X } from 'lucide-react'
+import { ChevronDown, GripVertical, Monitor, Pause, Play, Plus, Search, X } from 'lucide-react'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
@@ -14,7 +14,6 @@ import type {
 import {
   computerTone,
   executionModeName,
-  matchesSessionSearch,
   providerName,
   sessionActivityTime,
   sessionKey,
@@ -24,8 +23,7 @@ import {
   taskSnapshot,
 } from './session-presentation'
 import type { SessionPresentation, SessionSort } from './session-presentation'
-
-type SessionFilter = 'all' | 'attention' | 'working'
+import type { SessionFilter, SessionNavigationView } from './session-navigation-view'
 
 type SessionActions = {
   onSelectSession: (session: ManagedSession) => void
@@ -276,63 +274,33 @@ function SortableComputerGroup({
 }
 
 export function SessionNavigation({
-  computers,
-  sessionsByComputer,
+  view,
   backgroundTasks,
   selectedKey,
   loading,
   sort,
   onSortChange,
+  onNewSession,
+  query,
+  filter,
+  onQueryChange: setQuery,
+  onFilterChange: setFilter,
   ...actions
 }: SessionActions & {
-  computers: ComputerSummary[]
-  sessionsByComputer: Map<string, ManagedSession[]>
+  view: SessionNavigationView
   backgroundTasks: Record<string, BackgroundTaskSnapshot>
   selectedKey?: string
   loading: boolean
   sort: SessionSort
   onSortChange: (sort: SessionSort) => void
+  onNewSession: () => void
+  query: string
+  filter: SessionFilter
+  onQueryChange: (query: string) => void
+  onFilterChange: (filter: SessionFilter) => void
 }) {
-  const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
-  const [filter, setFilter] = useState<SessionFilter>('all')
-  const filtering = query.trim().length > 0 || filter !== 'all'
-  const { groups, counts, shown } = useMemo(() => {
-    const groups = computers.map((computer) => {
-      const sessions = sessionsByComputer.get(computer.id) || []
-      const classified = sessions.map((session) => ({
-        session,
-        state: sessionPresentation(
-          session,
-          taskSnapshot(backgroundTasks, session),
-          computer.online,
-        ),
-      }))
-      const visible = classified.filter(({ session, state }) =>
-        matchesSessionSearch(session, query, computer.name) &&
-          (filter === 'all' ||
-            (filter === 'attention' && state.needsAttention) ||
-            (filter === 'working' && state.working)),
-      ).map(({ session }) => session)
-      return {
-        computer,
-        sessions: visible,
-        total: sessions.length,
-        attention: classified.filter(({ state }) => state.needsAttention).length,
-        working: classified.filter(({ state }) => state.working).length,
-      }
-    })
-    const counts = groups.reduce((counts, group) => ({
-      all: counts.all + group.total,
-      attention: counts.attention + group.attention,
-      working: counts.working + group.working,
-    }), { all: 0, attention: 0, working: 0 })
-    return {
-      groups,
-      counts,
-      shown: groups.reduce((total, group) => total + group.sessions.length, 0),
-    }
-  }, [computers, sessionsByComputer, backgroundTasks, query, filter])
+  const { groups, counts, shown, filtering } = view
   const filters: { id: SessionFilter; label: string; count: number }[] = [
     { id: 'all', label: 'All', count: counts.all },
     { id: 'attention', label: 'Needs you', count: counts.attention },
@@ -348,7 +316,7 @@ export function SessionNavigation({
             <small>
             {loading
               ? 'Connecting...'
-              : `${computers.filter((computer) => computer.online).length}/${computers.length} online`}
+              : `${groups.filter(({ computer }) => computer.online).length}/${groups.length} online`}
             </small>
           </div>
           <label className="session-sort">
@@ -364,6 +332,14 @@ export function SessionNavigation({
             </select>
             <ChevronDown aria-hidden="true" size={13} />
           </label>
+          <button
+            aria-label="New session"
+            className="icon-button session-list__new"
+            onClick={onNewSession}
+            type="button"
+          >
+            <Plus aria-hidden="true" size={17} />
+          </button>
         </div>
         <div className="session-search">
           <Search aria-hidden="true" size={15} />
@@ -377,7 +353,7 @@ export function SessionNavigation({
                 setQuery('')
               }
             }}
-            placeholder="Find a session..."
+            placeholder="Search sessions"
             ref={searchRef}
             type="search"
             value={query}
@@ -433,7 +409,7 @@ export function SessionNavigation({
           <p className="sidebar-message">No sessions here.</p>
         ) : null}
         <SortableContext
-          items={computers.map((computer) => `computer:${computer.id}`)}
+          items={groups.map(({ computer }) => `computer:${computer.id}`)}
           strategy={verticalListSortingStrategy}
         >
           <div className="computer-session-groups">

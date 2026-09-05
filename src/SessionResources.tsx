@@ -160,6 +160,7 @@ function ResourceCatalog({
       ]))
     : []
   const visibleCount = tab === 'skills' ? skills.length : servers.length
+  const countLabel = visibleCount === 1 ? (tab === 'skills' ? 'skill' : 'MCP server') : label
   const scopeLabel = snapshot?.scope === 'session' ? 'Reported by this session'
     : snapshot?.scope === 'workspace' ? 'Configured for this folder'
       : snapshot?.scope === 'last-known' ? 'Last reported by this session'
@@ -237,7 +238,7 @@ function ResourceCatalog({
             {snapshot.scope === 'unavailable' ? null : (
               <>
                 <p className="session-resources__count" role="status">
-                  {visibleCount} {query ? 'matching ' : ''}{label}
+                  {visibleCount} {query ? 'matching ' : ''}{countLabel}
                   {snapshot.truncated
                     ? ` shown${snapshot.totalCount !== undefined ? ` of ${snapshot.totalCount}` : ''}`
                     : ''}

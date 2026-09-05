@@ -396,8 +396,8 @@
     "src/SessionActions.tsx": "058d8adc943e9f0dcf42cbce3c58c4b5c550b47816a98769c9c894fb2e32d563",
     "src/SessionNavigation.test.tsx": "254d542a0c1b67f834f1546c73c6013b9c4e1b92d71ee9a0f9c69aa1619c752e",
     "src/SessionNavigation.tsx": "29f3458e4f24d74c461f525ea28c74d7f51225e866a0e8b171263dda302ca7cf",
-    "src/SessionResources.test.tsx": "0a9e330f4359b039e79c5c2c925c7bc3171f54248fa6c7d8f4310c4348daa9b5",
-    "src/SessionResources.tsx": "78655b2d07a6559cb2df409e6e590641f8000595d7f0886af61d72539385effe",
+    "src/SessionResources.test.tsx": "bf25e1cb9ba969bee47a5a49fc60471b8d37bdb9b9d5e173ae0e4545a8502dad",
+    "src/SessionResources.tsx": "8691377a8ca25dd4100b0a0593ed2b5f17437af46e11bb4832db8999f4eed336",
     "src/WorkspaceFileIcon.tsx": "75fe86ced617e230b30e0100104114d95c1feb49bf2239003416376f761ee868",
     "src/accent-icon.test.ts": "cbbd1e1fd7544f5e9ab88ac50b1cdb8d7dd5b6827ad2323addfc9298ddc447bd",
     "src/accent-icon.ts": "88b76cf4ca66779fa5d1f332479dcb82b8c44ff9aa4b89927291307dc62685f3",
@@ -497,20 +497,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "937913ee374360c4b0f70d7f48a084baa5e1caeab4c2ac41868194151a7dcf73",
+    "GRAPH_REPORT.md": "d11c1330c53c11e568af1c9193aad511fe880081376f9de6a2909b486f426ec0",
     "communities.json": "7c4bae821228fa77e08995a8f37927f8ea925f452a450b5ea1b97391e92f4a62",
-    "graph.html": "d8141df038a3504731be20365a5a1dcb7e975fd3c624b4221437d22407fc7e38",
-    "graph.json": "8b0500d0d5e928d2f0aebbd78ae35b81ba7adf1811031ee871dba1e6801b43a9"
+    "graph.html": "825d2a3ce92f4a1c6cfcb6d45da3cb201317396099dfac9819f72ccde32b9fc1",
+    "graph.json": "0dd9a54ca72ec4e270235fee3fbdaa2090d30be85c9bac043cdf95d81ba36e82"
   },
   "schema_version": 1,
-  "source_commit": "16bac4b47945708655a27999cfe44a1f46e96a4d",
-  "source_fingerprint": "b4c561d41e2547defd686b0c26d482359d39a99bfdf3fdba9e137c8203d2363a",
+  "source_commit": "7e971ccd379acceaf1eb650f93f26ca06ab6b124",
+  "source_fingerprint": "3e261f7e81607c1757eecc29c8e39127b825bb9aefa07871e3b9796fcb776da6",
   "working_tree_changes": [
-    "server/remote-node-client.test.ts",
-    "server/remote-node-client.ts",
-    "server/remote-node-errors.ts",
-    "server/session-resource-routes.test.ts",
-    "server/session-resources.test.ts",
-    "server/session-resources.ts"
+    "src/SessionResources.test.tsx",
+    "src/SessionResources.tsx"
   ]
 }

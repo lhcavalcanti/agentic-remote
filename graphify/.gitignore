@@ -1,0 +1,6 @@
+.venv/
+.cache/
+cache/
+.graphify*
+__pycache__/
+*.pyc

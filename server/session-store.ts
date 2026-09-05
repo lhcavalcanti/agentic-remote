@@ -126,8 +126,13 @@ export class SessionStore {
       const raw = await readFile(this.statePath, 'utf8')
       const parsed = JSON.parse(raw) as StoredState
       if (
+        parsed === null ||
+        typeof parsed !== 'object' ||
+        Array.isArray(parsed) ||
         parsed.version !== 1 ||
+        parsed.sessions === null ||
         typeof parsed.sessions !== 'object' ||
+        Array.isArray(parsed.sessions) ||
         (parsed.retiredSessionIds !== undefined && !isSessionIdList(parsed.retiredSessionIds))
       ) {
         throw new Error('Unsupported Agentic Remote state format')

@@ -226,8 +226,8 @@
     "server/session-service.ts": "ecb10957687968570c89736a93363eeb1f3e86d5a27fb61380113ccddfa86ea1",
     "server/session-store-durability.test.ts": "d0741f8946b8979dd80c6520ce61f802e30737aa6036adc141b57f6efc300701",
     "server/session-store-providers.test.ts": "1033600fda895361b88ae38331d8b55e2c77943fd57f31bcef37035e7a956b7a",
-    "server/session-store.test.ts": "cf353b01cd06dc96a9001225d19709f1d5303b3433bc9a4b7f7384e2e1a22cb7",
-    "server/session-store.ts": "01651f8e0dfff10daf112fa2deea44fb7b3a69061255e9c7951292a14cbbb9f4",
+    "server/session-store.test.ts": "3da9e422e2bb7230918ea159fa9851387b78a1fc01e5381bbf26bff4ed5c4cde",
+    "server/session-store.ts": "44c007a0ffb13c68c4f093e29a2dc5604f48fe08d4e4e442c88661736f51fbf1",
     "server/terminal-session.test.ts": "560bcdb762da2892a4ac70a1316063bbaaa873f5da4b10a3bbdcc77a9cc57c24",
     "server/terminal-session.ts": "84b86fe7c8ec81df945531636817861486a4ac98f672f1b29172b1a4fe12d92a",
     "server/tmux-test-helpers.ts": "cfa80cfa5218c9d8d713a9805067f7a58759c0065c94ee6e6ae4fd62a5986116",
@@ -341,20 +341,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "32023f47733f625f85c1b81f11d38b4d28ecf09adfbd9087f212d215cbe360e9",
+    "GRAPH_REPORT.md": "6c379c2e623f8f8131e81d9cf1b0e613b058f70717894384a0c022e68e8570eb",
     "communities.json": "cc4096c9e8654db8116d8748fead4aef28deb896626a6e9e5dfc9a2060338ca1",
-    "graph.html": "2abedcfec69b4d79c06adc397f2ea8aff8849e29fcafa09d040f098cb938b213",
-    "graph.json": "d2837f930efaf53108b813e78a01c55257a8593f05ca2283d9abd360095b37b5"
+    "graph.html": "c36d90f86997d4643ed4d4d5b89c16dd34c8c7f54fb4244f3c9db0084f256323",
+    "graph.json": "a9ce2c5c4f93d8a92aa96f2555aba256fcd4ead597da95038fab6a7c0d9c1a06"
   },
   "schema_version": 1,
-  "source_commit": "e05b28b12b7e31d0b192783a3ef4f77b25fce037",
-  "source_fingerprint": "a24986b41e5b6b8d6f9c4fc77f8bace4c95c3fffb22b8eb967535d674c03169e",
+  "source_commit": "d18030fc68771282b0eb8990c663a28add220552",
+  "source_fingerprint": "18c09e3dcfb616a74e14cce1ca3e8478dbdf3afcc63cdc52074abd25fc787dc8",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "server/agent-service.ts",
-    "server/session-store-durability.test.ts",
-    "server/session-store-providers.test.ts",
+    "server/session-store.test.ts",
     "server/session-store.ts"
   ]
 }

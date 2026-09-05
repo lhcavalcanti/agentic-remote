@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "e05b28b12b7e31d0b192783a3ef4f77b25fce037",
+  "built_at_commit": "d18030fc68771282b0eb8990c663a28add220552",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -37272,7 +37272,7 @@
       "relation": "contains",
       "source": "server_session_store",
       "source_file": "server/session-store.ts",
-      "source_location": "L1262",
+      "source_location": "L1267",
       "target": "server_session_store_safeuploadname",
       "weight": 1.0
     },
@@ -38323,7 +38323,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L777",
+      "source_location": "L782",
       "target": "server_session_store_sessionstore_addmessage",
       "weight": 1.0
     },
@@ -38334,7 +38334,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1014",
+      "source_location": "L1019",
       "target": "server_session_store_sessionstore_applystream",
       "weight": 1.0
     },
@@ -38345,7 +38345,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L231",
+      "source_location": "L236",
       "target": "server_session_store_sessionstore_backend",
       "weight": 1.0
     },
@@ -38356,7 +38356,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1103",
+      "source_location": "L1108",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -38367,7 +38367,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L524",
+      "source_location": "L529",
       "target": "server_session_store_sessionstore_clearconversation",
       "weight": 1.0
     },
@@ -38378,7 +38378,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L681",
+      "source_location": "L686",
       "target": "server_session_store_sessionstore_clearfailedprompt",
       "weight": 1.0
     },
@@ -38389,7 +38389,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L935",
+      "source_location": "L940",
       "target": "server_session_store_sessionstore_clearpendingrequest",
       "weight": 1.0
     },
@@ -38400,7 +38400,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L721",
+      "source_location": "L726",
       "target": "server_session_store_sessionstore_clearqueuedispatch",
       "weight": 1.0
     },
@@ -38411,7 +38411,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L732",
+      "source_location": "L737",
       "target": "server_session_store_sessionstore_clearuntrackedterminaldispatch",
       "weight": 1.0
     },
@@ -38433,7 +38433,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L235",
+      "source_location": "L240",
       "target": "server_session_store_sessionstore_create",
       "weight": 1.0
     },
@@ -38444,7 +38444,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L663",
+      "source_location": "L668",
       "target": "server_session_store_sessionstore_enqueueansweringprompt",
       "weight": 1.0
     },
@@ -38455,7 +38455,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L602",
+      "source_location": "L607",
       "target": "server_session_store_sessionstore_enqueueprompt",
       "weight": 1.0
     },
@@ -38466,7 +38466,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L912",
+      "source_location": "L917",
       "target": "server_session_store_sessionstore_finishmessage",
       "weight": 1.0
     },
@@ -38477,7 +38477,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L844",
+      "source_location": "L849",
       "target": "server_session_store_sessionstore_finishtaskcompletion",
       "weight": 1.0
     },
@@ -38488,7 +38488,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L808",
+      "source_location": "L813",
       "target": "server_session_store_sessionstore_finishtoolactivity",
       "weight": 1.0
     },
@@ -38499,7 +38499,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1151",
+      "source_location": "L1156",
       "target": "server_session_store_sessionstore_flush",
       "weight": 1.0
     },
@@ -38510,7 +38510,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L189",
+      "source_location": "L194",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -38532,7 +38532,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L197",
+      "source_location": "L202",
       "target": "server_session_store_sessionstore_isretiredsession",
       "weight": 1.0
     },
@@ -38543,7 +38543,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L182",
+      "source_location": "L187",
       "target": "server_session_store_sessionstore_list",
       "weight": 1.0
     },
@@ -38554,7 +38554,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L709",
+      "source_location": "L714",
       "target": "server_session_store_sessionstore_markterminalpromptdispatched",
       "weight": 1.0
     },
@@ -38565,7 +38565,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1082",
+      "source_location": "L1087",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -38576,7 +38576,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L981",
+      "source_location": "L986",
       "target": "server_session_store_sessionstore_mutateinmemory",
       "weight": 1.0
     },
@@ -38587,7 +38587,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1169",
+      "source_location": "L1174",
       "target": "server_session_store_sessionstore_persist",
       "weight": 1.0
     },
@@ -38598,7 +38598,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L705",
+      "source_location": "L710",
       "target": "server_session_store_sessionstore_queuedispatchat",
       "weight": 1.0
     },
@@ -38609,7 +38609,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L222",
+      "source_location": "L227",
       "target": "server_session_store_sessionstore_readafterwrites",
       "weight": 1.0
     },
@@ -38620,7 +38620,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L745",
+      "source_location": "L750",
       "target": "server_session_store_sessionstore_remove",
       "weight": 1.0
     },
@@ -38631,7 +38631,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L614",
+      "source_location": "L619",
       "target": "server_session_store_sessionstore_removequeuedprompt",
       "weight": 1.0
     },
@@ -38642,7 +38642,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1254",
+      "source_location": "L1259",
       "target": "server_session_store_sessionstore_removeuploads",
       "weight": 1.0
     },
@@ -38653,7 +38653,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L470",
+      "source_location": "L475",
       "target": "server_session_store_sessionstore_renamesession",
       "weight": 1.0
     },
@@ -38664,7 +38664,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L303",
+      "source_location": "L308",
       "target": "server_session_store_sessionstore_replacemessages",
       "weight": 1.0
     },
@@ -38675,7 +38675,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L312",
+      "source_location": "L317",
       "target": "server_session_store_sessionstore_replacetranscript",
       "weight": 1.0
     },
@@ -38686,7 +38686,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L542",
+      "source_location": "L547",
       "target": "server_session_store_sessionstore_replacewithclearedsession",
       "weight": 1.0
     },
@@ -38697,7 +38697,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1074",
+      "source_location": "L1079",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -38708,7 +38708,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1050",
+      "source_location": "L1055",
       "target": "server_session_store_sessionstore_restorestreams",
       "weight": 1.0
     },
@@ -38719,7 +38719,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L211",
+      "source_location": "L216",
       "target": "server_session_store_sessionstore_retire",
       "weight": 1.0
     },
@@ -38730,7 +38730,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L201",
+      "source_location": "L206",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -38741,7 +38741,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L758",
+      "source_location": "L763",
       "target": "server_session_store_sessionstore_saveupload",
       "weight": 1.0
     },
@@ -38752,7 +38752,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L458",
+      "source_location": "L463",
       "target": "server_session_store_sessionstore_setbackend",
       "weight": 1.0
     },
@@ -38763,7 +38763,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L638",
+      "source_location": "L643",
       "target": "server_session_store_sessionstore_setfailedprompt",
       "weight": 1.0
     },
@@ -38774,7 +38774,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L897",
+      "source_location": "L902",
       "target": "server_session_store_sessionstore_setmessagecontent",
       "weight": 1.0
     },
@@ -38785,7 +38785,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L422",
+      "source_location": "L427",
       "target": "server_session_store_sessionstore_setopen",
       "weight": 1.0
     },
@@ -38796,7 +38796,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L435",
+      "source_location": "L440",
       "target": "server_session_store_sessionstore_setsuspended",
       "weight": 1.0
     },
@@ -38807,7 +38807,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L687",
+      "source_location": "L692",
       "target": "server_session_store_sessionstore_shiftqueuedprompt",
       "weight": 1.0
     },
@@ -38818,7 +38818,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L784",
+      "source_location": "L789",
       "target": "server_session_store_sessionstore_starttoolactivity",
       "weight": 1.0
     },
@@ -38829,7 +38829,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L886",
+      "source_location": "L891",
       "target": "server_session_store_sessionstore_streammessage",
       "weight": 1.0
     },
@@ -38840,7 +38840,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1057",
+      "source_location": "L1062",
       "target": "server_session_store_sessionstore_streamtarget",
       "weight": 1.0
     },
@@ -38851,7 +38851,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L378",
+      "source_location": "L383",
       "target": "server_session_store_sessionstore_syncbackends",
       "weight": 1.0
     },
@@ -38862,7 +38862,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L267",
+      "source_location": "L272",
       "target": "server_session_store_sessionstore_syncdiscovered",
       "weight": 1.0
     },
@@ -38873,7 +38873,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L357",
+      "source_location": "L362",
       "target": "server_session_store_sessionstore_syncopen",
       "weight": 1.0
     },
@@ -38884,7 +38884,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L502",
+      "source_location": "L507",
       "target": "server_session_store_sessionstore_syncworkspacemetadata",
       "weight": 1.0
     },
@@ -38895,7 +38895,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L1129",
+      "source_location": "L1134",
       "target": "server_session_store_sessionstore_takebatch",
       "weight": 1.0
     },
@@ -38906,7 +38906,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L407",
+      "source_location": "L412",
       "target": "server_session_store_sessionstore_terminalrecoverysessions",
       "weight": 1.0
     },
@@ -38917,7 +38917,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L954",
+      "source_location": "L959",
       "target": "server_session_store_sessionstore_update",
       "weight": 1.0
     },
@@ -38928,7 +38928,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L490",
+      "source_location": "L495",
       "target": "server_session_store_sessionstore_updateautomatictitle",
       "weight": 1.0
     },
@@ -38939,7 +38939,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L962",
+      "source_location": "L967",
       "target": "server_session_store_sessionstore_updateif",
       "weight": 1.0
     },
@@ -38950,7 +38950,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L923",
+      "source_location": "L928",
       "target": "server_session_store_sessionstore_updatestatus",
       "weight": 1.0
     },
@@ -38961,7 +38961,7 @@
       "relation": "method",
       "source": "server_session_store_sessionstore",
       "source_file": "server/session-store.ts",
-      "source_location": "L478",
+      "source_location": "L483",
       "target": "server_session_store_sessionstore_updateworkingdirectory",
       "weight": 1.0
     },
@@ -38973,7 +38973,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_addmessage",
       "source_file": "server/session-store.ts",
-      "source_location": "L778",
+      "source_location": "L783",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -38985,7 +38985,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_addmessage",
       "source_file": "server/session-store.ts",
-      "source_location": "L777",
+      "source_location": "L782",
       "target": "shared_contracts_chatmessage",
       "weight": 1.0
     },
@@ -38997,7 +38997,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_addmessage",
       "source_file": "server/session-store.ts",
-      "source_location": "L777",
+      "source_location": "L782",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39009,7 +39009,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_applystream",
       "source_file": "server/session-store.ts",
-      "source_location": "L1020",
+      "source_location": "L1025",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -39021,7 +39021,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_applystream",
       "source_file": "server/session-store.ts",
-      "source_location": "L1030",
+      "source_location": "L1035",
       "target": "server_session_store_sessionstore_streamtarget",
       "weight": 1.0
     },
@@ -39033,7 +39033,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_backend",
       "source_file": "server/session-store.ts",
-      "source_location": "L232",
+      "source_location": "L237",
       "target": "server_session_store_sessionstore_isretiredsession",
       "weight": 1.0
     },
@@ -39045,7 +39045,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_change",
       "source_file": "server/session-store.ts",
-      "source_location": "L1117",
+      "source_location": "L1122",
       "target": "server_session_store_pendingmutation_reject",
       "weight": 1.0
     },
@@ -39057,7 +39057,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_change",
       "source_file": "server/session-store.ts",
-      "source_location": "L1125",
+      "source_location": "L1130",
       "target": "server_session_store_sessionstore_persist",
       "weight": 1.0
     },
@@ -39069,7 +39069,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_clearconversation",
       "source_file": "server/session-store.ts",
-      "source_location": "L525",
+      "source_location": "L530",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39081,7 +39081,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_clearconversation",
       "source_file": "server/session-store.ts",
-      "source_location": "L524",
+      "source_location": "L529",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39093,7 +39093,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_clearfailedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L682",
+      "source_location": "L687",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39105,7 +39105,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_clearfailedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L681",
+      "source_location": "L686",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39117,7 +39117,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_clearpendingrequest",
       "source_file": "server/session-store.ts",
-      "source_location": "L941",
+      "source_location": "L946",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39129,7 +39129,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_clearpendingrequest",
       "source_file": "server/session-store.ts",
-      "source_location": "L935",
+      "source_location": "L940",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39141,7 +39141,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_clearpendingrequest",
       "source_file": "server/session-store.ts",
-      "source_location": "L935",
+      "source_location": "L940",
       "target": "shared_contracts_sessionstatus",
       "weight": 1.0
     },
@@ -39153,7 +39153,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_clearqueuedispatch",
       "source_file": "server/session-store.ts",
-      "source_location": "L725",
+      "source_location": "L730",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39165,7 +39165,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_clearqueuedispatch",
       "source_file": "server/session-store.ts",
-      "source_location": "L721",
+      "source_location": "L726",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39177,7 +39177,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_clearuntrackedterminaldispatch",
       "source_file": "server/session-store.ts",
-      "source_location": "L736",
+      "source_location": "L741",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39189,32 +39189,8 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_clearuntrackedterminaldispatch",
       "source_file": "server/session-store.ts",
-      "source_location": "L732",
+      "source_location": "L737",
       "target": "shared_contracts_sessiondetail",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_session_store_sessionstore_create",
-      "source_file": "server/session-store.ts",
-      "source_location": "L242",
-      "target": "server_session_store_clonesession",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_session_store_sessionstore_create",
-      "source_file": "server/session-store.ts",
-      "source_location": "L244",
-      "target": "server_session_store_issessionidlist",
       "weight": 1.0
     },
     {
@@ -39226,6 +39202,30 @@
       "source": "server_session_store_sessionstore_create",
       "source_file": "server/session-store.ts",
       "source_location": "L247",
+      "target": "server_session_store_clonesession",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_session_store_sessionstore_create",
+      "source_file": "server/session-store.ts",
+      "source_location": "L249",
+      "target": "server_session_store_issessionidlist",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_session_store_sessionstore_create",
+      "source_file": "server/session-store.ts",
+      "source_location": "L252",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -39237,7 +39237,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_create",
       "source_file": "server/session-store.ts",
-      "source_location": "L263",
+      "source_location": "L268",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -39249,7 +39249,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_create",
       "source_file": "server/session-store.ts",
-      "source_location": "L262",
+      "source_location": "L267",
       "target": "server_session_store_sessionstore_retire",
       "weight": 1.0
     },
@@ -39261,7 +39261,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_create",
       "source_file": "server/session-store.ts",
-      "source_location": "L248",
+      "source_location": "L253",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -39273,7 +39273,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_create",
       "source_file": "server/session-store.ts",
-      "source_location": "L235",
+      "source_location": "L240",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39283,21 +39283,21 @@
       "confidence_score": 1.0,
       "context": "call",
       "relation": "calls",
+      "source": "server_session_store_sessionstore_enqueueansweringprompt",
+      "source_file": "server/session-store.ts",
+      "source_location": "L673",
+      "target": "server_session_store_sessionstore_mutate",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "parameter_type",
+      "relation": "references",
       "source": "server_session_store_sessionstore_enqueueansweringprompt",
       "source_file": "server/session-store.ts",
       "source_location": "L668",
-      "target": "server_session_store_sessionstore_mutate",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "parameter_type",
-      "relation": "references",
-      "source": "server_session_store_sessionstore_enqueueansweringprompt",
-      "source_file": "server/session-store.ts",
-      "source_location": "L663",
       "target": "shared_contracts_queuedprompt",
       "weight": 1.0
     },
@@ -39309,7 +39309,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_enqueueansweringprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L663",
+      "source_location": "L668",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39319,21 +39319,21 @@
       "confidence_score": 1.0,
       "context": "call",
       "relation": "calls",
+      "source": "server_session_store_sessionstore_enqueueprompt",
+      "source_file": "server/session-store.ts",
+      "source_location": "L612",
+      "target": "server_session_store_sessionstore_mutate",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "parameter_type",
+      "relation": "references",
       "source": "server_session_store_sessionstore_enqueueprompt",
       "source_file": "server/session-store.ts",
       "source_location": "L607",
-      "target": "server_session_store_sessionstore_mutate",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "parameter_type",
-      "relation": "references",
-      "source": "server_session_store_sessionstore_enqueueprompt",
-      "source_file": "server/session-store.ts",
-      "source_location": "L602",
       "target": "shared_contracts_queuedprompt",
       "weight": 1.0
     },
@@ -39345,7 +39345,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_enqueueprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L602",
+      "source_location": "L607",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39357,7 +39357,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_finishmessage",
       "source_file": "server/session-store.ts",
-      "source_location": "L913",
+      "source_location": "L918",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39369,7 +39369,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_finishmessage",
       "source_file": "server/session-store.ts",
-      "source_location": "L912",
+      "source_location": "L917",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39381,7 +39381,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_finishtaskcompletion",
       "source_file": "server/session-store.ts",
-      "source_location": "L851",
+      "source_location": "L856",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39393,7 +39393,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_finishtaskcompletion",
       "source_file": "server/session-store.ts",
-      "source_location": "L844",
+      "source_location": "L849",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39405,7 +39405,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_finishtoolactivity",
       "source_file": "server/session-store.ts",
-      "source_location": "L822",
+      "source_location": "L827",
       "target": "server_session_store_activityduration",
       "weight": 1.0
     },
@@ -39417,7 +39417,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_finishtoolactivity",
       "source_file": "server/session-store.ts",
-      "source_location": "L828",
+      "source_location": "L833",
       "target": "server_session_store_activityresultpreview",
       "weight": 1.0
     },
@@ -39429,7 +39429,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_finishtoolactivity",
       "source_file": "server/session-store.ts",
-      "source_location": "L815",
+      "source_location": "L820",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39441,7 +39441,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_finishtoolactivity",
       "source_file": "server/session-store.ts",
-      "source_location": "L808",
+      "source_location": "L813",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39453,7 +39453,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_get",
       "source_file": "server/session-store.ts",
-      "source_location": "L194",
+      "source_location": "L199",
       "target": "server_session_store_clonesession",
       "weight": 1.0
     },
@@ -39465,7 +39465,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_get",
       "source_file": "server/session-store.ts",
-      "source_location": "L190",
+      "source_location": "L195",
       "target": "server_session_store_sessionstore_isretiredsession",
       "weight": 1.0
     },
@@ -39477,7 +39477,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_get",
       "source_file": "server/session-store.ts",
-      "source_location": "L189",
+      "source_location": "L194",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39489,7 +39489,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_initialize",
       "source_file": "server/session-store.ts",
-      "source_location": "L131",
+      "source_location": "L136",
       "target": "server_session_store_issessionidlist",
       "weight": 1.0
     },
@@ -39501,7 +39501,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_initialize",
       "source_file": "server/session-store.ts",
-      "source_location": "L141",
+      "source_location": "L146",
       "target": "server_session_store_sessionstore_persist",
       "weight": 1.0
     },
@@ -39513,7 +39513,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_initialize",
       "source_file": "server/session-store.ts",
-      "source_location": "L177",
+      "source_location": "L182",
       "target": "server_session_store_sessionstore_retire",
       "weight": 1.0
     },
@@ -39525,7 +39525,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_isretiredsession",
       "source_file": "server/session-store.ts",
-      "source_location": "L198",
+      "source_location": "L203",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -39537,7 +39537,7 @@
       "relation": "indirect_call",
       "source": "server_session_store_sessionstore_list",
       "source_file": "server/session-store.ts",
-      "source_location": "L186",
+      "source_location": "L191",
       "target": "server_session_store_clonesession",
       "weight": 1.0
     },
@@ -39549,7 +39549,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_list",
       "source_file": "server/session-store.ts",
-      "source_location": "L184",
+      "source_location": "L189",
       "target": "server_session_store_sessionstore_isretiredsession",
       "weight": 1.0
     },
@@ -39561,7 +39561,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_list",
       "source_file": "server/session-store.ts",
-      "source_location": "L182",
+      "source_location": "L187",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39573,7 +39573,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_markterminalpromptdispatched",
       "source_file": "server/session-store.ts",
-      "source_location": "L714",
+      "source_location": "L719",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39585,7 +39585,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_markterminalpromptdispatched",
       "source_file": "server/session-store.ts",
-      "source_location": "L709",
+      "source_location": "L714",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39597,7 +39597,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_mutate",
       "source_file": "server/session-store.ts",
-      "source_location": "L1087",
+      "source_location": "L1092",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -39609,7 +39609,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_mutate",
       "source_file": "server/session-store.ts",
-      "source_location": "L1093",
+      "source_location": "L1098",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -39621,7 +39621,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_mutate",
       "source_file": "server/session-store.ts",
-      "source_location": "L1089",
+      "source_location": "L1094",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -39633,7 +39633,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_mutate",
       "source_file": "server/session-store.ts",
-      "source_location": "L1082",
+      "source_location": "L1087",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39645,7 +39645,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_mutateinmemory",
       "source_file": "server/session-store.ts",
-      "source_location": "L993",
+      "source_location": "L998",
       "target": "server_session_store_sessionstore_applystream",
       "weight": 1.0
     },
@@ -39657,7 +39657,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_mutateinmemory",
       "source_file": "server/session-store.ts",
-      "source_location": "L984",
+      "source_location": "L989",
       "target": "server_session_store_sessionstore_isretiredsession",
       "weight": 1.0
     },
@@ -39669,7 +39669,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_mutateinmemory",
       "source_file": "server/session-store.ts",
-      "source_location": "L1011",
+      "source_location": "L1016",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -39681,7 +39681,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_mutateinmemory",
       "source_file": "server/session-store.ts",
-      "source_location": "L987",
+      "source_location": "L992",
       "target": "server_session_store_sessionstore_streamtarget",
       "weight": 1.0
     },
@@ -39693,7 +39693,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_mutateinmemory",
       "source_file": "server/session-store.ts",
-      "source_location": "L981",
+      "source_location": "L986",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39705,7 +39705,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_persist",
       "source_file": "server/session-store.ts",
-      "source_location": "L1193",
+      "source_location": "L1198",
       "target": "server_session_store_pendingmutation_apply",
       "weight": 1.0
     },
@@ -39717,7 +39717,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_persist",
       "source_file": "server/session-store.ts",
-      "source_location": "L1204",
+      "source_location": "L1209",
       "target": "server_session_store_pendingmutation_reject",
       "weight": 1.0
     },
@@ -39729,7 +39729,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_persist",
       "source_file": "server/session-store.ts",
-      "source_location": "L1188",
+      "source_location": "L1193",
       "target": "server_session_store_sessionstore_applystream",
       "weight": 1.0
     },
@@ -39741,7 +39741,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_persist",
       "source_file": "server/session-store.ts",
-      "source_location": "L1208",
+      "source_location": "L1213",
       "target": "server_session_store_sessionstore_restorestreams",
       "weight": 1.0
     },
@@ -39753,7 +39753,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_persist",
       "source_file": "server/session-store.ts",
-      "source_location": "L1177",
+      "source_location": "L1182",
       "target": "server_session_store_sessionstore_takebatch",
       "weight": 1.0
     },
@@ -39765,7 +39765,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_readafterwrites",
       "source_file": "server/session-store.ts",
-      "source_location": "L223",
+      "source_location": "L228",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -39777,7 +39777,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_readafterwrites",
       "source_file": "server/session-store.ts",
-      "source_location": "L227",
+      "source_location": "L232",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -39789,7 +39789,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_readafterwrites",
       "source_file": "server/session-store.ts",
-      "source_location": "L224",
+      "source_location": "L229",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -39801,7 +39801,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_readafterwrites",
       "source_file": "server/session-store.ts",
-      "source_location": "L222",
+      "source_location": "L227",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39813,8 +39813,20 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_remove",
       "source_file": "server/session-store.ts",
-      "source_location": "L746",
+      "source_location": "L751",
       "target": "server_session_store_sessionstore_change",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "server_session_store_sessionstore_remove",
+      "source_file": "server/session-store.ts",
+      "source_location": "L760",
+      "target": "server_session_store_sessionstore_removeuploads",
       "weight": 1.0
     },
     {
@@ -39826,18 +39838,6 @@
       "source": "server_session_store_sessionstore_remove",
       "source_file": "server/session-store.ts",
       "source_location": "L755",
-      "target": "server_session_store_sessionstore_removeuploads",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "server_session_store_sessionstore_remove",
-      "source_file": "server/session-store.ts",
-      "source_location": "L750",
       "target": "server_session_store_sessionstore_retire",
       "weight": 1.0
     },
@@ -39849,7 +39849,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_removequeuedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L619",
+      "source_location": "L624",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39861,7 +39861,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_removequeuedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L614",
+      "source_location": "L619",
       "target": "shared_contracts_queuedprompt",
       "weight": 1.0
     },
@@ -39873,7 +39873,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_removequeuedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L614",
+      "source_location": "L619",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39885,7 +39885,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_renamesession",
       "source_file": "server/session-store.ts",
-      "source_location": "L471",
+      "source_location": "L476",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39897,7 +39897,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_renamesession",
       "source_file": "server/session-store.ts",
-      "source_location": "L470",
+      "source_location": "L475",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39909,7 +39909,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_replacemessages",
       "source_file": "server/session-store.ts",
-      "source_location": "L307",
+      "source_location": "L312",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39921,7 +39921,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_replacemessages",
       "source_file": "server/session-store.ts",
-      "source_location": "L303",
+      "source_location": "L308",
       "target": "shared_contracts_chatmessage",
       "weight": 1.0
     },
@@ -39933,7 +39933,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_replacemessages",
       "source_file": "server/session-store.ts",
-      "source_location": "L303",
+      "source_location": "L308",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39945,7 +39945,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_replacetranscript",
       "source_file": "server/session-store.ts",
-      "source_location": "L323",
+      "source_location": "L328",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -39957,7 +39957,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_replacetranscript",
       "source_file": "server/session-store.ts",
-      "source_location": "L312",
+      "source_location": "L317",
       "target": "shared_contracts_chatmessage",
       "weight": 1.0
     },
@@ -39969,7 +39969,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_replacetranscript",
       "source_file": "server/session-store.ts",
-      "source_location": "L312",
+      "source_location": "L317",
       "target": "shared_contracts_pendinguserinput",
       "weight": 1.0
     },
@@ -39981,7 +39981,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_replacetranscript",
       "source_file": "server/session-store.ts",
-      "source_location": "L312",
+      "source_location": "L317",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -39993,7 +39993,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_replacetranscript",
       "source_file": "server/session-store.ts",
-      "source_location": "L312",
+      "source_location": "L317",
       "target": "shared_contracts_sessionruntimeinfo",
       "weight": 1.0
     },
@@ -40005,7 +40005,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_replacetranscript",
       "source_file": "server/session-store.ts",
-      "source_location": "L312",
+      "source_location": "L317",
       "target": "shared_contracts_sessionstatus",
       "weight": 1.0
     },
@@ -40017,7 +40017,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_replacewithclearedsession",
       "source_file": "server/session-store.ts",
-      "source_location": "L597",
+      "source_location": "L602",
       "target": "server_session_store_sessionreplacementcleanuperror",
       "weight": 1.0
     },
@@ -40029,7 +40029,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_replacewithclearedsession",
       "source_file": "server/session-store.ts",
-      "source_location": "L546",
+      "source_location": "L551",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -40041,7 +40041,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_replacewithclearedsession",
       "source_file": "server/session-store.ts",
-      "source_location": "L595",
+      "source_location": "L600",
       "target": "server_session_store_sessionstore_removeuploads",
       "weight": 1.0
     },
@@ -40053,7 +40053,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_replacewithclearedsession",
       "source_file": "server/session-store.ts",
-      "source_location": "L592",
+      "source_location": "L597",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -40065,7 +40065,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_replacewithclearedsession",
       "source_file": "server/session-store.ts",
-      "source_location": "L590",
+      "source_location": "L595",
       "target": "server_session_store_sessionstore_retire",
       "weight": 1.0
     },
@@ -40077,7 +40077,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_replacewithclearedsession",
       "source_file": "server/session-store.ts",
-      "source_location": "L548",
+      "source_location": "L553",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -40089,7 +40089,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_replacewithclearedsession",
       "source_file": "server/session-store.ts",
-      "source_location": "L542",
+      "source_location": "L547",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40101,7 +40101,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_requiresession",
       "source_file": "server/session-store.ts",
-      "source_location": "L1075",
+      "source_location": "L1080",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -40113,7 +40113,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_requiresession",
       "source_file": "server/session-store.ts",
-      "source_location": "L1074",
+      "source_location": "L1079",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40125,7 +40125,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_retire",
       "source_file": "server/session-store.ts",
-      "source_location": "L213",
+      "source_location": "L218",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -40137,7 +40137,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_saveupload",
       "source_file": "server/session-store.ts",
-      "source_location": "L766",
+      "source_location": "L771",
       "target": "server_session_store_safeuploadname",
       "weight": 1.0
     },
@@ -40149,7 +40149,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_saveupload",
       "source_file": "server/session-store.ts",
-      "source_location": "L763",
+      "source_location": "L768",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -40161,7 +40161,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_saveupload",
       "source_file": "server/session-store.ts",
-      "source_location": "L758",
+      "source_location": "L763",
       "target": "shared_contracts_sessionfileupload",
       "weight": 1.0
     },
@@ -40173,7 +40173,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_setbackend",
       "source_file": "server/session-store.ts",
-      "source_location": "L462",
+      "source_location": "L467",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40185,7 +40185,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_setbackend",
       "source_file": "server/session-store.ts",
-      "source_location": "L458",
+      "source_location": "L463",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40197,7 +40197,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_setfailedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L644",
+      "source_location": "L649",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40209,7 +40209,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_setfailedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L638",
+      "source_location": "L643",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40221,7 +40221,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_setmessagecontent",
       "source_file": "server/session-store.ts",
-      "source_location": "L902",
+      "source_location": "L907",
       "target": "server_session_store_sessionstore_mutateinmemory",
       "weight": 1.0
     },
@@ -40233,7 +40233,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_setmessagecontent",
       "source_file": "server/session-store.ts",
-      "source_location": "L897",
+      "source_location": "L902",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40243,21 +40243,21 @@
       "confidence_score": 1.0,
       "context": "call",
       "relation": "calls",
+      "source": "server_session_store_sessionstore_setopen",
+      "source_file": "server/session-store.ts",
+      "source_location": "L432",
+      "target": "server_session_store_sessionstore_mutate",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "generic_arg",
+      "relation": "references",
       "source": "server_session_store_sessionstore_setopen",
       "source_file": "server/session-store.ts",
       "source_location": "L427",
-      "target": "server_session_store_sessionstore_mutate",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "generic_arg",
-      "relation": "references",
-      "source": "server_session_store_sessionstore_setopen",
-      "source_file": "server/session-store.ts",
-      "source_location": "L422",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40269,7 +40269,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_setsuspended",
       "source_file": "server/session-store.ts",
-      "source_location": "L439",
+      "source_location": "L444",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40281,7 +40281,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_setsuspended",
       "source_file": "server/session-store.ts",
-      "source_location": "L435",
+      "source_location": "L440",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40293,7 +40293,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_shiftqueuedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L698",
+      "source_location": "L703",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40305,7 +40305,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_shiftqueuedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L695",
+      "source_location": "L700",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -40317,7 +40317,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_shiftqueuedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L687",
+      "source_location": "L692",
       "target": "shared_contracts_queuedprompt",
       "weight": 1.0
     },
@@ -40329,7 +40329,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_shiftqueuedprompt",
       "source_file": "server/session-store.ts",
-      "source_location": "L687",
+      "source_location": "L692",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40341,7 +40341,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_starttoolactivity",
       "source_file": "server/session-store.ts",
-      "source_location": "L792",
+      "source_location": "L797",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40353,7 +40353,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_starttoolactivity",
       "source_file": "server/session-store.ts",
-      "source_location": "L784",
+      "source_location": "L789",
       "target": "shared_contracts_activitykind",
       "weight": 1.0
     },
@@ -40365,7 +40365,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_starttoolactivity",
       "source_file": "server/session-store.ts",
-      "source_location": "L784",
+      "source_location": "L789",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40377,7 +40377,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_streammessage",
       "source_file": "server/session-store.ts",
-      "source_location": "L887",
+      "source_location": "L892",
       "target": "server_session_store_sessionstore_mutateinmemory",
       "weight": 1.0
     },
@@ -40389,7 +40389,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_streammessage",
       "source_file": "server/session-store.ts",
-      "source_location": "L886",
+      "source_location": "L891",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40401,7 +40401,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_streamtarget",
       "source_file": "server/session-store.ts",
-      "source_location": "L1063",
+      "source_location": "L1068",
       "target": "server_session_store_sessionstore_get",
       "weight": 1.0
     },
@@ -40413,7 +40413,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_streamtarget",
       "source_file": "server/session-store.ts",
-      "source_location": "L1057",
+      "source_location": "L1062",
       "target": "shared_contracts_chatmessage",
       "weight": 1.0
     },
@@ -40425,7 +40425,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_syncbackends",
       "source_file": "server/session-store.ts",
-      "source_location": "L384",
+      "source_location": "L389",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -40437,7 +40437,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_syncbackends",
       "source_file": "server/session-store.ts",
-      "source_location": "L386",
+      "source_location": "L391",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -40449,7 +40449,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_syncdiscovered",
       "source_file": "server/session-store.ts",
-      "source_location": "L268",
+      "source_location": "L273",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -40461,7 +40461,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_syncdiscovered",
       "source_file": "server/session-store.ts",
-      "source_location": "L270",
+      "source_location": "L275",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -40473,7 +40473,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_syncopen",
       "source_file": "server/session-store.ts",
-      "source_location": "L359",
+      "source_location": "L364",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -40485,7 +40485,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_syncopen",
       "source_file": "server/session-store.ts",
-      "source_location": "L361",
+      "source_location": "L366",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -40497,7 +40497,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_syncworkspacemetadata",
       "source_file": "server/session-store.ts",
-      "source_location": "L506",
+      "source_location": "L511",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40509,7 +40509,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_syncworkspacemetadata",
       "source_file": "server/session-store.ts",
-      "source_location": "L502",
+      "source_location": "L507",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40521,7 +40521,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_takebatch",
       "source_file": "server/session-store.ts",
-      "source_location": "L1143",
+      "source_location": "L1148",
       "target": "server_session_store_sessionstore_persist",
       "weight": 1.0
     },
@@ -40533,7 +40533,7 @@
       "relation": "indirect_call",
       "source": "server_session_store_sessionstore_terminalrecoverysessions",
       "source_file": "server/session-store.ts",
-      "source_location": "L419",
+      "source_location": "L424",
       "target": "server_session_store_clonesession",
       "weight": 1.0
     },
@@ -40545,7 +40545,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_terminalrecoverysessions",
       "source_file": "server/session-store.ts",
-      "source_location": "L411",
+      "source_location": "L416",
       "target": "server_session_store_sessionstore_isretiredsession",
       "weight": 1.0
     },
@@ -40557,7 +40557,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_terminalrecoverysessions",
       "source_file": "server/session-store.ts",
-      "source_location": "L407",
+      "source_location": "L412",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40569,7 +40569,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_update",
       "source_file": "server/session-store.ts",
-      "source_location": "L958",
+      "source_location": "L963",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40581,7 +40581,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_update",
       "source_file": "server/session-store.ts",
-      "source_location": "L954",
+      "source_location": "L959",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40591,21 +40591,21 @@
       "confidence_score": 1.0,
       "context": "call",
       "relation": "calls",
+      "source": "server_session_store_sessionstore_updateautomatictitle",
+      "source_file": "server/session-store.ts",
+      "source_location": "L500",
+      "target": "server_session_store_sessionstore_mutate",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "generic_arg",
+      "relation": "references",
       "source": "server_session_store_sessionstore_updateautomatictitle",
       "source_file": "server/session-store.ts",
       "source_location": "L495",
-      "target": "server_session_store_sessionstore_mutate",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "generic_arg",
-      "relation": "references",
-      "source": "server_session_store_sessionstore_updateautomatictitle",
-      "source_file": "server/session-store.ts",
-      "source_location": "L490",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40617,7 +40617,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_updateif",
       "source_file": "server/session-store.ts",
-      "source_location": "L966",
+      "source_location": "L971",
       "target": "server_session_store_sessionstore_change",
       "weight": 1.0
     },
@@ -40629,7 +40629,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_updateif",
       "source_file": "server/session-store.ts",
-      "source_location": "L977",
+      "source_location": "L982",
       "target": "server_session_store_sessionstore_requiresession",
       "weight": 1.0
     },
@@ -40641,7 +40641,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_updateif",
       "source_file": "server/session-store.ts",
-      "source_location": "L968",
+      "source_location": "L973",
       "target": "server_session_store_sessionstore_retiredids",
       "weight": 1.0
     },
@@ -40653,7 +40653,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_updateif",
       "source_file": "server/session-store.ts",
-      "source_location": "L962",
+      "source_location": "L967",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40665,7 +40665,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_updatestatus",
       "source_file": "server/session-store.ts",
-      "source_location": "L928",
+      "source_location": "L933",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40677,7 +40677,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_updatestatus",
       "source_file": "server/session-store.ts",
-      "source_location": "L923",
+      "source_location": "L928",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -40689,7 +40689,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_updatestatus",
       "source_file": "server/session-store.ts",
-      "source_location": "L923",
+      "source_location": "L928",
       "target": "shared_contracts_sessionstatus",
       "weight": 1.0
     },
@@ -40701,7 +40701,7 @@
       "relation": "calls",
       "source": "server_session_store_sessionstore_updateworkingdirectory",
       "source_file": "server/session-store.ts",
-      "source_location": "L483",
+      "source_location": "L488",
       "target": "server_session_store_sessionstore_mutate",
       "weight": 1.0
     },
@@ -40713,7 +40713,7 @@
       "relation": "references",
       "source": "server_session_store_sessionstore_updateworkingdirectory",
       "source_file": "server/session-store.ts",
-      "source_location": "L478",
+      "source_location": "L483",
       "target": "shared_contracts_sessiondetail",
       "weight": 1.0
     },
@@ -78569,7 +78569,7 @@
       "label": "safeUploadName()",
       "norm_label": "safeuploadname()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1262"
+      "source_location": "L1267"
     },
     {
       "_callable": true,
@@ -78632,7 +78632,7 @@
       "label": ".addMessage()",
       "norm_label": ".addmessage()",
       "source_file": "server/session-store.ts",
-      "source_location": "L777"
+      "source_location": "L782"
     },
     {
       "_callable": true,
@@ -78644,7 +78644,7 @@
       "label": ".applyStream()",
       "norm_label": ".applystream()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1014"
+      "source_location": "L1019"
     },
     {
       "_callable": true,
@@ -78656,7 +78656,7 @@
       "label": ".backend()",
       "norm_label": ".backend()",
       "source_file": "server/session-store.ts",
-      "source_location": "L231"
+      "source_location": "L236"
     },
     {
       "_callable": true,
@@ -78668,7 +78668,7 @@
       "label": ".change()",
       "norm_label": ".change()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1103"
+      "source_location": "L1108"
     },
     {
       "_callable": true,
@@ -78680,7 +78680,7 @@
       "label": ".clearConversation()",
       "norm_label": ".clearconversation()",
       "source_file": "server/session-store.ts",
-      "source_location": "L524"
+      "source_location": "L529"
     },
     {
       "_callable": true,
@@ -78692,7 +78692,7 @@
       "label": ".clearFailedPrompt()",
       "norm_label": ".clearfailedprompt()",
       "source_file": "server/session-store.ts",
-      "source_location": "L681"
+      "source_location": "L686"
     },
     {
       "_callable": true,
@@ -78704,7 +78704,7 @@
       "label": ".clearPendingRequest()",
       "norm_label": ".clearpendingrequest()",
       "source_file": "server/session-store.ts",
-      "source_location": "L935"
+      "source_location": "L940"
     },
     {
       "_callable": true,
@@ -78716,7 +78716,7 @@
       "label": ".clearQueueDispatch()",
       "norm_label": ".clearqueuedispatch()",
       "source_file": "server/session-store.ts",
-      "source_location": "L721"
+      "source_location": "L726"
     },
     {
       "_callable": true,
@@ -78728,7 +78728,7 @@
       "label": ".clearUntrackedTerminalDispatch()",
       "norm_label": ".clearuntrackedterminaldispatch()",
       "source_file": "server/session-store.ts",
-      "source_location": "L732"
+      "source_location": "L737"
     },
     {
       "_callable": true,
@@ -78752,7 +78752,7 @@
       "label": ".create()",
       "norm_label": ".create()",
       "source_file": "server/session-store.ts",
-      "source_location": "L235"
+      "source_location": "L240"
     },
     {
       "_callable": true,
@@ -78764,7 +78764,7 @@
       "label": ".enqueueAnsweringPrompt()",
       "norm_label": ".enqueueansweringprompt()",
       "source_file": "server/session-store.ts",
-      "source_location": "L663"
+      "source_location": "L668"
     },
     {
       "_callable": true,
@@ -78776,7 +78776,7 @@
       "label": ".enqueuePrompt()",
       "norm_label": ".enqueueprompt()",
       "source_file": "server/session-store.ts",
-      "source_location": "L602"
+      "source_location": "L607"
     },
     {
       "_callable": true,
@@ -78788,7 +78788,7 @@
       "label": ".finishMessage()",
       "norm_label": ".finishmessage()",
       "source_file": "server/session-store.ts",
-      "source_location": "L912"
+      "source_location": "L917"
     },
     {
       "_callable": true,
@@ -78800,7 +78800,7 @@
       "label": ".finishTaskCompletion()",
       "norm_label": ".finishtaskcompletion()",
       "source_file": "server/session-store.ts",
-      "source_location": "L844"
+      "source_location": "L849"
     },
     {
       "_callable": true,
@@ -78812,7 +78812,7 @@
       "label": ".finishToolActivity()",
       "norm_label": ".finishtoolactivity()",
       "source_file": "server/session-store.ts",
-      "source_location": "L808"
+      "source_location": "L813"
     },
     {
       "_callable": true,
@@ -78824,7 +78824,7 @@
       "label": ".flush()",
       "norm_label": ".flush()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1151"
+      "source_location": "L1156"
     },
     {
       "_callable": true,
@@ -78836,7 +78836,7 @@
       "label": ".get()",
       "norm_label": ".get()",
       "source_file": "server/session-store.ts",
-      "source_location": "L189"
+      "source_location": "L194"
     },
     {
       "_callable": true,
@@ -78860,7 +78860,7 @@
       "label": ".isRetiredSession()",
       "norm_label": ".isretiredsession()",
       "source_file": "server/session-store.ts",
-      "source_location": "L197"
+      "source_location": "L202"
     },
     {
       "_callable": true,
@@ -78872,7 +78872,7 @@
       "label": ".list()",
       "norm_label": ".list()",
       "source_file": "server/session-store.ts",
-      "source_location": "L182"
+      "source_location": "L187"
     },
     {
       "_callable": true,
@@ -78884,7 +78884,7 @@
       "label": ".markTerminalPromptDispatched()",
       "norm_label": ".markterminalpromptdispatched()",
       "source_file": "server/session-store.ts",
-      "source_location": "L709"
+      "source_location": "L714"
     },
     {
       "_callable": true,
@@ -78896,7 +78896,7 @@
       "label": ".mutate()",
       "norm_label": ".mutate()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1082"
+      "source_location": "L1087"
     },
     {
       "_callable": true,
@@ -78908,7 +78908,7 @@
       "label": ".mutateInMemory()",
       "norm_label": ".mutateinmemory()",
       "source_file": "server/session-store.ts",
-      "source_location": "L981"
+      "source_location": "L986"
     },
     {
       "_callable": true,
@@ -78920,7 +78920,7 @@
       "label": ".persist()",
       "norm_label": ".persist()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1169"
+      "source_location": "L1174"
     },
     {
       "_callable": true,
@@ -78932,7 +78932,7 @@
       "label": ".queueDispatchAt()",
       "norm_label": ".queuedispatchat()",
       "source_file": "server/session-store.ts",
-      "source_location": "L705"
+      "source_location": "L710"
     },
     {
       "_callable": true,
@@ -78944,7 +78944,7 @@
       "label": ".readAfterWrites()",
       "norm_label": ".readafterwrites()",
       "source_file": "server/session-store.ts",
-      "source_location": "L222"
+      "source_location": "L227"
     },
     {
       "_callable": true,
@@ -78956,7 +78956,7 @@
       "label": ".remove()",
       "norm_label": ".remove()",
       "source_file": "server/session-store.ts",
-      "source_location": "L745"
+      "source_location": "L750"
     },
     {
       "_callable": true,
@@ -78968,7 +78968,7 @@
       "label": ".removeQueuedPrompt()",
       "norm_label": ".removequeuedprompt()",
       "source_file": "server/session-store.ts",
-      "source_location": "L614"
+      "source_location": "L619"
     },
     {
       "_callable": true,
@@ -78980,7 +78980,7 @@
       "label": ".removeUploads()",
       "norm_label": ".removeuploads()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1254"
+      "source_location": "L1259"
     },
     {
       "_callable": true,
@@ -78992,7 +78992,7 @@
       "label": ".renameSession()",
       "norm_label": ".renamesession()",
       "source_file": "server/session-store.ts",
-      "source_location": "L470"
+      "source_location": "L475"
     },
     {
       "_callable": true,
@@ -79004,7 +79004,7 @@
       "label": ".replaceMessages()",
       "norm_label": ".replacemessages()",
       "source_file": "server/session-store.ts",
-      "source_location": "L303"
+      "source_location": "L308"
     },
     {
       "_callable": true,
@@ -79016,7 +79016,7 @@
       "label": ".replaceTranscript()",
       "norm_label": ".replacetranscript()",
       "source_file": "server/session-store.ts",
-      "source_location": "L312"
+      "source_location": "L317"
     },
     {
       "_callable": true,
@@ -79028,7 +79028,7 @@
       "label": ".replaceWithClearedSession()",
       "norm_label": ".replacewithclearedsession()",
       "source_file": "server/session-store.ts",
-      "source_location": "L542"
+      "source_location": "L547"
     },
     {
       "_callable": true,
@@ -79040,7 +79040,7 @@
       "label": ".requireSession()",
       "norm_label": ".requiresession()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1074"
+      "source_location": "L1079"
     },
     {
       "_callable": true,
@@ -79052,7 +79052,7 @@
       "label": ".restoreStreams()",
       "norm_label": ".restorestreams()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1050"
+      "source_location": "L1055"
     },
     {
       "_callable": true,
@@ -79064,7 +79064,7 @@
       "label": ".retire()",
       "norm_label": ".retire()",
       "source_file": "server/session-store.ts",
-      "source_location": "L211"
+      "source_location": "L216"
     },
     {
       "_callable": true,
@@ -79076,7 +79076,7 @@
       "label": ".retiredIds()",
       "norm_label": ".retiredids()",
       "source_file": "server/session-store.ts",
-      "source_location": "L201"
+      "source_location": "L206"
     },
     {
       "_callable": true,
@@ -79088,7 +79088,7 @@
       "label": ".saveUpload()",
       "norm_label": ".saveupload()",
       "source_file": "server/session-store.ts",
-      "source_location": "L758"
+      "source_location": "L763"
     },
     {
       "_callable": true,
@@ -79100,7 +79100,7 @@
       "label": ".setBackend()",
       "norm_label": ".setbackend()",
       "source_file": "server/session-store.ts",
-      "source_location": "L458"
+      "source_location": "L463"
     },
     {
       "_callable": true,
@@ -79112,7 +79112,7 @@
       "label": ".setFailedPrompt()",
       "norm_label": ".setfailedprompt()",
       "source_file": "server/session-store.ts",
-      "source_location": "L638"
+      "source_location": "L643"
     },
     {
       "_callable": true,
@@ -79124,7 +79124,7 @@
       "label": ".setMessageContent()",
       "norm_label": ".setmessagecontent()",
       "source_file": "server/session-store.ts",
-      "source_location": "L897"
+      "source_location": "L902"
     },
     {
       "_callable": true,
@@ -79136,7 +79136,7 @@
       "label": ".setOpen()",
       "norm_label": ".setopen()",
       "source_file": "server/session-store.ts",
-      "source_location": "L422"
+      "source_location": "L427"
     },
     {
       "_callable": true,
@@ -79148,7 +79148,7 @@
       "label": ".setSuspended()",
       "norm_label": ".setsuspended()",
       "source_file": "server/session-store.ts",
-      "source_location": "L435"
+      "source_location": "L440"
     },
     {
       "_callable": true,
@@ -79160,7 +79160,7 @@
       "label": ".shiftQueuedPrompt()",
       "norm_label": ".shiftqueuedprompt()",
       "source_file": "server/session-store.ts",
-      "source_location": "L687"
+      "source_location": "L692"
     },
     {
       "_callable": true,
@@ -79172,7 +79172,7 @@
       "label": ".startToolActivity()",
       "norm_label": ".starttoolactivity()",
       "source_file": "server/session-store.ts",
-      "source_location": "L784"
+      "source_location": "L789"
     },
     {
       "_callable": true,
@@ -79184,7 +79184,7 @@
       "label": ".streamMessage()",
       "norm_label": ".streammessage()",
       "source_file": "server/session-store.ts",
-      "source_location": "L886"
+      "source_location": "L891"
     },
     {
       "_callable": true,
@@ -79196,7 +79196,7 @@
       "label": ".streamTarget()",
       "norm_label": ".streamtarget()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1057"
+      "source_location": "L1062"
     },
     {
       "_callable": true,
@@ -79208,7 +79208,7 @@
       "label": ".syncBackends()",
       "norm_label": ".syncbackends()",
       "source_file": "server/session-store.ts",
-      "source_location": "L378"
+      "source_location": "L383"
     },
     {
       "_callable": true,
@@ -79220,7 +79220,7 @@
       "label": ".syncDiscovered()",
       "norm_label": ".syncdiscovered()",
       "source_file": "server/session-store.ts",
-      "source_location": "L267"
+      "source_location": "L272"
     },
     {
       "_callable": true,
@@ -79232,7 +79232,7 @@
       "label": ".syncOpen()",
       "norm_label": ".syncopen()",
       "source_file": "server/session-store.ts",
-      "source_location": "L357"
+      "source_location": "L362"
     },
     {
       "_callable": true,
@@ -79244,7 +79244,7 @@
       "label": ".syncWorkspaceMetadata()",
       "norm_label": ".syncworkspacemetadata()",
       "source_file": "server/session-store.ts",
-      "source_location": "L502"
+      "source_location": "L507"
     },
     {
       "_callable": true,
@@ -79256,7 +79256,7 @@
       "label": ".takeBatch()",
       "norm_label": ".takebatch()",
       "source_file": "server/session-store.ts",
-      "source_location": "L1129"
+      "source_location": "L1134"
     },
     {
       "_callable": true,
@@ -79268,7 +79268,7 @@
       "label": ".terminalRecoverySessions()",
       "norm_label": ".terminalrecoverysessions()",
       "source_file": "server/session-store.ts",
-      "source_location": "L407"
+      "source_location": "L412"
     },
     {
       "_callable": true,
@@ -79280,7 +79280,7 @@
       "label": ".update()",
       "norm_label": ".update()",
       "source_file": "server/session-store.ts",
-      "source_location": "L954"
+      "source_location": "L959"
     },
     {
       "_callable": true,
@@ -79292,7 +79292,7 @@
       "label": ".updateAutomaticTitle()",
       "norm_label": ".updateautomatictitle()",
       "source_file": "server/session-store.ts",
-      "source_location": "L490"
+      "source_location": "L495"
     },
     {
       "_callable": true,
@@ -79304,7 +79304,7 @@
       "label": ".updateIf()",
       "norm_label": ".updateif()",
       "source_file": "server/session-store.ts",
-      "source_location": "L962"
+      "source_location": "L967"
     },
     {
       "_callable": true,
@@ -79316,7 +79316,7 @@
       "label": ".updateStatus()",
       "norm_label": ".updatestatus()",
       "source_file": "server/session-store.ts",
-      "source_location": "L923"
+      "source_location": "L928"
     },
     {
       "_callable": true,
@@ -79328,7 +79328,7 @@
       "label": ".updateWorkingDirectory()",
       "norm_label": ".updateworkingdirectory()",
       "source_file": "server/session-store.ts",
-      "source_location": "L478"
+      "source_location": "L483"
     },
     {
       "_callable": true,

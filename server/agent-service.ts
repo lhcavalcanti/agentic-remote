@@ -84,6 +84,7 @@ import {
 import {
   isTerminalAgentWorking,
   isTerminalOverlay,
+  isTerminalSessionInUsePrompt,
   terminalCommandOutput,
   TmuxTerminalSessionController,
   type TerminalFormStep,
@@ -3327,7 +3328,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // them no better off than the silent loss this replaces.
         throw Object.assign(
           new Error(
-            'The terminal is showing a full-screen view. Close it there, then send this again.',
+            isTerminalSessionInUsePrompt(pane)
+              ? 'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
+              : 'The terminal is showing a full-screen view. Close it there, then send this again.',
           ),
           { statusCode: 409 },
         )

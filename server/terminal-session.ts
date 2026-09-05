@@ -838,12 +838,19 @@ export class TmuxTerminalSessionController
       if (!target) {
         return false
       }
-      await resumeSessionIfPrompted(target)
       // What the pane already holds is not evidence that this message
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
       const paneBeforePaste = await capturePane(target)
+      if (isTerminalSessionInUsePrompt(paneBeforePaste)) {
+        throw Object.assign(
+          new Error(
+            'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.',
+          ),
+          { statusCode: 409 },
+        )
+      }
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -1195,37 +1202,7 @@ interface TmuxSessionInfo {
 }
 
 export function isTerminalSessionInUsePrompt(pane: string): boolean {
-  return (
-    /Session in use/i.test(pane) &&
-    /1\.\s+Resume anyway/i.test(pane) &&
-    /2\.\s+Go back/i.test(pane)
-  )
-}
-
-async function resumeSessionIfPrompted(target: string): Promise<void> {
-  const capture = async () =>
-    (
-      await execFileAsync('tmux', [
-        'capture-pane',
-        '-p',
-        '-t',
-        target,
-        '-S',
-        '-80',
-      ])
-    ).stdout
-
-  if (!isTerminalSessionInUsePrompt(await capture())) {
-    return
-  }
-  await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    if (!isTerminalSessionInUsePrompt(await capture())) {
-      return
-    }
-  }
-  throw new Error('Copilot session-use confirmation did not close')
+  return Boolean(parseTerminalSessionInUse(pane))
 }
 
 function cleanDialogLine(line: string): string {
@@ -1668,6 +1645,10 @@ export function parseTerminalUserInput(
 export function parseTerminalPermission(
   pane: string,
 ): PendingPermission | undefined {
+  const sessionInUse = parseTerminalSessionInUse(pane)
+  if (sessionInUse) {
+    return sessionInUse
+  }
   const folderTrust = parseTerminalFolderTrust(pane)
   if (folderTrust) {
     return folderTrust
@@ -1742,6 +1723,43 @@ export function parseTerminalPermission(
     options: [
       { optionId: 'terminal:allow', name: 'Yes', kind: 'allow_once' },
       { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+    ],
+  }
+}
+
+function parseTerminalSessionInUse(pane: string): PendingPermission | undefined {
+  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  const header = lines.findLastIndex((line) => line === 'Session in use')
+  if (header < 0) {
+    return undefined
+  }
+  const dialog = lines.slice(header + 1)
+  const choices = dialog.flatMap((line) => {
+    const choice = /^(?:❯\s*)?(\d+)\.\s+(.+)$/u.exec(line)
+    return choice ? [{ index: Number(choice[1]), label: choice[2] }] : []
+  })
+  if (
+    !/in use by another CLI or application/.test(dialog.join(' ')) ||
+    choices.length !== 2 ||
+    choices[0].index !== 1 || choices[0].label !== 'Resume anyway' ||
+    choices[1].index !== 2 || choices[1].label !== 'Go back (Esc)'
+  ) {
+    return undefined
+  }
+  // Relative activity times and the highlighted row can change while the
+  // reader decides. The session-scoped action and option order stay the same.
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify({ kind: 'session-in-use', choices }))
+    .digest('hex')
+    .slice(0, 24)
+  return {
+    requestId: `terminal-permission:${fingerprint}`,
+    title: 'Session in use. Resuming here may conflict with another CLI or application.',
+    kind: 'terminal',
+    choiceCount: 2,
+    options: [
+      { optionId: 'terminal:allow', name: 'Resume anyway', kind: 'allow_once' },
+      { optionId: 'terminal:stop', name: 'Go back', kind: 'reject_once' },
     ],
   }
 }

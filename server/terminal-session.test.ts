@@ -39,6 +39,17 @@ const directories: string[] = []
 const tmuxSessions: string[] = []
 let tmuxRoot = ''
 
+const sessionInUsePane = [
+  '╭──────────────────────────────────────────────────────────────────────╮',
+  '│ Session in use                                                       │',
+  '│ This session was last active just now and appears to be in use by     │',
+  '│ another CLI or application. Resuming it here may cause conflicts.     │',
+  '│ ❯ 1. Resume anyway                                                   │',
+  '│   2. Go back (Esc)                                                    │',
+  '│ ↑/↓ to navigate · enter to select · esc to cancel                     │',
+  '╰──────────────────────────────────────────────────────────────────────╯',
+].join('\n')
+
 const folderTrustPane = [
   '╭────────────────────────────────────────────────────────────────────────╮',
   '│ Confirm folder trust                                                   │',
@@ -90,6 +101,118 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it('exposes session-use warnings without approving a concurrent takeover', () => {
+    const permission = parseTerminalPermission(sessionInUsePane)
+    expect(permission).toMatchObject({
+      title: expect.stringContaining('may conflict'),
+      choiceCount: 2,
+      options: [
+        { optionId: 'terminal:allow', name: 'Resume anyway', kind: 'allow_once' },
+        { optionId: 'terminal:stop', name: 'Go back', kind: 'reject_once' },
+      ],
+    })
+    expect(isTerminalSessionInUsePrompt(sessionInUsePane)).toBe(true)
+    expect(parseTerminalPermission(sessionInUsePane
+      .replace('just now', 'a minute ago')
+      .replace('❯ 1.', '  1.')
+      .replace('  2.', '❯ 2.'))?.requestId).toBe(permission?.requestId)
+    expect(parseTerminalPermission(
+      sessionInUsePane.replace('1. Resume anyway', '1. Delete session'),
+    )).toBeUndefined()
+  })
+
+  it('ignores a prior session-use confirmation above the active composer', () => {
+    const pane = [
+      sessionInUsePane,
+      '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      '┃ Unsaved draft',
+      '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' ← open sidebar · / commands · tab next tab',
+    ].join('\n')
+    expect(isTerminalSessionInUsePrompt(pane)).toBe(false)
+    expect(parseTerminalPermission(pane)).toBeUndefined()
+    expect(isTerminalOverlay(pane)).toBe(false)
+  })
+
+  it.each(['terminal:allow', 'terminal:stop'])(
+    'delivers only the explicit %s decision to the session-use confirmation',
+    async (optionId) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'session-use-test-'))
+      directories.push(directory)
+      const executable = path.join(directory, 'copilot-confirm.mjs')
+      const output = path.join(directory, 'decision.json')
+      const sessionId = randomUUID()
+      await writeFile(output, '')
+      await writeFile(executable, `
+import { writeFileSync } from 'node:fs'
+let selected = 1
+let pending = ''
+function finish(decision) {
+  writeFileSync(${JSON.stringify(output)}, JSON.stringify({ decision }))
+  process.stdout.write('\\x1b[2J\\x1b[HReady\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
+}
+process.stdin.setRawMode(true)
+process.stdin.on('data', (data) => {
+  pending += data.toString()
+  while (pending) {
+    if (pending[0] === '\\x1b') {
+      if (pending.length < 3) {
+        setTimeout(() => {
+          if (pending === '\\x1b') { pending = ''; finish('back') }
+        }, 25)
+        return
+      }
+      selected = pending[2] === 'A' ? Math.max(0, selected - 1) : Math.min(1, selected + 1)
+      pending = pending.slice(3)
+    } else if (pending[0] === '\\r' || pending[0] === '\\n') {
+      pending = pending.slice(1)
+      finish(selected === 0 ? 'resume' : 'back')
+    } else {
+      finish('unexpected text')
+      pending = ''
+    }
+  }
+})
+process.stdout.write(${JSON.stringify(sessionInUsePane.replace('❯ 1.', '  1.').replace('  2.', '❯ 2.'))}.replaceAll('\\n', '\\r\\n'))
+`)
+      const tmuxSession = `agentic-session-use-${process.pid}`
+      tmuxSessions.push(tmuxSession)
+      await execFileAsync('tmux', [
+        'new-session', '-d', '-s', tmuxSession,
+        process.execPath, executable, '--session-id', sessionId,
+      ])
+      const panePid = (await execFileAsync('tmux', [
+        'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+      ])).stdout.trim()
+      await waitForProcessCommand(Number(panePid), [executable])
+      const copilotHome = path.join(directory, 'copilot-home')
+      const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+      await mkdir(sessionDirectory, { recursive: true })
+      await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+      vi.stubEnv('COPILOT_HOME', copilotHome)
+      const controller = new TmuxTerminalSessionController()
+      const request = await eventually(
+        () => controller.pendingPermission(sessionId),
+        (value) => Boolean(value),
+      )
+      if (!request) throw new Error('Session-use prompt was not detected')
+      await expect(controller.send(sessionId, 'Do not paste this', false))
+        .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('confirmation') })
+      expect(await readFile(output, 'utf8')).toBe('')
+      await expect(controller.replyPermission(
+        sessionId, { ...request, requestId: 'stale-request' }, optionId,
+      )).rejects.toThrow('no longer active')
+      expect(await readFile(output, 'utf8')).toBe('')
+
+      expect(await controller.replyPermission(sessionId, request, optionId)).toBe(true)
+      const decision = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
+      expect(JSON.parse(decision)).toEqual({
+        decision: optionId === 'terminal:allow' ? 'resume' : 'back',
+      })
+      expect(isTerminalSessionInUsePrompt(await controller.capture(sessionId) || '')).toBe(false)
+    },
+  )
+
   it('exposes the folder-trust prompt as an explicit one-session permission', () => {
     const permission = parseTerminalPermission(folderTrustPane)
     expect(permission).toMatchObject({

@@ -9730,6 +9730,11 @@ function App() {
   function forgetComputerKnowledge(computerId: string) {
     forgottenComputers.current.add(computerId)
     knowledgeRequest.current += 1
+    // The invalidation above is deliberately blunt, and a read already in
+    // flight clears the spinner only when its own generation is still
+    // current. Left alone, that reader returns quietly and the panel spins
+    // for good, so the flag is put down here instead.
+    setKnowledgeLoading(false)
     const orphaned = new Set(
       rootsRef.current
         .filter((root) => root.computerId === computerId)

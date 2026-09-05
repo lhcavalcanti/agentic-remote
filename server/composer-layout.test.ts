@@ -116,4 +116,19 @@ describe('desktop composer layout', () => {
       declaration(desktop, '.composer:has(.recording-panel)', 'border-color'),
     ).toBe('transparent')
   })
+
+  // `phoneEnterCreatesNewline` gates on a coarse pointer as well as on width,
+  // so a tablet in landscape adds a line on Return while being wider than the
+  // breakpoint. Switching the hint on width alone told it the opposite.
+  it('reads the Enter hint the same way the composer decides', async () => {
+    const css = await stylesheet()
+    const coarse = atRule(css, /@media \(pointer: coarse\)/)
+
+    expect(declaration(coarse, '.composer-hint__desktop', 'display')).toBe(
+      'none',
+    )
+    expect(declaration(coarse, '.composer-hint__mobile', 'display')).toBe(
+      'inline',
+    )
+  })
 })

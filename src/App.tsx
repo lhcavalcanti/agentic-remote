@@ -296,6 +296,29 @@ function readStoredOrder<T>(key: string, fallback: T): T {
   }
 }
 
+/**
+ * Remembering something is a convenience, and storage is not always there to
+ * remember it in. Safari with cookies blocked throws on the first access, and
+ * a full quota throws on the write; both happen inside effects, where an
+ * exception unmounts the whole tree and leaves a blank page. Reads were
+ * already guarded, so the writes are guarded the same way.
+ */
+function writeStored(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Losing a remembered preference is not a reason to take the app down.
+  }
+}
+
+function clearStored(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // As above.
+  }
+}
+
 type StatuslineSettings = {
   enabled: boolean
   computer: boolean
@@ -420,8 +443,10 @@ function newCollapsedPasteKey(): string {
   return `${Date.now().toString(36)}-${collapsedPasteKeySequence.toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
-function readComposerAcceptanceReceipts(): ComposerAcceptanceReceipt[] {
-  const stored = readStoredOrder<unknown>(composerDraftsGenerationKey, 1)
+function readComposerAcceptanceReceipts(strict = false): ComposerAcceptanceReceipt[] {
+  const stored: unknown = strict
+    ? JSON.parse(localStorage.getItem(composerDraftsGenerationKey) ?? '1')
+    : readStoredOrder<unknown>(composerDraftsGenerationKey, 1)
   if (!stored || typeof stored !== 'object' || !('accepted' in stored)) {
     return []
   }
@@ -1449,6 +1474,9 @@ function contextSizeLabel(
   return limit ? `${compactTokens(limit)} tokens` : 'Automatic'
 }
 
+const dialogFocusable =
+  'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
+
 function DialogFrame({
   title,
   eyebrow,
@@ -1462,6 +1490,97 @@ function DialogFrame({
   children: ReactNode
   className?: string
 }) {
+  const dialog = useRef<HTMLElement>(null)
+  // Read while rendering, before the dialog is committed, so this is whatever
+  // opened it. Reading it from the effect instead named a field inside the
+  // dialog that React had already focused, and handing the focus back to
+  // something that is about to unmount is the same as dropping it.
+  const [opener] = useState<HTMLElement | null>(() =>
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  )
+
+  useEffect(() => {
+    // The frame says `aria-modal`, which tells a reader the page behind it is
+    // out of reach. Taking the focus, keeping Tab inside it, and handing the
+    // focus back on the way out are what make that true rather than a claim.
+    //
+    // A dialog that has already put the focus somewhere of its own -- a title
+    // being renamed, a search field -- is left alone. Pulling it back to the
+    // frame would take the reader out of the field they were placed in, and
+    // typing straight away would go nowhere.
+    //
+    // Escape is deliberately not answered here. The app closes the topmost
+    // layer itself, in the order they are stacked and only when nothing
+    // nearer has already answered the key, and a second closer on the frame
+    // would be the same decision made again with less to go on.
+    if (
+      !(
+        document.activeElement instanceof HTMLElement &&
+        dialog.current?.contains(document.activeElement)
+      )
+    ) {
+      dialog.current?.focus()
+    }
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.key !== 'Tab' ||
+        event.defaultPrevented ||
+        !dialog.current ||
+        [...document.querySelectorAll('.dialog[aria-modal="true"]')].at(-1) !== dialog.current
+      ) {
+        return
+      }
+      const reachable = [
+        ...dialog.current.querySelectorAll<HTMLElement>(dialogFocusable),
+      ].filter(
+        (element) =>
+          !element.matches(':disabled') &&
+          element.getAttribute('tabindex') !== '-1' &&
+          element.getAttribute('aria-hidden') !== 'true' &&
+          (element.offsetWidth > 0 ||
+            element.offsetHeight > 0 ||
+            element === document.activeElement),
+      )
+      if (reachable.length === 0) {
+        event.preventDefault()
+        dialog.current.focus()
+        return
+      }
+      const first = reachable[0]
+      const last = reachable[reachable.length - 1]
+      const active = document.activeElement
+      // The control that had the focus can be removed or disabled while the
+      // dialog is open -- a button that stops applying, a field that goes
+      // away with the mode it belonged to. The focus falls to the body, and
+      // Tab from there walks the page behind a dialog that says it is out of
+      // reach, so it is brought back in.
+      if (!reachable.some((element) => element === active)) {
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+        return
+      }
+      if (event.shiftKey && (active === first || active === dialog.current)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      const remaining = [...document.querySelectorAll<HTMLElement>('.dialog[aria-modal="true"]')].at(-1)
+      if (!remaining || (opener && remaining.contains(opener))) {
+        if (opener?.isConnected) opener.focus()
+      } else if (!remaining.contains(document.activeElement)) {
+        remaining.focus()
+      }
+    }
+  }, [])
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -1469,7 +1588,9 @@ function DialogFrame({
         aria-modal="true"
         className={`dialog ${className || ''}`}
         onMouseDown={(event) => event.stopPropagation()}
+        ref={dialog}
         role="dialog"
+        tabIndex={-1}
       >
         <div className="dialog__header">
           <div>
@@ -1514,6 +1635,7 @@ function NewSessionDialog({
   const [directoryListing, setDirectoryListing] =
     useState<DirectoryListing>()
   const [loadingDirectories, setLoadingDirectories] = useState(false)
+  const [directoryComputerId, setDirectoryComputerId] = useState<string>()
   const directoryRequest = useRef(0)
   const [terminalBacked, setTerminalBacked] = useState(true)
   const [allowAllPermissions, setAllowAllPermissions] = useState(true)
@@ -1531,28 +1653,81 @@ function NewSessionDialog({
     () => computers.filter((computer) => computer.online),
     [computers],
   )
+  const initialized = useRef(false)
+  const initialSelection = useRef<string | undefined>(undefined)
 
   useEffect(() => {
-    if (open) {
-      const initialComputerId = defaultComputerId || available[0]?.id || ''
-      setComputerId(initialComputerId)
-      setProvider('copilot')
-      setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
-      setDirectoryListing(undefined)
-      setTerminalBacked(true)
-      setAllowAllPermissions(true)
-      setMode('new')
-      setHistoryKey('')
-      setError(undefined)
-      setLoadingHistory(true)
-      void listHistory()
-        .then(setHistory)
-        .catch((caught: unknown) => {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        })
-        .finally(() => setLoadingHistory(false))
+    if (!open) {
+      initialized.current = false
+      initialSelection.current = undefined
+      return
     }
+    // Opening the dialog is what fills it in. `available` and the stored
+    // folders are rebuilt whenever any computer event arrives -- a node going
+    // online, a status refresh on returning to the tab -- and re-running this
+    // while the dialog is open threw away the provider, mode, folder, and
+    // previous session the reader had already chosen.
+    if (initialized.current) {
+      return
+    }
+    const initialComputerId =
+      available.find((computer) => computer.id === defaultComputerId)?.id ||
+      available[0]?.id || ''
+    // Opening before the first computer snapshot has landed leaves nothing to
+    // choose. Marking the dialog filled in at that point stranded it: the
+    // computers arrived, this returned at the guard above, and Create stayed
+    // disabled with no computer selected until the dialog was reopened.
+    if (!initialComputerId) {
+      return
+    }
+    initialized.current = true
+    initialSelection.current = initialComputerId
+    setComputerId(initialComputerId)
+    setProvider('copilot')
+    setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
+    setDirectoryComputerId(initialComputerId)
+    setDirectoryListing(undefined)
+    setTerminalBacked(true)
+    setAllowAllPermissions(true)
+    setMode('new')
+    setHistoryKey('')
+    setError(undefined)
+    setLoadingHistory(true)
+    void listHistory()
+      .then(setHistory)
+      .catch((caught: unknown) => {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      })
+      .finally(() => setLoadingHistory(false))
   }, [open, defaultComputerId, defaultSessionFolders, available])
+
+  // The chosen computer can be unpaired, or go offline, while the dialog is
+  // still open. Left alone the selection stays truthy and Create stays
+  // enabled, so submitting aimed at a computer that is no longer there. Only
+  // the computer and its folder are reconciled; provider and mode remain
+  // what the reader chose.
+  useEffect(() => {
+    if (!open || !initialized.current) {
+      return
+    }
+    if (initialSelection.current !== undefined) {
+      if (computerId !== initialSelection.current) return
+      initialSelection.current = undefined
+    }
+    if (available.some((computer) => computer.id === computerId)) {
+      return
+    }
+    const nextComputerId =
+      available.find((computer) => computer.id === defaultComputerId)?.id ||
+      available[0]?.id || ''
+    directoryRequest.current += 1
+    setComputerId(nextComputerId)
+    setCwd('')
+    setDirectoryListing(undefined)
+    setDirectoryComputerId(undefined)
+    setLoadingDirectories(Boolean(nextComputerId))
+    setHistoryKey('')
+  }, [open, computerId, available, defaultComputerId])
 
   useEffect(() => {
     if (!open || mode !== 'new' || !computerId) {
@@ -1571,6 +1746,7 @@ function NewSessionDialog({
         if (active && request === directoryRequest.current) {
           setDirectoryListing(listing)
           setCwd(listing.path)
+          setDirectoryComputerId(computerId)
         }
       })
       .catch((caught: unknown) => {
@@ -1639,6 +1815,7 @@ function NewSessionDialog({
       if (request === directoryRequest.current) {
         setDirectoryListing(listing)
         setCwd(listing.path)
+        setDirectoryComputerId(computerId)
       }
     } catch (caught) {
       if (request === directoryRequest.current) {
@@ -1656,6 +1833,14 @@ function NewSessionDialog({
     setSubmitting(true)
     setError(undefined)
     try {
+      if (
+        !available.some((computer) => computer.id === computerId) ||
+        (mode === 'new' && (
+          directoryComputerId !== computerId || !cwd.trim()
+        ))
+      ) {
+        throw new Error('Choose an available computer and wait for its folder to load.')
+      }
       if (mode === 'new') {
         const defaultRuntime = providerRuntimeModels
           ? normalizedRuntimeSelection(
@@ -1691,7 +1876,11 @@ function NewSessionDialog({
         setCwd('')
       } else {
         const previous = history.find(
-          (session) => sessionKey(session) === historyKey,
+          (session) =>
+            sessionKey(session) === historyKey &&
+            session.computerId === computerId &&
+            available.some((computer) => computer.id === session.computerId) &&
+            !session.isOpen,
         )
         if (!previous) {
           throw new Error('Choose a previous session')
@@ -1763,6 +1952,9 @@ function NewSessionDialog({
               setProvider('copilot')
               setHistoryKey('')
               setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
+              setDirectoryListing(undefined)
+              setDirectoryComputerId(nextComputerId || undefined)
+              setLoadingDirectories(Boolean(nextComputerId))
             }}
             value={computerId}
           >
@@ -1929,11 +2121,15 @@ function NewSessionDialog({
           className="primary-button dialog__submit"
           disabled={
             submitting ||
-            !computerId ||
+            !selectedComputer ||
             Boolean(defaultModel && runtimeLoading) ||
             Boolean(defaultModel && runtimeError) ||
-            (mode === 'new' && !selectedProvider?.available) ||
-            (mode === 'new' ? !cwd.trim() : !historyKey)
+            (mode === 'new' && (
+              !selectedProvider?.available || directoryComputerId !== computerId
+            )) ||
+            (mode === 'new'
+              ? !cwd.trim()
+              : !previousSessions.some((session) => sessionKey(session) === historyKey))
           }
           type="submit"
         >
@@ -3811,12 +4007,6 @@ function UserInputCard({
   const [values, setValues] = useState<Record<string, UserInputFieldValue>>(
     () => initialUserInputValues(request.form),
   )
-
-  useEffect(() => {
-    setSelected([])
-    setAnswer('')
-    setValues(initialUserInputValues(request.form))
-  }, [request.requestId, request.form])
 
   if (request.form) {
     const canSubmit = request.form.fields.every(
@@ -6616,9 +6806,26 @@ function App() {
     Record<string, BackgroundTaskSnapshot>
   >({})
   const [selectedKey, setSelectedKey] = useState<string>()
-  const [composerDrafts, setComposerDrafts] =
-    useState<ComposerDrafts>(readComposerDrafts)
-  const [composerStorageError, setComposerStorageError] = useState<string>()
+  const composerInitialReadFailure = useRef<string | undefined>(undefined)
+  const [composerDrafts, setComposerDrafts] = useState<ComposerDrafts>(() => {
+    try {
+      for (const key of [
+        composerDraftsStorageKey, composerDraftsGenerationKey,
+        'agentic-remote:composer-drafts', 'agentic-remote:composer-pastes',
+        'agentic-remote:composer-draft-failures', 'agentic-remote:composer-draft-recovered',
+      ]) {
+        localStorage.getItem(key)
+      }
+      return readComposerDrafts()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      composerInitialReadFailure.current =
+        `Saved drafts could not be read (${detail}). Copy new text and reload after storage is available.`
+      return {}
+    }
+  })
+  const [composerStorageError, setComposerStorageError] =
+    useState<string | undefined>(composerInitialReadFailure.current)
   const composerDraftsRef = useRef(composerDrafts)
   const composerAcceptanceReceipts = useRef(readComposerAcceptanceReceipts())
   const composerMounted = useRef(true)
@@ -6652,7 +6859,7 @@ function App() {
   // Roots are browsable without a session, so reading position is kept under
   // a reserved key rather than being unreachable.
   const knowledgePanelKey = selectedKey || sessionlessKnowledgeKey
-  const [roots, setRoots] = useState<KnowledgeRoot[]>([])
+  const [roots, setRootsState] = useState<KnowledgeRoot[]>([])
   const [knowledgeRootsLoaded, setKnowledgeRootsLoaded] = useState(false)
   const [activeRootId, setActiveRootId] = useState<string | undefined>(() =>
     readStoredOrder<string | undefined>(
@@ -6672,6 +6879,24 @@ function App() {
   const [knowledgeFragment, setKnowledgeFragment] = useState<string>()
   const [knowledgeLoading, setKnowledgeLoading] = useState(false)
   const [addRootOpen, setAddRootOpen] = useState(false)
+  // Read from the socket handler, which is bound once and would otherwise
+  // close over whichever roots existed when it was bound.
+  const rootsRef = useRef<KnowledgeRoot[]>([])
+  const setRoots = useCallback((
+    update: KnowledgeRoot[] | ((current: KnowledgeRoot[]) => KnowledgeRoot[]),
+  ) => {
+    const next = typeof update === 'function' ? update(rootsRef.current) : update
+    rootsRef.current = next
+    setRootsState(next)
+  }, [])
+  const activeRootIdRef = useRef<string | undefined>(undefined)
+  // Computers this browser has been told to forget. Held so an answer still
+  // on its way can be discarded rather than restoring what was removed.
+  const forgottenComputers = useRef(new Set<string>())
+  const knowledgeComputerLifetimes = useRef(new Map<string, number>())
+  useEffect(() => {
+    activeRootIdRef.current = activeRootId
+  }, [activeRootId])
   const [addRootInitialLocation, setAddRootInitialLocation] = useState<{
     computerId: string
     path: string
@@ -7124,11 +7349,7 @@ function App() {
   function commitSidebarWidth(width: number) {
     const next = clampSidebarWidth(width)
     setSidebarWidth(next)
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next))
-    } catch {
-      // A blocked storage quota should not stop the drag from working.
-    }
+    writeStored(SIDEBAR_WIDTH_KEY, String(next))
   }
 
   function sidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
@@ -7311,9 +7532,17 @@ function App() {
     Boolean(selected?.pendingPermission || selected?.pendingUserInput)
   selectedRef.current = selected
   sessionsRef.current = sessions
-  const currentTool = selected?.messages.findLast(
-    (message) =>
-      message.role === 'activity' && message.activityStatus === 'running',
+  // Only the running tool is wanted, but finding it walks the whole
+  // transcript, and this sits in the render path -- which every composer
+  // keystroke runs. Held against the messages so typing does not re-scan a
+  // long session for something that has not changed.
+  const currentTool = useMemo(
+    () =>
+      selected?.messages.findLast(
+        (message) =>
+          message.role === 'activity' && message.activityStatus === 'running',
+      ),
+    [selected?.messages],
   )
   const hasRunningTool = currentTool?.activityStatus === 'running'
   const pendingActionId =
@@ -7528,7 +7757,7 @@ function App() {
     if (!knowledgeHydrated.current) {
       return
     }
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-root',
       JSON.stringify(activeRootId),
     )
@@ -7543,21 +7772,21 @@ function App() {
       [activeRootId]: expandedKnowledge,
     }
     restoredKnowledgeExpansion.current = stored
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-expanded',
       JSON.stringify(stored),
     )
   }, [activeRootId, expandedKnowledge])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-roots-open',
       JSON.stringify(knowledgeRootsOpen),
     )
   }, [knowledgeRootsOpen])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-mode',
       JSON.stringify(knowledgeMode),
     )
@@ -7708,7 +7937,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:knowledge-session-positions',
       JSON.stringify(knowledgePositions),
     )
@@ -7721,7 +7950,7 @@ function App() {
   }, [commandQuery, selectedKey])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       shortcutsStorageKey,
       JSON.stringify(shortcutOverrides),
     )
@@ -8046,7 +8275,7 @@ function App() {
     legacyKnowledgeAdopted.current = true
     const legacy = restoredKnowledge.current
     restoredKnowledge.current = {}
-    localStorage.removeItem('agentic-remote:knowledge-position')
+    clearStored('agentic-remote:knowledge-position')
     if (
       !legacy.rootId ||
       knowledgePositionsRef.current[selectedKey] ||
@@ -8073,16 +8302,27 @@ function App() {
   }, [selectedKey])
 
   useEffect(() => {
+    const lifetimes = new Map(knowledgeComputerLifetimes.current)
     void listKnowledgeRoots()
       .then(async (loaded) => {
-        setRoots(loaded)
+        // This answer was asked for before any computer could be unpaired,
+        // and it names computers rather than being scoped to one. Installing
+        // it as it stands would put back the roots of a computer forgotten
+        // while it was on its way.
+        const live = loaded.filter(
+          (entry) =>
+            !forgottenComputers.current.has(entry.computerId) &&
+            (lifetimes.get(entry.computerId) || 0) ===
+              (knowledgeComputerLifetimes.current.get(entry.computerId) || 0),
+        )
+        setRoots(live)
         setKnowledgeRootsLoaded(true)
         // Only the root is reopened here. Where a session was reading belongs
         // to that session, and this runs before one is known, so applying it
         // would show one session's document under another.
         const remembered = restoredKnowledge.current
         const root =
-          loaded.find((entry) => entry.id === remembered.rootId) || loaded[0]
+          live.find((entry) => entry.id === remembered.rootId) || live[0]
         if (!root) {
           // Nothing to restore, so later changes are safe to persist.
           knowledgeHydrated.current = true
@@ -8204,35 +8444,35 @@ function App() {
   }, [computers, sessions])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:computer-order',
       JSON.stringify(computerOrder),
     )
   }, [computerOrder])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:session-order',
       JSON.stringify(sessionOrder),
     )
   }, [sessionOrder])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:statusline',
       JSON.stringify(statusline),
     )
   }, [statusline])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       'agentic-remote:default-models',
       JSON.stringify(defaultRuntimes),
     )
   }, [defaultRuntimes])
 
   useEffect(() => {
-    localStorage.setItem(
+    writeStored(
       defaultSessionFoldersStorageKey,
       JSON.stringify({ version: 1, folders: defaultSessionFolders }),
     )
@@ -8259,11 +8499,18 @@ function App() {
   }
 
   function persistComposerDrafts(drafts: ComposerDrafts): ComposerPersistenceResult {
+    if (composerInitialReadFailure.current) {
+      return { ok: false, error: composerInitialReadFailure.current }
+    }
     try {
-      let receipts = readComposerAcceptanceReceipts()
+      // Admission and receipts must fail visibly, unlike best-effort settings.
+      let receipts = readComposerAcceptanceReceipts(true)
       composerAcceptanceReceipts.current = [...receipts]
       if (receipts.length > 0) {
-        const stored = readStoredOrder<ComposerDrafts>(composerDraftsStorageKey, {}) || {}
+        const stored: ComposerDrafts = JSON.parse(localStorage.getItem(composerDraftsStorageKey) ?? '{}')
+        if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+          throw new Error('Saved draft metadata could not be read safely')
+        }
         receipts = receipts.filter((receipt) =>
           Object.entries(stored).some(([key, draft]) =>
             draft?.pendingSubmission &&
@@ -8480,7 +8727,7 @@ function App() {
         // without it a deep link to its ancestor has no way through.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(reconciled)
-        setComputers(loadedComputers)
+        applyComputerSnapshot(loadedComputers, startedAtSequence)
         // A live removal can arrive before this list does, so the address may
         // name a session that has already been replaced, possibly more than
         // once. Falling through to `sessions[0]` would open something the
@@ -8749,13 +8996,6 @@ function App() {
           (computerEventSequenceRef.current.get(session.computerId) || 0) <=
             startedAtSequence,
       )
-      const snapshotComputers = loadedComputers.filter(
-        (computer) =>
-          (computerRecordSequenceRef.current.get(computer.id) || 0) <=
-          startedAtSequence &&
-          (computerEventSequenceRef.current.get(computer.id) || 0) <=
-          startedAtSequence,
-      )
       const answeredFor = new Set(listing.answeredComputerIds)
       if (!claim.whole) {
         // Only the computers this answer reached that the newer one did not.
@@ -8877,24 +9117,7 @@ function App() {
       // first. Selection is only set when nothing has been chosen yet, so
       // this never moves a reader who is already somewhere.
       applyInitialSelection(reconciledForClaim, answeredFor)
-      setComputers((current) => {
-        let reconciled = snapshotComputers
-        for (const existing of current) {
-          // Both watermarks: a removal speaks for the computer's sessions, an
-          // ordinary update speaks only for the record. Reading one when
-          // filtering and the other when preserving dropped a computer that
-          // was merely updated while the refresh was in flight, taking its
-          // whole session group with it.
-          const changedAt = Math.max(
-            computerEventSequenceRef.current.get(existing.id) || 0,
-            computerRecordSequenceRef.current.get(existing.id) || 0,
-          )
-          if (changedAt > startedAtSequence) {
-            reconciled = upsertComputer(reconciled, existing)
-          }
-        }
-        return reconciled
-      })
+      applyComputerSnapshot(loadedComputers, startedAtSequence)
       // A session that changed while the refresh was in flight is described
       // more recently by the event than by the snapshot, exactly as the two
       // reconciliations above assume. A clear moves the mute to a replacement
@@ -9077,6 +9300,9 @@ function App() {
           },
           }))
         } else if (event.type === 'computer.updated') {
+          // The hub filters retired clients before publishing this event.
+          // A new pairing may be announced by another tab without a refresh.
+          forgottenComputers.current.delete(event.computer.id)
           eventSequenceRef.current += 1
           // Only the computer record is newer, not its sessions. A paired node
           // going offline is an ordinary update, and treating it as reason to
@@ -9085,7 +9311,8 @@ function App() {
             event.computer.id,
             eventSequenceRef.current,
           )
-          setComputers((current) => upsertComputer(current, event.computer))
+          computersRef.current = upsertComputer(computersRef.current, event.computer)
+          setComputers(computersRef.current)
         } else if (event.type === 'computer.removed') {
           eventSequenceRef.current += 1
           computerEventSequenceRef.current.set(
@@ -9103,9 +9330,14 @@ function App() {
               unshownFailures.current.delete(key)
             }
           }
-          setComputers((current) =>
-            current.filter((computer) => computer.id !== event.computerId),
+          computersRef.current = computersRef.current.filter(
+            (computer) => computer.id !== event.computerId,
           )
+          setComputers(computersRef.current)
+          // A root names a folder on a computer. The hub drops the roots of a
+          // computer that has been unpaired, so a tab still listing one would
+          // offer a document it can no longer fetch.
+          forgetComputerKnowledge(event.computerId)
           // Nothing on a computer that has gone is still on its way.
           for (const key of [...pendingReplacements.current]) {
             if (key.slice(0, key.indexOf(':')) === event.computerId) {
@@ -10481,7 +10713,17 @@ function App() {
   }
 
   async function createRoot(computerId: string, path: string) {
+    const lifetime = knowledgeComputerLifetimes.current.get(computerId) || 0
     const root = await addKnowledgeRoot({ computerId, path })
+    // Adding a root is a round trip, and the computer can be unpaired while
+    // it is in flight. The hub drops the root in that case, so accepting this
+    // answer would put back something that no longer exists.
+    if (
+      forgottenComputers.current.has(computerId) ||
+      lifetime !== (knowledgeComputerLifetimes.current.get(computerId) || 0)
+    ) {
+      throw new Error('The computer pairing changed while adding this folder. Choose the computer again.')
+    }
     setRoots((current) =>
       current.some((entry) => entry.id === root.id)
         ? current
@@ -10490,6 +10732,82 @@ function App() {
     setAddRootOpen(false)
     setAddRootInitialLocation(undefined)
     await selectRoot(root.id)
+  }
+
+  function applyComputerSnapshot(
+    loaded: ComputerSummary[],
+    startedAtSequence: number,
+  ) {
+    const changedAt = (id: string) => Math.max(
+      computerEventSequenceRef.current.get(id) || 0,
+      computerRecordSequenceRef.current.get(id) || 0,
+    )
+    const accepted = loaded.filter((computer) =>
+      changedAt(computer.id) <= startedAtSequence,
+    )
+    for (const computer of accepted) {
+      forgottenComputers.current.delete(computer.id)
+    }
+    const listedIds = new Set(loaded.map((computer) => computer.id))
+    const knownIds = new Set([
+      ...computersRef.current.map((computer) => computer.id),
+      ...rootsRef.current.map((root) => root.computerId),
+    ])
+    for (const id of knownIds) {
+      if (
+        !listedIds.has(id) &&
+        changedAt(id) <= startedAtSequence &&
+        !forgottenComputers.current.has(id)
+      ) {
+        forgetComputerKnowledge(id)
+      }
+    }
+    let reconciled = accepted
+    for (const computer of computersRef.current) {
+      if (changedAt(computer.id) > startedAtSequence) {
+        reconciled = upsertComputer(reconciled, computer)
+      }
+    }
+    computersRef.current = reconciled
+    setComputers(reconciled)
+  }
+
+  /**
+   * Everything this browser holds for a computer that is no longer paired.
+   *
+   * Reached from the socket event and from the button that does the removing,
+   * because only one of those two arrives when the hub is the one being asked.
+   * Pending work is invalidated as well: a listing or a newly created root
+   * still on its way would otherwise land afterwards and put the computer's
+   * knowledge back.
+   */
+  function forgetComputerKnowledge(computerId: string) {
+    forgottenComputers.current.add(computerId)
+    knowledgeComputerLifetimes.current.set(
+      computerId,
+      (knowledgeComputerLifetimes.current.get(computerId) || 0) + 1,
+    )
+    knowledgeRequest.current += 1
+    // The invalidation above is deliberately blunt, and a read already in
+    // flight clears the spinner only when its own generation is still
+    // current. Left alone, that reader returns quietly and the panel spins
+    // for good, so the flag is put down here instead.
+    setKnowledgeLoading(false)
+    const orphaned = new Set(
+      rootsRef.current
+        .filter((root) => root.computerId === computerId)
+        .map((root) => root.id),
+    )
+    setRoots((current) =>
+      current.filter((root) => root.computerId !== computerId),
+    )
+    if (activeRootIdRef.current && orphaned.has(activeRootIdRef.current)) {
+      setActiveRootId(undefined)
+      setKnowledgeFolders({})
+      setExpandedKnowledge([])
+      setKnowledgePath(knowledgeRootPath)
+      setKnowledgeFile(undefined)
+    }
   }
 
   function selectSession(session: ManagedSession) {
@@ -12213,6 +12531,15 @@ function App() {
           {selected?.pendingUserInput ? (
             <UserInputCard
               disabled={userInputBusy}
+              // The answer being composed belongs to this question on this
+              // session. Keying on it lets a new question start from a blank
+              // card, and keeps the card being filled in from being emptied
+              // by the session upserts that carry the same request through.
+              // The session is part of the key because a terminal request id
+              // describes the question, not the session, so the same question
+              // on two sessions would otherwise share one card -- and the
+              // answer typed into the first would appear in the second.
+              key={`${selected.computerId}:${selected.id}:${selected.pendingUserInput.requestId}`}
               onReply={(input) => void answerUserInput(input)}
               request={selected.pendingUserInput}
             />
@@ -12735,14 +13062,25 @@ function App() {
       />
       <ComputersDialog
         computers={computers}
-        onAdded={(computer) =>
-          setComputers((current) => upsertComputer(current, computer))
-        }
+        onAdded={(computer) => {
+          // Pairing it again is authoritative, and the socket may not be the
+          // one that says so. Without this the mark set when it was removed
+          // would outlive it and go on discarding its answers.
+          forgottenComputers.current.delete(computer.id)
+          eventSequenceRef.current += 1
+          computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
+          computersRef.current = upsertComputer(computersRef.current, computer)
+          setComputers(computersRef.current)
+        }}
         onClose={() => setComputersOpen(false)}
         onRemoved={(computerId) => {
-          setComputers((current) =>
-            current.filter((computer) => computer.id !== computerId),
+          eventSequenceRef.current += 1
+          computerEventSequenceRef.current.set(computerId, eventSequenceRef.current)
+          computersRef.current = computersRef.current.filter(
+            (computer) => computer.id !== computerId,
           )
+          setComputers(computersRef.current)
+          forgetComputerKnowledge(computerId)
           setSessions((current) =>
             current.filter((session) => session.computerId !== computerId),
           )

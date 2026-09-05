@@ -82,6 +82,12 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - A late or ambiguous lock MAY be accepted only when `/proc/<pid>/fd` proves
   that the process has the corresponding `session.db` open.
 - Historical sessions MAY be opened from the new-session flow.
+- An open new-session dialog MUST preserve user choices across computer status
+  updates. If its computer becomes unavailable, it MUST select an available
+  computer when one returns and require a new compatible historical selection.
+- Automatic computer fallback MUST NOT submit the prior computer's folder.
+  Creation waits for a folder owned by the replacement computer. An explicitly
+  selected computer's saved default remains usable while its listing loads.
 - Copilot sessions MUST expose tracked background tasks when the owning
   runtime advertises task support. The UI MUST show queued, running,
   completed, failed, and cancelled task states, including task progress and
@@ -209,6 +215,16 @@ Questions and permissions are the highest-priority UI state.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
   Such input MUST be left untouched with an actionable conflict, not cleared,
   duplicated, or submitted automatically.
+- A working terminal composer MUST accept native queued messages and slash
+  commands whose catalog explicitly allows execution during a turn. Other
+  immediate messages MUST wait. These delivery modes MUST still reject
+  startup screens, dialogs, non-composer frames, and existing drafts.
+- Losing a paste acknowledgement MUST report uncertain delivery rather than
+  authorize an automatic retry. Readiness MUST be checked again after owner
+  validation and before the paste.
+- Form identity MUST preserve word boundaries. Terminal form reads MUST use
+  tmux's joined soft-wrap capture instead of guessing whether a line break
+  separated words or split an identifier.
 
 - Full-screen send protection MUST recognize active terminal dialogs, including
   single-field questions, without treating keyboard hints quoted in transcript
@@ -285,6 +301,11 @@ support: a client request ID bound to the payload and logical session lineage,
 durable acceptance recorded with the operation, and a receipt lookup or
 idempotent retry that cannot submit it twice. The client-only fallback does not
 provide that server guarantee.
+
+Best-effort preference storage MUST NOT authorize composer submission or retire
+delivery receipts. If saved draft storage cannot be read at startup, typing
+remains available but sends and draft writes stay blocked until a reload can
+recover the saved state. The UI MUST warn the user to copy new text first.
 
 Pastes longer than 20 lines MUST appear in the composer as
 `[Paste #N - L lines]`, numbered within the current session draft. The exact
@@ -389,6 +410,14 @@ clear replacement IDs without losing, duplicating, or reordering content.
   confined; a root is read-only.
 - A root MUST be validated on its owning computer, and every path browsed under
   it MUST stay inside it.
+- Validation and pending Knowledge responses MUST belong to the same pairing
+  lifetime that requested them. Re-pairing the same computer ID MUST NOT revive
+  old responses or make a stale validation create a root.
+- Root creation MUST recheck registration after persistence. A re-pairing
+  announced by another tab MUST allow fresh requests without reviving older
+  responses or removing the new pairing's roots.
+- Initial and reconnect computer snapshots MUST preserve newer computer events.
+  An older partial session refresh MUST NOT undo a newer computer removal.
 - The reader MUST reopen the root, folder, and document last being read, so
   returning does not mean choosing them again. Changing folder MUST remain an
   explicit action.
@@ -543,6 +572,22 @@ Persistent state MUST NOT include:
 - Voice recordings
 - Temporary transcription artifacts
 - Live `.env` files or credentials
+
+Awaited session mutations MUST become visible only after their state write
+commits. A refused write MUST NOT leave the mutation in memory, subsequent
+successful writes, snapshots, or queue dispatch decisions. Mutations sharing a
+coalesced write MUST share its commit outcome; a later batch MUST start from
+committed state, not a rejected batch. Validation failures MUST NOT leave
+partially applied changes.
+
+Removing or replacing a session MUST NOT turn an earlier committed mutation
+into a rejected call. State-dependent reductions and equality guards MUST
+respect admitted mutation order, including runtime permission changes, working
+directories, and questions arriving while an earlier reply is being recorded.
+
+Live streamed text MAY remain volatile until the next persisted mutation.
+Publishing a live delta MUST NOT expose unrelated, uncommitted session or queue
+changes.
 
 ## 14. Error handling
 

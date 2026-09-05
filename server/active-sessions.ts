@@ -3,6 +3,7 @@ import { readdir, readFile, readlink, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type { DiscoveredSession } from './session-store.js'
+import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
 
 const execFileAsync = promisify(execFile)
 const sessionPattern =
@@ -39,8 +40,13 @@ async function findActiveProcesses(): Promise<ActiveProcess[]> {
       maxBuffer: 4 * 1024 * 1024,
     })
     output = result.stdout
-  } catch {
-    return []
+  } catch (error) {
+    // Failing to enumerate processes is not the same as there being none.
+    // Returning an empty list here reported every running session as stopped.
+    throw new Error(
+      `Unable to list processes: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    )
   }
 
   const tmuxPanePids = await listTmuxPanePids()
@@ -210,20 +216,36 @@ async function isCopilotProcess(pid: number): Promise<boolean> {
 }
 
 async function listTmuxPanePids(): Promise<number[]> {
-  try {
-    const { stdout } = await execFileAsync('tmux', [
-      'list-panes',
-      '-a',
-      '-F',
-      '#{pane_pid}',
-    ])
-    return stdout
-      .split('\n')
-      .map((value) => Number.parseInt(value, 10))
-      .filter(Number.isInteger)
-  } catch {
-    return []
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const { stdout } = await execFileAsync('tmux', [
+        'list-panes',
+        '-a',
+        '-F',
+        '#{pane_pid}',
+      ])
+      return stdout
+        .split('\n')
+        .map((value) => Number.parseInt(value, 10))
+        .filter(Number.isInteger)
+    } catch (error) {
+      // A computer without tmux, or without a server running, genuinely has
+      // no panes. Anything else is a socket that could not be reached or
+      // read, and answering "no panes" for it says every terminal-backed
+      // session has exited: discovery would drop them all, and stopping one
+      // would report success without having killed anything.
+      if (tmuxNotInstalled(error) || (await noTmuxServer(error))) {
+        return []
+      }
+      lastError = error
+      // Reading the pane list is the only thing that tells a live session
+      // apart from a stopped one, so a momentary failure is retried before it
+      // is allowed to become the caller's answer.
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)))
+    }
   }
+  throw lastError
 }
 
 async function processRunsInTmux(

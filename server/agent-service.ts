@@ -56,7 +56,7 @@ import {
   type CopilotTasksApi,
 } from './background-task-adapter.js'
 import { BackgroundTaskTracker } from './background-task-tracker.js'
-import { SessionStore, type DiscoveredSession } from './session-store.js'
+import { SessionReplacementCleanupError, SessionStore, type DiscoveredSession } from './session-store.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
@@ -2868,7 +2868,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let fresh: CopilotSessionLike | undefined
     let original: CopilotSessionLike | undefined
     let committed = false
+    let cleared: SessionDetail | undefined
+    const cleanupErrors: unknown[] = []
     const terminalBacked = this.externalSessionIds.has(id)
+    const commitReplacement = async () => {
+      try {
+        cleared = await this.store.replaceWithClearedSession(id, replacementId)
+      } catch (error) {
+        if (!(error instanceof SessionReplacementCleanupError)) throw error
+        cleared = error.replacement
+        cleanupErrors.push(error)
+      }
+      committed = true
+    }
     try {
       if (terminalBacked) {
         if (!this.terminalController.reset) {
@@ -2879,23 +2891,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           replacementId,
           stored.cwd,
           runtime,
-          async () => {
-            try {
-              await this.client.deleteSession(id)
-            } catch (error) {
-              if (!isMissingSessionError(error)) {
-                throw error
-              }
-            }
-            await removeCopilotSessionFiles(id)
-          },
+          commitReplacement,
         )
         if (!reset) {
           throw new Error('External terminal is no longer available')
         }
-        await this.terminalController.rename?.(replacementId, stored.title)
+        if (!committed) {
+          throw new Error('Terminal reset did not commit the replacement session')
+        }
         this.externalSessionIds.delete(id)
         this.externalSessionIds.add(replacementId)
+        try {
+          if (this.terminalController.rename &&
+            !(await this.terminalController.rename(replacementId, stored.title))) {
+            throw new Error('The cleared terminal session is no longer available to rename')
+          }
+        } catch (error) {
+          cleanupErrors.push(error)
+        }
       } else {
         original = this.sessions.get(id)
         try {
@@ -2937,12 +2950,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               this.publishError(replacementId, error),
             )
         }
+        await commitReplacement()
       }
-      const cleared = await this.store.replaceWithClearedSession(
-        id,
-        replacementId,
-      )
-      committed = true
+      if (!cleared) throw new Error('Conversation replacement was not committed')
       this.deletedSessionIds.delete(replacementId)
       for (const [requestId, permission] of this.permissions) {
         if (permission.sessionId === id) {
@@ -2981,25 +2991,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       this.publish(cleared)
       this.flushSessionMetadata(replacementId)
-      if (!terminalBacked) {
-        // The original provider history remains recoverable until replacement
-        // commits. Cleanup failure cannot undo an already accepted clear.
-        try {
-          await this.disposeSdkIdentity(id, original)
-          await removeCopilotSessionFiles(id)
-        } catch (error) {
-          this.publishError(replacementId, error)
-        }
+      // Both terminal and SDK histories remain recoverable until replacement
+      // commits. Cleanup failure cannot undo an already accepted clear.
+      try {
+        await this.disposeSdkIdentity(id, original)
+        await removeCopilotSessionFiles(id)
+      } catch (error) {
+        cleanupErrors.push(error)
       }
+      for (const error of cleanupErrors) this.publishError(replacementId, error)
       return cleared
     } catch (error) {
-      if (!committed && !terminalBacked) {
+      if (!committed) {
         try {
+          if (terminalBacked) await this.activeSessionStopper(replacementId)
           await this.disposeSdkIdentity(replacementId, fresh)
+          await removeCopilotSessionFiles(replacementId)
         } catch (cleanupError) {
           throw new AggregateError(
             [error, cleanupError],
-            'Clearing failed and replacement SDK cleanup is incomplete',
+            `Clearing failed and replacement ${terminalBacked ? 'terminal' : 'SDK'} cleanup is incomplete`,
           )
         }
       }

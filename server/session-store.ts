@@ -20,6 +20,13 @@ export interface DiscoveredSession {
   updatedAt: string
 }
 
+export class SessionReplacementCleanupError extends Error {
+  constructor(readonly replacement: SessionDetail, cause: unknown) {
+    super('Conversation cleared, but previous uploads could not be removed.', { cause })
+    this.name = 'SessionReplacementCleanupError'
+  }
+}
+
 interface StoredState {
   version: 1
   sessions: Record<string, StoredSession>
@@ -517,7 +524,11 @@ export class SessionStore {
       delete state.sessions[sessionId]
       return () => this.requireSession(replacementId)
     }, true)
-    await this.removeUploads(sessionId)
+    try {
+      await this.removeUploads(sessionId)
+    } catch (error) {
+      throw new SessionReplacementCleanupError(replacement, error)
+    }
     return replacement
   }
 

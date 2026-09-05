@@ -127,6 +127,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.
+- Clear MUST keep the reader on the live replacement unless they navigate
+  elsewhere, including gaps between removal, replacement, and response delivery.
+- A refused replacement write MUST preserve the original provider history and
+  uploads. A terminal clear MUST restore the original command and working
+  folder before reporting that refusal, or explicitly report restoration failure.
+- Cleanup failures after a replacement commits MUST be surfaced on the new
+  session; they MUST NOT roll back the accepted identity or destroy its runtime.
 - Delete MUST close the owning provider process/session after confirmation and
   remove Agentic Remote state and session uploads.
 

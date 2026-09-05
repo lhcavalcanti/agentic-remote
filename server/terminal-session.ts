@@ -60,7 +60,7 @@ export interface TerminalSessionController {
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
   /** Ends the window running a session without forgetting the session. */
@@ -296,36 +296,32 @@ export class TmuxTerminalSessionController
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      const resolvedCwd = await realpath(cwd)
+      if (!(await stat(resolvedCwd)).isDirectory()) {
+        throw new Error('Terminal working directory is not a folder')
+      }
       const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
       const originalCommand = await processCommand(owner.pid)
+      const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, replacementId, input)
       this.inputReadySessions.delete(sessionId)
       this.inputReadySessions.delete(replacementId)
       this.automaticStartupSessions.delete(sessionId)
       this.automaticStartupSessions.delete(replacementId)
-      await execFileAsync('tmux', [
-        'respawn-pane',
-        '-k',
-        '-t',
-        owner.target,
-        '/usr/bin/sleep',
-        '300',
-      ])
       try {
-        await clearState()
         await execFileAsync('tmux', [
           'respawn-pane',
           '-k',
           '-t',
           owner.target,
           '-c',
-          cwd,
+          resolvedCwd,
           ...command,
         ])
         const nextOwner = await this.waitForNewOwner(
@@ -333,11 +329,16 @@ export class TmuxTerminalSessionController
           owner.pid,
           owner.target,
         )
+        // The old provider history must still exist until this commit accepts
+        // the replacement; otherwise the original command cannot recover it.
+        await commitReplacement()
         this.automaticStartupSessions.set(replacementId, {
           pid: nextOwner.pid,
           target: nextOwner.target,
         })
       } catch (error) {
+        this.inputReadySessions.delete(replacementId)
+        this.automaticStartupSessions.delete(replacementId)
         try {
           await execFileAsync('tmux', [
             'respawn-pane',
@@ -345,7 +346,7 @@ export class TmuxTerminalSessionController
             '-t',
             owner.target,
             '-c',
-            cwd,
+            originalCwd,
             ...originalCommand,
           ])
           const restoredOwner = await this.waitForNewOwner(
@@ -360,7 +361,7 @@ export class TmuxTerminalSessionController
         } catch (rollbackError) {
           throw new AggregateError(
             [error, rollbackError],
-            'Conversation reset failed and the terminal session could not be restored',
+            'Conversation clear failed and the original terminal session could not be restored',
           )
         }
         throw error

@@ -11,6 +11,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...fs,
     writeFile: vi.fn(fs.writeFile),
     rename: vi.fn(fs.rename),
+    rm: vi.fn(fs.rm),
   }
 })
 
@@ -83,6 +84,7 @@ function holdWrite() {
 beforeEach(() => {
   vi.mocked(writeFile).mockReset().mockImplementation(disk.writeFile)
   vi.mocked(rename).mockReset().mockImplementation(disk.rename)
+  vi.mocked(rm).mockReset().mockImplementation(disk.rm)
 })
 
 afterEach(async () => {
@@ -500,6 +502,21 @@ describe('SessionStore durability', () => {
     expect(await readFile(uploaded.path, 'utf8')).toBe('Keep me')
     expect(store.get('session')).toBeDefined()
     expect(store.get('new')).toBeUndefined()
+  })
+
+  it('distinguishes upload cleanup failure from a rejected replacement write', async () => {
+    const { store, contents } = await fixture()
+    const uploaded = await store.saveUpload('session', 'notes.txt', Buffer.from('Retained upload'))
+    const failure = new Error('Upload cleanup refused')
+    vi.mocked(rm).mockRejectedValueOnce(failure)
+    await expect(store.replaceWithClearedSession('session', 'replacement')).rejects.toMatchObject({
+      name: 'SessionReplacementCleanupError',
+      replacement: { id: 'replacement', replacedSessionIds: ['session'] },
+      cause: failure,
+    })
+    expect(store.get('session')).toBeUndefined()
+    expect(JSON.parse(await contents()).sessions.replacement.id).toBe('replacement')
+    expect(await readFile(uploaded.path, 'utf8')).toBe('Retained upload')
   })
 
   it('selects each shifted head within its transaction', async () => {

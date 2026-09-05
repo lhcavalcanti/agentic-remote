@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import ReaderWorkspace from './ReaderWorkspace'
 import type {
   CSSProperties,
   ChangeEvent,
@@ -10954,7 +10955,7 @@ function App() {
       ) : null}
 
 
-      <div className={`workspace workspace--${knowledgeMode}`}>
+      <ReaderWorkspace mode={knowledgeMode}>
       <main className="conversation" hidden={knowledgeMode === 'expanded'}>
         <header className="conversation-header">
           <button
@@ -11553,6 +11554,7 @@ function App() {
         aria-label="Session knowledge"
         className="knowledge-panel"
         hidden={knowledgeMode === 'hidden'}
+        id="knowledge-panel"
       >
         <header className="knowledge-panel__header">
           <BookOpen aria-hidden="true" size={16} />
@@ -11646,7 +11648,7 @@ function App() {
           </div>
         </div>
       </aside>
-      </div>
+      </ReaderWorkspace>
 
       <NewSessionDialog
         computers={computers}

@@ -5837,6 +5837,7 @@ describe('App', () => {
   })
 
   it('keeps knowledge open across sessions and follows the new one', async () => {
+    localStorage.setItem('agentic-remote:reader-width', '420')
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
     vi.mocked(listKnowledgeRoots).mockResolvedValue([
@@ -5870,6 +5871,8 @@ describe('App', () => {
     expect(document.querySelector('.workspace')).toHaveClass(
       'workspace--docked',
     )
+    expect(screen.getByRole('separator', { name: 'Resize reader' }))
+      .toHaveAttribute('aria-valuenow', '420')
     // Files are navigated from the sidebar, in every mode.
     const sidebar = document.querySelector('.sidebar')!
     expect(
@@ -5899,6 +5902,8 @@ describe('App', () => {
         localStorage.getItem('agentic-remote:knowledge-mode') || '""',
       ),
     ).toBe('docked')
+    expect(screen.getByRole('separator', { name: 'Resize reader' }))
+      .toHaveAttribute('aria-valuenow', '420')
   })
 
   it('expands the knowledge panel over the conversation', async () => {
@@ -5929,6 +5934,8 @@ describe('App', () => {
     )
     // Expanded covers the conversation instead of squeezing it.
     expect(document.querySelector('.conversation')).toHaveAttribute('hidden')
+    expect(screen.queryByRole('separator', { name: 'Resize reader' }))
+      .not.toBeInTheDocument()
 
     fireEvent.click(
       screen.getByRole('button', { name: 'Minimize knowledge panel' }),
@@ -5939,6 +5946,8 @@ describe('App', () => {
     expect(document.querySelector('.conversation')).not.toHaveAttribute(
       'hidden',
     )
+    expect(screen.getByRole('separator', { name: 'Resize reader' }))
+      .toBeInTheDocument()
   })
 
   it('restores the knowledge scroll position when the panel reopens', async () => {

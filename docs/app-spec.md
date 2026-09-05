@@ -329,6 +329,11 @@ switches, failed sends, and clear replacement IDs.
 - Whether the panel is open, and how much room it takes, is a workspace mode:
   it MUST persist across session switches, so a document being read is not
   dismissed by moving to another session.
+- The docked desktop reader MUST support resizing its left edge with a pointer
+  or the arrow keys, with Shift taking larger steps. Home or a double-click
+  MUST restore the responsive default width. The preferred width MUST persist
+  in browser-local storage, remain bounded by the available workspace without
+  crowding out the conversation, and MUST NOT affect phone full-screen reading.
 - Each session MUST keep its own reading position — root, folder, and
   document — and switching sessions MUST show that session's position.
 - Clearing a conversation replaces a session rather than deleting it, so the

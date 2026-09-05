@@ -142,6 +142,15 @@ replay it after publishing the created/replacement session. Failed identity
 writes discard dependent metadata, while genuine SDK creation/configuration
 errors retain their existing reporting and recovery behavior.
 
+Discovery waits for provider creation to settle, including cleanup of a refused
+identity write. Rejected SDK identities are detached, deleted from the provider,
+and excluded from later discovery; cleanup failures are surfaced and remain
+quarantined in the running service. Late SDK attachments and events cannot
+reinstall a retired owner. A clear keeps the original SDK identity until the
+replacement commits, then retires it. Persisted replacement lineage prevents
+stale provider listings from rediscovering the original after restart. Cleanup
+failure after an accepted clear is reported without undoing the committed clear.
+
 Providers await mutations before publishing or acting on their results.
 `readAfterWrites()` queues a read behind admitted changes before runtime,
 dispatch, or lifecycle decisions; a read-only batch does not write or
@@ -151,6 +160,12 @@ and queue/lifecycle ownership rules. Selecting and removing a queue head uses
 one store transaction. Reorder operations use this same boundary and must not
 add per-operation rollback. External provider delivery is not part of the
 filesystem transaction.
+
+Closing the store stops admission before draining existing batches and upload
+writes. Private batch scheduling remains enabled for work already admitted,
+including removal/replacement boundaries. The final close checkpoints volatile
+streamed text; late durable mutations, live deltas, and uploads fail explicitly
+without changing memory or recreating the state directory.
 
 The on-disk version and atomic-rename durability boundary are unchanged; this
 requires no stored-state migration or history rewrite.

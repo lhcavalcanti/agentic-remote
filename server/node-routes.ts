@@ -58,7 +58,10 @@ const reorderQueueSchema = z.object({
 
 const sendMessageSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
-  content: z.string().trim().min(1).max(200_000),
+  content: z
+    .string()
+    .max(200_000)
+    .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
   enqueue: z.boolean().optional(),
 })
 
@@ -114,6 +117,7 @@ const knowledgeFileQuerySchema = z.object({
 const workspaceFileQuerySchema = z.object({
   path: z.string().trim().min(1).max(4096),
 })
+
 const workspaceSearchQuerySchema = z.object({
   query: z.string().trim().min(2).max(200),
   path: z.string().trim().max(4096).optional(),

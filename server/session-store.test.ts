@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -770,5 +771,30 @@ describe('SessionStore', () => {
       sessions: Record<string, { messages: { id: string }[] }>
     }
     expect(persisted.sessions['session-burst'].messages).toHaveLength(25)
+  })
+
+  it('refuses a write that arrives after it has been closed', async () => {
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'session-late',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [],
+    })
+
+    await store.close()
+    // What a caller does once stopping has resolved: the directory is its own
+    // again. A prompt still finishing writes from its own completion path, and
+    // that write is not held by whoever stopped the service.
+    await rm(directory, { recursive: true, force: true })
+
+    await expect(
+      store.renameSession('session-late', 'Renamed after closing'),
+    ).rejects.toThrow('Session store is closed')
+    await store.flush()
+    expect(store.get('session-late')?.title).toBe('Project')
+    expect(existsSync(directory)).toBe(false)
   })
 })

@@ -92,6 +92,9 @@ export class SessionStore {
   private checkpoint = this.state
   private writeQueue: Promise<void> = Promise.resolve()
   private pendingPersist?: Promise<void>
+  private closed = false
+  private closeTask?: Promise<void>
+  private readonly fileWrites = new Set<Promise<void>>()
   private pendingChanges: PendingChange[] = []
   private writingState?: StoredState
   private liveMutableSessions = new WeakSet<StoredSession>()
@@ -752,6 +755,23 @@ export class SessionStore {
     filename: string,
     data: Buffer,
   ): Promise<SessionFileUpload> {
+    if (this.closed) throw new Error('Session store is closed')
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => { finish = resolve })
+    this.fileWrites.add(pending)
+    try {
+      return await this.writeUpload(sessionId, filename, data)
+    } finally {
+      this.fileWrites.delete(pending)
+      finish()
+    }
+  }
+
+  private async writeUpload(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
     this.requireSession(sessionId)
     const uploads = path.join(this.directory, 'uploads', sessionId)
     await mkdir(uploads, { recursive: true, mode: 0o700 })
@@ -971,6 +991,7 @@ export class SessionStore {
   }
 
   private mutateInMemory(change: StreamMutation): SessionDetail {
+    if (this.closed) throw new Error('Session store is closed')
     const { sessionId, messageId } = change
     const session = this.state.sessions[sessionId]
     if (!session) {
@@ -1096,6 +1117,7 @@ export class SessionStore {
     mutation: (state: StoredState) => () => T,
     separateCommit = false,
   ): Promise<T> {
+    if (this.closed) return Promise.reject(new Error('Session store is closed'))
     return new Promise((resolve, reject) => {
       this.pendingChanges.push({
         kind: 'mutation',
@@ -1158,7 +1180,19 @@ export class SessionStore {
     }
   }
 
-  private persist(): Promise<void> {
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask
+    this.closed = true
+    this.closeTask = (async () => {
+      await Promise.all([...this.fileWrites])
+      await this.flush()
+      // Closing is a checkpoint even when the only remaining work is live text.
+      if (this.pendingChanges.length) await this.persist(true)
+    })()
+    return this.closeTask
+  }
+
+  private persist(checkpointStreams = false): Promise<void> {
     if (this.pendingPersist) {
       return this.pendingPersist
     }
@@ -1195,7 +1229,7 @@ export class SessionStore {
             change.reject(error)
           }
         }
-        if (changes.length && !durableChange) {
+        if (changes.length && !durableChange && !checkpointStreams) {
           this.restoreStreams(changes)
           for (const resolve of applied) {
             resolve()

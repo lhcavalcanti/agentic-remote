@@ -3349,6 +3349,22 @@ button {
   display: none;
 }
 
+/*
+ * The composer decides what Enter does on a coarse pointer as well as on
+ * width, so the hint has to be read the same way. A tablet in landscape is
+ * wider than the breakpoint and still adds a line on Return -- and was being
+ * told the opposite.
+ */
+@media (pointer: coarse) {
+  .composer-hint__desktop {
+    display: none;
+  }
+
+  .composer-hint__mobile {
+    display: inline;
+  }
+}
+
 .dialog-backdrop {
   position: absolute;
   z-index: 30;

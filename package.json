@@ -40,6 +40,8 @@
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5",
     "web-push": "^3.6.7",
     "ws": "^8.21.3",
     "zod": "^4.4.3"
@@ -48,6 +50,7 @@
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",

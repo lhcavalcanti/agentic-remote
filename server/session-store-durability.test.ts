@@ -98,9 +98,7 @@ afterEach(async () => {
 
 describe('SessionStore durability', () => {
   const changes: [string, (store: SessionStore) => Promise<unknown>][] = [
-    ['reorder', (store) => store.update('session', (stored) => {
-      stored.queuedPrompts!.reverse()
-    })],
+    ['reorder', (store) => store.reorderQueuedPrompts('session', ['second', 'first'])],
     ['enqueue', (store) => store.enqueuePrompt('session', prompt('third'))],
     ['queue removal', (store) => store.removeQueuedPrompt('session', 'first')],
     ['queue shift', (store) => store.shiftQueuedPrompt('session')],
@@ -150,6 +148,65 @@ describe('SessionStore durability', () => {
     expect(reloaded.list()).toEqual(before)
   })
 
+  it('closes across queued destructive boundaries without stranding admitted callers', async () => {
+    const { store, directory } = await fixture()
+    const gate = holdWrite()
+    const first = store.renameSession('session', 'First committed title')
+    await gate.started
+    const replacing = store.replaceWithClearedSession('session', 'replacement')
+    const renaming = store.renameSession('replacement', 'Final committed title')
+    const closing = store.close()
+    await expect(store.renameSession('replacement', 'Too late'))
+      .rejects.toThrow('Session store is closed')
+    gate.finish()
+    await Promise.all([first, replacing, renaming, closing])
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.get('session')).toBeUndefined()
+    expect(reloaded.get('replacement')?.title).toBe('Final committed title')
+  })
+
+  it('checkpoints volatile text on close and refuses later live changes', async () => {
+    const { store, directory } = await fixture()
+    store.setMessageContent('session', 'assistant', 'Stream received before closing')
+    await store.close()
+    expect(() => store.setMessageContent('session', 'assistant', 'Too late'))
+      .toThrow('Session store is closed')
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.get('session')?.messages[0].content)
+      .toBe('Stream received before closing')
+  })
+
+  it('waits for admitted file writes and refuses uploads after close begins', async () => {
+    const { store } = await fixture()
+    const gate = holdWrite()
+    const upload = store.saveUpload('session', 'held.txt', Buffer.from('Owned upload'))
+    await gate.started
+    let finished = false
+    const closing = store.close().then(() => { finished = true })
+    await expect(store.saveUpload('session', 'late.txt', Buffer.from('Too late')))
+      .rejects.toThrow('Session store is closed')
+    await Promise.resolve()
+    expect(finished).toBe(false)
+    gate.finish()
+    const saved = await upload
+    await closing
+    expect(await readFile(saved.path, 'utf8')).toBe('Owned upload')
+  })
+
+  it('does not report a successful close when an admitted checkpoint fails', async () => {
+    const { store } = await fixture()
+    const gate = holdWrite()
+    const mutation = store.renameSession('session', 'Not committed')
+    const refusedMutation = expect(mutation).rejects.toThrow('Closing write failed')
+    await gate.started
+    const refusedClose = expect(store.close()).rejects.toThrow('Closing write failed')
+    gate.fail(new Error('Closing write failed'))
+    await Promise.all([refusedMutation, refusedClose])
+    expect(store.get('session')?.title).toBe('session')
+  })
+
   it('isolates a validation failure even after its callback changed nested data', async () => {
     const { store, contents } = await fixture()
     const before = store.get('session')
@@ -170,7 +227,7 @@ describe('SessionStore durability', () => {
     const onDisk = await contents()
     const gate = holdWrite()
     const results = [
-      store.update('session', (stored) => stored.queuedPrompts!.reverse()),
+      store.reorderQueuedPrompts('session', ['second', 'first']),
       store.enqueuePrompt('session', prompt('third')),
       store.removeQueuedPrompt('session', 'first'),
     ]
@@ -186,7 +243,7 @@ describe('SessionStore durability', () => {
   it('rebases a later batch on committed state after an earlier write fails', async () => {
     const { store, contents } = await fixture()
     const first = holdWrite()
-    const reorder = store.update('session', (stored) => stored.queuedPrompts!.reverse())
+    const reorder = store.reorderQueuedPrompts('session', ['second', 'first'])
     const rejected = expect(reorder).rejects.toThrow('disk full')
     await first.started
     const second = holdWrite()

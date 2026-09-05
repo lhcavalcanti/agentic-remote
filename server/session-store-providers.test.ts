@@ -52,6 +52,7 @@ function event(type: SessionEvent['type'], data: object): SessionEvent {
 
 async function fixture() {
   const directory = await mkdtemp(path.join(tmpdir(), 'store-providers-'))
+  vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot'))
   const store = new SessionStore(directory)
   fixtures.push({ directory, store })
   await store.initialize()
@@ -522,7 +523,7 @@ describe('SDK metadata during clear', () => {
     await expect(service.clearConversation('session')).rejects.toThrow('disk full')
     expect(store.get('session')).toBeDefined()
     expect(store.get(fresh()!.sessionId)).toBeUndefined()
-    expect(fresh()?.disconnect).not.toHaveBeenCalled()
+    expect(fresh()?.disconnect).toHaveBeenCalledOnce()
     expect(published).toEqual([])
     fresh()!.emit(event('session.permissions_changed', { allowAllPermissions: false }))
     await store.flush().catch(() => undefined)
@@ -688,6 +689,198 @@ describe('Provider queue persistence boundaries', () => {
     expect(events).toEqual([{ type: 'session.upserted', session: removed.session }])
   })
 
+  describe('SDK identity admission', () => {
+    function metadata(id: string, directory: string) {
+      return {
+        sessionId: id,
+        startTime: new Date('2026-09-05T00:00:00.000Z'),
+        modifiedTime: new Date('2026-09-05T00:00:00.000Z'),
+        isRemote: false,
+        summary: 'Provisional identity',
+        context: { workingDirectory: directory },
+      }
+    }
+
+    it('disposes and excludes a rejected SDK creation from later discovery', async () => {
+      const { store, directory, block, unblock } = await fixture()
+      const { service, client } = copilot(store)
+      const created = sdkSession('provisional')
+      client.createSession = vi.fn(async () => created)
+      client.deleteSession = vi.fn(async () => {})
+      client.listSessions = vi.fn(async () => [metadata(created.sessionId, directory)])
+      const published: ServerEvent[] = []
+      service.on('event', (incoming) => published.push(incoming))
+      await block()
+      await expect(service.createSession(directory)).rejects.toThrow('EISDIR')
+      expect(created.disconnect).toHaveBeenCalledOnce()
+      expect(client.deleteSession).toHaveBeenCalledExactlyOnceWith(created.sessionId)
+      expect(store.get(created.sessionId)).toBeUndefined()
+      created.emit(event('session.title_changed', { title: 'Late rejected title' }))
+      await unblock()
+      await service.refreshDiscovery()
+      await store.flush()
+      expect(store.get(created.sessionId)).toBeUndefined()
+      expect(published.filter((incoming) => incoming.type === 'session.upserted')).toEqual([])
+    })
+
+    it('holds discovery until a provisional SDK identity and its failed write settle', async () => {
+      const { store, directory, block, unblock } = await fixture()
+      const { service, client } = copilot(store)
+      const created = sdkSession('provisional')
+      let finishCreation!: (value: CopilotSessionLike) => void
+      let finishListing!: () => void
+      const listingGate = new Promise<void>((resolve) => { finishListing = resolve })
+      releases.push(finishListing)
+      client.createSession = vi.fn(() => new Promise<CopilotSessionLike>((resolve) => { finishCreation = resolve }))
+      client.listSessions = vi.fn(async () => {
+        await listingGate
+        return [metadata(created.sessionId, directory)]
+      })
+      await block()
+      const creating = service.createSession(directory)
+      const rejected = expect(creating).rejects.toThrow('EISDIR')
+      await vi.waitFor(() => expect(client.createSession).toHaveBeenCalledOnce())
+      const discovery = service.refreshDiscovery()
+      await Promise.resolve()
+      expect(client.listSessions).not.toHaveBeenCalled()
+      finishCreation(created)
+      await rejected
+      await unblock()
+      finishListing()
+      await discovery
+      expect(store.get(created.sessionId)).toBeUndefined()
+    })
+
+    it('keeps failed cleanup quarantined while surfacing both failures', async () => {
+      const { store, directory, block, unblock } = await fixture()
+      const { service, client } = copilot(store)
+      const created = sdkSession('provisional')
+      created.disconnect = vi.fn(async () => { throw new Error('Disconnect refused') })
+      client.createSession = vi.fn(async () => created)
+      client.deleteSession = vi.fn(async () => { throw new Error('Delete refused') })
+      client.listSessions = vi.fn(async () => [metadata(created.sessionId, directory)])
+      await block()
+      await expect(service.createSession(directory))
+        .rejects.toThrow('Session creation failed and SDK cleanup is incomplete')
+      expect(created.disconnect).toHaveBeenCalledOnce()
+      expect(client.deleteSession).toHaveBeenCalledOnce()
+      await unblock()
+      await service.refreshDiscovery()
+      expect(store.get(created.sessionId)).toBeUndefined()
+      await service.stop()
+      expect(created.disconnect).toHaveBeenCalledOnce()
+    })
+
+    it('does not delete the original SDK identity when clear persistence fails', async () => {
+      const { store, directory, service, client, fresh } = await clearFixture()
+      client.deleteSession = vi.fn(async () => {})
+      const before = store.get('session')
+      const blocked = path.join(directory, 'state.json.tmp')
+      await mkdir(blocked)
+      await expect(service.clearConversation('session')).rejects.toThrow('EISDIR')
+      const replacement = fresh()!
+      expect(store.get('session')).toEqual(before)
+      expect(store.get(replacement.sessionId)).toBeUndefined()
+      expect(client.deleteSession).toHaveBeenCalledExactlyOnceWith(replacement.sessionId)
+      expect(replacement.disconnect).toHaveBeenCalledOnce()
+      await rm(blocked, { recursive: true })
+      client.listSessions = vi.fn(async () => [
+        metadata('session', directory), metadata(replacement.sessionId, directory),
+      ])
+      await service.refreshDiscovery()
+      expect(store.get(replacement.sessionId)).toBeUndefined()
+      expect(store.get('session')).toBeDefined()
+    })
+
+    it('retires the original SDK identity only after replacement commits', async () => {
+      const { store, directory, service, client } = await clearFixture()
+      client.deleteSession = vi.fn(async (id) => {
+        if (id === 'session') expect(store.get(id)).toBeUndefined()
+      })
+      const replacement = await service.clearConversation('session')
+      expect(client.deleteSession).toHaveBeenCalledWith('session')
+      client.listSessions = vi.fn(async () => [
+        metadata('session', directory), metadata(replacement.id, directory),
+      ])
+      const reloaded = new SessionStore(directory)
+      await reloaded.initialize()
+      const restarted = copilot(reloaded)
+      restarted.client.listSessions = client.listSessions
+      await restarted.service.refreshDiscovery()
+      expect(reloaded.get('session')).toBeUndefined()
+      expect(reloaded.get(replacement.id)).toBeDefined()
+    })
+
+    it('preserves a committed clear when old SDK cleanup is refused', async () => {
+      const { store, service, client } = await clearFixture()
+      client.deleteSession = vi.fn(async () => { throw new Error('Cleanup unavailable') })
+      const errors: ServerEvent[] = []
+      service.on('event', (incoming) => {
+        if (incoming.type === 'error') errors.push(incoming)
+      })
+      const replacement = await service.clearConversation('session')
+      expect(store.get('session')).toBeUndefined()
+      expect(store.get(replacement.id)).toBeDefined()
+      expect(errors).toEqual([expect.objectContaining({
+        type: 'error', sessionId: replacement.id,
+        message: expect.stringContaining('SDK cleanup is incomplete'),
+      })])
+    })
+
+    it('settles in-flight creation before stopping the SDK', async () => {
+      const { store, directory } = await fixture()
+      const { service, client } = copilot(store)
+      const created = sdkSession('provisional')
+      let finish!: (value: CopilotSessionLike) => void
+      client.createSession = vi.fn(() => new Promise<CopilotSessionLike>((resolve) => { finish = resolve }))
+      client.deleteSession = vi.fn(async () => {})
+      const stop = vi.spyOn(client, 'stop')
+      const creating = service.createSession(directory)
+      const rejected = expect(creating).rejects.toThrow('session service is stopping')
+      await vi.waitFor(() => expect(client.createSession).toHaveBeenCalledOnce())
+      const stopping = service.stop()
+      await Promise.resolve()
+      expect(stop).not.toHaveBeenCalled()
+      finish(created)
+      await rejected
+      await stopping
+      expect(created.disconnect).toHaveBeenCalledOnce()
+      expect(client.deleteSession).toHaveBeenCalledWith(created.sessionId)
+      expect(store.get(created.sessionId)).toBeUndefined()
+      await expect(service.createSession(directory)).rejects.toThrow('session service is stopping')
+      expect(client.createSession).toHaveBeenCalledOnce()
+    })
+
+    it('does not overwrite or dispose an existing provider identity on collision', async () => {
+      const { store, directory } = await fixture()
+      const { service, client } = copilot(store)
+      const existing = sdkSession('session')
+      const before = store.get('session')
+      client.createSession = vi.fn(async () => existing)
+      client.deleteSession = vi.fn(async () => {})
+      await expect(service.createSession(directory)).rejects.toThrow('existing session identity')
+      expect(store.get('session')).toEqual(before)
+      expect(existing.disconnect).not.toHaveBeenCalled()
+      expect(client.deleteSession).not.toHaveBeenCalled()
+    })
+
+    it('does not attach an SDK resume that completes after its identity was replaced', async () => {
+      const { store, service, client } = await clearFixture()
+      const old = sdkSession('session')
+      let finish!: (value: CopilotSessionLike) => void
+      client.resumeSession = vi.fn(() => new Promise<CopilotSessionLike>((resolve) => { finish = resolve }))
+      const opening = service.openSession('session')
+      const rejected = expect(opening).rejects.toThrow('Session is no longer available')
+      await vi.waitFor(() => expect(client.resumeSession).toHaveBeenCalledOnce())
+      const replacement = await service.clearConversation('session')
+      finish(old)
+      await rejected
+      expect(old.disconnect).toHaveBeenCalledOnce()
+      expect(store.get('session')).toBeUndefined()
+      expect(store.get(replacement.id)).toBeDefined()
+    })
+  })
+
   it('does not dispatch Copilot SDK work when its dequeue write fails', async () => {
     const { store, block } = await fixture()
     const { service, resumeSession, terminal } = copilot(store)
@@ -744,9 +937,8 @@ describe('Provider queue persistence boundaries', () => {
     const events: ServerEvent[] = []
     service.on('event', (event) => events.push(event))
     await block()
-    await expect(store.update('session', (stored) => {
-      stored.queuedPrompts!.reverse()
-    })).rejects.toThrow('EISDIR')
+    await expect(service.reorderQueuedPrompts('session', ['second', 'first']))
+      .rejects.toThrow('EISDIR')
     await unblock()
     await (service as unknown as {
       drainTerminalQueue(id: string): Promise<void>
@@ -761,6 +953,40 @@ describe('Provider queue persistence boundaries', () => {
         queuedPrompts: [expect.objectContaining({ id: 'second' })],
       }),
     })])
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.get('session')?.queuedPrompts).toEqual(
+      service.getSession('session')?.queuedPrompts,
+    )
+  })
+
+  it('drains the committed Claude order after rejecting a real reorder', async () => {
+    const { store, directory, block, unblock } = await fixture()
+    const { service, query } = claude(store)
+    const events: ServerEvent[] = []
+    service.on('event', (incoming) => events.push(incoming))
+    await store.updateStatus('session', 'running')
+    const before = service.getSession('session')
+    await block()
+    await expect(service.reorderQueuedPrompts('session', ['second', 'first']))
+      .rejects.toThrow('EISDIR')
+    expect(events).toEqual([])
+    expect(service.getSession('session')).toEqual(before)
+    expect(query).not.toHaveBeenCalled()
+    await unblock()
+    await store.updateStatus('session', 'idle')
+    const internals = service as unknown as {
+      drainQueue(id: string): Promise<void>
+      dispatchQueued(id: string, content: string): Promise<unknown>
+    }
+    const dispatch = vi.spyOn(internals, 'dispatchQueued').mockImplementation(
+      async (id) => store.updateStatus(id, 'running'),
+    )
+    await internals.drainQueue('session')
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith('session', 'first', false, true)
+    expect(query).not.toHaveBeenCalled()
+    expect(service.getSession('session')?.queuedPrompts?.map(({ id }) => id))
+      .toEqual(['second'])
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
     expect(reloaded.get('session')?.queuedPrompts).toEqual(

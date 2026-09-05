@@ -95,6 +95,29 @@ release. On any failure after the switch, restore the previous commit and
 release pointer, restart the service, and leave the success marker unchanged so
 the next run retries from a known state.
 
+The failed candidate is marked `.promotion-failed` before restoration, so
+`agentic-remote rollback` will never select it. Remove only that new candidate
+after the previous pointer is restored and the restarted runtime passes its
+health check; keep older healthy releases available. If pointer restoration,
+restart, health verification, or removal fails, retain the rejected release
+and its marker and report the incomplete recovery without advancing success.
+Do not remove an active release. A rejected release still serving as `current`
+must be rolled back to a healthy release before promotion can retry.
+Inactive rejected directories are quarantined outside the release inventory if
+restored health cannot be established, so older rollback commands cannot select
+them merely because they are newest. An active candidate is never moved or
+deleted when pointer restoration fails. Retained marked directories do not
+consume the two healthy rollback slots.
+
+Publication stages complete bundles outside the rollback inventory and installs
+them with an atomic directory rename before switching `current`. The monitor
+supplies a unique `--release-id`, then checks that both the source checkout and
+the active release match its candidate. A setup failure before pointer activation
+cannot hide an unverified candidate behind the previous healthy pointer. The
+promotion record contains the promoted and previous release paths as well as
+their commits. The profile's release root must identify the application CLI's
+release directory; a mismatch is refused before changing the runtime source.
+
 Graduate only what `origin/main` already contains. A clean local `main` can sit
 ahead of its upstream, so comparing `HEAD` against `refs/remotes/origin/main`
 after the fetch is what prevents promoting an unmerged commit.
@@ -108,6 +131,12 @@ supplied per run without touching the file:
 ```bash
 AGENTIC_REMOTE_MONITOR_DEV_ROOT=/other/checkout agentic-remote-promotion-monitor run
 ```
+
+Local installation runs prepend both `AGENTIC_REMOTE_RUNTIME_TOOLS` and
+`$HOME/.local/bin` to the service environment's `PATH`. The runtime-tools
+directory supplies the pinned package-manager shim, while the user-local
+directory supplies Copilot when it was installed with the documented npm
+prefix.
 
 Moving values into the systemd unit looks like it hides them but does the
 opposite. The profile is written `0600`, while `systemctl show -p Environment`

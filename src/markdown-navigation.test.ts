@@ -213,6 +213,107 @@ describe('outlineFromMarkdown edge cases', () => {
     )
     expect(outlineFromMarkdown(content)).toEqual([])
   })
+
+  // The outline is matched to the document by position among the rendered
+  // headings, so an underlined heading that is rendered but not collected
+  // shifts every entry after it onto the heading before the one it names.
+  it('counts headings that are underlined rather than hashed', () => {
+    const content = [
+      'Overview',
+      '========',
+      '',
+      'Some prose.',
+      '',
+      'Details',
+      '-------',
+      '',
+      '### Deeper',
+    ].join('\n')
+
+    expect(
+      outlineFromMarkdown(content).map(({ text, level, index }) => ({
+        text,
+        level,
+        index,
+      })),
+    ).toEqual([
+      { text: 'Overview', level: 1, index: 0 },
+      { text: 'Details', level: 2, index: 1 },
+      { text: 'Deeper', level: 3, index: 2 },
+    ])
+  })
+
+  it('does not read a rule or a list dash as an underline', () => {
+    const content = [
+      'Intro paragraph.',
+      '',
+      '---',
+      '',
+      '- item',
+      '- other',
+      '',
+      '# Real',
+    ].join('\n')
+
+    expect(outlineFromMarkdown(content).map((entry) => entry.text)).toEqual([
+      'Real',
+    ])
+  })
+
+  it('keeps counting a heading that has nothing to show', () => {
+    // `#` on its own is still drawn, so an entry after it is one heading
+    // further down the document than its position in this list.
+    const content = ['#', '', '# Real', '', '## Later'].join('\n')
+
+    expect(
+      outlineFromMarkdown(content).map(({ text, index }) => ({ text, index })),
+    ).toEqual([
+      { text: 'Real', index: 1 },
+      { text: 'Later', index: 2 },
+    ])
+  })
+
+  it('uses reference-style image alt text in heading outlines', () => {
+    expect(outlineFromMarkdown(
+      '# ![Architecture][diagram]\n\n## Later\n\n[diagram]: diagram.png\n',
+    )).toEqual([
+      { id: 'architecture', text: 'Architecture', level: 1, index: 0 },
+      { id: 'later', text: 'Later', level: 2, index: 1 },
+    ])
+  })
+
+  it('does not read a rule under a link definition as a heading', () => {
+    // A link reference definition is not a paragraph, so the renderer draws a
+    // rule here rather than a heading. Reading it as one shifted every later
+    // outline entry by a heading.
+    const content = ['[ref]: /url', '---', '', '# Real'].join('\n')
+
+    expect(outlineFromMarkdown(content).map((entry) => entry.text)).toEqual([
+      'Real',
+    ])
+  })
+
+  it('reads front matter the way the renderer draws it', () => {
+    // remark is used without a front-matter plugin, so this is a rule, a
+    // paragraph, and the underline that turns it into a heading. Skipping it
+    // here would put every later entry one heading out.
+    const content = ['---', 'title: Notes', '---', '', '# Real'].join('\n')
+
+    expect(
+      outlineFromMarkdown(content).map(({ text, level }) => ({ text, level })),
+    ).toEqual([
+      { text: 'title: Notes', level: 2 },
+      { text: 'Real', level: 1 },
+    ])
+  })
+
+  it('does not read an underline inside a fence as a heading', () => {
+    const content = ['```', 'Fake', '====', '```', '', '# Real'].join('\n')
+
+    expect(outlineFromMarkdown(content).map((entry) => entry.text)).toEqual([
+      'Real',
+    ])
+  })
 })
 
 describe('resolveDocumentPath', () => {

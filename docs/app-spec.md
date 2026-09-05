@@ -82,6 +82,12 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - A late or ambiguous lock MAY be accepted only when `/proc/<pid>/fd` proves
   that the process has the corresponding `session.db` open.
 - Historical sessions MAY be opened from the new-session flow.
+- An open new-session dialog MUST preserve user choices across computer status
+  updates. If its computer becomes unavailable, it MUST select an available
+  computer when one returns and require a new compatible historical selection.
+- Automatic computer fallback MUST NOT submit the prior computer's folder.
+  Creation waits for a folder owned by the replacement computer. An explicitly
+  selected computer's saved default remains usable while its listing loads.
 - Copilot sessions MUST expose tracked background tasks when the owning
   runtime advertises task support. The UI MUST show queued, running,
   completed, failed, and cancelled task states, including task progress and
@@ -209,6 +215,16 @@ Questions and permissions are the highest-priority UI state.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
   Such input MUST be left untouched with an actionable conflict, not cleared,
   duplicated, or submitted automatically.
+- A working terminal composer MUST accept native queued messages and slash
+  commands whose catalog explicitly allows execution during a turn. Other
+  immediate messages MUST wait. These delivery modes MUST still reject
+  startup screens, dialogs, non-composer frames, and existing drafts.
+- Losing a paste acknowledgement MUST report uncertain delivery rather than
+  authorize an automatic retry. Readiness MUST be checked again after owner
+  validation and before the paste.
+- Form identity MUST preserve word boundaries. Terminal form reads MUST use
+  tmux's joined soft-wrap capture instead of guessing whether a line break
+  separated words or split an identifier.
 
 - Full-screen send protection MUST recognize active terminal dialogs, including
   single-field questions, without treating keyboard hints quoted in transcript
@@ -241,6 +257,62 @@ required to be individually editable.
 
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
+Recalling history MUST preserve the unsent draft durably; a reload restores that
+draft, not the historical preview. Sending a preview MUST NOT discard the draft
+behind it or acknowledge a failed prompt owned by that hidden draft. This also
+applies to local `/statusline`, `/clear`, `/restart`, and argumentless `/cwd`
+previews, including any replacement session created by clearing.
+
+A pending submission MUST retain its complete text and paste metadata until its
+request is accepted, independently of anything written in the meantime. Reloads
+and unsuccessful requests MUST restore that submission without automatically
+sending or queuing it. When delivery cannot be confirmed, the composer MUST warn
+that the message may already have been sent or queued. Matching transcript text
+or the absence of a previous failure marker MUST NOT be treated as acceptance of
+an unconfirmed request.
+
+A failure to save composer state MUST leave the current text editable and warn
+that the saved copy may be out of date. Message and queue admission MUST require
+successful writes of the pending state, generation marker, and expanded legacy
+draft copy. Failed admission MUST dispatch nothing, preserve the editor and its
+history draft, and release the sending gate. Repairing partial writes is
+best-effort and MUST NOT turn failed admission into a send; if repair also fails,
+the user MUST be told to copy their text before reloading. A later successful
+save clears the storage warning but MUST NOT automatically send anything.
+Storage failures after confirmed acceptance MUST NOT restore the accepted
+message over newer writing. Unsaved recovery-identity changes are retried with
+the next composer save.
+
+Successful requests MUST record acceptance by submission identity before
+retiring pending browser state. The generation marker reserves space for at
+most 64 receipts containing the original computer/session key and submission
+ID, not message contents. Receipts MUST survive failed draft cleanup, including
+reload, and MUST NOT acknowledge another session's submission. Retirement writes
+the legacy copy before removing the pending identity from the versioned copy;
+only receipts no longer referenced there may be pruned. Newer legacy edits
+still take precedence over an old snapshot.
+
+If acceptance evidence cannot be written, the tab MUST retain the accepted
+submission and newer editable draft in memory and explicitly warn that its
+confirmation is not saved. A reload may then restore the submission as
+unconfirmed; it MUST NOT be automatically resent or presented as definitely
+unsent. Definitive recovery when all browser writes are denied requires server
+support: a client request ID bound to the payload and logical session lineage,
+durable acceptance recorded with the operation, and a receipt lookup or
+idempotent retry that cannot submit it twice. The client-only fallback does not
+provide that server guarantee.
+
+Best-effort preference storage MUST NOT authorize composer submission or retire
+delivery receipts. If saved draft storage cannot be read at startup, typing
+remains available but sends and draft writes stay blocked until a reload can
+recover the saved state. The UI MUST warn the user to copy new text first.
+
+Pastes longer than 20 lines MUST appear in the composer as
+`[Paste #N - L lines]`, numbered within the current session draft. The exact
+pasted text MUST remain embedded in the draft and replace its label when the
+message is sent or queued. Shorter pastes MUST remain ordinary editable text.
+Collapsed pastes MUST survive reloads, session switches, failed sends, and
+clear replacement IDs without losing, duplicating, or reordering content.
 
 ### 6.3 Recording state
 
@@ -338,6 +410,14 @@ switches, failed sends, and clear replacement IDs.
   confined; a root is read-only.
 - A root MUST be validated on its owning computer, and every path browsed under
   it MUST stay inside it.
+- Validation and pending Knowledge responses MUST belong to the same pairing
+  lifetime that requested them. Re-pairing the same computer ID MUST NOT revive
+  old responses or make a stale validation create a root.
+- Root creation MUST recheck registration after persistence. A re-pairing
+  announced by another tab MUST allow fresh requests without reviving older
+  responses or removing the new pairing's roots.
+- Initial and reconnect computer snapshots MUST preserve newer computer events.
+  An older partial session refresh MUST NOT undo a newer computer removal.
 - The reader MUST reopen the root, folder, and document last being read, so
   returning does not mean choosing them again. Changing folder MUST remain an
   explicit action.

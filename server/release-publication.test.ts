@@ -3,9 +3,13 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
+  rename,
   rm,
+  symlink,
   unlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -42,11 +46,15 @@ async function publicationFixture() {
     }
     return match[0]
   }).join('\n')
-  const run = (command: 'publish_release' | 'rollback_service') => exec(
+  const run = (
+    command: 'publish_release' | 'rollback_service',
+    environment: Record<string, string> = {},
+  ) => exec(
     'bash',
     ['-euc', `
       die() { printf '%s\\n' "$*" >&2; exit 1; }
       systemctl() { printf '%s\\n' "$*" > "$CONFIG_DIR/service-call"; }
+      mv() { if [[ "\${FAIL_ACTIVATION:-0}" == 1 ]]; then return 9; fi; command mv "$@"; }
       ${functions}
       ${command}
     `],
@@ -57,6 +65,7 @@ async function publicationFixture() {
         REPO_ROOT: repository,
         CONFIG_DIR: config,
         SERVICE_NAME: 'fixture.service',
+        ...environment,
       },
     },
   )
@@ -106,5 +115,66 @@ describe('immutable build publication', () => {
 
     await expect(run('publish_release')).rejects.toThrow('production build identity is missing')
     expect(await realpath(current)).toBe(previous)
+  })
+
+  it('does not let a retained rejected release evict or replace healthy rollback candidates', async () => {
+    const { config, run, build } = await publicationFixture()
+    const releases = path.join(config, 'releases')
+    const current = path.join(releases, 'current')
+    await build('older-healthy')
+    await run('publish_release')
+    const older = await realpath(current)
+    await utimes(older, 1, 1)
+    await build('previous-healthy')
+    await run('publish_release')
+    const previous = await realpath(current)
+    await utimes(previous, 2, 2)
+    const rejected = path.join(releases, 'rejected')
+    await mkdir(rejected)
+    await writeFile(path.join(rejected, '.promotion-failed'), 'failed candidate')
+    await build('new-healthy')
+    await run('publish_release')
+
+    expect(await readFile(path.join(older, 'dist', 'index.html'), 'utf8')).toBe('older-healthy')
+    expect(await readFile(path.join(previous, 'dist', 'index.html'), 'utf8')).toBe('previous-healthy')
+    await run('rollback_service')
+    expect(await realpath(current)).toBe(previous)
+    expect(await readFile(path.join(rejected, '.promotion-failed'), 'utf8')).toBe('failed candidate')
+  })
+
+  it('does not expose a partially copied or unactivated release to rollback', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    await build('healthy')
+    await run('publish_release')
+    const current = path.join(config, 'releases', 'current')
+    const previous = await realpath(current)
+    await build('rejected')
+    await expect(run('publish_release', { FAIL_ACTIVATION: '1' })).rejects.toThrow()
+    expect(await realpath(current)).toBe(previous)
+    expect((await readdir(path.join(config, 'releases'), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+      .toEqual([path.basename(previous)])
+    await rm(path.join(repository, 'shared'), { recursive: true })
+    await expect(run('publish_release')).rejects.toThrow()
+    expect(await realpath(current)).toBe(previous)
+    expect((await readdir(path.join(config, 'releases'), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+      .toEqual([path.basename(previous)])
+  })
+
+  it('copies a linked dependency directory into the immutable release', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    const dependencies = path.join(repository, 'dependencies')
+    await rename(path.join(repository, 'node_modules'), dependencies)
+    await writeFile(path.join(dependencies, 'fixture.txt'), 'published dependency')
+    await symlink(dependencies, path.join(repository, 'node_modules'))
+    await build('healthy')
+    await run('publish_release')
+    const published = await realpath(path.join(config, 'releases', 'current'))
+    expect(await realpath(path.join(published, 'node_modules')))
+      .toBe(path.join(published, 'node_modules'))
+    await writeFile(path.join(dependencies, 'fixture.txt'), 'changed development dependency')
+    expect(await readFile(path.join(published, 'node_modules', 'fixture.txt'), 'utf8'))
+      .toBe('published dependency')
   })
 })

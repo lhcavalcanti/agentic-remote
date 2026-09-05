@@ -11400,6 +11400,7 @@ function App() {
                 </header>
                 <DndContext
                   collisionDetection={closestCenter}
+                  id="prompt-queue"
                   onDragEnd={(event) => void queueDragEnded(event)}
                   sensors={sensors}
                 >

@@ -436,6 +436,16 @@ type ComposerPersistenceResult =
   | { ok: true }
   | { ok: false; error: string }
 
+type ComposerStorageSnapshot = {
+  drafts: ComposerDrafts
+  legacyDrafts: Record<string, string>
+  legacyPastes: Record<string, unknown[]>
+  receipts: ComposerAcceptanceReceipt[]
+  generationPresent: boolean
+  failureStamps: Record<string, string>
+  recoveredContents: Record<string, string>
+}
+
 const collapsedPasteLineThreshold = 20
 const composerDraftsStorageKey = 'agentic-remote:composer-drafts-v2'
 // Set the first time this build persists, and never cleared. Its presence is
@@ -449,23 +459,129 @@ function newCollapsedPasteKey(): string {
   return `${Date.now().toString(36)}-${collapsedPasteKeySequence.toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
-function readComposerAcceptanceReceipts(strict = false): ComposerAcceptanceReceipt[] {
-  const stored: unknown = strict
-    ? JSON.parse(localStorage.getItem(composerDraftsGenerationKey) ?? '1')
-    : readStoredOrder<unknown>(composerDraftsGenerationKey, 1)
-  if (!stored || typeof stored !== 'object' || !('accepted' in stored)) {
-    return []
+class ComposerStorageFormatError extends Error {
+  constructor(key: string, detail: string) {
+    super(`${key}: ${detail}`)
+    this.name = 'ComposerStorageFormatError'
   }
-  return Array.isArray(stored.accepted)
-    ? stored.accepted.filter((entry): entry is ComposerAcceptanceReceipt =>
-        entry !== null &&
-        typeof entry === 'object' &&
-        typeof entry.key === 'string' &&
-        entry.key.length > 0 &&
-        typeof entry.id === 'string' &&
-        entry.id.length > 0,
-      )
-    : []
+}
+
+function isComposerObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isComposerOwnerKey(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false
+  }
+  const separator = value.indexOf(':')
+  return separator > 0 && separator < value.length - 1
+}
+
+function isComposerRecord(value: unknown, item: (value: unknown) => boolean): boolean {
+  return isComposerObject(value) &&
+    Object.entries(value).every(([key, entry]) => isComposerOwnerKey(key) && item(entry))
+}
+
+function isStoredComposerPaste(value: unknown): boolean {
+  if (!isComposerObject(value)) {
+    return false
+  }
+  const { key, start, unresolved } = value
+  if (!isComposerPastePayload(value)) {
+    return false
+  }
+  // A missing or displaced anchor is recoverable, not evidence that its
+  // payload can be discarded. Wrong structural types are not a valid record.
+  return (key === undefined || typeof key === 'string') &&
+    (start === undefined || Number.isInteger(start)) &&
+    (unresolved === undefined || typeof unresolved === 'boolean')
+}
+
+function isStoredComposerContent(value: unknown): value is Record<string, unknown> {
+  return isComposerObject(value) && typeof value.text === 'string' &&
+    Array.isArray(value.pastes) && value.pastes.every(isStoredComposerPaste)
+}
+
+function isStoredComposerDraft(value: unknown): boolean {
+  if (!isStoredComposerContent(value)) {
+    return false
+  }
+  const pending = value.pendingSubmission
+  return (value.deliveryUncertain === undefined || typeof value.deliveryUncertain === 'boolean') &&
+    (value.unresolvedPastes === undefined ||
+      (Array.isArray(value.unresolvedPastes) && value.unresolvedPastes.every((paste) =>
+        isComposerObject(paste) && typeof paste.key === 'string' &&
+        paste.key.length > 0 && isComposerPastePayload(paste),
+      ))) &&
+    (pending === undefined || (
+      isStoredComposerContent(pending) &&
+      typeof pending.id === 'string' && pending.id.length > 0 &&
+      typeof pending.text === 'string' && pending.text.length > 0 &&
+      (pending.originKey === undefined || isComposerOwnerKey(pending.originKey)) &&
+      (pending.acknowledgesFailure === undefined || typeof pending.acknowledgesFailure === 'string') &&
+      (pending.accepted === undefined || typeof pending.accepted === 'boolean')
+    ))
+}
+
+function readComposerStorageValue<T>(
+  key: string,
+  missing: T,
+  valid: (value: unknown) => boolean,
+): { value: T; present: boolean } {
+  const raw = localStorage.getItem(key)
+  if (raw === null) {
+    return { value: missing, present: false }
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    throw new ComposerStorageFormatError(key, 'invalid JSON')
+  }
+  if (!valid(value)) {
+    throw new ComposerStorageFormatError(key, 'invalid saved composer schema')
+  }
+  return { value: value as T, present: true }
+}
+
+function readComposerStorageSnapshot(): ComposerStorageSnapshot {
+  const generation = readComposerStorageValue<
+    1 | { version: 1; accepted: ComposerAcceptanceReceipt[] }
+  >(composerDraftsGenerationKey, 1, (value) =>
+    value === 1 || (isComposerObject(value) && value.version === 1 &&
+      Array.isArray(value.accepted) && value.accepted.length <= composerAcceptanceReceiptLimit &&
+      value.accepted.every((receipt) => isComposerObject(receipt) &&
+        isComposerOwnerKey(receipt.key) &&
+        typeof receipt.id === 'string' && receipt.id.length > 0)),
+  )
+  const strings = (value: unknown) => isComposerRecord(value, (entry) => typeof entry === 'string')
+  return {
+    drafts: readComposerStorageValue<ComposerDrafts>(
+      composerDraftsStorageKey, {}, (value) => isComposerRecord(value, isStoredComposerDraft),
+    ).value,
+    legacyDrafts: readComposerStorageValue<Record<string, string>>(
+      'agentic-remote:composer-drafts', {}, strings,
+    ).value,
+    legacyPastes: readComposerStorageValue<Record<string, unknown[]>>(
+      'agentic-remote:composer-pastes', {}, (value) => isComposerRecord(
+        value, (entry) => Array.isArray(entry) && entry.every(isStoredComposerPaste),
+      ),
+    ).value,
+    failureStamps: readComposerStorageValue<Record<string, string>>(
+      'agentic-remote:composer-draft-failures', {}, strings,
+    ).value,
+    recoveredContents: readComposerStorageValue<Record<string, string>>(
+      'agentic-remote:composer-draft-recovered', {}, strings,
+    ).value,
+    receipts: generation.value === 1 ? [] : generation.value.accepted,
+    generationPresent: generation.present,
+  }
+}
+
+function composerReadFailureMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  return `Saved drafts could not be read (${detail}). Copy new text and reload after storage is available.`
 }
 
 function hasComposerAcceptanceReceipt(
@@ -691,35 +807,19 @@ function writeComposerEdit(
   return writeComposerContent(updated, key, edit.content)
 }
 
-function readComposerDrafts(): ComposerDrafts {
-  const stored = readStoredOrder<unknown>(composerDraftsStorageKey, {})
-  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
-    return readLegacyComposerDrafts()
-  }
+function readComposerDrafts(snapshot: ComposerStorageSnapshot): ComposerDrafts {
+  const stored = snapshot.drafts
   const result: ComposerDrafts = {}
   const unresolvedRecorded = new Set<string>()
-  const receipts = readComposerAcceptanceReceipts()
+  const receipts = snapshot.receipts
   const acceptedLegacySnapshots: Record<string, string> = {}
-  for (const [key, value] of Object.entries(stored)) {
-    if (
-      !value ||
-      typeof value !== 'object' ||
-      Array.isArray(value) ||
-      typeof (value as ComposerDraft).text !== 'string'
-    ) {
-      continue
-    }
-    const candidate = value as ComposerDraft
+  for (const [key, candidate] of Object.entries(stored)) {
     const decoded = resolveComposerPastes(candidate.text, candidate.pastes, key)
     const draft: ComposerDraft = {
       text: candidate.text,
       pastes: decoded.pastes,
     }
-    const savedUnresolved = Array.isArray(candidate.unresolvedPastes)
-      ? candidate.unresolvedPastes.filter((paste) =>
-          isComposerPastePayload(paste) && typeof paste.key === 'string' && paste.key.length > 0,
-        )
-      : undefined
+    const savedUnresolved = candidate.unresolvedPastes
     if (savedUnresolved) {
       unresolvedRecorded.add(key)
     }
@@ -731,13 +831,7 @@ function readComposerDrafts(): ComposerDrafts {
     }
     const pending = candidate.pendingSubmission
     let unresolvedPending: UnresolvedComposerPaste[] = []
-    if (
-      pending &&
-      typeof pending === 'object' &&
-      typeof pending.id === 'string' &&
-      typeof pending.text === 'string' &&
-      pending.text
-    ) {
+    if (pending) {
       const decodedPending = resolveComposerPastes(
         pending.text, pending.pastes, `${key}:submission:${pending.id}`,
       )
@@ -770,7 +864,7 @@ function readComposerDrafts(): ComposerDrafts {
       result[key] = recovered
     }
   }
-  const legacy = readLegacyComposerDrafts()
+  const legacy = readLegacyComposerDrafts(snapshot)
   // An older build writes only the legacy key, so after a rollback and back
   // again its drafts are the newer ones -- and taking this state whenever it
   // held anything at all wrote the stale copy straight back over them. Where
@@ -783,7 +877,7 @@ function readComposerDrafts(): ComposerDrafts {
   // writing it in full ever since, so a session it holds nothing for is one
   // whose draft was sent or cleared over there, and keeping ours brought that
   // draft back from the dead.
-  const returning = localStorage.getItem(composerDraftsGenerationKey) !== null
+  const returning = snapshot.generationPresent
   if (returning) {
     for (const key of Object.keys(result)) {
       if (!legacy[key]) {
@@ -828,15 +922,9 @@ function readComposerDrafts(): ComposerDrafts {
   return Object.keys(result).length > 0 ? result : legacy
 }
 
-function readLegacyComposerDrafts(): ComposerDrafts {
-  const stored = readStoredOrder<Record<string, unknown>>(
-    'agentic-remote:composer-drafts',
-    {},
-  )
-  const storedPastes = readStoredOrder<Record<string, unknown>>(
-    'agentic-remote:composer-pastes',
-    {},
-  )
+function readLegacyComposerDrafts(snapshot: ComposerStorageSnapshot): ComposerDrafts {
+  const stored = snapshot.legacyDrafts
+  const storedPastes = snapshot.legacyPastes
   const keys = new Set([...Object.keys(stored || {}), ...Object.keys(storedPastes || {})])
   return Object.fromEntries([...keys].flatMap((key) => {
     const text = typeof stored?.[key] === 'string' ? stored[key] as string : ''
@@ -6968,27 +7056,26 @@ function App() {
   >({})
   const [selectedKey, setSelectedKey] = useState<string>()
   const composerInitialReadFailure = useRef<string | undefined>(undefined)
+  const initialComposerStorage = useRef<ComposerStorageSnapshot | undefined>(undefined)
   const [composerDrafts, setComposerDrafts] = useState<ComposerDrafts>(() => {
+    if (composerInitialReadFailure.current) {
+      return {}
+    }
     try {
-      for (const key of [
-        composerDraftsStorageKey, composerDraftsGenerationKey,
-        'agentic-remote:composer-drafts', 'agentic-remote:composer-pastes',
-        'agentic-remote:composer-draft-failures', 'agentic-remote:composer-draft-recovered',
-      ]) {
-        localStorage.getItem(key)
-      }
-      return readComposerDrafts()
+      const snapshot = readComposerStorageSnapshot()
+      const drafts = readComposerDrafts(snapshot)
+      initialComposerStorage.current = snapshot
+      return drafts
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      composerInitialReadFailure.current =
-        `Saved drafts could not be read (${detail}). Copy new text and reload after storage is available.`
+      initialComposerStorage.current = undefined
+      composerInitialReadFailure.current = composerReadFailureMessage(error)
       return {}
     }
   })
   const [composerStorageError, setComposerStorageError] =
     useState<string | undefined>(composerInitialReadFailure.current)
   const composerDraftsRef = useRef(composerDrafts)
-  const composerAcceptanceReceipts = useRef(readComposerAcceptanceReceipts())
+  const composerAcceptanceReceipts = useRef(initialComposerStorage.current?.receipts || [])
   const composerMounted = useRef(true)
   const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
   const composerEditRef = useRef<
@@ -7115,7 +7202,7 @@ function App() {
   // Survives a reload beside the draft itself, because after one the text is
   // all that is left and identical text is not proof of where it came from.
   const restoredDraftStamps = useRef<Record<string, string>>(
-    readStoredOrder('agentic-remote:composer-draft-failures', {}),
+    initialComposerStorage.current?.failureStamps || {},
   )
   // The exact text that was handed back, so an untouched recovery can be told
   // from one the reader has since edited.
@@ -7123,7 +7210,7 @@ function App() {
   // warning is repeated when the text comes back but not on every render.
   const warnedUncertain = useRef(new Map<string, string>())
   const restoredDraftContents = useRef<Record<string, string>>(
-    readStoredOrder('agentic-remote:composer-draft-recovered', {}),
+    initialComposerStorage.current?.recoveredContents || {},
   )
   const composerRecoveryStorageDirty = useRef(false)
   // The history listener is bound once, so it reads the resolver through a ref
@@ -7670,15 +7757,19 @@ function App() {
   const unresolvedComposerPastes = selectedKey && !composerPreviewingHistory
     ? composerDrafts[selectedKey]?.unresolvedPastes || []
     : []
-  const selectedSubmission = selectedKey
-    ? composerDrafts[selectedKey]?.pendingSubmission
-    : undefined
-  const acceptanceReceiptMissing = selectedKey && selectedSubmission?.accepted &&
-    !hasComposerAcceptanceReceipt(
-      composerAcceptanceReceipts.current,
-      selectedKey,
-      selectedSubmission,
-    )
+  const missingAcceptanceOwners = Object.entries(composerDrafts).flatMap(([key, draft]) => {
+    const pending = draft.pendingSubmission
+    if (!pending?.accepted || hasComposerAcceptanceReceipt(composerAcceptanceReceipts.current, key, pending)) {
+      return []
+    }
+    const owner = sessions.find((session) => sessionKey(session) === key)
+    const separator = key.indexOf(':')
+    const computerId = key.slice(0, separator)
+    const computerName = owner?.computerName ||
+      computers.find((computer) => computer.id === computerId)?.name || computerId
+    return [`${owner?.title || key.slice(separator + 1)} on ${computerName}`]
+  })
+  const acceptanceReceiptMissing = missingAcceptanceOwners.length > 0
   // What each shortcut answers to now: its default unless the reader has
   // changed it.
   const shortcuts = shortcutDefaults.map((entry) => ({
@@ -8671,15 +8762,12 @@ function App() {
     }
     try {
       // Admission and receipts must fail visibly, unlike best-effort settings.
-      let receipts = readComposerAcceptanceReceipts(true)
+      const snapshot = readComposerStorageSnapshot()
+      let receipts = snapshot.receipts
       composerAcceptanceReceipts.current = [...receipts]
       if (receipts.length > 0) {
-        const stored: ComposerDrafts = JSON.parse(localStorage.getItem(composerDraftsStorageKey) ?? '{}')
-        if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
-          throw new Error('Saved draft metadata could not be read safely')
-        }
         receipts = receipts.filter((receipt) =>
-          Object.entries(stored).some(([key, draft]) =>
+          Object.entries(snapshot.drafts).some(([key, draft]) =>
             draft?.pendingSubmission &&
             hasComposerAcceptanceReceipt([receipt], key, draft.pendingSubmission),
           ),
@@ -8781,6 +8869,10 @@ function App() {
       }
       return { ok: true }
     } catch (caught) {
+      if (caught instanceof ComposerStorageFormatError) {
+        composerInitialReadFailure.current = composerReadFailureMessage(caught)
+        return { ok: false, error: composerInitialReadFailure.current }
+      }
       return {
         ok: false,
         error: caught instanceof Error
@@ -10215,7 +10307,9 @@ function App() {
       ? followReplacementsRef.current(rawTargetKey)
       : rawTargetKey
     updateComposerDrafts([targetKey], (current) => {
-      const existing = current[targetKey] || { text: '', pastes: [] }
+      const existing = current[targetKey]
+        ? durableComposerDraft(targetKey, current[targetKey])
+        : { text: '', pastes: [] }
       const separator = existing.text
         ? existing.text.endsWith('\n')
           ? '\n'
@@ -12757,12 +12851,28 @@ function App() {
           </button>
         </header>
 
-        {error ? (
-          <div className="error-banner">
-            <span>{error}</span>
-            <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
-              <X size={16} />
-            </button>
+        {error || acceptanceReceiptMissing ? (
+          <div className="conversation-notices">
+            {error ? (
+              <div className="error-banner">
+                <span>{error}</span>
+                <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
+                  <X size={16} />
+                </button>
+              </div>
+            ) : null}
+            {acceptanceReceiptMissing ? (
+              <div className="error-banner" id="composer-acceptance-warning" role="status">
+                <span>
+                  {missingAcceptanceOwners.length === 1
+                    ? 'This send was accepted, but the browser has no saved receipt. '
+                    : 'These sends were accepted, but the browser has no saved receipts. '}
+                  Affected: {missingAcceptanceOwners.join('; ')}.
+                  {' '}Keep this tab open. Reloading may restore the submitted text as
+                  unconfirmed; check the conversation before sending it again.
+                </span>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -13034,15 +13144,6 @@ function App() {
             {composerStorageError ? (
               <div className="error-banner" id="composer-storage-warning" role="alert">
                 <span>{composerStorageError}</span>
-              </div>
-            ) : null}
-            {acceptanceReceiptMissing ? (
-              <div className="error-banner" id="composer-acceptance-warning" role="status">
-                <span>
-                  This send was accepted, but the browser has no saved receipt.
-                  Keep this tab open. Reloading may restore the submitted text as
-                  unconfirmed; check the conversation before sending it again.
-                </span>
               </div>
             ) : null}
             <div

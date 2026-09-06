@@ -1179,6 +1179,10 @@ button {
   font-size: 10.5px;
 }
 
+.conversation-notices {
+  grid-area: banner;
+}
+
 .error-banner {
   grid-area: banner;
   display: flex;

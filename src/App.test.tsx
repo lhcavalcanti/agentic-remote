@@ -1099,19 +1099,19 @@ describe('App', () => {
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
     expect(textarea).toHaveValue('Second prompt')
 
-    // Dictation appends to the composer without replacing it, and without
-    // going through the textarea's change handler.
+    // Dictation belongs to the real draft (empty here), not the preview, and
+    // does not go through the textarea's change handler.
     const file = new File(['audio'], 'idea.webm', { type: 'audio/webm' })
     fireEvent.drop(textarea.closest('.composer')!, {
       dataTransfer: { files: [file], types: ['Files'] },
     })
     await waitFor(() =>
-      expect(textarea).toHaveValue('Second prompt\n\nTranscribed walking idea'),
+      expect(textarea).toHaveValue('Transcribed walking idea'),
     )
 
     // Navigating again must not discard the dictated text.
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
-    expect(textarea).toHaveValue('Second prompt\n\nTranscribed walking idea')
+    expect(textarea).toHaveValue('Transcribed walking idea')
   })
 
   it('does not let history navigation overwrite a programmatic draft', async () => {
@@ -3639,6 +3639,237 @@ describe('App', () => {
     rendered.unmount()
     render(<App />)
     expect(await screen.findByLabelText('Message')).toHaveValue('Original saved draft')
+  })
+
+  it.each([
+    ['transcription', false], ['transcription', true],
+    ['upload', false], ['upload', true],
+  ] as const)(
+    'appends an async %s completion to the durable draft during history preview (switched=%s)',
+    async (kind, switched) => {
+      const pasted = Array.from({ length: 21 }, (_, index) => `hidden draft ${index}`).join('\n')
+      const label = '[Paste #1 - 21 lines]'
+      const addition = kind === 'transcription'
+        ? `Transcribed completion with literal ${label}`
+        : 'Attached file: `/synthetic/owned-note.txt`'
+      let finish: (() => void) | undefined
+      if (kind === 'transcription') {
+        vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+          finish = () => resolve({ transcript: addition, durationSeconds: 1 })
+        }))
+      } else {
+        vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+          finish = () => resolve({ name: 'owned-note.txt', path: '/synthetic/owned-note.txt', size: 4 })
+        }))
+      }
+      vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === secondSession.id ? secondSession : session,
+      )
+      const rendered = render(<App />)
+      const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+      fireEvent.change(textarea, { target: { value: 'Keep ' } })
+      textarea.setSelectionRange(5, 5)
+      fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+      const file = new File(['data'], kind === 'transcription' ? 'voice.webm' : 'owned-note.txt', {
+        type: kind === 'transcription' ? 'audio/webm' : 'text/plain',
+      })
+      fireEvent.change(screen.getByLabelText('File attachment'), { target: { files: [file] } })
+      await waitFor(() => expect(kind === 'transcription' ? transcribeAudio : uploadSessionFile).toHaveBeenCalledOnce())
+      fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+      expect(textarea).toHaveValue('Hello agent')
+      if (switched) {
+        fireEvent.click(screen.getByText('Second chat').closest('button')!)
+        fireEvent.change(textarea, { target: { value: 'Other session stays intact' } })
+      }
+      await act(async () => { finish?.() })
+      if (switched) {
+        expect(textarea).toHaveValue('Other session stays intact')
+        fireEvent.click(screen.getByText('Project chat').closest('button')!)
+      }
+      expect(textarea).toHaveValue(`Keep ${label}\n\n${addition}`)
+      expect(sendMessage).not.toHaveBeenCalled()
+      rendered.unmount()
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue(`Keep ${label}\n\n${addition}`)
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() =>
+        expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+          content: `Keep ${pasted}\n\n${addition}`, enqueue: false,
+        }),
+      )
+    },
+  )
+
+  it.each([
+    ['agentic-remote:composer-drafts-v2', '{'],
+    ['agentic-remote:composer-drafts', '{'],
+    ['agentic-remote:composer-drafts-generation', '{'],
+    ['agentic-remote:composer-pastes', '{'],
+    ['agentic-remote:composer-draft-failures', '{'],
+    ['agentic-remote:composer-draft-recovered', '{'],
+    ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":{}}}'],
+    ['agentic-remote:composer-drafts', '{"computer-1:session-1":42}'],
+    ['agentic-remote:composer-drafts-generation', '{"version":1,"accepted":"invalid"}'],
+    ['agentic-remote:composer-pastes', '{"computer-1:session-1":{}}'],
+    ['agentic-remote:composer-draft-failures', '{"computer-1:session-1":42}'],
+    ['agentic-remote:composer-draft-recovered', '[]'],
+    ['agentic-remote:composer-drafts-v2', 'null'],
+    ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":[null]}}'],
+    ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":[],"unresolvedPastes":"bad"}}'],
+    ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":[],"pendingSubmission":{"text":"pending","pastes":[]}}}'],
+    ['agentic-remote:composer-drafts-generation', '{"version":2,"accepted":[]}'],
+    ['agentic-remote:composer-drafts-generation', '{"version":1,"accepted":[{"key":"computer-1:session-1"}]}'],
+    ['agentic-remote:composer-drafts', '{"session-1":"Unscoped legacy text"}'],
+    ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":[],"pendingSubmission":{"id":"pending","text":"content","pastes":[],"originKey":"missing-computer"}}}'],
+  ] as const)(
+    'locks composer-owned storage without overwriting good data when %s contains %s',
+    async (corruptKey, corruptValue) => {
+      const pasted = Array.from({ length: 21 }, (_, index) => `saved content ${index}`).join('\n')
+      const label = '[Paste #1 - 21 lines]'
+      const valid: Record<string, string> = {
+        'agentic-remote:composer-drafts-v2': JSON.stringify({
+          'computer-1:session-1': {
+            text: `Saved ${label}`,
+            pastes: [{ key: 'saved-paste', id: 1, content: pasted, lineCount: 21, start: 6 }],
+          },
+        }),
+        'agentic-remote:composer-drafts': JSON.stringify({ 'computer-1:session-1': `Saved ${pasted}` }),
+        'agentic-remote:composer-drafts-generation': '1',
+        'agentic-remote:composer-pastes': '{}',
+        'agentic-remote:composer-draft-failures': '{}',
+        'agentic-remote:composer-draft-recovered': '{}',
+      }
+      for (const [key, value] of Object.entries(valid)) localStorage.setItem(key, value)
+      localStorage.setItem(corruptKey, corruptValue)
+      const before = Object.fromEntries(Object.keys(valid).map((key) => [key, localStorage.getItem(key)]))
+      const rendered = render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      expect(screen.getByText(/Saved drafts could not be read/)).toBeInTheDocument()
+      fireEvent.change(textarea, { target: { value: 'New editable text while locked' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await screen.findByText(/Message was not sent/)
+      expect(textarea).toHaveValue('New editable text while locked')
+      expect(sendMessage).not.toHaveBeenCalled()
+      for (const [key, value] of Object.entries(before)) expect(localStorage.getItem(key)).toBe(value)
+      localStorage.setItem(corruptKey, valid[corruptKey])
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      expect(sendMessage).not.toHaveBeenCalled()
+      rendered.unmount()
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue(`Saved ${label}`)
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() =>
+        expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+          content: `Saved ${pasted}`, enqueue: false,
+        }),
+      )
+    },
+  )
+
+  it('keeps the composer read-failure lock through Strict Mode after a transient malformed read', async () => {
+    const original = JSON.stringify({
+      'computer-1:session-1': { text: 'Original durable draft', pastes: [] },
+    })
+    localStorage.setItem('agentic-remote:composer-drafts-v2', original)
+    localStorage.setItem('agentic-remote:composer-drafts-generation', '1')
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+      'computer-1:session-1': 'Original durable draft',
+    }))
+    const getItem = Storage.prototype.getItem
+    let failOnce = true
+    const storage = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(
+      function (this: Storage, key) {
+        if (this === localStorage && key === 'agentic-remote:composer-drafts' && failOnce) {
+          failOnce = false
+          return '{'
+        }
+        return getItem.call(this, key)
+      },
+    )
+    const rendered = render(<StrictMode><App /></StrictMode>)
+    try {
+      const textarea = await screen.findByLabelText('Message')
+      expect(screen.getByText(/Saved drafts could not be read/)).toBeInTheDocument()
+      fireEvent.change(textarea, { target: { value: 'Volatile new text' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await screen.findByText(/Message was not sent/)
+      expect(textarea).toHaveValue('Volatile new text')
+      expect(localStorage.getItem('agentic-remote:composer-drafts-v2')).toBe(original)
+      expect(sendMessage).not.toHaveBeenCalled()
+    } finally {
+      storage.mockRestore()
+    }
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('Original durable draft')
+  })
+
+  it('locks composer writes if malformed storage appears after startup', async () => {
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Last complete saved draft' } })
+    const original = localStorage.getItem('agentic-remote:composer-drafts-v2')
+    const legacy = localStorage.getItem('agentic-remote:composer-drafts')!
+    localStorage.setItem('agentic-remote:composer-drafts', '{')
+    fireEvent.change(textarea, { target: { value: 'Newer unsaved draft' } })
+    expect(textarea).toHaveValue('Newer unsaved draft')
+    expect(screen.getByText(/Saved drafts could not be read/)).toBeInTheDocument()
+    expect(localStorage.getItem('agentic-remote:composer-drafts-v2')).toBe(original)
+    expect(localStorage.getItem('agentic-remote:composer-drafts')).toBe('{')
+    localStorage.setItem('agentic-remote:composer-drafts', legacy)
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await screen.findByText(/Message was not sent/)
+    expect(sendMessage).not.toHaveBeenCalled()
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('Last complete saved draft')
+  })
+
+  it('keeps the missing acceptance receipt warning visible after switching sessions', async () => {
+    let accept: ((value: ManagedSession) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => { accept = resolve }))
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Submitted from session A' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    fireEvent.change(textarea, { target: { value: 'Newer draft in A' } })
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+    fireEvent.change(textarea, { target: { value: 'Draft in B' } })
+    const setItem = Storage.prototype.setItem
+    let blocked = true
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
+      function (this: Storage, key, value) {
+        if (this === localStorage && blocked && key.startsWith('agentic-remote:composer-')) {
+          throw new DOMException('Receipt writes denied', 'SecurityError')
+        }
+        setItem.call(this, key, value)
+      },
+    )
+    try {
+      await act(async () => { accept?.(session) })
+      expect(textarea).toHaveValue('Draft in B')
+      expect(screen.getByText(/This send was accepted, but the browser has no saved receipt/)).toHaveTextContent('Project chat')
+      fireEvent.change(textarea, { target: { value: 'Draft in B remains editable' } })
+      expect(screen.getByText(/browser has no saved receipt/)).toBeInTheDocument()
+      expect(sendMessage).toHaveBeenCalledOnce()
+      blocked = false
+      fireEvent.change(textarea, { target: { value: 'Draft in B now saved' } })
+      expect(screen.queryByText(/browser has no saved receipt/)).not.toBeInTheDocument()
+      rendered.unmount()
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue('Draft in B now saved')
+      fireEvent.click(screen.getByText('Project chat').closest('button')!)
+      expect(screen.getByLabelText('Message')).toHaveValue('Newer draft in A')
+      expect(sendMessage).toHaveBeenCalledOnce()
+    } finally {
+      storage.mockRestore()
+    }
   })
 
   it('refuses admission when acceptance receipts cannot be read', async () => {

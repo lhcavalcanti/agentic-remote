@@ -262,6 +262,11 @@ draft, not the historical preview. Sending a preview MUST NOT discard the draft
 behind it or acknowledge a failed prompt owned by that hidden draft. This also
 applies to local `/statusline`, `/clear`, `/restart`, and argumentless `/cwd`
 previews, including any replacement session created by clearing.
+Transcription, recording, upload, and other append completions MUST append to
+the originating session's durable draft, not a history preview. They MUST keep
+its text and paste metadata while leaving another selected session unchanged.
+Text follows replacement lineage; attachment paths remain with the session
+that owns the uploaded file.
 
 A pending submission MUST retain its complete text and paste metadata until its
 request is accepted, independently of anything written in the meantime. Reloads
@@ -294,7 +299,9 @@ still take precedence over an old snapshot.
 
 If acceptance evidence cannot be written, the tab MUST retain the accepted
 submission and newer editable draft in memory and explicitly warn that its
-confirmation is not saved. A reload may then restore the submission as
+confirmation is not saved. The warning MUST identify every affected session
+and remain visible across session selection changes until its receipt is
+durable. A reload may then restore the submission as
 unconfirmed; it MUST NOT be automatically resent or presented as definitely
 unsent. Definitive recovery when all browser writes are denied requires server
 support: a client request ID bound to the payload and logical session lineage,
@@ -306,6 +313,13 @@ Best-effort preference storage MUST NOT authorize composer submission or retire
 delivery receipts. If saved draft storage cannot be read at startup, typing
 remains available but sends and draft writes stay blocked until a reload can
 recover the saved state. The UI MUST warn the user to copy new text first.
+Composer-owned JSON and its record shapes MUST be validated before reconciliation
+or writes; only a missing key means missing state. Invalid JSON or schemas in
+drafts, legacy paste copies, receipt markers, or recovery identity maps MUST
+enter that read-failure lock without overwriting any saved composer data.
+Corruption discovered after startup also requires a reload after repair; it
+MUST NOT be interpreted as rollback deletion. Well-formed payloads with an
+unmatched or ambiguous label remain eligible for explicit paste recovery.
 
 Pastes longer than 20 lines MUST appear in the composer as
 `[Paste #N - L lines]`, numbered within the current session draft. The exact

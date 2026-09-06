@@ -578,6 +578,10 @@ export class SessionStore {
       .map(cloneSession)
   }
 
+  isManagedOpen(sessionId: string): boolean {
+    return this.state.sessions[sessionId]?.managedOpen === true && !this.isRetiredSession(sessionId)
+  }
+
   async setOpen(
     sessionId: string,
     isOpen: boolean,
@@ -966,6 +970,7 @@ export class SessionStore {
     sessionId: string,
     expected: QueuedPrompt,
     isCurrent: () => boolean,
+    requireManagedTerminal = false,
   ): Promise<{ session: SessionDetail; dispatch: TerminalQueueDispatch }> {
     this.lastTerminalQueueDispatchAt = Math.max(Date.now(), this.lastTerminalQueueDispatchAt + 1)
     const dispatch = { id: randomUUID(), startedAt: new Date(this.lastTerminalQueueDispatchAt).toISOString() }
@@ -973,6 +978,7 @@ export class SessionStore {
       const head = stored.queuedPrompts?.[0]
       if (
         !isCurrent() || stored.suspended || stored.status !== 'idle' ||
+        (requireManagedTerminal && (!stored.isOpen || stored.managedOpen !== true || stored.backend !== 'terminal')) ||
         stored.pendingPermission || stored.pendingUserInput ||
         stored.terminalQueueDispatch || stored.failedPrompt ||
         !head || head.id !== expected.id || head.content !== expected.content ||

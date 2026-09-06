@@ -165,6 +165,16 @@ Uncertainty does not become known delivery. The controller includes lost paste
 acknowledgements in its uncertainty boundary; pre-paste capture/buffer failures
 and a paste process that could not spawn remain definite, effect-free failures.
 
+Native startup queue intent is captured from managed-open persisted sessions
+before discovery can promote other live terminals. Startup seeds the existing
+guarded drain rather than waiting for a completion newer than the queued text.
+Its stricter readiness checks require completed discovery, the existing owner,
+and a readable empty composer; managed/open/native state is rechecked in the
+claim transaction. The existing bounded claim/settlement retries retain this
+startup intent across transient observation or persistence failures. Queued
+sessions are not force-created by boot recovery, and repeated `start()` calls
+join the same startup rather than reload state or install more pollers.
+
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then
 replay it after publishing the created/replacement session. Failed identity

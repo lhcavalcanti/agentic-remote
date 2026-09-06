@@ -2162,9 +2162,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       reasoningEffort,
       contextTier,
     )
-    return this.runSessionCreation(() => terminalBacked
+    return this.publicSession(await this.runSessionCreation(() => terminalBacked
       ? this.createTerminalSession(cwd, allowAllPermissions, runtime)
-      : this.createSdkSession(cwd, allowAllPermissions, runtime))
+      : this.createSdkSession(cwd, allowAllPermissions, runtime)))
   }
 
   private async createSdkSession(
@@ -2258,7 +2258,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const renamed = await this.store.renameSession(id, title)
     this.publish(renamed)
-    return renamed
+    return this.publicSession(renamed)
   }
 
   async providerRuntimeOptions(
@@ -2391,7 +2391,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw error
       }
     }
-    return persistRuntime(mode)
+    return this.publicSession(await persistRuntime(mode))
   }
 
   private async reconcileRuntimeStatus(
@@ -2455,7 +2455,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * history, which is what makes a machine full of sessions affordable.
    */
   async suspendSession(id: string): Promise<SessionDetail> {
-    return this.serializeLifecycle(id, () => this.suspendSerialized(id))
+    return this.publicSession(await this.serializeLifecycle(id, () => this.suspendSerialized(id)))
   }
 
   private async suspendSerialized(id: string): Promise<SessionDetail> {
@@ -2700,7 +2700,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // stored flag on the way in saw a session that suspension was still in
     // the middle of putting down, and returned success for a resume the
     // suspension then wrote over.
-    return this.serializeLifecycle(id, () => this.resumeQueued(id))
+    return this.publicSession(await this.serializeLifecycle(id, () => this.resumeQueued(id)))
   }
 
   private async resumeQueued(id: string): Promise<SessionDetail> {
@@ -2794,7 +2794,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async restartSession(id: string): Promise<SessionDetail> {
-    return this.serializeLifecycle(id, () => this.restartSerialized(id))
+    return this.publicSession(await this.serializeLifecycle(id, () => this.restartSerialized(id)))
   }
 
   private async restartSerialized(id: string): Promise<SessionDetail> {
@@ -2845,7 +2845,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async moveToTerminal(id: string): Promise<SessionDetail> {
-    return this.serializeLifecycle(id, () => this.moveToTerminalSerialized(id))
+    return this.publicSession(await this.serializeLifecycle(id, () => this.moveToTerminalSerialized(id)))
   }
 
   private async moveToTerminalSerialized(id: string): Promise<SessionDetail> {
@@ -2925,7 +2925,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async clearConversation(id: string): Promise<SessionDetail> {
-    return this.serializeLifecycle(id, () => this.clearSerialized(id))
+    return this.publicSession(await this.serializeLifecycle(id, () => this.clearSerialized(id)))
   }
 
   private async clearSerialized(id: string): Promise<SessionDetail> {
@@ -3254,8 +3254,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
-    return this.admissions.run(sessionId, () =>
-      this.sendAdmittedMessage(sessionId, rawContent, enqueue, acknowledgedFailure))
+    return this.admissions.run(sessionId, async () =>
+      this.publicSession(await this.sendAdmittedMessage(sessionId, rawContent, enqueue, acknowledgedFailure)))
   }
 
   private async sendAdmittedMessage(
@@ -3452,7 +3452,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     delivery: DeliveryBoundary | undefined,
   ): Promise<void> {
     if (delivery) delivery.accepted = true
-    if (answers) await this.store.acceptRecoveryResend(this.recoverySessionId(sessionId), answers)
+    if (answers) {
+      const claim = this.recoveryClaims.get(answers)
+      if (claim) claim.accepted = true
+      const currentId = this.recoverySessionId(sessionId)
+      const current = this.store.get(currentId)
+      if (current) this.publish(current)
+      const accepted = await this.store.acceptRecoveryResend(currentId, answers)
+      this.publish(accepted)
+    }
   }
 
   private submissionFailure(
@@ -3807,10 +3815,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
-      await this.recordDelivery(sessionId, answers, delivery)
-      if (startupLocked && startupReady && !nativeEnqueue) {
+      if (startupLocked && !nativeEnqueue) {
         this.terminalAdmissionDispatched.add(sessionId)
       }
+      await this.recordDelivery(sessionId, answers, delivery)
       if (nativeEnqueue) {
         const queued = await this.store.update(sessionId, (session) => {
           session.activity = 'Queued in terminal'
@@ -3860,7 +3868,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error('Queued prompt not found')
       }
       this.publish(session)
-      return { session, prompt }
+      return { session: this.publicSession(session), prompt }
     })
   }
 
@@ -4184,8 +4192,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
-    return this.admissions.run(sessionId, () =>
-      this.executeAdmittedCommand(sessionId, rawCommand, enqueue, acknowledgedFailure))
+    return this.admissions.run(sessionId, async () =>
+      this.publicSession(await this.executeAdmittedCommand(sessionId, rawCommand, enqueue, acknowledgedFailure)))
   }
 
   private async executeAdmittedCommand(
@@ -4928,6 +4936,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     requestId: string,
     optionId: string,
   ): Promise<SessionDetail> {
+    return this.publicSession(await this.replyPermissionInternal(sessionId, requestId, optionId))
+  }
+
+  private async replyPermissionInternal(
+    sessionId: string,
+    requestId: string,
+    optionId: string,
+  ): Promise<SessionDetail> {
     if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
       throw new Error('Session is no longer available')
     }
@@ -5003,6 +5019,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async replyUserInput(
+    sessionId: string,
+    requestId: string,
+    input: UserInputReplyInput,
+  ): Promise<SessionDetail> {
+    return this.publicSession(await this.replyUserInputInternal(sessionId, requestId, input))
+  }
+
+  private async replyUserInputInternal(
     sessionId: string,
     requestId: string,
     input: UserInputReplyInput,
@@ -7019,9 +7043,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private publicSession(session: SessionDetail): SessionDetail {
-    return session.failedPrompt && this.recoveryClaims.get(session.failedPrompt.failedAt)?.accepted
+    const failed = session.failedPrompt
+    if (!failed) return session
+    const current = this.store.failedPrompt(session.id)
+    const receipt = this.store.recoveryResend(session.id)
+    const obsolete = !current || current.failedAt !== failed.failedAt || current.content !== failed.content
+    const accepted = this.recoveryClaims.get(failed.failedAt)?.accepted ||
+      (receipt && receipt.failedAt === failed.failedAt && receipt.accepted)
+    return obsolete || accepted
       ? { ...session, failedPrompt: undefined }
-      : session
+      : { ...session, failedPrompt: current }
   }
 
   private publishError(sessionId: string, error: unknown): void {

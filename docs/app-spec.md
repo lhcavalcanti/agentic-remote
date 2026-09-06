@@ -259,6 +259,13 @@ Questions and permissions are the highest-priority UI state.
   or persistence fails. Its recovery claim MUST remain reserved until token-scoped
   acknowledgement settles; a fresh-token or anonymous retry MUST NOT deliver it
   again while that acknowledgement is pending.
+- Confirmed startup delivery MUST establish its dispatch hold before receipt
+  persistence or publication can fail, even if an earlier readiness observation
+  was negative. Acceptance MUST update the linked claim and publish a redacted
+  view before attempting its receipt write. Every public session response,
+  including mutation results and queue-removal envelopes, MUST omit accepted or
+  obsolete recovery markers without mutating internal recovery state or dropping
+  a newer unaccepted recovery.
 - A failed recovery submission MUST return its current recovery token and owning
   session through both local and paired-node HTTP paths. The browser MUST bind
   any restored draft to that token, including across navigation, reload and clear

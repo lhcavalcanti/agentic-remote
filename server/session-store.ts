@@ -1044,6 +1044,12 @@ export class SessionStore {
     })
   }
 
+  // Projection reads recovery metadata without cloning the session's history.
+  failedPrompt(sessionId: string): SessionDetail['failedPrompt'] {
+    const failed = this.state.sessions[sessionId]?.failedPrompt
+    return !this.isRetiredSession(sessionId) && failed ? structuredClone(failed) : undefined
+  }
+
   recoveryResend(sessionId: string): RecoveryResend | undefined {
     const session = this.state.sessions[sessionId]
     const resend = session?.recoveryResend

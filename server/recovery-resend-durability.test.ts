@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
 import { SessionStore } from './session-store.js'
 import { buildApp } from './app.js'
+import type { RemovedQueuedPrompt, SessionDetail } from '../shared/contracts.js'
+import type { SessionService } from './session-service.js'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>()
@@ -1414,5 +1416,334 @@ describe('Recovery and admission integration', () => {
     expect(recovery).toMatchObject({ content: 'Durable admitted text', uncertain: true })
     await restarted.store.claimFailedPrompt(sessionId, recovery, 'Explicit new decision', 'resend:new-decision')
     expect(restarted.store.get(sessionId)?.failedPrompt?.content).toBe('Explicit new decision')
+  })
+})
+
+describe('Review 5125727881 runtime boundaries', () => {
+  type PublicSessionValue = SessionDetail | SessionDetail[] | RemovedQueuedPrompt | undefined
+  type SessionMethod = {
+    [Key in keyof SessionService]: SessionService[Key] extends (...args: never[]) => infer Result
+      ? Awaited<Result> extends PublicSessionValue ? Key : never
+      : never
+  }[keyof SessionService]
+  const projections: Record<SessionMethod, (
+    context: Awaited<ReturnType<typeof fixture>>, snapshot: SessionDetail,
+  ) => Promise<PublicSessionValue>> = {
+    listSessions: async ({ service }) => service.listSessions(),
+    listHistory: async ({ service }) => service.listHistory(),
+    getSession: async ({ service }) => service.getSession(sessionId),
+    openSession: async ({ service }) => service.openSession(sessionId),
+    activateSession: async ({ service }) => service.activateSession(sessionId),
+    createSession: async ({ service, directory }, snapshot) => {
+      service['createSdkSession'] = async () => snapshot
+      return service.createSession(directory, false)
+    },
+    renameSession: async ({ service }) => service.renameSession(sessionId, 'Projected title'),
+    configureRuntime: async ({ service, terminal }) => {
+      service['refreshRuntimeModels'] = async () => {}
+      service['reconcileRuntimeStatus'] = async (session) => ({ ...session, status: 'idle' })
+      service['runtimeModels'].set('fixture', {
+        id: 'fixture', name: 'Fixture', reasoningEfforts: [], contextTiers: ['default'],
+      })
+      Object.assign(terminal, { configure: async () => true })
+      return service.configureRuntime(sessionId, { model: 'fixture', contextTier: 'default' })
+    },
+    clearConversation: async ({ service }, snapshot) => {
+      service['clearSerialized'] = async () => snapshot
+      return service.clearConversation(sessionId)
+    },
+    suspendSession: async ({ service }, snapshot) => {
+      service['suspendSerialized'] = async () => snapshot
+      return service.suspendSession(sessionId)
+    },
+    resumeSession: async ({ service }, snapshot) => {
+      service['resumeQueued'] = async () => snapshot
+      return service.resumeSession(sessionId)
+    },
+    restartSession: async ({ service }, snapshot) => {
+      service['restartSerialized'] = async () => snapshot
+      return service.restartSession(sessionId)
+    },
+    moveToTerminal: async ({ service }, snapshot) => {
+      service['moveToTerminalSerialized'] = async () => snapshot
+      return service.moveToTerminal(sessionId)
+    },
+    removeQueuedPrompt: async ({ service }) => {
+      await service.store.enqueuePrompt(sessionId, {
+        id: 'editable', content: 'Keep the removed draft', createdAt: originalToken,
+      })
+      return service.removeQueuedPrompt(sessionId, 'editable')
+    },
+    sendMessage: async ({ service }, snapshot) => {
+      service['sendAdmittedMessage'] = async () => snapshot
+      return service.sendMessage(sessionId, 'Independent text')
+    },
+    executeCommand: async ({ service }, snapshot) => {
+      service['executeAdmittedCommand'] = async () => snapshot
+      return service.executeCommand(sessionId, '/usage independent')
+    },
+    replyPermission: async ({ service }, snapshot) => {
+      service['replyPermissionInternal'] = async () => snapshot
+      return service.replyPermission(sessionId, 'request', 'allow')
+    },
+    replyUserInput: async ({ service }, snapshot) => {
+      service['replyUserInputInternal'] = async () => snapshot
+      return service.replyUserInput(sessionId, 'request', { answer: 'Yes', wasFreeform: false })
+    },
+  }
+
+  async function httpBoundary(context: Awaited<ReturnType<typeof fixture>>, paired: boolean) {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'http://localhost')
+    const transcription = {
+      async initialize() {}, async stop() {},
+      async transcribe() { throw new Error('Live transcription is forbidden') },
+    }
+    let node: Awaited<ReturnType<typeof buildApp>> | undefined
+    let nodeUrl: string | undefined
+    let service = context.service
+    if (paired) {
+      node = await buildApp({
+        service, role: 'node', logger: false, dataDirectory: path.join(context.directory, 'boundary-node'),
+        transcriptionService: transcription,
+      })
+      runtimes.push(node)
+      nodeUrl = await node.app.listen({ host: '127.0.0.1', port: 0 })
+      service = new AgentService(
+        new SessionStore(path.join(context.directory, 'boundary-hub-store')), context.client,
+        async () => [], async () => undefined, async () => [], async () => undefined,
+        { has: async () => false, send: async () => false, cancel: async () => false },
+        async () => undefined, async () => undefined,
+      )
+      services.push(service)
+      await service.start()
+    }
+    const hub = await buildApp({
+      service, role: 'hub', logger: false, dataDirectory: path.join(context.directory, 'boundary-hub'),
+      transcriptionService: transcription,
+    })
+    runtimes.push(hub)
+    const computer = node && nodeUrl
+      ? (await hub.manager!.registerComputer({ baseUrl: nodeUrl, token: node.identity.token })).id
+      : hub.identity.info.id
+    return { app: hub.app, route: `/api/computers/${computer}/sessions/${sessionId}` }
+  }
+
+  it.each([false, true])('does not re-advertise accepted text through real HTTP mutations (paired=%s)', async (paired) => {
+    const context = await fixture()
+    context.withEvents()
+    context.refuseAcknowledgements()
+    const { app, route } = await httpBoundary(context, paired)
+    const first = await app.inject({
+      method: 'POST', url: `${route}/messages`, headers: { host: 'localhost' },
+      payload: { content: context.submitted, acknowledgesFailure: originalToken },
+    })
+    expect(first.statusCode).toBe(409)
+    expect(first.json().submission.accepted).toBe(true)
+    await vi.waitFor(() => expect(context.service['acknowledgementTimers'].size).toBe(1))
+    const token = first.json().submission.failedAt
+    for (const request of [
+      { method: 'GET' as const, url: route, expected: 200 },
+      { method: 'PATCH' as const, url: route, payload: { title: 'Independent metadata edit' }, expected: 200 },
+      { method: 'POST' as const, url: `${route}/messages`, payload: { content: 'Other queued work', enqueue: true }, expected: 202 },
+      { method: 'POST' as const, url: `${route}/commands`, payload: { command: '/usage other-work', enqueue: true }, expected: 200 },
+    ]) {
+      const { expected, ...input } = request
+      const response = await app.inject({ ...input, headers: { host: 'localhost' } })
+      expect(response.statusCode).toBe(expected)
+      expect(response.json().session.failedPrompt).toBeUndefined()
+    }
+    const queued = context.service.store.get(sessionId)!.queuedPrompts!.find((prompt) => prompt.content === 'Other queued work')!
+    const removed = await app.inject({
+      method: 'DELETE', url: `${route}/queue/${queued.id}`, headers: { host: 'localhost' },
+    })
+    expect(removed.statusCode).toBe(200)
+    expect(removed.json().session.failedPrompt).toBeUndefined()
+    expect(removed.json().prompt.content).toBe('Other queued work')
+    expect(context.service.store.failedPrompt(sessionId)?.failedAt).toBe(token)
+    expect(context.service.store.recoveryResend(sessionId)?.accepted).toBe(true)
+    expect(context.pastes).toEqual([context.submitted])
+  })
+
+  it.each(Object.keys(projections) as SessionMethod[])(
+    'projects accepted recovery at every public SessionService response: %s',
+    async (method) => {
+      const context = await fixture()
+      context.withEvents()
+      context.refuseAcknowledgements()
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      await vi.waitFor(() => expect(context.service['acknowledgementTimers'].size).toBe(1))
+      const snapshot = context.service.store.get(sessionId)!
+      const token = snapshot.failedPrompt!.failedAt
+      const response = await projections[method](context, snapshot)
+      expect(response).toBeDefined()
+      const sessions = Array.isArray(response) ? response
+        : response && 'session' in response ? [response.session]
+        : [response as SessionDetail]
+      expect(sessions.length).toBeGreaterThan(0)
+      for (const session of sessions) expect(session.failedPrompt).toBeUndefined()
+      if (response && !Array.isArray(response) && 'prompt' in response) {
+        expect(response.prompt.content).toBe('Keep the removed draft')
+      }
+      expect(snapshot.failedPrompt?.failedAt).toBe(token)
+      expect(context.service.store.failedPrompt(sessionId)?.failedAt).toBe(token)
+      expect(context.pastes).toEqual([context.submitted])
+    },
+  )
+
+  it.each([
+    ['message', 'message', true], ['message', 'command', true],
+    ['message', 'message', false], ['message', 'command', false],
+    ['command', 'message', true], ['command', 'command', true],
+  ] as const)(
+    'retains startup ownership before a %s receipt write fails and a %s follower enters (first readiness=%s)',
+    async (firstKind, followerKind, firstReady) => {
+      const context = await fixture(firstKind)
+      context.withEvents()
+      let ownsStartup = true
+      Object.assign(context.terminal, {
+        ownsStartupPrompt: () => ownsStartup,
+        capture: async () => '╻▄▄▄▄\n┃ \n╹▀▀▀▀\n / commands',
+        inputReady: vi.fn(async () => true).mockResolvedValueOnce(firstReady),
+        resolveStartupPrompt: async () => { ownsStartup = false; return true },
+      })
+      const held = gate()
+      context.terminal.send.mockImplementationOnce(async (_id, content) => {
+        context.pastes.push(content)
+        held.opened()
+        await held.pending
+        return true
+      })
+      const first = context.send(context.service)
+      await held.started
+      expect((await context.persisted()).sessions[sessionId].recoveryResend.accepted).toBe(false)
+      vi.mocked(writeFile).mockImplementation(async (...args) => {
+        if (args[0] === `${context.statePath}.tmp` &&
+            JSON.parse(String(args[1])).sessions[sessionId]?.recoveryResend?.accepted) {
+          throw storageError
+        }
+        return disk.writeFile(...args)
+      })
+      const admission = context.service['terminalAdmissionOperations'].get(sessionId)
+      const follower = followerKind === 'message'
+        ? context.service.sendMessage(sessionId, 'Independent following message')
+        : context.service.executeCommand(sessionId, '/usage following')
+      const results = Promise.allSettled([first, follower])
+      await vi.waitFor(() => expect(context.service['terminalAdmissionOperations'].get(sessionId)).not.toBe(admission))
+      held.release()
+      const [delivered, blocked] = await results
+      expect(delivered).toMatchObject({
+        status: 'rejected', reason: { statusCode: 409, submission: { accepted: true } },
+      })
+      expect(blocked.status).toBe('rejected')
+      if (blocked.status === 'rejected') {
+        if (blocked.reason !== storageError) expect.soft(blocked.reason).toMatchObject({ statusCode: 409 })
+        expect(blocked.reason).not.toMatchObject({ submission: { accepted: true } })
+      }
+      expect(context.pastes).toEqual([context.submitted])
+      expect((await context.persisted()).sessions[sessionId].recoveryResend.accepted).toBe(false)
+    },
+  )
+
+  it('marks the shared in-memory recovery claim accepted before acknowledgement failure', async () => {
+    const context = await fixture()
+    context.withEvents()
+    context.refuseAcknowledgements()
+    await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+    const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+    expect(context.service['recoveryClaims'].get(token)?.accepted).toBe(true)
+    expect((await context.persisted()).sessions[sessionId].recoveryResend.accepted).toBe(true)
+    expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+  })
+
+  it('marks the linked claim even if a caller forwards a separate delivery-boundary object', async () => {
+    const context = await fixture()
+    const claim = await context.service['claimFailure'](sessionId, context.submitted, originalToken)
+    expect(claim).toBeDefined()
+    const forwarded = { accepted: false }
+    await context.service['recordDelivery'](sessionId, claim!.failedAt, forwarded)
+    expect(forwarded.accepted).toBe(true)
+    expect(claim!.accepted).toBe(true)
+    expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+    expect(context.service.store.failedPrompt(sessionId)?.failedAt).toBe(claim!.failedAt)
+    claim!.release()
+  })
+
+  it('publishes an accepted projection even when receipt persistence cannot commit', async () => {
+    const context = await fixture()
+    const snapshots: SessionDetail[] = []
+    context.service.on('event', (event) => {
+      if (event.type === 'session.upserted' && event.session.id === sessionId) snapshots.push(event.session)
+    })
+    context.terminal.send.mockImplementationOnce(async (_id, content) => {
+      context.pastes.push(content)
+      context.refuseWrites()
+      return true
+    })
+    await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+    const pending = (await context.persisted()).sessions[sessionId]
+    expect(pending.recoveryResend.accepted).toBe(false)
+    expect(context.service['recoveryClaims'].get(pending.failedPrompt.failedAt)?.accepted).toBe(true)
+    expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+    expect(snapshots.length).toBeGreaterThan(0)
+    expect(snapshots.at(-1)?.failedPrompt).toBeUndefined()
+    expect(context.pastes).toEqual([context.submitted])
+  })
+
+  it.each(['rename', 'queued message', 'queued command', 'remove queued prompt'] as const)(
+    'does not return an accepted recovery through %s metadata',
+    async (operation) => {
+      const context = await fixture()
+      context.withEvents()
+      context.refuseAcknowledgements()
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      await vi.waitFor(() => expect(context.service['acknowledgementTimers'].size).toBe(1))
+      const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+      let returned: SessionDetail
+      if (operation === 'rename') returned = await context.service.renameSession(sessionId, 'A retained title')
+      else if (operation === 'queued message') {
+        returned = await context.service.sendMessage(sessionId, 'Unrelated queued text', true)
+      } else if (operation === 'queued command') {
+        returned = await context.service.executeCommand(sessionId, '/usage unrelated', true)
+      } else {
+        await context.service.store.enqueuePrompt(sessionId, {
+          id: 'editable', content: 'Unrelated queued text', createdAt: originalToken,
+        })
+        const removed = await context.service.removeQueuedPrompt(sessionId, 'editable')
+        expect(removed.prompt.content).toBe('Unrelated queued text')
+        returned = removed.session
+      }
+      expect.soft(returned.failedPrompt).toBeUndefined()
+      expect(context.service.store.get(sessionId)?.failedPrompt?.failedAt).toBe(token)
+      expect(context.service.store.recoveryResend(sessionId)?.accepted).toBe(true)
+      expect(context.pastes).toEqual([context.submitted])
+    },
+  )
+
+  it('keeps a durable accepted recovery hidden after its retry waiter stops', async () => {
+    const context = await fixture()
+    context.withEvents()
+    context.refuseAcknowledgements()
+    await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+    const [shutdown] = await Promise.allSettled([context.service.stop()])
+    if (shutdown.status === 'rejected') expect(shutdown.reason).toBe(storageError)
+    expect(context.service['recoveryClaims'].size).toBe(0)
+    expect(context.service.store.recoveryResend(sessionId)?.accepted).toBe(true)
+    expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+  })
+
+  it('does not re-advertise an obsolete accepted snapshot or hide a newer recovery', async () => {
+    const context = await fixture()
+    context.withEvents()
+    context.refuseAcknowledgements()
+    await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+    const snapshot = context.service.store.get(sessionId)!
+    context.refuseAcknowledgements(false)
+    await vi.waitFor(() => expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined())
+    expect.soft(context.service['publicSession'](snapshot).failedPrompt).toBeUndefined()
+    const newer = { content: 'Newer unaccepted work', failedAt: 'newer-token', uncertain: true }
+    await context.service.store.update(sessionId, (session) => { session.failedPrompt = newer })
+    expect(context.service.getSession(sessionId)?.failedPrompt).toEqual(newer)
+    expect(context.service['publicSession'](snapshot).failedPrompt).toBeUndefined()
+    expect(context.service.store.get(sessionId)?.failedPrompt).toEqual(newer)
   })
 })

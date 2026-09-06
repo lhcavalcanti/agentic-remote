@@ -253,6 +253,16 @@ token, following clear lineage when necessary. Public session reads do not offer
 a known-accepted marker while acknowledgement is pending. An anonymous copy of
 an unresolved `resend:` draft is refused instead of bypassing token validation.
 
+The confirmed-delivery boundary establishes startup dispatch ownership before
+any fallible receipt or publication work; an earlier readiness observation cannot
+undo a later confirmed receipt. It marks the linked in-memory claim accepted and
+publishes that projected state even when the receipt write is refused. A committed
+receipt is published again at its durable revision. All public session-returning
+methods, including reply/lifecycle results and nested queue-removal sessions,
+use the same projection. It consults only current recovery metadata, hides
+accepted and obsolete markers, and leaves internal failure/queue ownership and
+newer unaccepted recoveries unchanged.
+
 The same dispatch boundary and claimed token pass through admission wrappers,
 SDK turn preparation, generated command prompts, and durable answering-enqueue
 transactions. The first accepted acknowledgement belongs to the original send

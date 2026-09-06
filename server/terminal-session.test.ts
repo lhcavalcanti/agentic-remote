@@ -1921,6 +1921,7 @@ Permission request (1 remaining)
         '[[ "$answer" == n ]] || exit 2',
         shellReadyComposer,
         'IFS= read -r line',
+        'sleep 0.2',
         `printf '%s' "$line" >"${output}"`,
         shellReadyComposer,
         'sleep 60',
@@ -1976,8 +1977,15 @@ Permission request (1 remaining)
     )
 
     expect(delivered).toBe(true)
-    expect(await readFile(output, 'utf8')).toBe('arrives after both prompts')
-  })
+    const received = await eventually(
+      () => readFile(output, 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      }),
+      (value) => value === 'arrives after both prompts',
+    )
+    expect(received).toBe('arrives after both prompts')
+  }, 15_000)
 
   it('captures an owned startup prompt from its expected pane', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))

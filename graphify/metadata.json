@@ -241,7 +241,7 @@
     "server/session-store.test.ts": "c01fd8a8f8c5190dbb0926d09d93efabd6142c2c606640e0eab72e7614c064b4",
     "server/session-store.ts": "6a66498843693b6e790510bccd30b889c82a315c4e233e3cee798ca434e96363",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
-    "server/terminal-session.test.ts": "1683c10e90f0787a9b448fc8970b0db40bd65051ac9cf27428c982581a110754",
+    "server/terminal-session.test.ts": "7736542f25b3755757c14f9fa961d2464c2ce03be63ac24dc8c7361dff38b2a2",
     "server/terminal-session.ts": "7d29c7def0ef056f62ef1a87ddb3864bc25831ddc73e30598abafb2f4e98c2dd",
     "server/tmux-test-helpers.ts": "cfa80cfa5218c9d8d713a9805067f7a58759c0065c94ee6e6ae4fd62a5986116",
     "server/transcription-media-digests.test.ts": "dc7e6f6658dc2bdab766874a8e850c8fe837fb25252e82c8e6f255c0254ddd8d",
@@ -355,30 +355,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "73891a88e4c5b30a25c0766f5e7f8dc3a8ecb7cbcf73a0c91bf6547644938166",
+    "GRAPH_REPORT.md": "8fa76f2a075a43f7d1b61e9437e6f5de21be2c2ddeef0241b2621f09152d90a2",
     "communities.json": "b4db4e6fd7b8b87cc39d626b655182c4a39d09f615e91a53224db9b36366fe83",
-    "graph.html": "7ea87544b804b7143277e03f4eb8fc83bc7b9df07d372280aa7bfb9525497748",
-    "graph.json": "3d5015295de2a6dbddb26f249f314a5c1909b944c07539048570983cd1d1c230"
+    "graph.html": "46ec29a00d8e95f07f40830b449d1ac4358cc34ab7b3e105b0ae4ebb02553a46",
+    "graph.json": "d879db99ebcad4abd9c943b8cc4959b0fa54ab6a1d682b48404ca1525c1d3fe4"
   },
   "schema_version": 1,
-  "source_commit": "cbecc9473b1baab96505325e46b0e41e08c02409",
-  "source_fingerprint": "333786c4b1b40b31a8dc633121a48b8b9c87fc2b9b43df29aabfb79f1d691656",
+  "source_commit": "f60dc30787f3258e6ddde55911bc8cfa51399ef9",
+  "source_fingerprint": "7fd978838cc5987af4ca5a4a5d3cf3eca1b2794dba4cbc0e322745d1eaf3b6b4",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/claude-agent-service.test.ts",
-    "server/claude-agent-service.ts",
-    "server/recovery-resend-durability.test.ts",
-    "server/session-admission-lifecycle.test.ts",
-    "server/session-admissions.ts",
-    "server/session-metadata-provenance.test.ts",
-    "server/session-reply-durability.test.ts",
-    "server/session-store-durability.test.ts",
-    "server/session-store-providers.test.ts",
-    "server/session-store.ts",
-    "server/terminal-queue-delivery.test.ts",
-    "server/terminal-session.ts"
+    "server/terminal-session.test.ts"
   ]
 }

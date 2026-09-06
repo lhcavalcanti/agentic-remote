@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "cbecc9473b1baab96505325e46b0e41e08c02409",
+  "built_at_commit": "f60dc30787f3258e6ddde55911bc8cfa51399ef9",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -49168,7 +49168,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L3069",
+      "source_location": "L3077",
       "target": "server_terminal_session_test_bracketedtabpane",
       "weight": 1.0
     },
@@ -49256,7 +49256,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L3023",
+      "source_location": "L3031",
       "target": "server_terminal_session_test_formpanefirstfield",
       "weight": 1.0
     },
@@ -49267,7 +49267,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L3039",
+      "source_location": "L3047",
       "target": "server_terminal_session_test_formpanelastfield",
       "weight": 1.0
     },
@@ -49322,7 +49322,7 @@
       "relation": "contains",
       "source": "server_terminal_session_test",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L3055",
+      "source_location": "L3063",
       "target": "server_terminal_session_test_singlefieldpane",
       "weight": 1.0
     },
@@ -89642,7 +89642,7 @@
       "label": "bracketedTabPane",
       "norm_label": "bracketedtabpane",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L3069"
+      "source_location": "L3077"
     },
     {
       "_callable": true,
@@ -89733,7 +89733,7 @@
       "label": "formPaneFirstField",
       "norm_label": "formpanefirstfield",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L3023"
+      "source_location": "L3031"
     },
     {
       "_origin": "ast",
@@ -89744,7 +89744,7 @@
       "label": "formPaneLastField",
       "norm_label": "formpanelastfield",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L3039"
+      "source_location": "L3047"
     },
     {
       "_callable": true,
@@ -89802,7 +89802,7 @@
       "label": "singleFieldPane",
       "norm_label": "singlefieldpane",
       "source_file": "server/terminal-session.test.ts",
-      "source_location": "L3055"
+      "source_location": "L3063"
     },
     {
       "_origin": "ast",

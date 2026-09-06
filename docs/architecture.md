@@ -177,6 +177,34 @@ retryable queue item. Older runtimes also retain the existing recovery record.
 Settlement preserves a newer native completion or permission state instead of
 restoring the claim's obsolete running state.
 
+Recovery resends use the existing `failedPrompt` record as a durable claim.
+Before dispatch, a compare-and-set replaces the acknowledged `failedAt` token
+with a fresh `resend:<UUID>` token, the actual submitted text (including edits), and
+`uncertain: true`. A refused write or rename delivers nothing. The consumed
+token no longer matches durable state, so another reader cannot replay it after
+a crash even if every post-delivery write failed. In-flight ownership also
+blocks use of the fresh token until that dispatch finishes.
+
+An unresolved send leaves the replacement marker available for an explicit new
+recovery decision after checking the native terminal and any queued copy; it is
+not automatically acknowledged. Even a pre-delivery refusal after the claim
+commits conservatively keeps that new decision. Successful sends acknowledge
+the replacement token; app-queued resends pass that token to the existing atomic
+answering-enqueue operation. Acknowledgement retries compare the token inside
+the store mutation, so a delayed retry cannot erase a newer decision. Failed
+acknowledgements report uncertainty instead of reporting a completed settlement.
+Clear replacement carries the current marker, not the consumed token.
+
+This protocol adds no saved-state field or format version. Legacy unstamped
+recoveries remain readable and are claimed when their unchanged text is
+resubmitted. Older runtimes that check `acknowledgesFailure` still reject an
+already-consumed token because the saved token changed. They do not,
+however, durably claim the *next* recovery resend: rolling back to such a binary
+reintroduces the crash window for new recovery decisions. Development validation
+must exercise both write-refusal boundaries and restart before promotion; an
+old-binary rollback needs an operator decision to settle or pause recovery
+resends first. Do not rewrite stored recovery state merely to enable rollback.
+
 ### Durable identity retirement
 
 Version-1 state can include an identifier-only `retiredSessionIds` ledger.

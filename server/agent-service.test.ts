@@ -4371,14 +4371,14 @@ describe('AgentService deletion', () => {
     // the prompt a second time.
     await expect(
       service.sendMessage(created.id, 'the one that failed', true, failedAt),
-    ).rejects.toThrow(/already been sent/)
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been used') })
   })
 
   it.each([
     [true, false],
     [true, true],
     [false, false],
-  ] as const)('settles a recovered terminal resend according to uncertainty (%s, acknowledgement failure=%s)', async (uncertain, failAcknowledgement) => {
+  ] as const)('keeps a fresh recovery decision after an unresolved terminal resend (%s, acknowledgement failure=%s)', async (uncertain, failAcknowledgement) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-uncertain-recovery-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -4411,20 +4411,17 @@ describe('AgentService deletion', () => {
     try {
       await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
         .rejects.toBe(failure)
-      if (uncertain) {
-        if (!failAcknowledgement) {
-          expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
-        }
-        await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
-          .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been sent') })
-        expect(terminal.send).toHaveBeenCalledOnce()
-        acknowledgement?.mockRestore()
-        await vi.waitFor(() => expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined())
-      } else {
-        expect(service.store.get(client.session.sessionId)?.failedPrompt?.failedAt).toBe(failedAt)
-        await service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt)
-        expect(terminal.send).toHaveBeenCalledTimes(2)
-      }
+      const recovery = service.store.get(client.session.sessionId)!.failedPrompt!
+      expect(recovery).toMatchObject({ content: 'Recovered prompt', uncertain: true })
+      expect(recovery.failedAt).not.toBe(failedAt)
+      await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
+        .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been used') })
+      expect(terminal.send).toHaveBeenCalledOnce()
+      if (acknowledgement) expect(acknowledgement).not.toHaveBeenCalled()
+      acknowledgement?.mockRestore()
+      await service.sendMessage(client.session.sessionId, 'Recovered prompt', false, recovery.failedAt)
+      expect(terminal.send).toHaveBeenCalledTimes(2)
+      expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
     } finally {
       acknowledgement?.mockRestore()
       await service.stop()

@@ -231,8 +231,18 @@ Questions and permissions are the highest-priority UI state.
 - Losing a paste acknowledgement MUST report uncertain delivery rather than
   authorize an automatic retry. Readiness MUST be checked again after owner
   validation and before the paste.
-- A recovered prompt with an uncertain terminal receipt MUST retain its resend
-  claim. Failed acknowledgement writes MUST be retried without repeating delivery.
+- A recovered prompt or slash-command resend MUST durably consume its recovery
+  token before delivery or queue admission. If that write cannot commit, no
+  delivery may occur and the original token remains unused.
+- The claim MUST preserve the actual submitted text and a fresh uncertain
+  recovery token. An unresolved attempt MUST reject its old token across restart
+  and clear replacement, and require an explicit new recovery decision; it MUST
+  NOT be automatically acknowledged or replayed. A refusal after the claim
+  commits may conservatively remain uncertain, but MUST offer a usable new
+  decision rather than permanently blocking recovery.
+- Successful delivery or durable queue admission MUST settle only its own
+  recovery token. Failed acknowledgement writes after accepted delivery MUST be
+  surfaced and retried without repeating delivery or clearing a newer recovery.
 - Form identity MUST preserve word boundaries. Terminal form reads MUST use
   tmux's joined soft-wrap capture instead of guessing whether a line break
   separated words or split an identifier.

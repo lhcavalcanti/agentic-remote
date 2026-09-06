@@ -805,13 +805,39 @@ export class SessionStore {
     })
   }
 
-  async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {
+  async claimFailedPrompt(
+    sessionId: string,
+    expected: NonNullable<SessionDetail['failedPrompt']>,
+    submitted: string,
+    claimedAt: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (stored) => {
+      if (
+        !claimedAt || claimedAt === expected.failedAt ||
+        stored.terminalQueueDispatch ||
+        !stored.failedPrompt ||
+        stored.failedPrompt.failedAt !== expected.failedAt ||
+        stored.failedPrompt.content !== expected.content
+      ) {
+        throw Object.assign(
+          new Error('That recovery decision has already been used. Review the current recovered prompt.'),
+          { statusCode: 409 },
+        )
+      }
+      // Consume the old token before delivery. The new token describes an
+      // unresolved attempt, including the edited text, even if no later write
+      // can commit or the process exits before it can record the receipt.
+      stored.failedPrompt = { content: submitted, failedAt: claimedAt, uncertain: true }
+    })
+  }
+
+  async clearFailedPrompt(sessionId: string, expected?: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
       if (stored.terminalQueueDispatch) {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }
       stored.failedPrompt = undefined
-    })
+    }, expected === undefined ? undefined : (stored) => stored.failedPrompt?.failedAt === expected)
   }
 
   async shiftQueuedPrompt(

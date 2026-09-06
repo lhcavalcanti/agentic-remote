@@ -56,6 +56,7 @@
     "server/service-worker.test.ts",
     "server/session-directory.test.ts",
     "server/session-directory.ts",
+    "server/session-reply-durability.test.ts",
     "server/session-service.ts",
     "server/session-store-durability.test.ts",
     "server/session-store-providers.test.ts",
@@ -118,9 +119,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 109,
+  "communities": 111,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5610,
+  "edges": 5700,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -152,7 +153,7 @@
     "bin/agentic-remote-promotion-setup": "8c90f5750c7eb945098ee3b170a4f0f25fbd4dc1b7543771f8257c0f88ed7e1a",
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "75761f9ca0aa03c6e78bed4b5b502e79797b4895cae3f4228c8c2e795874232d",
+    "docs/app-spec.md": "3365cf8abfebb76240f99316fe199642a2cd321d77efaae63191e9deab38380a",
     "docs/architecture.md": "eeffc6e8bb78b09126a16be309440f2dbe7f3c7f5d1b2a634cad435b1f1f2b80",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -179,7 +180,7 @@
     "server/active-sessions.ts": "3a86fe9ec604721f7f9d6b4b0777d316887abbfcca794d90bd6c2c79fa707380",
     "server/activity-spacing.test.ts": "b6446956cba3c708e2c4ff4a47016528851f6d69519e5e548c14ae062f9a03ca",
     "server/agent-service.test.ts": "8d8a4ecb3a7a39f08f39010ebd354dc72be701350d63be8c05e15b9f576a0b5a",
-    "server/agent-service.ts": "c2205330d2a525755fbd66665c44c734d38a83f6bd619994561f09b8d84f96c0",
+    "server/agent-service.ts": "5439fdea0a6acdc0e5288164574c0c829ca88fbdc08be2092260af6d31ad6dc6",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "e98adc8f9c5e58e398a6b2e04105967c5d9f8300ee042b77fae9329823b9de72",
@@ -188,7 +189,7 @@
     "server/background-task-tracker.test.ts": "50154bcfeb4996dd6a4129fc16c10696da63ff73b439249f28d6aa1864c63137",
     "server/background-task-tracker.ts": "47f0fd9ebf4164c3347376c09aaca797738caeab49eb09312fda5b6ff1d5fdc0",
     "server/claude-agent-service.test.ts": "1c6c83d4752dbfb5b4604ca919335dd665773c3477bb6595904ab5975210fa56",
-    "server/claude-agent-service.ts": "9ce7dfffffe991e4e7ccddadd8ac8664f6a53129861dd86a4467ad48687a290d",
+    "server/claude-agent-service.ts": "96914cfcea94ab2a752ad09e3ccba2ad94fec6a690089f27782b955c8eeb9212",
     "server/composer-layout.test.ts": "beef468fb354013d3412a3c33fe8cb0096666e5366c53bb5c1715087859e96df",
     "server/computer-manager.ts": "1ce0e55a07b27ace96a82964b3699cf929a85b80ab56726e49d769d90ffac631",
     "server/computer-registry.test.ts": "e0616b92fdfb650b523100af4a8f7b8e4f31b99764ec4ab71502d3b69b1bf55b",
@@ -224,6 +225,7 @@
     "server/service-worker.test.ts": "d86bd5fef7d09792c35753246e6c46ddeece822e40f4cf16a44e04a440ad708e",
     "server/session-directory.test.ts": "9cbfcb867e305c37c0d8270bcf4e417ed6af21e34b4053c6dadb5286bfcd660f",
     "server/session-directory.ts": "8260aee7e736e5442329ca4fc000e63e606a5c349f4f4fe3f79b59bd65636f1e",
+    "server/session-reply-durability.test.ts": "7189cd1eedc33d63de9b68dee00765cfae92fa4b48b99dfcef9c0431891ffd9f",
     "server/session-service.ts": "ecb10957687968570c89736a93363eeb1f3e86d5a27fb61380113ccddfa86ea1",
     "server/session-store-durability.test.ts": "1743e6e3ba0fb55b27d39e2bd01ee10f08aacbe5578d0c057a9a4a5e0358fba3",
     "server/session-store-providers.test.ts": "5567bccbe9efde09651f769647c4ebbfc851debaa1b5e00b168a46fd83cb22aa",
@@ -291,7 +293,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2181,
+  "nodes": 2208,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -343,15 +345,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "9ecfd634cd7995d6da96dffca98475893acf5f7ddc226b616f06b4f8511eb68f",
-    "communities.json": "4b4658c0324dc54f3de84bed11a3d315092a0edc92604deed126ce3f9b235386",
-    "graph.html": "3d0f0b3bf50f13e05145a101833fab759903e20f4b230bcd151ae647ed086411",
-    "graph.json": "51cffdf5c130e46feaed754b87e1941dcaa7a29d8180e78082944cc755c71b6c"
+    "GRAPH_REPORT.md": "3cd84e6788f8ca4e77d4d175f8b12dd1cb9b6d9bb0b25fb7462d3e4be78e24e0",
+    "communities.json": "5b0c20bfb394f4dd14dabd4b6431615d82aec83b3d7b52de9ea4850a36c4de96",
+    "graph.html": "772cc2bde3a454b7c27c41dd6dfd4d5d947ac81624f59ed19e2178ea1a198f4f",
+    "graph.json": "39b1af4e284ede08ea3a5f2042ef2b0e9d5b473364709be59054eacb5fa34a70"
   },
   "schema_version": 1,
-  "source_commit": "02230df6d9d81002d9877a7a8a94db12c1386463",
-  "source_fingerprint": "aa6ff3de8acf49664fe09e3f61d558f18f002f42d593b6b0585e5ac851fa1d5b",
+  "source_commit": "0eeb2f8ba04008dc796d0c7789354c3fd96f015f",
+  "source_fingerprint": "acf5bee635595bcff458c7c547f9aff4103592073802d0db9d64ec4cf6b3fb7d",
   "working_tree_changes": [
-    "server/terminal-session.test.ts"
+    "docs/app-spec.md",
+    "server/agent-service.ts",
+    "server/claude-agent-service.ts",
+    "server/session-reply-durability.test.ts"
   ]
 }

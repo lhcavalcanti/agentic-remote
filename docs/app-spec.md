@@ -208,6 +208,12 @@ Questions and permissions are the highest-priority UI state.
   a service restart, including structured ask-user forms.
 - If an SDK callback was lost, answering the recovered question MUST resume as a
   normal user turn.
+- While the owning service is running, an accepted SDK reply whose settlement
+  write failed MUST remain retryable without resolving the provider callback
+  again. A conflicting reply MUST be rejected, and settlement MUST preserve
+  newer questions, permissions, and their waiting status.
+- Multi-question flows MUST commit the next question card before advancing
+  their private request identity or collected answers.
 - A newly arriving question or permission MUST scroll into view.
 - Entering a session that is already waiting MUST scroll to the action card.
 

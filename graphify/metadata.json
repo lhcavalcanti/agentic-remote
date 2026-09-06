@@ -6,9 +6,11 @@
     "bin/agentic-remote-promotion-setup",
     "e2e/capture-workbench-review.ts",
     "e2e/capture-workspace.ts",
+    "e2e/check-workspace-review-regressions.ts",
     "e2e/render-workspace-gifs.ts",
     "e2e/screenshot-stability.test.ts",
     "e2e/screenshot-stability.ts",
+    "e2e/workspace-fixtures.test.ts",
     "e2e/workspace-fixtures.ts",
     "package.json",
     "public/sw.js",
@@ -162,9 +164,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 125,
+  "communities": 108,
   "community_algorithm": "louvain-seed-42",
-  "edges": 7114,
+  "edges": 7151,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -211,10 +213,12 @@
     "docs/slash-command-feedback.md": "49df532a01a5ed60ead540fe349cc80e1b2cc737ff710b77ad984e09156b082e",
     "e2e/capture-workbench-review.ts": "0c19d55997cf62800b731c21431051645e46d487214e646a85d9cf01f649e705",
     "e2e/capture-workspace.ts": "9e4822a55a435bfdc8cc739dfa30fe550ac5a9d421a8cbd51bbb1a6187cc2dcc",
+    "e2e/check-workspace-review-regressions.ts": "4af0c558cd0ef02f001e3d627739da338faa88590a96e38a79edd57c46a17f56",
     "e2e/render-workspace-gifs.ts": "94bc45412aa8d0dc77dbe9e013bcce86c22abd1a04fff645e7c2ec6c8bab87ae",
     "e2e/screenshot-stability.test.ts": "f6193a86a40580d461d7a5473490196e8ebe6aab978a2d794bd157f6bc1c82f4",
     "e2e/screenshot-stability.ts": "7f52b64902d7dc77c02cd11a69682dd46f3c6028d19221098794ef31d2c7e16a",
-    "e2e/workspace-fixtures.ts": "f4cf26aae23c76c5154263de646421dc977fae6875bbbaac8e6f45bee1a33fbe",
+    "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
+    "e2e/workspace-fixtures.ts": "99d34fac15885d366cb02c7db74024b88ee303b5d7caaac5fd20296cb9f83710",
     "index.html": "dd40370c1e575f22efc5df1845898b7183087b9b0696bc52de52fcd13442335a",
     "package.json": "b83f297b10da87272678626c0073924543ad23d4c34f40dac3944ddd020f89d7",
     "public/apple-touch-icon-precomposed.png": "9358cf47aba927d07ecc9fafff9788778808af66df52f61112cca31485d77923",
@@ -354,7 +358,7 @@
     "src/appearance.ts": "1d51e22ecf822496820c2fdcdb9d51ecbe6bec204368c3c1ad3bbd353c08bcfb",
     "src/composer-sizing.ts": "287d9a67a40dffb32161e6867173ffd3d51ae35d7942b7b0c456478bf2082d8d",
     "src/env.d.ts": "7dfb7763ec2101e5d66963c95cb8f938ea84fa576f0055dcd1922f6572add894",
-    "src/index.css": "cf3523f78e0de865c1a22507505336c338eda8d95ce9b1cc3c84de45d45a9f47",
+    "src/index.css": "75dd8c15206af81ed1628b62d59c89fd1fbecb2c395b59821ed3439ce714bb0f",
     "src/knowledge-position.ts": "ae9592b0d6d4824a37731ddf7d23ee011c7bcc7875848269ffff3d3abe74b6b2",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -383,7 +387,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2699,
+  "nodes": 2714,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -439,17 +443,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b8eee5dd636011638416c616a4ca7a8904cc5d35f3e0f2ac52096b9eed684401",
-    "communities.json": "69d9ad45ff9cd1e9bd70cd5e110c1412238436e2bc331124b713482638cdc170",
-    "graph.html": "86498ff95298f4b2534214c3af3b987eb1f6e0947c5eff09c2c6fb451c3565ed",
-    "graph.json": "60a4992a074ba17967647e0b38289176179abe34134d644057c407bd47cd3527"
+    "GRAPH_REPORT.md": "76d57a38e9d768862550e4b723e0c16d9c2d686cd127dd5104c33dc7d85fbf37",
+    "communities.json": "aa285c548a4d41b24224fe9c63b372ba20710003ae491bfb97f25ddea7abc304",
+    "graph.html": "8b59762b34ce1e0e56f6628e8ad85e8fa163acfb29c9137d5899c7d93291b92f",
+    "graph.json": "1b84aecb31edad5d6f543ccf10459b18ea39681441e16e5b267d1f69e15e6864"
   },
   "schema_version": 1,
-  "source_commit": "3e1fce32951ec8d424c7afeefbcca0a842db7c34",
-  "source_fingerprint": "a9258678cf9094e37df862cb8e3e84d160e3449998d3441d52c528f9fa2758b0",
+  "source_commit": "c6b9ef9109fcfbf3598721b02e5ba2fe59e75d30",
+  "source_fingerprint": "6e2fd6d767efd454c6bb14f0b1dc03dcea7991927fe29c229ce14c7d6f5d4481",
   "working_tree_changes": [
-    "src/App.test.tsx",
-    "src/use-session-knowledge-root.test.tsx",
-    "src/use-session-knowledge-root.ts"
+    "e2e/check-workspace-review-regressions.ts",
+    "e2e/workspace-fixtures.test.ts",
+    "e2e/workspace-fixtures.ts",
+    "src/index.css"
   ]
 }

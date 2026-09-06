@@ -58,6 +58,8 @@
   --warning: #876309;
   --task: #315ea7;
   --shadow-popover: 0 12px 36px rgb(31 42 58 / 14%);
+  --error-banner-text: var(--danger);
+  --question-select-text: var(--text);
 }
 
 .field__hint {
@@ -143,6 +145,7 @@ button {
 
 .app-shell[data-appearance='light'] {
   --accent-foreground: color-mix(in srgb, var(--accent) 35%, #24332d);
+  --inline-code-text: var(--accent-foreground);
 }
 
 .app-shell[data-accent-theme='ocean'] {
@@ -2046,7 +2049,7 @@ button {
   gap: 12px;
   margin: 10px 18px 0;
   padding: 10px 12px;
-  color: #ffd5cd;
+  color: var(--error-banner-text, #ffd5cd);
   border: 1px solid rgba(239, 129, 111, 0.35);
   border-radius: 10px;
   background: rgba(239, 129, 111, 0.08);
@@ -2529,7 +2532,7 @@ button {
 .message__content code,
 .markdown-body code {
   padding: 2px 5px;
-  color: color-mix(in srgb, var(--accent) 58%, white);
+  color: var(--inline-code-text, color-mix(in srgb, var(--accent) 58%, white));
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--panel-raised);
@@ -2927,12 +2930,12 @@ button {
   min-height: 42px;
   gap: 12px;
   padding: 8px 11px;
-  color: #f4f7ed;
+  color: var(--question-select-text, #f4f7ed);
   border: 1px solid var(--accent-focus);
   border-radius: 10px;
   outline: 0;
   background: color-mix(in srgb, var(--accent) 7%, var(--panel-raised));
-  color-scheme: dark;
+  color-scheme: inherit;
   text-align: left;
 }
 
@@ -2965,7 +2968,7 @@ button {
   outline: 0;
   background: color-mix(in srgb, var(--accent) 4%, var(--panel));
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
-  color-scheme: dark;
+  color-scheme: inherit;
 }
 
 .user-input-card__select-menu:focus-visible {
@@ -2978,7 +2981,7 @@ button {
 .user-input-card__select-option {
   min-height: 36px;
   padding: 7px 9px;
-  color: #eef4e8;
+  color: var(--question-select-text, #eef4e8);
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -2987,12 +2990,12 @@ button {
 
 .user-input-card__select-option:hover,
 .user-input-card__select-option--highlighted {
-  color: #ffffff;
+  color: var(--question-select-text, #ffffff);
   background: color-mix(in srgb, var(--accent) 25%, var(--panel-raised));
 }
 
 .user-input-card__select-option--selected {
-  color: color-mix(in srgb, var(--accent) 64%, white);
+  color: var(--question-select-text, color-mix(in srgb, var(--accent) 64%, white));
   font-weight: 650;
   background: color-mix(in srgb, var(--accent) 17%, var(--panel-raised));
 }

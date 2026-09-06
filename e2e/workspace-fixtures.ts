@@ -438,6 +438,7 @@ export const fixtureEndpoints = [
   'GET /api/knowledge/roots',
   'GET /api/knowledge/roots/:rootId/entries?path=.',
   'GET /api/knowledge/roots/:rootId/file?path=handbook/agent-workspace.md',
+  'GET /api/computers/:computerId/directories?path=~&scope=all',
   'GET /api/computers/:computerId/providers/:provider/runtime',
   'GET /api/computers/:computerId/sessions/:sessionId',
   'GET /api/computers/:computerId/sessions/:sessionId/commands',
@@ -772,27 +773,27 @@ export async function setupWorkspaceFixture(
         await respond(body)
         return
       }
-      const directory = path.match(/^\/api\/computers\/([^/]+)\/directories$/)
-      if (method === 'GET' && directory && fixtureComputers.some((computer) => computer.id === directory[1])) {
-        const requested = url.searchParams.get('path')
-        const current = !requested || requested === '~' ? '/home/demo' : requested
-        const allowed = current === '/home/demo' ||
-          sessions.some((session) => session.computerId === directory[1] && session.cwd === current) ||
-          state.roots.some((root) => root.computerId === directory[1] && root.path === current)
-        if (!allowed) {
-          await reject(route, `Unknown fixture directory ${current}`)
-          return
-        }
-        await respond({
-          path: current,
-          parent: current === '/home/demo' ? undefined : '/home/demo',
-          directories: current === '/home/demo'
-            ? [...new Set(sessions.filter((session) => session.computerId === directory[1]).map((session) => session.cwd))]
-              .map((path) => ({ name: path.split('/').at(-1), path }))
-            : [],
-        })
+    }
+    const directory = path.match(/^\/api\/computers\/([^/]+)\/directories$/)
+    if (method === 'GET' && directory && fixtureComputers.some((computer) => computer.id === directory[1])) {
+      const requested = url.searchParams.get('path')
+      const current = !requested || requested === '~' ? '/home/demo' : requested
+      const allowed = current === '/home/demo' ||
+        sessions.some((session) => session.computerId === directory[1] && session.cwd === current) ||
+        state.roots.some((root) => root.computerId === directory[1] && root.path === current)
+      if (!allowed) {
+        await reject(route, `Unknown fixture directory ${current}`)
         return
       }
+      await respond({
+        path: current,
+        parent: current === '/home/demo' ? undefined : '/home/demo',
+        directories: current === '/home/demo'
+          ? [...new Set(sessions.filter((session) => session.computerId === directory[1]).map((session) => session.cwd))]
+            .map((path) => ({ name: path.split('/').at(-1), path }))
+          : [],
+      })
+      return
     }
     const provider = path.match(
       /^\/api\/computers\/([^/]+)\/providers\/(copilot|claude)\/runtime$/,

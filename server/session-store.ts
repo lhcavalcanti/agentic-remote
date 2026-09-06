@@ -1156,17 +1156,20 @@ export class SessionStore {
     sessionId: string,
     kind: 'pendingPermission' | 'pendingUserInput',
     requestId: string,
-    continuation?: { status: SessionStatus; activity?: string },
+    continuation?:
+      | { status: SessionStatus; activity?: string }
+      | ((session: Readonly<SessionDetail>) => { status: SessionStatus; activity?: string }),
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session[kind] = undefined
       if (continuation) {
+        const next = typeof continuation === 'function' ? continuation(session) : continuation
         session.status = session.pendingPermission || session.pendingUserInput
           ? 'waiting'
-          : continuation.status
+          : next.status
         session.activity = session.pendingPermission?.title ||
           session.pendingUserInput?.question ||
-          continuation.activity
+          next.activity
       }
     }, (session) => session[kind]?.requestId === requestId)
   }

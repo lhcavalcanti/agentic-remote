@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import type { Query } from '@anthropic-ai/claude-agent-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UserInputReplyInput } from '../shared/contracts.js'
-import { AgentService, type CopilotClientLike } from './agent-service.js'
+import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
 import { SessionStore } from './session-store.js'
 
@@ -80,6 +81,7 @@ async function copilotFixture() {
       cancel: vi.fn(async () => false),
     },
   )
+  ownPrompt(service)
   fixtures.push({ directory: setup.directory, service })
   return { ...setup, service }
 }
@@ -93,8 +95,92 @@ async function claudeFixture() {
     renameSession: vi.fn(async () => {}),
   }
   const service = new ClaudeAgentService(setup.store, '/bin/true', sdk)
+  ownPrompt(service)
   fixtures.push({ directory: setup.directory, service })
-  return { ...setup, service }
+  return { ...setup, service, sdk }
+}
+
+function holdCompletion() {
+  let finish = () => {}
+  const done = new Promise<void>((resolve) => { finish = resolve })
+  releases.push(finish)
+  return { done, finish }
+}
+
+async function assistantFixture(store: SessionStore) {
+  const assistantId = randomUUID()
+  await store.update(sessionId, (session) => {
+    session.messages.push({
+      id: assistantId, role: 'assistant', content: '',
+      createdAt: '2026-09-06T00:00:00.000Z', streaming: true,
+    })
+  })
+  return assistantId
+}
+
+function ownPrompt(service: AgentService | ClaudeAgentService) {
+  if (service instanceof AgentService) {
+    const owner = { assistantMessageId: randomUUID() }
+    service['activePrompts'].set(sessionId, owner)
+    return owner
+  }
+  const owner = {
+    abortController: new AbortController(),
+    query: (async function* () {})() as unknown as Query,
+    done: Promise.resolve(),
+    finish: () => {},
+  }
+  service['active'].set(sessionId, owner)
+  return owner
+}
+
+function releasePrompt(service: AgentService | ClaudeAgentService) {
+  if (service instanceof AgentService) service['activePrompts'].delete(sessionId)
+  else service['active'].delete(sessionId)
+}
+
+async function copilotRunFixture(outcome: 'idle' | 'error' = 'idle') {
+  const setup = await copilotFixture()
+  const assistantId = await assistantFixture(setup.store)
+  const provider = holdCompletion()
+  setup.service['activePrompts'].set(sessionId, { assistantMessageId: assistantId })
+  const runtime: CopilotSessionLike = {
+    sessionId,
+    on: () => () => {},
+    getEvents: async () => [],
+    abort: async () => { provider.finish() },
+    disconnect: async () => {},
+    rpc: {
+      commands: { list: async () => ({ commands: [] }), invoke: vi.fn(), enqueue: vi.fn() },
+      name: { set: async () => {} },
+      model: {
+        getCurrent: async () => ({ modelId: 'fixture' }),
+        switchTo: async () => ({ modelId: 'fixture' }),
+      },
+      mode: { set: async () => {} },
+    },
+    sendAndWait: async () => {
+      await provider.done
+      if (outcome === 'error') throw new Error('Provider failed')
+      return undefined
+    },
+  }
+  const finished = setup.service['runPrompt'](runtime, 'fixture', assistantId)
+    .catch((error: unknown) => error)
+  return { ...setup, provider, finished }
+}
+
+async function claudeRunFixture() {
+  const setup = await claudeFixture()
+  const assistantId = await assistantFixture(setup.store)
+  const provider = holdCompletion()
+  releasePrompt(setup.service)
+  vi.mocked(setup.sdk.query).mockImplementation(() =>
+    (async function* () { await provider.done; yield* [] })() as unknown as Query)
+  const finished = setup.service['runQuery'](sessionId, 'fixture', assistantId)
+    .catch((error: unknown) => error)
+  await vi.waitFor(() => expect(setup.service['active'].has(sessionId)).toBe(true))
+  return { ...setup, provider, finished }
 }
 
 async function copilotRequest(
@@ -761,4 +847,178 @@ describe('Reply lifecycle cleanup', () => {
       expect(vi.mocked(writeFile).mock.calls).toHaveLength(writes)
     },
   )
+})
+
+describe('Reply continuation ownership', () => {
+  for (const kind of ['permission', 'input', 'elicitation'] as const) {
+    it.each([
+      ['idle', 'before'],
+      ['idle', 'after'],
+      ['error', 'before'],
+      ['error', 'after'],
+    ] as const)(
+      `keeps a Copilot ${kind} reply %s when the provider ends %s confirmation refusal`,
+      async (outcome, timing) => {
+        const { service, store, provider, finished } = await copilotRunFixture(outcome)
+        const pending = await copilotRequest(service, kind)
+        const gate = holdWrite()
+        const refused = expect(pending.reply()).rejects.toThrow('disk full')
+        await gate.started
+        if (timing === 'before') {
+          provider.finish()
+          await nextTick()
+        }
+        gate.fail(new Error('disk full'))
+        await refused
+        provider.finish()
+        expect(await finished).toBeUndefined()
+        expect(store.get(sessionId)?.status).toBe(outcome)
+        expect(service['activePrompts'].has(sessionId)).toBe(false)
+        expect(kind === 'permission'
+          ? store.get(sessionId)?.pendingPermission?.requestId
+          : store.get(sessionId)?.pendingUserInput?.requestId).toBe(pending.requestId)
+        await expect(pending.reply('Right')).rejects.toMatchObject({ statusCode: 409 })
+
+        const settled = await pending.reply()
+        expect(settled.status).toBe(outcome)
+        expect(settled.activity).toBeUndefined()
+        expect(settled.pendingPermission).toBeUndefined()
+        expect(settled.pendingUserInput).toBeUndefined()
+        expect(pending.resolve).toHaveBeenCalledTimes(1)
+        const admitted = await store.beginPrompt(
+          sessionId, 'Next prompt', randomUUID(), () => !service['activePrompts'].has(sessionId),
+        )
+        expect(admitted.status).toBe('running')
+      },
+    )
+  }
+
+  for (const providerName of ['copilot', 'claude'] as const) {
+    const setup = providerName === 'copilot'
+      ? async () => {
+          const fixture = await copilotFixture()
+          return { ...fixture, pending: await copilotRequest(fixture.service, 'input') }
+        }
+      : async () => {
+          const fixture = await claudeFixture()
+          return { ...fixture, pending: await claudeRequest(fixture.service, 'input') }
+        }
+
+    it.each(['before', 'after'] as const)(
+      `does not revive ${providerName} when completion writes fail %s confirmation refusal`,
+      async (timing) => {
+      const { service, store, provider, finished } = providerName === 'copilot'
+        ? await copilotRunFixture()
+        : await claudeRunFixture()
+      const pending = service instanceof AgentService
+        ? await copilotRequest(service, 'input')
+        : await claudeRequest(service, 'input')
+      vi.mocked(writeFile).mockRejectedValue(new Error('disk full'))
+      const gate = holdWrite()
+      const refused = expect(pending.reply()).rejects.toThrow('disk full')
+      await gate.started
+      if (timing === 'before') {
+        provider.finish()
+        await nextTick()
+      }
+      gate.fail(new Error('disk full'))
+      await refused
+      provider.finish()
+      expect(await finished).toEqual(new Error('disk full'))
+      expect(service instanceof AgentService
+        ? service['activePrompts'].has(sessionId)
+        : service['active'].has(sessionId)).toBe(false)
+      expect(store.get(sessionId)?.status).toBe('waiting')
+      expect(store.get(sessionId)?.pendingUserInput?.requestId).toBe(pending.requestId)
+      vi.mocked(writeFile).mockImplementation(disk.writeFile)
+      await expect(pending.reply('Right')).rejects.toMatchObject({ statusCode: 409 })
+
+      const settled = await pending.reply()
+      expect(settled.status).toBe('idle')
+      expect(settled.activity).toBeUndefined()
+      expect(settled.pendingUserInput).toBeUndefined()
+      expect(pending.resolve).toHaveBeenCalledTimes(1)
+      const admitted = await store.beginPrompt(sessionId, 'Next prompt', randomUUID(), () => true)
+      expect(admitted.status).toBe('running')
+      },
+    )
+
+    it(`reads current ${providerName} ownership only when the reply mutation prepares`, async () => {
+      const { service, store, pending } = await setup()
+      const gate = holdWrite()
+      const earlier = store.update(sessionId, (stored) => { stored.title = 'Earlier write' })
+      await gate.started
+      const settling = pending.reply()
+      releasePrompt(service)
+      gate.finish()
+      await earlier
+      const settled = await settling
+      expect(settled.status).toBe('idle')
+      expect(settled.activity).toBeUndefined()
+      expect(pending.resolve).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(['idle', 'error'] as const)(
+      `preserves an admitted ${providerName} %s state while its owner is still tearing down`,
+      async (status) => {
+        const { store, pending } = await setup()
+        const gate = holdWrite()
+        const earlier = store.update(sessionId, (stored) => { stored.title = 'Earlier write' })
+        await gate.started
+        const completed = store.updateStatus(sessionId, status, `${status} outcome`)
+        const settling = pending.reply()
+        expect(store.get(sessionId)?.status).toBe('waiting')
+        gate.finish()
+        await Promise.all([earlier, completed])
+        const settled = await settling
+        expect(settled.status).toBe(status)
+        expect(settled.activity).toBe(`${status} outcome`)
+        expect(pending.resolve).toHaveBeenCalledTimes(1)
+      },
+    )
+
+    it(`preserves a newer ${providerName} prompt that takes ownership before settlement prepares`, async () => {
+      const { service, store, pending } = await setup()
+      vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+      await expect(pending.reply()).rejects.toThrow('disk full')
+      const gate = holdWrite()
+      const earlier = store.update(sessionId, (stored) => { stored.title = 'Earlier write' })
+      await gate.started
+      const changed = store.updateStatus(sessionId, 'running', 'Newer provider work')
+      const settling = pending.reply()
+      const nextOwner = ownPrompt(service)
+      await expect(pending.reply('Right')).rejects.toMatchObject({ statusCode: 409 })
+      gate.finish()
+      await Promise.all([earlier, changed])
+      const settled = await settling
+      expect(settled).toMatchObject({ status: 'running', activity: 'Newer provider work' })
+      expect(service instanceof AgentService
+        ? service['activePrompts'].get(sessionId)
+        : service['active'].get(sessionId)).toBe(nextOwner)
+      expect(pending.resolve).toHaveBeenCalledTimes(1)
+    })
+
+    it.each(['permission', 'input'] as const)(
+      `preserves a newer ${providerName} %s after the original provider owner ends`,
+      async (kind) => {
+        const { service, store, pending } = await setup()
+        vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
+        await expect(pending.reply()).rejects.toThrow('disk full')
+        releasePrompt(service)
+        const newer = service instanceof AgentService
+          ? await copilotRequest(service, kind)
+          : await claudeRequest(service, kind)
+        const field = kind === 'permission' ? 'pendingPermission' : 'pendingUserInput'
+        const card = store.get(sessionId)?.[field]
+        const settled = await pending.reply()
+        expect(settled.status).toBe('waiting')
+        expect(settled[field]).toEqual(card)
+        expect(newer.resolve).not.toHaveBeenCalled()
+        expect(pending.resolve).toHaveBeenCalledTimes(1)
+        const ended = await newer.reply()
+        expect(ended.status).toBe('idle')
+        expect(newer.resolve).toHaveBeenCalledTimes(1)
+      },
+    )
+  }
 })

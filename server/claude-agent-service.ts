@@ -159,6 +159,7 @@ interface PendingClaudeReply {
   answer: string
   question?: ClaudeQuestion
   accepted: boolean
+  queryOwner?: Promise<void>
   completion?: Promise<SessionDetail>
 }
 
@@ -526,6 +527,7 @@ export class ClaudeAgentService
     const answers = { ...pending.answers, [question.question]: answer }
     const replyingNext: PendingClaudeReply = {
       sessionId, kind: 'pendingUserInput', answer, question, accepted: false,
+      queryOwner: this.active.get(sessionId)?.done,
     }
     if (pending.index + 1 < pending.questions.length) {
       const next: PendingClaudeInput = {
@@ -1059,7 +1061,20 @@ export class ClaudeAgentService
     reply: PendingClaudeReply,
   ): Promise<SessionDetail> {
     return this.persistClaudeReply(requestId, reply, () => this.store.clearPendingRequest(
-      reply.sessionId, reply.kind, requestId, { status: 'running', activity: 'Continuing' },
+      reply.sessionId, reply.kind, requestId, (stored) => {
+        // Query ownership and earlier completion mutations must be read together.
+        if (stored.status === 'idle' || stored.status === 'error') {
+          return { status: stored.status, activity: stored.activity }
+        }
+        const current = this.active.get(reply.sessionId)
+        if (!current) return { status: 'idle' }
+        return {
+          status: 'running',
+          activity: current.done === reply.queryOwner && stored.status === 'waiting'
+            ? 'Continuing'
+            : stored.activity,
+        }
+      },
     ))
   }
 
@@ -1099,6 +1114,7 @@ export class ClaudeAgentService
     }
     const reply: PendingClaudeReply = {
       sessionId, kind: 'pendingPermission', answer: optionId, accepted: true,
+      queryOwner: this.active.get(sessionId)?.done,
     }
     this.pendingReplies.set(requestId, reply)
     this.permissions.delete(requestId)

@@ -2250,7 +2250,8 @@ describe('AgentService deletion', () => {
       wasFreeform: false,
     })
     expect(updated.pendingUserInput).toBeUndefined()
-    expect(updated.status).toBe('running')
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(updated.status).toBe('idle')
     await service.stop()
   })
 
@@ -2392,7 +2393,8 @@ describe('AgentService deletion', () => {
       content: values,
     })
     expect(updated.pendingUserInput).toBeUndefined()
-    expect(updated.status).toBe('running')
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(updated.status).toBe('idle')
     await service.stop()
   })
 

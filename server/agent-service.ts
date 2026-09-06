@@ -143,6 +143,7 @@ type SdkReplyChoice =
 interface AcceptedSdkReply {
   sessionId: string
   choice: SdkReplyChoice
+  promptId?: string
   completion?: Promise<SessionDetail>
 }
 
@@ -4436,7 +4437,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sessionId,
       choice.kind === 'permission' ? 'pendingPermission' : 'pendingUserInput',
       requestId,
-      { status: 'running', activity: 'Continuing' },
+      (stored) => {
+        // Completion can be admitted while this confirmation is waiting to write.
+        if (stored.status === 'idle' || stored.status === 'error') {
+          return { status: stored.status, activity: stored.activity }
+        }
+        const current = this.activePrompts.get(sessionId)
+        if (!current) return { status: 'idle' }
+        return {
+          status: 'running',
+          activity: current.assistantMessageId === accepted.promptId && stored.status === 'waiting'
+            ? 'Continuing'
+            : stored.activity,
+        }
+      },
     ).then((updated) => {
       if (this.acceptedSdkReplies.get(requestId) === accepted) {
         this.acceptedSdkReplies.delete(requestId)
@@ -4469,6 +4483,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.acceptedSdkReplies.set(requestId, {
       sessionId,
       choice: structuredClone(choice),
+      promptId: this.activePrompts.get(sessionId)?.assistantMessageId,
     })
     resolve()
     return this.settleSdkReply(sessionId, requestId, choice)

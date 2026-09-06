@@ -118,9 +118,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 105,
+  "communities": 98,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5798,
+  "edges": 5804,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -178,8 +178,8 @@
     "server/active-sessions.test.ts": "ce862ad23138fa1d120e95839025e4ff11908254dfff7d6141a91b76acf48de0",
     "server/active-sessions.ts": "3a86fe9ec604721f7f9d6b4b0777d316887abbfcca794d90bd6c2c79fa707380",
     "server/activity-spacing.test.ts": "b6446956cba3c708e2c4ff4a47016528851f6d69519e5e548c14ae062f9a03ca",
-    "server/agent-service.test.ts": "325d029786b1d72342874190f1e74d9045fbd8661c58ba67aeb75bd73cbed60f",
-    "server/agent-service.ts": "4d6ccc65dbf2158ad1871ea1f48dd4174f50e5088e44bf90eeac01ebbc03fe90",
+    "server/agent-service.test.ts": "bceb73d01dde779af93aa1a0e747a2912b5af933cd0433350581003e7e577f8c",
+    "server/agent-service.ts": "711a952aba005822269317875fc7278797f242bfdc595944e3bddf997dbce1aa",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "e98adc8f9c5e58e398a6b2e04105967c5d9f8300ee042b77fae9329823b9de72",
@@ -230,8 +230,8 @@
     "server/session-store-providers.test.ts": "07465b5fada184615b1b40769b7973e8f2dcc6f0b61a6bb0cc0c35154e258d54",
     "server/session-store.test.ts": "c01fd8a8f8c5190dbb0926d09d93efabd6142c2c606640e0eab72e7614c064b4",
     "server/session-store.ts": "c0fb64011cb080496e7962ce69135ccbbcf06908b0c3afe748411bb474f6393f",
-    "server/terminal-session.test.ts": "1737d800bed51811da53c87a43a9f7fa7acc57f4e56a61a511815429eb1810fb",
-    "server/terminal-session.ts": "5c15f30b9a04caf02fa9205788d7574a041e0d86adadf5d97c44eff54a61501c",
+    "server/terminal-session.test.ts": "6d8733765808806d3166dcef8c7a22191ef7ce467f6e1a8ec633af1a10206cd5",
+    "server/terminal-session.ts": "d583fc7e11f2f8073ced1a530949000fedf462fc1ad41074041ecd2c7bc47361",
     "server/tmux-test-helpers.ts": "cfa80cfa5218c9d8d713a9805067f7a58759c0065c94ee6e6ae4fd62a5986116",
     "server/transcription-media-digests.test.ts": "dc7e6f6658dc2bdab766874a8e850c8fe837fb25252e82c8e6f255c0254ddd8d",
     "server/transcription-routes.test.ts": "60c7b050221db2d94015c288f29d422fb2aab628ce6e7e43a60f4f8073d16b09",
@@ -291,7 +291,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2236,
+  "nodes": 2237,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -343,19 +343,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "53e60a078bac989250eeb53587f97e48286ba44bbfa487a69eae0b7e9da26cca",
-    "communities.json": "7435cd5f25239f5c33405507a6ad38438c9d0ee4531ccaa8d2e85688b6e190cd",
-    "graph.html": "af1ed80f502d2e6582158aa4a947d3ed2ae5dcccbeadcceec4dfe67979caf2b7",
-    "graph.json": "55d483d5991b268b4cf1659ab4271e4bfee156004c4ce9859ad64ec6bd685a40"
+    "GRAPH_REPORT.md": "c220a06f76c3f8b8615792a2ffe17d10c1963fbef5b9a24d4a6ca8931e462ec3",
+    "communities.json": "cc170473df365f7abfa9b4447dc1c04ab7f1082a73fdd5da1c436a5d5b79e618",
+    "graph.html": "b5984e7a992c9586eac94740140d3c7b346344789b7105859ca432fad6a7a3e5",
+    "graph.json": "58e4deb530b2608d58a8817f82490eaffa521c10e9653ab3c1e1cbec0fc57438"
   },
   "schema_version": 1,
-  "source_commit": "df78d7fe13edac26a776996cdf4376b4069129db",
-  "source_fingerprint": "e569c6690a7f6cfb3896f8db3db7cbff2446f156655009bbc430310728eb52c6",
+  "source_commit": "d2d42397cad521dffdaa399026c39b11bf937470",
+  "source_fingerprint": "280a4fa2cdbc5acbf5ecf8fdb131050cdeb0c2bf4bef94d303e890ab7be27e88",
   "working_tree_changes": [
-    "bin/agentic-remote",
-    "bin/agentic-remote-promotion-monitor",
-    "docs/deployment-promotion.md",
-    "server/promotion-monitor.test.ts",
-    "server/release-publication.test.ts"
+    "server/agent-service.test.ts",
+    "server/agent-service.ts",
+    "server/terminal-session.test.ts",
+    "server/terminal-session.ts"
   ]
 }

@@ -11882,6 +11882,8 @@ function App() {
     const submission = queuedEditSubmission()
     if (!submission) return false
     const { target, savedKey, promptId, submitted, content } = submission
+    const ownsSavedSession = () =>
+      followReplacementsRef.current(savedKey) === savedKey && !removedSessions.current.has(savedKey)
     if (!updateComposerDrafts([], (current) => ({ ...current }), true)) return false
     submissionsInFlight.current.add(savedKey)
     setQueueActionId(promptId)
@@ -11933,6 +11935,7 @@ function App() {
       })
       return true
     } catch (caught) {
+      if (!ownsSavedSession()) return false
       const message = caught instanceof Error ? caught.message : String(caught)
       // A not-found response can name a missing item or an unsupported route.
       // Neither proves a disposition of the original or permits anonymous resend.
@@ -11943,16 +11946,21 @@ function App() {
         // Refresh the visible queue, but never release edit ownership merely
         // because the refresh also omits the item.
         try {
-          const fresh = await getSession(target.computerId, target.id)
+          const fresh = await getSession(target.computerId, target.id, AbortSignal.timeout(15_000))
+          if (!ownsSavedSession()) return false
+          if (sessionKey(fresh) !== savedKey) throw new Error('The queue refresh returned a different session')
           if (stillListed(fresh)) {
             applySession(fresh)
           }
-        } catch {
+        } catch (refreshError) {
+          if (!ownsSavedSession()) return false
           // Left as it is. A re-read that failed says nothing about the
           // message, and letting the marker go on the strength of it detached
           // the rewrite from a message that may still be waiting.
           reportQueueNotice(savedKey,
-            `Queued editing was not confirmed by ${target.computerName}: ${message}. This runtime may not support saving queued edits. Check the queue or discard the rewrite; a visible queue row is not proof that PATCH is supported.`,
+            `Queued editing was not confirmed by ${target.computerName}: ${message}. This runtime may not support saving queued edits. The automatic refresh also failed: ${
+              refreshError instanceof Error ? refreshError.message : String(refreshError)
+            }. Check the queue or discard the rewrite; a visible queue row is not proof that PATCH is supported.`,
           )
         }
         return false
@@ -11969,7 +11977,7 @@ function App() {
         !composerDraftsRef.current[liveKey]?.queuedEdit?.dispatchPending) {
         forgetQueuedEdit(liveKey, promptId)
       }
-      setQueueActionId(undefined)
+      setQueueActionId((current) => current === promptId ? undefined : current)
     }
   }
 
@@ -12067,6 +12075,8 @@ function App() {
     // server had not accepted -- and then persisting it, or putting it back
     // when the recovery read failed.
     const lane = sessionKey(selected)
+    const ownsTarget = () =>
+      followReplacementsRef.current(lane) === lane && !removedSessions.current.has(lane)
     let settle: () => void = () => {}
     const mine = new Promise<void>((resolve) => {
       settle = resolve
@@ -12077,6 +12087,7 @@ function App() {
       if (ahead) {
         await ahead.catch(() => undefined)
       }
+      if (!ownsTarget()) return
       // Now that whatever was ahead has settled, this is the queue as it
       // actually stands.
       const target = sessionsRef.current.find(
@@ -12108,17 +12119,20 @@ function App() {
           target.id,
           order,
         )
-        if (stillListed(updated)) {
+        if (ownsTarget() && sessionKey(updated) === lane && stillListed(updated)) {
           applySession(updated)
         }
       } catch (caught) {
+        if (!ownsTarget()) return
         reportQueueNotice(lane, caught instanceof Error ? caught.message : String(caught))
         // Asked for rather than assumed. The refusal usually means the queue
         // has moved on, so putting back the list as it was before the drag
         // would show work that is already gone, or hide work that has just
         // arrived.
         try {
-          const fresh = await getSession(target.computerId, target.id)
+          const fresh = await getSession(target.computerId, target.id, AbortSignal.timeout(15_000))
+          if (!ownsTarget()) return
+          if (sessionKey(fresh) !== lane) throw new Error('The queue refresh returned a different session')
           if (stillListed(fresh)) {
             applySession(fresh)
           }
@@ -12128,7 +12142,7 @@ function App() {
           // order the server had accepted. Only if it is still a session at
           // all: put back after its removal has been seen, the snapshot
           // reappears as one nothing can act on and no later event will clear.
-          if (stillListed(target)) {
+          if (ownsTarget() && stillListed(target)) {
             applySession(target)
           }
         }

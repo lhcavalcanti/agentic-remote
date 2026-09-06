@@ -6316,6 +6316,212 @@ describe('App', () => {
     }
   })
 
+  it.each(['same owner', 'selection changed', 'cleared owner'] as const)(
+    'bounds automatic PATCH recovery without losing ownership (%s)', async (mode) => {
+      const prompts = ['q1', 'q2', 'q3'].map((id) => ({
+        id, content: `original ${id}`, createdAt: session.updatedAt,
+      }))
+      const local = { ...session, queuedPrompts: prompts, queuedCount: 3 }
+      const peer = { ...secondSession, title: 'Automatic recovery peer' }
+      const replacement = {
+        ...local, id: 'automatic-recovery-replacement', title: 'Replacement after refused save',
+        queuedPrompts: [], queuedCount: 0, messages: [], replacedSessionIds: [session.id],
+      }
+      vi.mocked(listSessions).mockResolvedValue([local, peer])
+      vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+        id === replacement.id ? replacement : id === session.id ? local : peer,
+      )
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 1' }))
+      const textarea = screen.getByLabelText('Message')
+      const rewrite = '  Preserve my automatic-recovery rewrite\n'
+      fireEvent.change(textarea, { target: { value: rewrite } })
+      const controller = new AbortController()
+      const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+      let began = false
+      let releaseRead: (value: ManagedSession) => void = () => {}
+      vi.mocked(getSession).mockImplementationOnce((_computerId, _sessionId, signal) =>
+        new Promise((resolve, reject) => {
+          began = true
+          releaseRead = resolve
+          signal?.addEventListener('abort', () => reject(new Error('Automatic recovery expired')), { once: true })
+        }),
+      )
+      vi.mocked(updateQueuedPrompt).mockRejectedValueOnce(new Error('Not Found'))
+      try {
+        fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+        await waitFor(() => expect(began).toBe(true))
+        expect(screen.getByRole('button', { name: 'Stop editing this queued message' })).toBeDisabled()
+        expect(timeout).toHaveBeenCalledWith(15_000)
+
+        if (mode === 'selection changed') {
+          fireEvent.click(screen.getByText(peer.title).closest('button')!)
+          await waitFor(() => expect(textarea).toHaveValue(''))
+          fireEvent.change(textarea, { target: { value: 'Peer writing stays independent' } })
+          await act(async () => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'error', computerId: peer.computerId, sessionId: peer.id, message: 'Peer-owned notice' }),
+            } as MessageEvent)
+          })
+        } else if (mode === 'cleared owner') {
+          await act(async () => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({
+                type: 'session.removed', computerId: computer.id, sessionId: session.id, replacedBy: replacement.id,
+              }),
+            } as MessageEvent)
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+            } as MessageEvent)
+          })
+          await waitFor(() => expect(window.location.search).toContain(replacement.id))
+          fireEvent.change(textarea, { target: { value: 'New replacement writing' } })
+          await act(async () => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'error', computerId: computer.id, sessionId: replacement.id, message: 'Replacement-owned notice' }),
+            } as MessageEvent)
+          })
+        }
+        await act(async () => { controller.abort() })
+        await act(async () => { releaseRead({ ...local, title: 'Late original snapshot' }) })
+
+        if (mode === 'cleared owner') {
+          await waitFor(() => expect(document.querySelector('.queued-edit-banner')).toBeNull())
+          expect(textarea).toHaveValue('New replacement writing')
+          expect(screen.getByText(/Replacement-owned notice/)).toBeInTheDocument()
+          expect(screen.queryByText(/Not Found|Late original snapshot/)).not.toBeInTheDocument()
+          vi.mocked(sendMessage).mockResolvedValueOnce(replacement)
+          fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+          await waitFor(() => expect(sendMessage).toHaveBeenCalledExactlyOnceWith(computer.id, replacement.id, {
+            content: 'New replacement writing', enqueue: false,
+          }))
+        } else {
+          if (mode === 'selection changed') {
+            expect(textarea).toHaveValue('Peer writing stays independent')
+            expect(screen.getByText(/Peer-owned notice/)).toBeInTheDocument()
+            expect(screen.queryByText(/Not Found/)).not.toBeInTheDocument()
+            fireEvent.click(screen.getByText(session.title).closest('button')!)
+          }
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Save to queue' })).toBeEnabled())
+          expect(screen.getByRole('button', { name: 'Check queue' })).toBeEnabled()
+          expect(screen.getByRole('button', { name: 'Stop editing this queued message' })).toBeEnabled()
+          expect(textarea).toHaveValue(rewrite)
+          const key = `${computer.id}:${session.id}`
+          expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+            .toEqual({ promptId: 'q1' })
+          const prompt = { ...prompts[0], content: rewrite }
+          vi.mocked(updateQueuedPrompt).mockResolvedValueOnce({
+            session: { ...local, queuedPrompts: [prompt, ...prompts.slice(1)] }, prompt,
+          })
+          fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+          await waitFor(() => expect(updateQueuedPrompt).toHaveBeenCalledTimes(2))
+          await waitFor(() => expect(textarea).toHaveValue(''))
+          expect(sendMessage).not.toHaveBeenCalled()
+        }
+        expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+      } finally {
+        await act(async () => { releaseRead(local) })
+        timeout.mockRestore()
+      }
+    },
+  )
+
+  it.each(['same lane', 'different lane', 'cleared lane'] as const)(
+    'bounds automatic reorder recovery and releases only its own lane (%s)', async (mode) => {
+      const prompts = ['q1', 'q2', 'q3'].map((id) => ({ id, content: id, createdAt: session.updatedAt }))
+      const otherPrompts = ['b1', 'b2', 'b3'].map((id) => ({ id, content: id, createdAt: session.updatedAt }))
+      const local = { ...session, queuedPrompts: prompts, queuedCount: 3 }
+      const peer = { ...secondSession, title: 'Independent reorder lane', queuedPrompts: otherPrompts, queuedCount: 3 }
+      const replacement = {
+        ...local, id: 'reorder-replacement', title: 'Replacement reorder owner',
+        queuedPrompts: [], queuedCount: 0, replacedSessionIds: [session.id],
+      }
+      vi.mocked(listSessions).mockResolvedValue([local, peer])
+      vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+        id === replacement.id ? replacement : id === session.id ? local : peer,
+      )
+      render(<App />)
+      await screen.findByText('q1')
+      const controller = new AbortController()
+      const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+      let began = false
+      let releaseRead: (value: ManagedSession) => void = () => {}
+      let releasePeer: (value: ManagedSession) => void = () => {}
+      let localCalls = 0
+      let peerCalls = 0
+      vi.mocked(getSession).mockImplementationOnce((_computerId, _sessionId, signal) =>
+        new Promise((resolve, reject) => {
+          began = true
+          releaseRead = resolve
+          signal?.addEventListener('abort', () => reject(new Error('Reorder recovery expired')), { once: true })
+        }),
+      )
+      vi.mocked(reorderQueuedPrompts).mockImplementation(async (_computerId, id, order) => {
+        if (id === session.id) {
+          if (++localCalls === 1) throw new Error('The first reorder was refused')
+          return { ...local, queuedPrompts: order.map((id) => prompts.find((prompt) => prompt.id === id)!) }
+        }
+        expect(id).toBe(peer.id)
+        if (++peerCalls === 1) return new Promise((resolve) => { releasePeer = resolve })
+        return { ...peer, queuedPrompts: order.map((id) => otherPrompts.find((prompt) => prompt.id === id)!) }
+      })
+      try {
+        act(() => finishQueueReorder('q1', 'q3'))
+        await waitFor(() => expect(began).toBe(true))
+        expect(timeout).toHaveBeenCalledWith(15_000)
+        act(() => finishQueueReorder('q3', 'q2'))
+        expect(localCalls).toBe(1)
+        if (mode === 'different lane') {
+          fireEvent.click(screen.getByText(peer.title).closest('button')!)
+          await screen.findByText('b1')
+          act(() => finishQueueReorder('b1', 'b3'))
+          await waitFor(() => expect(peerCalls).toBe(1))
+          act(() => finishQueueReorder('b3', 'b2'))
+        } else if (mode === 'cleared lane') {
+          await act(async () => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'session.removed', computerId: computer.id, sessionId: session.id, replacedBy: replacement.id }),
+            } as MessageEvent)
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+            } as MessageEvent)
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'error', computerId: computer.id, sessionId: replacement.id, message: 'New replacement reorder notice' }),
+            } as MessageEvent)
+            controller.abort()
+          })
+        }
+        if (mode !== 'cleared lane') await act(async () => { controller.abort() })
+        await act(async () => { releaseRead({ ...local, title: 'Late reordered ancestor' }) })
+        if (mode === 'cleared lane') {
+          await waitFor(() => expect(window.location.search).toContain(replacement.id))
+          expect(localCalls).toBe(1)
+          expect(screen.getByText(/New replacement reorder notice/)).toBeInTheDocument()
+          expect(screen.queryByText('Late reordered ancestor')).not.toBeInTheDocument()
+        } else {
+          await waitFor(() => expect(localCalls).toBe(2))
+          expect(reorderQueuedPrompts).toHaveBeenCalledWith(computer.id, session.id, ['q1', 'q3', 'q2'])
+          if (mode === 'different lane') {
+            expect(peerCalls).toBe(1)
+            await act(async () => {
+              releasePeer({ ...peer, queuedPrompts: [otherPrompts[1], otherPrompts[2], otherPrompts[0]] })
+            })
+            await waitFor(() => expect(peerCalls).toBe(2))
+            expect(reorderQueuedPrompts).toHaveBeenCalledWith(peer.computerId, peer.id, ['b3', 'b2', 'b1'])
+          }
+        }
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+      } finally {
+        await act(async () => {
+          releaseRead(local)
+          releasePeer(peer)
+        })
+        timeout.mockRestore()
+      }
+    },
+  )
+
   it('restores an already-persisted legacy edit across reload and navigation without borrowing another computer draft', async () => {
     const key = 'computer-1:session-1'
     const foreignKey = 'computer-2:session-1'
@@ -6555,10 +6761,9 @@ describe('App', () => {
     expect(updateQueuedPrompt).not.toHaveBeenCalled()
   })
 
-  it('lets go of the edit when its message drains from a session not on screen', async () => {
-    // One marker serves every session, so one left set over a message that has
-    // gone blocks editing anywhere -- and looking only at the session on
-    // screen meant it was never noticed.
+  it('keeps a hidden-session edit owned without blocking another session', async () => {
+    // Ownership is per session. An unclaimed absence on a hidden session must
+    // not detach its rewrite, and must not prevent another session's edit.
     const queued = {
       id: 'q1',
       content: 'queued here',
@@ -6570,8 +6775,13 @@ describe('App', () => {
       queuedCount: 1,
       queuedPrompts: [queued],
     }
-    vi.mocked(listSessions).mockResolvedValue([withQueue, secondSession])
-    vi.mocked(getSession).mockResolvedValue(withQueue)
+    const otherPrompt = { ...queued, id: 'q2', content: 'queued elsewhere' }
+    const other = { ...secondSession, queuedPrompts: [otherPrompt], queuedCount: 1 }
+    let original: ManagedSession = withQueue
+    vi.mocked(listSessions).mockResolvedValue([withQueue, other])
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      id === session.id ? original : other,
+    )
 
     render(<App />)
     await screen.findByText('queued here')
@@ -6580,9 +6790,9 @@ describe('App', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Message')).toHaveValue('queued here'),
     )
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Hidden-session rewrite' } })
 
-    // Away to the other session, and the agent reaches the message meanwhile.
-    vi.mocked(getSession).mockResolvedValue(secondSession)
+    // The older runtime can omit the original while its provider load is held.
     fireEvent.keyDown(window, {
       key: 'ArrowDown',
       code: 'ArrowDown',
@@ -6591,29 +6801,57 @@ describe('App', () => {
     await waitFor(() =>
       expect(document.querySelector('.queued-edit-banner')).toBeNull(),
     )
+    original = { ...withQueue, status: 'idle', queuedCount: 0, queuedPrompts: [] }
     await act(async () => {
       MockWebSocket.instances[0]?.onmessage?.({
         data: JSON.stringify({
           type: 'session.upserted',
-          // Settled, with the message genuinely gone. A drain takes it off
-          // before dispatching and puts it back if it cannot go, so an absence
-          // while the session is still working says nothing.
-          session: {
-            ...withQueue,
-            status: 'idle',
-            queuedCount: 0,
-            queuedPrompts: [],
-          },
+          session: original,
         }),
       } as MessageEvent)
     })
 
-    // Let go of while another session is on screen, rather than waiting to be
-    // noticed the next time its own is opened. One marker serves them all, so
-    // until it is released no other message can be edited.
-    await waitFor(() =>
-      expect(localStorage.getItem('agentic-remote:queued-edit')).toBeNull(),
-    )
+    const originalKey = `${session.computerId}:${session.id}`
+    const otherKey = `${other.computerId}:${other.id}`
+    expect(JSON.parse(localStorage.getItem('agentic-remote:queued-edit') || '{}')[originalKey]).toBe('q1')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 1' }))
+    expect(screen.getByLabelText('Message')).toHaveValue('queued elsewhere')
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Other-session rewrite' } })
+    expect(JSON.parse(localStorage.getItem('agentic-remote:queued-edit') || '{}')).toMatchObject({
+      [originalKey]: 'q1', [otherKey]: 'q2',
+    })
+
+    fireEvent.click(screen.getByText(session.title).closest('button')!)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Hidden-session rewrite'))
+    expect(screen.getByText('Queue state needs checking.')).toBeInTheDocument()
+    original = { ...withQueue, status: 'idle' }
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: original }),
+      } as MessageEvent)
+    })
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeEnabled()
+    expect(screen.getByLabelText('Message')).toHaveValue('Hidden-session rewrite')
+
+    original = { ...withQueue, status: 'idle', queuedCount: 0, queuedPrompts: [] }
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: original }),
+      } as MessageEvent)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check queue' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check queue' })).toBeEnabled())
+    expect(JSON.parse(localStorage.getItem('agentic-remote:queued-edit') || '{}')[originalKey]).toBe('q1')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
+    fireEvent.click(screen.getByRole('button', { name: "I've checked — keep as draft" }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Have you checked'))
+    expect(screen.getByLabelText('Message')).toHaveValue('Hidden-session rewrite')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:queued-edit') || '{}')).toEqual({ [otherKey]: 'q2' })
+    fireEvent.click(screen.getByText(other.title).closest('button')!)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Other-session rewrite'))
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeEnabled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(updateQueuedPrompt).not.toHaveBeenCalled()
   })
 
   it('remembers across a reload that a draft is a rewrite of a waiting message', async () => {

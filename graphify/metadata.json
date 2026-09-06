@@ -211,7 +211,7 @@
     "server/node-identity.ts": "5a997e31e6717b7f5ba8b8de3dd036120fb4695ee316a84d7a85027fcceef66e",
     "server/node-routes.ts": "412d0a2c0efce8d715deb1d33ca94117da4666f313ff207250b1aab70414077b",
     "server/paths.ts": "11789bf5288ae72e1ce71a17f75b02c1432912d9dc5c5b859f0d1855100b2c14",
-    "server/promotion-monitor.test.ts": "cd64354764e4515d5d9658b8ccdc0cd889e18b4f25eac729fbbebdf9020ab891",
+    "server/promotion-monitor.test.ts": "50e08cebc81e728b7501fce79961444faf8a8af0ba326a95baa4488121e17d42",
     "server/promotion-setup.test.ts": "bdd915949a2483d85c8b26fd4754bd36edc1584de3eb9cc782797796857f7549",
     "server/provider-session-service.ts": "137e9cb078512b821b41a1b7023680258e7d1691cc713e5eafca254750d8944b",
     "server/push-notification-service.test.ts": "1948607fbd453c8ef07cc4b366bc2fcd6bd473d33a985c0b8601024af517959f",
@@ -345,18 +345,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "8112d806f245501551f6d056d717beb40fe0fff934967eef42194ab7b177aba5",
+    "GRAPH_REPORT.md": "c8f06518913fe8ea2a04932d41d1f3a50640aafabd11b81cd5c4080950baeb19",
     "communities.json": "5802ac58b36badd353d9086bf5e062209d9d01af8f37cadb569d044f1ef9c02e",
-    "graph.html": "8f207971aa833702b25a58ec8b46dc84d5e121ef189401f007a8a42b43daba2d",
-    "graph.json": "66c2c77fdd96e1321c1b84838ceec213da4b986118573655391e29bc3ea3cadf"
+    "graph.html": "aeccfebfdf3883a3b74fcadc48aa6f22a940749b53a726a8741dbdedc986f8bd",
+    "graph.json": "fe6d8faa75e122a9551c392e2b67c131be735eb2769cc783ccd6e1ca5734c63c"
   },
   "schema_version": 1,
-  "source_commit": "cbecc9473b1baab96505325e46b0e41e08c02409",
-  "source_fingerprint": "0b472b7aa898466e63e682769b517810d6fe4b5b9dc1d447ea81d825bda750d0",
+  "source_commit": "1e02a895205b5fd4e175e42ee0ff9e61abbceac3",
+  "source_fingerprint": "1a7e793ceb9ddadb7855a5451e68983ba84aaace256e3e9fdabd9f4c83f56ee7",
   "working_tree_changes": [
-    "bin/agentic-remote",
-    "docs/deployment-promotion.md",
-    "server/promotion-monitor.test.ts",
-    "server/release-publication.test.ts"
+    "server/promotion-monitor.test.ts"
   ]
 }

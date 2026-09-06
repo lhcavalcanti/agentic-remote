@@ -1414,6 +1414,94 @@ describe('promotion monitor', () => {
     expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
   })
 
+  it.each(['staged files', 'published inventory', 'active pointer'] as const)(
+    'recovers the actual publication CLI after a refused %s flush',
+    async (phase) => {
+      const { context, previous, fallback, state, record } = await healthyReleaseFixture()
+      const previousCommit = await git(context.runtime, 'rev-parse', 'HEAD')
+      await writeFile(
+        path.join(context.dev, 'bin', 'agentic-remote'),
+        await readFile(AGENTIC_REMOTE, 'utf8'),
+      )
+      const artifacts = [
+        ['dist/build-info.json', JSON.stringify({ version: '91.0.0', buildId: 'fixture-candidate' })],
+        ['dist/index.html', 'candidate'],
+        ['server/fixture.ts', 'export {}'],
+        ['shared/fixture.ts', 'export {}'],
+        ['node_modules/fixture.txt', 'synthetic dependency'],
+        ['tsconfig.json', '{}'],
+        ['tsconfig.server.json', '{}'],
+      ]
+      for (const [relative, content] of artifacts) {
+        const file = path.join(context.dev, relative)
+        await mkdir(path.dirname(file), { recursive: true })
+        await writeFile(file, content)
+      }
+      await git(context.dev, 'add', 'bin/agentic-remote', 'dist', 'server', 'shared',
+        'node_modules', 'tsconfig.json', 'tsconfig.server.json')
+      await git(context.dev, 'commit', '-m', 'exercise actual publication CLI')
+      await git(context.dev, 'push', 'origin', 'main')
+      const bin = path.join(context.root, 'bin')
+      await stub(bin, 'pnpm', 'exit 0')
+      await stub(bin, 'copilot', 'exit 0')
+      await stub(bin, 'loginctl', 'printf "yes\\n"')
+      const hook = path.join(context.root, 'refuse-publication-sync.cjs')
+      await writeFile(hook, `
+const fs = require('node:fs')
+const path = require('node:path')
+const sync = fs.fsyncSync
+fs.fsyncSync = (fd) => {
+  const entry = fs.readlinkSync('/proc/self/fd/' + fd)
+  const root = process.env.RELEASE_ROOT
+  const current = fs.realpathSync(path.join(root, 'current'))
+  const previous = process.env.RELEASE_PREVIOUS
+  const phase = process.env.RELEASE_SYNC_PHASE
+  const published = entry === root && fs.readdirSync(root)
+    .some((name) => fs.existsSync(path.join(root, name, 'dist', 'build-info.json')))
+  if ((phase === 'staged files' && entry.includes('/.release-stage.') &&
+       entry.endsWith('/dist/index.html')) ||
+      (published && phase === 'published inventory' && current === previous) ||
+      (entry === root && phase === 'active pointer' && current !== previous)) {
+    fs.appendFileSync(process.env.CALL_LOG, 'release-fsync-refused ' + phase + '\\n')
+    throw Object.assign(new Error('Injected publication fsync refusal: ' + phase), { code: 'EIO' })
+  }
+  return sync(fd)
+}
+`)
+
+      const result = await monitor(context, {
+        NODE_OPTIONS: `${context.env.NODE_OPTIONS || ''} --require=${JSON.stringify(hook)}`,
+        AGENTIC_REMOTE_MONITOR_SERVICE: 'agentic-remote.service',
+        AGENTIC_REMOTE_MONITOR_NAME: 'fixture',
+        RELEASE_PREVIOUS: previous,
+        RELEASE_SYNC_PHASE: phase,
+      })
+
+      expect(result.code).not.toBe(0)
+      expect(result.output).toContain(`Injected publication fsync refusal: ${phase}`)
+      expect(result.output).toContain('the previous runtime was restored')
+      expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+      expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(previousCommit)
+      expect(await git(context.runtime, 'status', '--porcelain')).toBe('')
+      expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+      expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
+      expect((await readdir(context.releases, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort())
+        .toEqual(['older-healthy', 'previous-healthy'])
+      expect(existsSync(path.join(previous, '.promotion-failed'))).toBe(false)
+      expect(existsSync(path.join(fallback, '.promotion-failed'))).toBe(false)
+      expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+      expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+      expect(existsSync(path.join(context.root, 'state', 'pending-promotion'))).toBe(false)
+      const observed = await calls(context)
+      const refusal = observed.indexOf(`release-fsync-refused ${phase}`)
+      const restart = observed.findIndex((entry) =>
+        entry === 'systemctl --user restart agentic-remote.service')
+      expect(refusal).toBeGreaterThanOrEqual(0)
+      expect(restart).toBeGreaterThan(refusal)
+    },
+  )
+
   it.each([
     ['pointer restoration fails', { FAIL_CANDIDATE_HEALTH: '1', FAIL_POINTER_RESTORE: '1' }],
     ['restored health cannot be verified', { CURL_EXIT: '7' }],

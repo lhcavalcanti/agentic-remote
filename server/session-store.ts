@@ -36,6 +36,11 @@ export interface RecoveryResend {
   accepted: boolean
 }
 
+export interface TranscriptObservation {
+  epoch: string | undefined
+  isCurrent?: () => boolean
+}
+
 export class StaleQueuedPromptReservationError extends Error {
   readonly statusCode = 409
 
@@ -80,6 +85,8 @@ interface StoredSession extends SessionDetail {
   queuedPromptReservation?: { id: string; promptId: string }
   sdkQueueAdmission?: SdkQueueAdmission
   recoveryResend?: RecoveryResend
+  transcriptEpoch?: string
+  lastClaimedRecovery?: string
 }
 
 interface PendingMutation {
@@ -133,6 +140,8 @@ function cloneSession(session: StoredSession): SessionDetail {
     queuedPromptReservation: _queuedPromptReservation,
     sdkQueueAdmission,
     recoveryResend: _recoveryResend,
+    transcriptEpoch: _transcriptEpoch,
+    lastClaimedRecovery: _lastClaimedRecovery,
     contextCwd: _contextCwd,
     workspaceTitle: _workspaceTitle,
     executionMode: _executionMode,
@@ -213,6 +222,14 @@ export class SessionStore {
         for (const id of session.replacedSessionIds) legacyRetirements.push(id)
       }
       session.revision ??= 0
+      if (session.transcriptEpoch !== undefined &&
+          (typeof session.transcriptEpoch !== 'string' || !session.transcriptEpoch)) {
+        throw new Error('Invalid transcript admission metadata')
+      }
+      if (session.lastClaimedRecovery !== undefined &&
+          (typeof session.lastClaimedRecovery !== 'string' || !session.lastClaimedRecovery)) {
+        throw new Error('Invalid recovery claim metadata')
+      }
       session.provider ??= 'copilot'
       session.isOpen = session.managedOpen === true
       session.queuedPrompts ??= []
@@ -412,9 +429,11 @@ export class SessionStore {
   async replaceMessages(
     sessionId: string,
     messages: ChatMessage[],
-  ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    observation = this.observeTranscript(sessionId),
+  ): Promise<SessionDetail | undefined> {
+    return this.installTranscript(sessionId, observation, (session) => {
       session.messages = messages
+      return true
     })
   }
 
@@ -428,8 +447,9 @@ export class SessionStore {
     contextCwd = false,
     pendingUserInput?: SessionProjection<PendingUserInput | null | undefined>,
     observedQueueDispatchAt?: string,
-  ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    observation = this.observeTranscript(sessionId),
+  ): Promise<SessionDetail | undefined> {
+    return this.installTranscript(sessionId, observation, (session) => {
       const nextMessages = typeof messages === 'function' ? messages(session) : messages
       const nextRuntime = typeof runtime === 'function' ? runtime(session) : runtime
       const nextCwd = typeof cwd === 'function' ? cwd(session) : cwd
@@ -460,6 +480,48 @@ export class SessionStore {
       }
       session.updatedAt =
         nextMessages.at(-1)?.createdAt || session.updatedAt
+      return true
+    })
+  }
+
+  observeTranscript(sessionId: string, isCurrent?: () => boolean): TranscriptObservation {
+    const session = this.state.sessions[sessionId]
+    if (!session || this.isRetiredSession(sessionId)) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    return { epoch: session.transcriptEpoch, isCurrent }
+  }
+
+  isCurrentTranscript(sessionId: string, observation: TranscriptObservation): boolean {
+    const session = this.state.sessions[sessionId]
+    return Boolean(session && !this.isRetiredSession(sessionId) &&
+      session.transcriptEpoch === observation.epoch && (observation.isCurrent?.() ?? true))
+  }
+
+  async updateTranscriptIfCurrent(
+    sessionId: string,
+    observation: TranscriptObservation,
+    mutation: (session: SessionDetail) => boolean,
+  ): Promise<SessionDetail | undefined> {
+    return this.installTranscript(sessionId, observation, mutation)
+  }
+
+  private installTranscript(
+    sessionId: string,
+    observation: TranscriptObservation,
+    mutation: (session: StoredSession) => boolean,
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId) ||
+          existing.transcriptEpoch !== observation.epoch || observation.isCurrent?.() === false) {
+        return () => undefined
+      }
+      const session = structuredClone(existing)
+      if (!mutation(session)) return () => undefined
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
     })
   }
 
@@ -640,6 +702,7 @@ export class SessionStore {
 
   async clearConversation(sessionId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
+      session.transcriptEpoch = randomUUID()
       session.messages = []
       session.status = 'idle'
       session.isOpen = true
@@ -660,11 +723,19 @@ export class SessionStore {
   async replaceWithClearedSession(
     sessionId: string,
     replacementId: string,
+    observation = this.observeTranscript(sessionId),
   ): Promise<SessionDetail> {
     const replacement = await this.change((state) => {
       const existing = state.sessions[sessionId]
       if (!existing || this.retiredIds(state).has(sessionId)) {
         throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (existing.id !== sessionId || existing.transcriptEpoch !== observation.epoch ||
+          observation.isCurrent?.() === false ||
+          existing.status === 'running' || existing.status === 'waiting' ||
+          existing.pendingPermission || existing.pendingUserInput ||
+          existing.sdkQueueAdmission || existing.terminalQueueDispatch) {
+        throw Object.assign(new Error('Conversation changed before clearing; no replacement was committed'), { statusCode: 409 })
       }
       if (
         sessionId === replacementId ||
@@ -699,6 +770,7 @@ export class SessionStore {
         terminalQueueDispatch: undefined,
         queuedPromptReservation: undefined,
         sdkQueueAdmission: undefined,
+        transcriptEpoch: undefined,
         updatedAt: new Date().toISOString(),
         runtime: existing.runtime
           ? {
@@ -767,10 +839,13 @@ export class SessionStore {
     isCurrent: () => boolean,
     reservation?: QueuedPromptReservation,
   ): Promise<SessionDetail> {
-    this.lastSdkAdmissionAt = Math.max(Date.now(), this.lastSdkAdmissionAt + 1)
-    const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
     const userId = randomUUID()
     return this.mutate(sessionId, (session) => {
+      this.lastSdkAdmissionAt = Math.max(
+        Date.now(), this.lastSdkAdmissionAt + 1,
+        (Date.parse(session.lastClaimedRecovery || '') || 0) + 1,
+      )
+      const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
       if (session.suspended) {
         throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409 })
       }
@@ -810,6 +885,7 @@ export class SessionStore {
         { id: userId, role: 'user', content, createdAt },
         { id: assistantId, role: 'assistant', content: '', createdAt, streaming: true },
       )
+      session.transcriptEpoch = assistantId
       session.updatedAt = createdAt
       session.status = 'running'
       session.activity = 'Thinking'
@@ -850,6 +926,7 @@ export class SessionStore {
     sessionId: string,
     assistantId: string,
     canBecomeIdle: () => boolean = () => true,
+    failure?: { message: string; uncertain?: boolean },
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const index = session.messages.findIndex((message) => message.id === assistantId)
@@ -857,15 +934,42 @@ export class SessionStore {
       const user = session.messages[index - 1]
       if (!assistant || assistant.role !== 'assistant' || user?.role !== 'user') return
       assistant.streaming = false
-      assistant.content = 'Not sent: the session service stopped before provider dispatch.'
+      assistant.content = failure?.message || 'Not sent: the session service stopped before provider dispatch.'
       if (canBecomeIdle()) {
         session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'idle'
         session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
       }
       if (!session.failedPrompt) {
-        session.failedPrompt = { content: user.content, failedAt: new Date().toISOString() }
+        const failedAt = new Date(Math.max(
+          Date.now(), (Date.parse(session.lastClaimedRecovery || '') || 0) + 1,
+        )).toISOString()
+        session.failedPrompt = {
+          content: user.content, failedAt, ...(failure?.uncertain ? { uncertain: true } : {}),
+        }
       }
     })
+  }
+
+  async failSdkQueueAdmission(
+    sessionId: string,
+    assistantId: string,
+    message: string,
+    canBecomeIdle: () => boolean = () => true,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const admission = session.sdkQueueAdmission!
+      if (session.failedPrompt?.failedAt === admission.startedAt) session.failedPrompt.uncertain = true
+      const assistant = session.messages.find((entry) => entry.id === assistantId)
+      if (assistant) {
+        assistant.streaming = false
+        assistant.content = message
+      }
+      session.sdkQueueAdmission = undefined
+      if (canBecomeIdle()) {
+        session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'error'
+        session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
+      }
+    }, (session) => session.sdkQueueAdmission?.assistantId === assistantId)
   }
 
   terminalQueueDispatch(sessionId: string): TerminalQueueDispatch | undefined {
@@ -1076,6 +1180,34 @@ export class SessionStore {
       stored.failedPrompt.failedAt = next
       stored.failedPrompt.uncertain = true
       stored.recoveryResend = undefined
+    })
+  }
+
+  async claimRecoveryPrompt(
+    sessionId: string,
+    prompt: QueuedPrompt,
+    token: string,
+    isCurrent: (session: Readonly<SessionDetail>) => boolean,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (!token || session.failedPrompt?.failedAt !== token || session.lastClaimedRecovery === token) {
+        throw Object.assign(new Error('That recovery has already been handled or replaced; refresh before retrying.'), { statusCode: 409 })
+      }
+      if (session.terminalQueueDispatch || session.sdkQueueAdmission ||
+          session.suspended || !isCurrent(session)) {
+        throw Object.assign(new Error('The session changed before recovery admission; the recovery was not consumed.'), { statusCode: 409 })
+      }
+      // Consumption and retained work are one durable operation. A replay
+      // cannot append another copy or clear a different recovery.
+      session.queuedPrompts = [...(session.queuedPrompts || []), prompt]
+      session.queuedCount = session.queuedPrompts.length
+      session.lastClaimedRecovery = token
+      session.failedPrompt = undefined
+      session.recoveryResend = undefined
+      if (session.status === 'error') {
+        session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'idle'
+        session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
+      }
     })
   }
 

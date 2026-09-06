@@ -1212,9 +1212,10 @@ export class TmuxTerminalSessionController
         '--',
         content,
       ])
+      // The paste can reach the pane even if its acknowledgement is lost.
+      // Preflight and buffer preparation above have not changed native input.
+      let pasteAcknowledged = false
       try {
-        // A paste can reach the server before its acknowledgement is lost.
-        // From this attempt onward, failure is not permission to resend.
         await execFileAsync('tmux', [
           'paste-buffer',
           '-p',
@@ -1224,6 +1225,7 @@ export class TmuxTerminalSessionController
           '-t',
           owner.target,
         ])
+        pasteAcknowledged = true
         return await this.finishSend(
           owner.target,
           content,
@@ -1233,6 +1235,11 @@ export class TmuxTerminalSessionController
           idleOnly,
         )
       } catch (error) {
+        if (!pasteAcknowledged && error && typeof error === 'object' &&
+            'syscall' in error && typeof error.syscall === 'string' &&
+            /^spawn(?: |$)/.test(error.syscall)) {
+          throw error
+        }
         if (
           error &&
           typeof error === 'object' &&

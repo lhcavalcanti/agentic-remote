@@ -406,7 +406,7 @@ describe('SessionStore', () => {
       status: 'running',
       activity: 'Sent to terminal',
     })
-    expect(updated.revision).toBeGreaterThan(before?.revision || 0)
+    expect(updated!.revision).toBeGreaterThan(before?.revision || 0)
   })
 
   it('does not clear a newer terminal dispatch with an older completion', async () => {

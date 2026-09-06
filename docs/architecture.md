@@ -136,6 +136,41 @@ directory, and pending question. `updateIf()` can explicitly decline a change;
 it does not turn a write or validation error into a no-op. Reply completion
 clears only the matching request and preserves another request's waiting state.
 
+Transcript reads capture an O(1) admission epoch before fetching history.
+Installation rechecks that epoch and current SDK ownership against the actual
+mutation candidate, before cloning history or running its projections. A
+pending commit-to-registration handoff remains protected even before a live
+prompt owner is installed. Rejected observations do not advance event-log
+fingerprints or erase a newer live watermark. The same boundary protects SDK
+hydration and recovered question cards; native/external reconciliation remains
+available and retains its existing version and dispatch-watermark gates.
+
+Clear acquires an exclusive lease from `SessionAdmissions`, without admitting
+itself into the work it must join. Async-local permits allow already-admitted
+handoffs to finish their nested work, but cannot be reused after they finish.
+Clear refuses if any joined handoff committed work, then revalidates the
+admission epoch, inactive state, and identity again in the replacement
+transaction. No original provider/history is disposed on a busy refusal.
+Failed exclusive operations release their lease and reawaken only deferred
+queue demand. The existing post-commit replacement cleanup contract is unchanged.
+Successful normal and recovery enqueues mark their admission committed and
+record queue demand immediately after persistence, before publication can
+throw. Send/command finalizers wake that demand only after releasing their
+admission and queue locks; an exclusive Clear keeps it deferred until its own
+lease is released. SDK command queue rejection is not acceptance when the
+provider explicitly returns `queued: false`; a lost RPC result remains uncertain.
+Direct native messages and commands share an effect latch: success or explicit
+delivery uncertainty protects joined Clear before returning or throwing.
+Uncertainty does not become known delivery. The controller includes lost paste
+acknowledgements in its uncertainty boundary; pre-paste capture/buffer failures
+and a paste process that could not spawn remain definite, effect-free failures.
+This Clear effect latch is separate from the per-dispatch accepted receipt:
+uncertain native effects never call `recordDelivery()` or acknowledge recovery.
+Confirmed delivery still holds startup followers before fallible receipt work,
+redacts accepted recovery immediately, and retains acknowledgement-only retries.
+Deferred native demand uses the existing coalesced queue wakeup, which cannot
+enter an exclusive Clear lease from an unrelated admission.
+
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then
 replay it after publishing the created/replacement session. Failed identity
@@ -197,6 +232,23 @@ state before committing or dispatching work.
 writes, and checkpoints remaining streamed text. Provider teardown and
 owned-query cancellation precede that final storage boundary; late completion
 callbacks cannot publish updates or write into a closed store.
+
+Claude recovery submissions honor the `acknowledgesFailure` value forwarded by
+the provider router. `claimRecoveryPrompt()` compares it with the candidate's
+current recovery, appends exactly one retry to canonical FIFO, records token
+consumption, and clears only that recovery in one commit. The queue pump is
+woken only after that commit. This is durable queue acceptance, not a claim that
+an external provider received the retry. Plain direct sends retain their existing
+behavior. Subsequent queued handoffs use fresh recovery timestamps, so a consumed
+token cannot be reused for a later uncertain attempt.
+
+Claude startup distinguishes three outcomes: lookup failed before any query
+invocation, invocation outcome is uncertain before registration, and a registered
+query completed. The first restores the matching unstarted admission without
+calling `finishMessage()`; the second preserves explicit uncertain recovery
+without automatic replay; only the third uses ordinary completion cleanup.
+Restoration refuses to overwrite a newer active or registering owner. A failed
+restoration retains the original durable admission for a later retry or restart.
 
 Terminal queue delivery first atomically claims the exact FIFO head, moving its
 content into the existing uncertain-recovery record before any keystrokes are

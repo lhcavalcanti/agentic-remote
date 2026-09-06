@@ -134,6 +134,19 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   folder before reporting that refusal, or explicitly report restoration failure.
 - Cleanup failures after a replacement commits MUST be surfaced on the new
   session; they MUST NOT roll back the accepted identity or destroy its runtime.
+- Clear MUST exclude new session admissions while joining earlier loading and
+  delivery handoffs. It MUST NOT cancel those handoffs merely to become idle.
+  Work admitted while Clear waits MUST cause refusal before the original
+  provider or history is replaced, even if that work completes quickly.
+  A successfully persisted enqueue MUST count as admitted work before its
+  response is published, even if the previous turn becomes idle meanwhile.
+  A refused queue write MUST NOT count as a successful admission. Deferred
+  eligible FIFO work MUST wake after the enqueue and Clear release their locks.
+  A native message or command with possible pane effects MUST protect joined
+  Clear even when delivery is uncertain. It MUST still reject with uncertainty,
+  not claim successful delivery. Definite preflight failures MUST NOT count as
+  native activity.
+  Replacement MUST revalidate idleness and identity at its mutation boundary.
 - Cleared and deleted session identities MUST stay retired across restart,
   including after their last replacement is deleted. Retirement metadata MUST
   commit atomically with the identity change, and stale provider listings MUST
@@ -356,6 +369,17 @@ ordinary authentication or storage failures MUST NOT cause a hot retry loop.
 A durable reply settlement MUST wake eligible queued work after releasing its
 own locks, without clearing a newer question or dispatching from a stopped,
 suspended, deleting, or already-owned session.
+
+An explicit recovery token MUST match the current failed prompt. For Claude,
+accepting a token-bearing retry MUST atomically retain one canonical FIFO entry
+and consume that recovery, including retries requested while idle. Replayed or stale tokens
+MUST NOT dispatch or enqueue another copy, or clear a newer recovery. Unrelated
+ordinary sends MUST NOT consume recovery. A new uncertain provider-start outcome
+MUST remain explicitly uncertain; the supplied token is not proof of delivery.
+
+If provider lookup fails before a query is registered, its unstarted queued
+admission MUST be restored before completion cleanup can erase it. Refused
+restoration MUST retain durable recovery, and cleanup MUST preserve newer owners.
 
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
@@ -626,6 +650,12 @@ directories, and questions arriving while an earlier reply is being recorded.
 Live streamed text MAY remain volatile until the next persisted mutation.
 Publishing a live delta MUST NOT expose unrelated, uncommitted session or queue
 changes.
+
+History fetched before a newer local admission MUST NOT overwrite that turn,
+its status, or its pending input when installed. Transcript ownership checks
+MUST run at mutation preparation, including the commit-to-registration gap.
+Rejecting stale history MUST preserve the polling version and live-watermark
+guards without disabling legitimate external/native history refresh.
 
 ## 14. Error handling
 

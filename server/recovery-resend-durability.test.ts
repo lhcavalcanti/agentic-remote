@@ -1419,6 +1419,142 @@ describe('Recovery and admission integration', () => {
   })
 })
 
+describe('PR162 final root integration', () => {
+  it.each([
+    { kind: 'message', phase: 'receipt' },
+    { kind: 'command', phase: 'receipt' },
+    { kind: 'message', phase: 'acknowledgement' },
+    { kind: 'command', phase: 'acknowledgement' },
+  ] as const)('joins recovered $kind delivery before Clear despite refused $phase', async ({ kind, phase }) => {
+    const context = await fixture(kind)
+    context.withEvents()
+    const held = gate()
+    const reset = vi.fn(async (
+      _id: string, _replacement: string, _cwd: string, _runtime: unknown,
+      commit: () => Promise<void>,
+    ) => { await commit(); return true })
+    Object.assign(context.terminal, { reset })
+    context.terminal.send.mockImplementationOnce(async (_id, content) => {
+      context.pastes.push(content)
+      held.opened()
+      await held.pending
+      if (phase === 'receipt') context.refuseWrites()
+      else context.refuseAcknowledgements()
+      return true
+    })
+    const sending = context.send(context.service).catch((error: unknown) => error)
+    await held.started
+    const clearing = context.service.clearConversation(sessionId)
+      .then((value) => ({ value }), (error: unknown) => ({ error }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    held.release()
+    const [sent, cleared] = await Promise.all([sending, clearing])
+    expect(sent).toMatchObject({ statusCode: 409, submission: { accepted: true, sessionId } })
+    expect(cleared).toMatchObject({ error: { statusCode: 409 } })
+    expect(reset).not.toHaveBeenCalled()
+    expect(context.pastes).toEqual([context.submitted])
+    expect(context.service.store.isRetiredSession(sessionId)).toBe(false)
+    const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+    expect(context.service['recoveryClaims'].get(token)?.accepted).toBe(true)
+    expect(context.service.store.recoveryResend(sessionId)?.accepted).toBe(phase === 'acknowledgement')
+    expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+    await expect(context.send(context.service, token)).rejects.toMatchObject({ statusCode: 409 })
+    context.refuseWrites(false)
+    context.refuseAcknowledgements(false)
+    await vi.waitFor(() => expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined())
+    expect(context.pastes).toEqual([context.submitted])
+    await context.service.store.updateStatus(sessionId, 'idle')
+    const laterClear = await context.service.clearConversation(sessionId)
+    expect(laterClear.id).not.toBe(sessionId)
+    expect(laterClear.failedPrompt).toBeUndefined()
+    expect(reset).toHaveBeenCalledOnce()
+  })
+
+  it.each(['message', 'command'] as const)(
+    'protects uncertain recovered native %s from Clear without accepting its receipt',
+    async (kind) => {
+      const context = await fixture(kind)
+      const held = gate()
+      const reset = vi.fn(async (
+        _id: string, _replacement: string, _cwd: string, _runtime: unknown,
+        commit: () => Promise<void>,
+      ) => { await commit(); return true })
+      Object.assign(context.terminal, { reset })
+      context.terminal.send.mockImplementationOnce(async (_id, content) => {
+        context.pastes.push(content)
+        held.opened()
+        await held.pending
+        throw Object.assign(new Error('Native paste acknowledgement was lost'), {
+          statusCode: 409, uncertainDelivery: true,
+        })
+      })
+      const sending = context.send(context.service).catch((error: unknown) => error)
+      await held.started
+      const clearing = context.service.clearConversation(sessionId)
+        .then((value) => ({ value }), (error: unknown) => ({ error }))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      held.release()
+      const [sent, cleared] = await Promise.all([sending, clearing])
+      expect(sent).toMatchObject({
+        statusCode: 409, uncertainDelivery: true, submission: { accepted: false, sessionId },
+      })
+      expect(cleared).toMatchObject({ error: { statusCode: 409 } })
+      expect(reset).not.toHaveBeenCalled()
+      const receipt = context.service.store.recoveryResend(sessionId)!
+      expect(receipt).toMatchObject({ accepted: false, content: context.submitted })
+      expect(context.service.getSession(sessionId)?.failedPrompt).toMatchObject({
+        failedAt: receipt.failedAt, content: context.submitted, uncertain: true,
+      })
+      await context.service.stop()
+      const restarted = await context.load()
+      await expect(context.send(restarted)).rejects.toMatchObject({ statusCode: 409 })
+      await prepareDecision(context, restarted, receipt.failedAt)
+      expect(context.pastes).toEqual([context.submitted])
+    },
+  )
+
+  it.each(['message', 'command'] as const)(
+    'keeps accepted recovered SDK %s and public redaction over an older transcript installation',
+    async (kind) => {
+      const context = await sdkFixture(kind)
+      context.withEvents()
+      context.service['sessions'].set(sessionId, context.sdk)
+      const history = gate()
+      const replace = context.service.store.replaceTranscript.bind(context.service.store)
+      vi.spyOn(context.service.store, 'replaceTranscript').mockImplementationOnce(async (...args) => {
+        history.opened()
+        await history.pending
+        return replace(...args)
+      })
+      let refused = false
+      vi.mocked(writeFile).mockImplementation(async (...args) => {
+        if (!refused && args[0] === `${context.statePath}.tmp` &&
+            JSON.parse(String(args[1])).sessions[sessionId]?.recoveryResend?.accepted === true) {
+          refused = true
+          throw storageError
+        }
+        return disk.writeFile(...args)
+      })
+      const polling = context.service.refreshTranscripts()
+      await history.started
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      expect(refused).toBe(true)
+      const current = context.service.getSession(sessionId)!
+      const expected = kind === 'command' ? context.generated : context.submitted
+      expect(context.calls).toEqual([expected])
+      expect(current.messages.some((message) => message.content === expected)).toBe(true)
+      expect(current.failedPrompt).toBeUndefined()
+      history.release()
+      await polling
+      expect(context.service.getSession(sessionId)?.messages).toEqual(current.messages)
+      expect(context.service.getSession(sessionId)?.status).toBe('running')
+      expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+      expect(context.service['eventLogFingerprints'].has(sessionId)).toBe(false)
+      expect(context.service['eventLogVersions'].has(sessionId)).toBe(false)
+    },
+  )
+})
+
 describe('Review 5125727881 runtime boundaries', () => {
   type PublicSessionValue = SessionDetail | SessionDetail[] | RemovedQueuedPrompt | undefined
   type SessionMethod = {

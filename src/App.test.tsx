@@ -766,6 +766,40 @@ describe('App', () => {
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
+  it('closes the chooser after a committed save despite unrelated computer removal', async () => {
+    const other = { ...knowledgeRoot, id: 'other-root', name: 'Other notes', path: '/srv/other' }
+    mockKnowledgeRoots([knowledgeRoot, other])
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    let finish!: (value: SessionKnowledgeBinding) => void
+    vi.mocked(updateSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    fireEvent.click(within(chooser).getByRole('radio', {
+      name: `${other.name} on ${other.computerName}: ${other.path}`,
+    }))
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
+    await waitFor(() => expect(updateSessionKnowledgeRoot).toHaveBeenCalledOnce())
+    const saved: SessionKnowledgeBinding = {
+      computerId: computer.id, sessionId: session.id, rootId: other.id,
+      root: other, revision: 2, available: true,
+    }
+    fixtureKnowledgeBindings.set(`${computer.id}:${session.id}`, saved)
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+    } as MessageEvent))
+    await act(async () => finish(saved))
+    await waitFor(() => expect(chooser).not.toBeInTheDocument())
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledExactlyOnceWith(computer.id, session.id, {
+      rootId: other.id, expectedRevision: 1,
+    })
+    expect(screen.queryByText(/pairing changed while saving/)).not.toBeInTheDocument()
+    expect(fixtureKnowledgeBindings.get(`${computer.id}:${session.id}`)).toEqual(saved)
+  })
+
   it.each(['before browsing', 'before creating', 'during creation'] as const)(
     'keeps the reviewed revision when another client changes the root %s',
     async (timing) => {

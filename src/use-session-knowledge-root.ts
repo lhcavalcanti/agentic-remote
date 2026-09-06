@@ -38,6 +38,7 @@ export function useSessionKnowledgeRoot(
   const eventSequence = useRef(new Map<string, number>())
   const generation = useRef(0)
   const lifetime = useRef(0)
+  const computerChanges = useRef(new Map<string, number>())
   const sessionLifetimes = useRef(new Map<string, number>())
   const saveSequence = useRef(0)
   const mounted = useRef(true)
@@ -119,6 +120,9 @@ export function useSessionKnowledgeRoot(
     }
     const token = ++saveSequence.current
     const ownerLifetime = lifetime.current
+    const pairingChanged = (incoming: SessionKnowledgeBinding) =>
+      [computerId, incoming.root?.computerId].some((id) =>
+        id !== undefined && (computerChanges.current.get(id) || 0) > ownerLifetime)
     const sessionLifetime = sessionLifetimes.current.get(key) || 0
     setSavingKey(key)
     try {
@@ -128,7 +132,7 @@ export function useSessionKnowledgeRoot(
       if (bindingKey(incoming) !== key) {
         throw new Error('The saved Knowledge root belongs to a different session.')
       }
-      if (ownerLifetime !== lifetime.current) {
+      if (pairingChanged(incoming)) {
         throw new Error('A computer pairing changed while saving the Knowledge root. Reload before trying again.')
       }
       if (sessionLifetime !== (sessionLifetimes.current.get(key) || 0)) {
@@ -141,7 +145,7 @@ export function useSessionKnowledgeRoot(
         caught instanceof SessionKnowledgeRequestError &&
         caught.binding &&
         bindingKey(caught.binding) === key &&
-        ownerLifetime === lifetime.current &&
+        !pairingChanged(caught.binding) &&
         sessionLifetime === (sessionLifetimes.current.get(key) || 0)
       ) {
         applyUpdate(caught.binding)
@@ -168,7 +172,7 @@ export function useSessionKnowledgeRoot(
   }, [refresh])
 
   const forgetComputer = useCallback((removedId: string) => {
-    lifetime.current += 1
+    computerChanges.current.set(removedId, ++lifetime.current)
     generation.current += 1
     const next = new Map(bindingsRef.current)
     for (const [savedKey, binding] of next) {

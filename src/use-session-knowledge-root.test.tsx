@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KnowledgeRoot, SessionKnowledgeBinding } from '../shared/contracts'
-import { getSessionKnowledgeRoot, updateSessionKnowledgeRoot } from './api'
+import { getSessionKnowledgeRoot, SessionKnowledgeRequestError, updateSessionKnowledgeRoot } from './api'
 import { knowledgePositionForBinding, useSessionKnowledgeRoot } from './use-session-knowledge-root'
 
 vi.mock('./api', async (importOriginal) => ({
@@ -133,6 +133,71 @@ describe('session Knowledge root controller', () => {
     vi.mocked(updateSessionKnowledgeRoot).mockResolvedValueOnce(binding(first, { rootId: 'platform', revision: 2 }))
     await act(async () => { await rendered.result.current.saveRoot('platform') })
     expect(rendered.result.current.binding?.rootId).toBe('platform')
+  })
+
+  it('accepts a committed save when an unrelated computer is removed', async () => {
+    const write = deferred<SessionKnowledgeBinding>()
+    vi.mocked(updateSessionKnowledgeRoot).mockReturnValueOnce(write.promise)
+    const rendered = renderHook(() => useSessionKnowledgeRoot(first, true))
+    await waitFor(() => expect(rendered.result.current.binding?.revision).toBe(1))
+    const saved = binding(first, { rootId: 'platform', revision: 2 })
+    let saving!: Promise<SessionKnowledgeBinding>
+    act(() => { saving = rendered.result.current.saveRoot('platform', 1) })
+    act(() => rendered.result.current.forgetComputer('unrelated'))
+    await act(async () => {
+      write.resolve(saved)
+      await expect(saving).resolves.toEqual(saved)
+    })
+    expect(rendered.result.current.binding).toEqual(saved)
+    expect(rendered.result.current.saving).toBe(false)
+  })
+
+  it.each(['session', 'returned root'] as const)('rejects a save after its %s computer is removed', async (changed) => {
+    const write = deferred<SessionKnowledgeBinding>()
+    vi.mocked(updateSessionKnowledgeRoot).mockReturnValueOnce(write.promise)
+    const rendered = renderHook(() => useSessionKnowledgeRoot(first, true))
+    await waitFor(() => expect(rendered.result.current.binding?.revision).toBe(1))
+    const remote = { ...root, id: 'remote-root', computerId: 'reader', computerName: 'Reader' }
+    let saving!: Promise<SessionKnowledgeBinding>
+    act(() => { saving = rendered.result.current.saveRoot(remote.id, 1) })
+    act(() => rendered.result.current.forgetComputer(changed === 'session' ? first.computerId : remote.computerId))
+    await act(async () => {
+      write.resolve(binding(first, { rootId: remote.id, root: remote, revision: 2 }))
+      await expect(saving).rejects.toThrow('pairing changed')
+    })
+    expect(rendered.result.current.binding?.rootId).not.toBe(remote.id)
+  })
+
+  it('accepts the latest conflict revision despite an unrelated computer removal', async () => {
+    const write = deferred<SessionKnowledgeBinding>()
+    vi.mocked(updateSessionKnowledgeRoot).mockReturnValueOnce(write.promise)
+    const rendered = renderHook(() => useSessionKnowledgeRoot(first, true))
+    await waitFor(() => expect(rendered.result.current.binding?.revision).toBe(1))
+    const latest = binding(first, { revision: 2 })
+    let saving!: Promise<SessionKnowledgeBinding>
+    act(() => { saving = rendered.result.current.saveRoot('platform', 1) })
+    act(() => rendered.result.current.forgetComputer('unrelated'))
+    await act(async () => {
+      write.reject(new SessionKnowledgeRequestError('Root changed in another client', 409, latest))
+      await expect(saving).rejects.toThrow('Root changed')
+    })
+    expect(rendered.result.current.binding?.revision).toBe(2)
+  })
+
+  it('can unlink a removed old root without invalidating the healthy session save', async () => {
+    const write = deferred<SessionKnowledgeBinding>()
+    vi.mocked(updateSessionKnowledgeRoot).mockReturnValueOnce(write.promise)
+    const rendered = renderHook(() => useSessionKnowledgeRoot(second, true))
+    await waitFor(() => expect(rendered.result.current.binding?.revision).toBe(1))
+    const unlinked = binding(second, { rootId: null, root: undefined, available: false, revision: 2 })
+    let saving!: Promise<SessionKnowledgeBinding>
+    act(() => { saving = rendered.result.current.saveRoot(null, 1) })
+    act(() => rendered.result.current.forgetComputer(root.computerId))
+    await act(async () => {
+      write.resolve(unlinked)
+      await expect(saving).resolves.toEqual(unlinked)
+    })
+    expect(rendered.result.current.binding).toEqual(unlinked)
   })
 
   it('does not accept a response naming a different owner and exposes a retryable error', async () => {

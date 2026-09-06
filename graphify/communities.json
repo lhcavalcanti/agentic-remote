@@ -22,7 +22,6 @@
       "src_app_app_closerootpicker",
       "src_app_app_closeselectedsession",
       "src_app_app_closetopmostlayer",
-      "src_app_app_commitsidebarwidth",
       "src_app_app_composerbeforeinput",
       "src_app_app_composerchanged",
       "src_app_app_composerkeydown",
@@ -49,11 +48,13 @@
       "src_app_app_moveknowledgeposition",
       "src_app_app_moverestoreddraft",
       "src_app_app_moveselectedsessiontotmux",
+      "src_app_app_movesessiontobrowsedfolder",
       "src_app_app_navigatemessagehistory",
       "src_app_app_openbackgroundtasks",
       "src_app_app_openrootpicker",
       "src_app_app_opensidebar",
       "src_app_app_opentasksforsession",
+      "src_app_app_persistcomposerdrafts",
       "src_app_app_persistcomposerrecoveryidentity",
       "src_app_app_queuededitsubmission",
       "src_app_app_queuedragended",
@@ -79,13 +80,12 @@
       "src_app_app_setcomposerforkey",
       "src_app_app_setfollowslatest",
       "src_app_app_setknowledgemode",
-      "src_app_app_sidebarresizeend",
-      "src_app_app_sidebarresizekeydown",
       "src_app_app_sidebarresizestart",
       "src_app_app_sidebartouchend",
       "src_app_app_startrecording",
       "src_app_app_stepsession",
       "src_app_app_stilllisted",
+      "src_app_app_stopselectedsession",
       "src_app_app_submitmessage",
       "src_app_app_timelinescrolled",
       "src_app_app_toggleknowledgeexpanded",
@@ -95,32 +95,29 @@
       "src_app_app_transcribefile",
       "src_app_app_updatecomposerdrafts",
       "src_app_app_uploadfile",
-      "src_app_bindingmatches",
-      "src_app_clearstored",
       "src_app_collapsedpastelabel",
       "src_app_composerpastesafterrangeedit",
       "src_app_expandcomposerpastes",
+      "src_app_hascomposeracceptancereceipt",
       "src_app_isaudiofile",
       "src_app_iseditabletarget",
-      "src_app_knowledgetreevisible",
       "src_app_newcollapsedpastekey",
       "src_app_pastedlinecount",
       "src_app_phoneentercreatesnewline",
       "src_app_prependcomposercontent",
-      "src_app_readaccenttheme",
+      "src_app_queuededitowners",
       "src_app_readselectionfromlocation",
+      "src_app_reconcileacceptedcomposerdrafts",
       "src_app_reconcilecomposerpastes",
-      "src_app_recordingduration",
       "src_app_recoverpendingcomposerdraft",
       "src_app_renamesessiondialog",
       "src_app_slashshortcut",
       "src_app_sortsessions",
-      "src_app_supportsbackgroundtasks",
       "src_app_upsertcomputer",
       "src_app_upsertsession",
       "src_app_workspacefileprompt",
       "src_app_writecomposercontent",
-      "src_app_writestored",
+      "src_app_writequeuededitowners",
       "src_session_navigation_view_stepvisiblesession",
       "src_session_presentation_sessionkey"
     ]
@@ -148,12 +145,11 @@
       "src_app_activitystatusfrommessage",
       "src_app_activitystatusglyph",
       "src_app_activitystatuslabel",
-      "src_app_app_persistcomposerdrafts",
-      "src_app_app_sidebarresizemove",
       "src_app_backgroundtaskcard",
       "src_app_backgroundtasksdialog",
+      "src_app_bindingmatches",
       "src_app_capturablecodes",
-      "src_app_clampsidebarwidth",
+      "src_app_clearstored",
       "src_app_codefenceprops",
       "src_app_collapsedpaste",
       "src_app_compactactivitytext",
@@ -181,11 +177,11 @@
       "src_app_emptyruntimeselection",
       "src_app_fencedsource",
       "src_app_formatactivityduration",
-      "src_app_hascomposeracceptancereceipt",
       "src_app_initialuserinputvalues",
       "src_app_isruntimereasoningeffort",
       "src_app_knowledgepanelmode",
       "src_app_knowledgeposition",
+      "src_app_knowledgetreevisible",
       "src_app_markdownimageloader",
       "src_app_mermaidcomponents",
       "src_app_mermaidfencedsource",
@@ -194,7 +190,7 @@
       "src_app_ordertasksforreading",
       "src_app_pdfviewer",
       "src_app_permissioncard",
-      "src_app_queuededitowners",
+      "src_app_readaccenttheme",
       "src_app_readcomposeracceptancereceipts",
       "src_app_readcomposerdrafts",
       "src_app_readdefaultruntimesettings",
@@ -202,8 +198,7 @@
       "src_app_readlegacycomposerdrafts",
       "src_app_readqueuededitowners",
       "src_app_readstoredorder",
-      "src_app_readstoredsidebarwidth",
-      "src_app_reconcileacceptedcomposerdrafts",
+      "src_app_recordingduration",
       "src_app_runtimedialog",
       "src_app_runtimedialog_submit",
       "src_app_samemessage",
@@ -217,6 +212,7 @@
       "src_app_statuslineoptions",
       "src_app_statuslinesettings",
       "src_app_storeddefaultsessionfolders",
+      "src_app_supportsbackgroundtasks",
       "src_app_taskdurationlabel",
       "src_app_taskstatuslabel",
       "src_app_transcriptmessage",
@@ -226,7 +222,6 @@
       "src_app_validcomposerpastes",
       "src_app_webcommands",
       "src_app_workspaceimage",
-      "src_app_writequeuededitowners",
       "src_appearance",
       "src_appearance_appearance",
       "src_appearance_appearancefrom",
@@ -292,6 +287,22 @@
     ]
   },
   "100": {
+    "label": "MockWebSocket",
+    "nodes": [
+      "src_app_test_mockwebsocket",
+      "src_app_test_mockwebsocket_close",
+      "src_app_test_mockwebsocket_constructor"
+    ]
+  },
+  "101": {
+    "label": "MermaidDiagram.test.tsx",
+    "nodes": [
+      "src_mermaiddiagram_test",
+      "src_mermaiddiagram_test_mermaidmodule",
+      "src_mermaiddiagram_test_render"
+    ]
+  },
+  "102": {
     "label": "tsconfig.json",
     "nodes": [
       "tsconfig",
@@ -299,7 +310,7 @@
       "tsconfig_references"
     ]
   },
-  "101": {
+  "103": {
     "label": "vite.config.ts",
     "nodes": [
       "vite_config",
@@ -307,60 +318,46 @@
       "vite_config_packageversion"
     ]
   },
-  "102": {
+  "104": {
     "label": "@fastify/multipart",
     "nodes": [
       "fastify_multipart",
       "package_dependencies_fastify_multipart"
     ]
   },
-  "103": {
+  "105": {
     "label": "@github/copilot-sdk",
     "nodes": [
       "github_copilot_sdk",
       "package_dependencies_github_copilot_sdk"
     ]
   },
-  "104": {
+  "106": {
     "label": "lucide-react",
     "nodes": [
       "lucide_react",
       "package_dependencies_lucide_react"
     ]
   },
-  "105": {
+  "107": {
     "label": "pdfjs-dist",
     "nodes": [
       "package_dependencies_pdfjs_dist",
       "package_json_pdfjs_dist"
     ]
   },
-  "106": {
+  "108": {
     "label": "react-markdown",
     "nodes": [
       "package_dependencies_react_markdown",
       "react_markdown"
     ]
   },
-  "107": {
+  "109": {
     "label": "ws",
     "nodes": [
       "package_dependencies_ws",
       "ws"
-    ]
-  },
-  "108": {
-    "label": "zod",
-    "nodes": [
-      "package_dependencies_zod",
-      "zod"
-    ]
-  },
-  "109": {
-    "label": "sw.js",
-    "nodes": [
-      "public_sw",
-      "public_sw_shell"
     ]
   },
   "11": {
@@ -413,66 +410,68 @@
     ]
   },
   "110": {
+    "label": "zod",
+    "nodes": [
+      "package_dependencies_zod",
+      "zod"
+    ]
+  },
+  "111": {
+    "label": "sw.js",
+    "nodes": [
+      "public_sw",
+      "public_sw_shell"
+    ]
+  },
+  "112": {
     "label": "service-worker.test.ts",
     "nodes": [
       "server_service_worker_test",
       "server_service_worker_test_worker"
     ]
   },
-  "111": {
+  "113": {
     "label": "build.rs",
     "nodes": [
       "shell_src_tauri_build",
       "shell_src_tauri_build_main"
     ]
   },
-  "112": {
+  "114": {
     "label": "main.rs",
     "nodes": [
       "shell_src_tauri_src_main",
       "shell_src_tauri_src_main_main"
     ]
   },
-  "113": {
+  "115": {
     "label": "mermaid",
     "nodes": [
       "mermaid_mermaid"
     ]
   },
-  "114": {
+  "116": {
     "label": "pdfjs-dist",
     "nodes": [
       "pdfjs_dist_pdfjs_dist"
     ]
   },
-  "115": {
+  "117": {
     "label": "agentic-remote-shell",
     "nodes": [
       "pkg_agentic_remote_shell"
     ]
   },
-  "116": {
+  "118": {
     "label": "accent-theme.test.ts",
     "nodes": [
       "server_accent_theme_test"
     ]
   },
-  "117": {
+  "119": {
     "label": "promotion-setup.test.ts",
     "nodes": [
       "server_promotion_setup_test"
-    ]
-  },
-  "118": {
-    "label": "safe-area.test.ts",
-    "nodes": [
-      "server_safe_area_test"
-    ]
-  },
-  "119": {
-    "label": "service-unit.test.ts",
-    "nodes": [
-      "server_service_unit_test"
     ]
   },
   "12": {
@@ -525,18 +524,30 @@
     ]
   },
   "120": {
+    "label": "safe-area.test.ts",
+    "nodes": [
+      "server_safe_area_test"
+    ]
+  },
+  "121": {
+    "label": "service-unit.test.ts",
+    "nodes": [
+      "server_service_unit_test"
+    ]
+  },
+  "122": {
     "label": "shell/vite.config.ts",
     "nodes": [
       "shell_vite_config"
     ]
   },
-  "121": {
+  "123": {
     "label": "env.d.ts",
     "nodes": [
       "src_env_d"
     ]
   },
-  "122": {
+  "124": {
     "label": "MermaidDiagram.real.test.tsx",
     "nodes": [
       "src_mermaiddiagram_real_test"
@@ -688,52 +699,6 @@
     ]
   },
   "16": {
-    "label": "agent-service.ts",
-    "nodes": [
-      "server_agent_service",
-      "server_agent_service_activeprompt",
-      "server_agent_service_activityduration",
-      "server_agent_service_activitygroupidfor",
-      "server_agent_service_activitytoolstart",
-      "server_agent_service_agentserviceevents",
-      "server_agent_service_ansisequence",
-      "server_agent_service_commandshortcut",
-      "server_agent_service_creationruntime",
-      "server_agent_service_elicitationcontext",
-      "server_agent_service_elicitationhandler",
-      "server_agent_service_foregroundlifecycleevents",
-      "server_agent_service_isactivitygroupkind",
-      "server_agent_service_isruntimereasoningeffort",
-      "server_agent_service_modelpromptlimits",
-      "server_agent_service_normalizedtitle",
-      "server_agent_service_pendingsdkelicitation",
-      "server_agent_service_pendingsdkpermission",
-      "server_agent_service_pendingsdkuserinput",
-      "server_agent_service_permissiontitle",
-      "server_agent_service_previewtext",
-      "server_agent_service_readablemcpservername",
-      "server_agent_service_readabletoolname",
-      "server_agent_service_runtimeeventtypes",
-      "server_agent_service_runtimeinfomatches",
-      "server_agent_service_sametoollabel",
-      "server_agent_service_stringarray",
-      "server_agent_service_stringarrayvalue",
-      "server_agent_service_stripansi",
-      "server_agent_service_toolactivitycontent",
-      "server_agent_service_userinputformat",
-      "server_agent_service_userinputhandler",
-      "server_agent_service_userinputrequest",
-      "server_agent_service_userinputresponse",
-      "server_agent_service_visibleusercontent",
-      "shared_contracts_activitykind",
-      "shared_contracts_agentmode",
-      "shared_contracts_userinputfieldoption",
-      "shared_queued_commands",
-      "shared_queued_commands_apponlynames",
-      "shared_queued_commands_isapponlyqueuedcommand"
-    ]
-  },
-  "17": {
     "label": "WorkspaceDialog",
     "nodes": [
       "src_app_followmarkdownlink",
@@ -779,7 +744,7 @@
       "src_markdown_navigation_test"
     ]
   },
-  "18": {
+  "17": {
     "label": "lib.rs",
     "nodes": [
       "apphandle",
@@ -824,7 +789,7 @@
       "shell_src_tauri_src_lib_withdraw_notifications"
     ]
   },
-  "19": {
+  "18": {
     "label": "claude-agent-service.ts",
     "nodes": [
       "server_agent_service_agentservice_providers",
@@ -867,6 +832,51 @@
       "shared_contracts_slashcommand",
       "shared_contracts_userinputreplyinput",
       "shared_contracts_workspacesearchresponse"
+    ]
+  },
+  "19": {
+    "label": "shell.ts",
+    "nodes": [
+      "src_shell",
+      "src_shell_attentioncount",
+      "src_shell_bridge",
+      "src_shell_decodesegment",
+      "src_shell_method",
+      "src_shell_nativeshell",
+      "src_shell_notifications",
+      "src_shell_notifications_key",
+      "src_shell_notifications_label",
+      "src_shell_notifications_notifiablesession",
+      "src_shell_notifications_notificationstate",
+      "src_shell_notifications_requestid",
+      "src_shell_notifications_sessionnotificationstate",
+      "src_shell_notifications_shellnotificationcontext",
+      "src_shell_notifications_shellnotifications",
+      "src_shell_notifications_test",
+      "src_shell_notifications_test_computernames",
+      "src_shell_notifications_test_session",
+      "src_shell_onshelldeeplink",
+      "src_shell_onshellnotificationreply",
+      "src_shell_openshellsettings",
+      "src_shell_parseshelldeeplink",
+      "src_shell_resetshellbadge",
+      "src_shell_sendshellnotification",
+      "src_shell_setshellbadge",
+      "src_shell_shellattentionstate",
+      "src_shell_shellbridge",
+      "src_shell_shelldeeplink",
+      "src_shell_shellnotification",
+      "src_shell_shellnotificationaction",
+      "src_shell_shellnotificationreply",
+      "src_shell_shellplatform",
+      "src_shell_shellsessiontarget",
+      "src_shell_shellsettingsavailable",
+      "src_shell_shellversion",
+      "src_shell_subscribe",
+      "src_shell_test",
+      "src_shell_test_installbridge",
+      "src_shell_window",
+      "src_shell_withdrawshellnotifications"
     ]
   },
   "2": {
@@ -975,51 +985,6 @@
     ]
   },
   "20": {
-    "label": "shell.ts",
-    "nodes": [
-      "src_shell",
-      "src_shell_attentioncount",
-      "src_shell_bridge",
-      "src_shell_decodesegment",
-      "src_shell_method",
-      "src_shell_nativeshell",
-      "src_shell_notifications",
-      "src_shell_notifications_key",
-      "src_shell_notifications_label",
-      "src_shell_notifications_notifiablesession",
-      "src_shell_notifications_notificationstate",
-      "src_shell_notifications_requestid",
-      "src_shell_notifications_sessionnotificationstate",
-      "src_shell_notifications_shellnotificationcontext",
-      "src_shell_notifications_shellnotifications",
-      "src_shell_notifications_test",
-      "src_shell_notifications_test_computernames",
-      "src_shell_notifications_test_session",
-      "src_shell_onshelldeeplink",
-      "src_shell_onshellnotificationreply",
-      "src_shell_openshellsettings",
-      "src_shell_parseshelldeeplink",
-      "src_shell_resetshellbadge",
-      "src_shell_sendshellnotification",
-      "src_shell_setshellbadge",
-      "src_shell_shellattentionstate",
-      "src_shell_shellbridge",
-      "src_shell_shelldeeplink",
-      "src_shell_shellnotification",
-      "src_shell_shellnotificationaction",
-      "src_shell_shellnotificationreply",
-      "src_shell_shellplatform",
-      "src_shell_shellsessiontarget",
-      "src_shell_shellsettingsavailable",
-      "src_shell_shellversion",
-      "src_shell_subscribe",
-      "src_shell_test",
-      "src_shell_test_installbridge",
-      "src_shell_window",
-      "src_shell_withdrawshellnotifications"
-    ]
-  },
-  "21": {
     "label": "config.rs",
     "nodes": [
       "duration",
@@ -1060,6 +1025,49 @@
       "shell_src_tauri_src_config_socket_address_defaults_the_port_from_the_scheme",
       "shell_src_tauri_src_config_socket_address_does_not_split_an_ipv6_literal",
       "shell_src_tauri_src_config_socket_address_keeps_an_explicit_port"
+    ]
+  },
+  "21": {
+    "label": "agent-service.ts",
+    "nodes": [
+      "server_agent_service",
+      "server_agent_service_activeprompt",
+      "server_agent_service_activityresult",
+      "server_agent_service_activitytoolstart",
+      "server_agent_service_agentserviceevents",
+      "server_agent_service_ansisequence",
+      "server_agent_service_commandshortcut",
+      "server_agent_service_creationruntime",
+      "server_agent_service_elicitationcontext",
+      "server_agent_service_elicitationhandler",
+      "server_agent_service_foregroundlifecycleevents",
+      "server_agent_service_isruntimereasoningeffort",
+      "server_agent_service_modelpromptlimits",
+      "server_agent_service_normalizedtitle",
+      "server_agent_service_pendingsdkelicitation",
+      "server_agent_service_pendingsdkpermission",
+      "server_agent_service_pendingsdkuserinput",
+      "server_agent_service_permissiontitle",
+      "server_agent_service_previewtext",
+      "server_agent_service_readablemcpservername",
+      "server_agent_service_readabletoolname",
+      "server_agent_service_runtimeeventtypes",
+      "server_agent_service_runtimeinfomatches",
+      "server_agent_service_sametoollabel",
+      "server_agent_service_stringarray",
+      "server_agent_service_stringarrayvalue",
+      "server_agent_service_stripansi",
+      "server_agent_service_toolactivitycontent",
+      "server_agent_service_userinputformat",
+      "server_agent_service_userinputhandler",
+      "server_agent_service_userinputrequest",
+      "server_agent_service_userinputresponse",
+      "shared_contracts_activitykind",
+      "shared_contracts_agentmode",
+      "shared_contracts_userinputfieldoption",
+      "shared_queued_commands",
+      "shared_queued_commands_apponlynames",
+      "shared_queued_commands_isapponlyqueuedcommand"
     ]
   },
   "22": {
@@ -1378,90 +1386,89 @@
     ]
   },
   "3": {
-    "label": "api.ts",
+    "label": "SessionDetail",
     "nodes": [
-      "core",
-      "src_api",
-      "src_api_addknowledgeroot",
-      "src_api_cancelbackgroundtask",
-      "src_api_cancelsession",
-      "src_api_clearconversation",
-      "src_api_deleteknowledgeroot",
-      "src_api_deletesession",
-      "src_api_dispatchqueuedprompt",
-      "src_api_getproviderruntimeoptions",
-      "src_api_getpushsettings",
-      "src_api_getruntimeoptions",
-      "src_api_getsession",
-      "src_api_getsessionknowledgeroot",
-      "src_api_isqueueddispatchresult",
-      "src_api_listbackgroundtasks",
-      "src_api_listcommands",
-      "src_api_listcomputers",
-      "src_api_listhistory",
-      "src_api_listknowledgeentries",
-      "src_api_listknowledgeroots",
-      "src_api_listsessionlisting",
-      "src_api_listsessions",
-      "src_api_listworkspace",
-      "src_api_movesessiontotmux",
-      "src_api_readknowledgefile",
-      "src_api_readworkspacefile",
-      "src_api_removequeuedprompt",
-      "src_api_renamesession",
-      "src_api_reorderqueuedprompts",
-      "src_api_replyuserinput",
-      "src_api_request",
-      "src_api_requestsessionknowledgeroot",
-      "src_api_requestvoid",
-      "src_api_responseerror",
-      "src_api_restartsession",
-      "src_api_resumesession",
-      "src_api_searchworkspace",
-      "src_api_sendmessage",
-      "src_api_sendtestpushnotification",
-      "src_api_sessionknowledgerequesterror",
-      "src_api_sessionpath",
-      "src_api_setsessionnotificationsmuted",
-      "src_api_suspendsession",
-      "src_api_test",
-      "src_api_test_failwith",
-      "src_api_transcribeaudio",
-      "src_api_updatequeuedprompt",
-      "src_api_updatesessionknowledgeroot",
-      "src_api_uploadsessionfile",
-      "src_app_app_stopselectedsession",
-      "src_app_renamesessionform",
-      "src_app_renamesessionform_submit",
-      "src_app_test",
-      "src_app_test_chooseknowledgeroot",
-      "src_app_test_computer",
-      "src_app_test_dndcontext",
-      "src_app_test_dndprops",
-      "src_app_test_draghandlers",
-      "src_app_test_findsessionaction",
-      "src_app_test_finishqueuereorder",
-      "src_app_test_finishreorder",
-      "src_app_test_fixtureknowledgebinding",
-      "src_app_test_fixtureknowledgebindings",
-      "src_app_test_fixtureknowledgeroots",
-      "src_app_test_get",
-      "src_app_test_historicalsession",
-      "src_app_test_knowledgelistings",
-      "src_app_test_knowledgeroot",
-      "src_app_test_mockaddedknowledgeroot",
-      "src_app_test_mockknowledgeroots",
-      "src_app_test_opennote",
-      "src_app_test_opensessionactions",
-      "src_app_test_opentargetedqueueeditor",
-      "src_app_test_secondcomputer",
-      "src_app_test_secondsession",
-      "src_app_test_session",
-      "src_app_test_sessionaction",
-      "src_app_test_set",
-      "src_app_test_taskcomputer",
-      "src_session_knowledge_api_test",
-      "src_session_knowledge_api_test_binding"
+      "server_agent_service_agentservice_renamesession",
+      "server_claude_agent_service_claudeagentservice_activatesession",
+      "server_claude_agent_service_claudeagentservice_clearconversation",
+      "server_claude_agent_service_claudeagentservice_clearserialized",
+      "server_claude_agent_service_claudeagentservice_configureruntime",
+      "server_claude_agent_service_claudeagentservice_constructor",
+      "server_claude_agent_service_claudeagentservice_handlemessage",
+      "server_claude_agent_service_claudeagentservice_publish",
+      "server_claude_agent_service_claudeagentservice_renamesession",
+      "server_claude_agent_service_claudeagentservice_reorderqueuedprompts",
+      "server_claude_agent_service_claudeagentservice_replypermission",
+      "server_claude_agent_service_claudeagentservice_requireidle",
+      "server_claude_agent_service_claudeagentservice_restartserialized",
+      "server_claude_agent_service_claudeagentservice_restartsession",
+      "server_claude_agent_service_claudeagentservice_resumequeued",
+      "server_claude_agent_service_claudeagentservice_resumesession",
+      "server_claude_agent_service_claudeagentservice_serializelifecycle",
+      "server_claude_agent_service_claudeagentservice_starttool",
+      "server_claude_agent_service_claudeagentservice_suspendqueued",
+      "server_claude_agent_service_claudeagentservice_suspendsession",
+      "server_claude_agent_service_ismissingclaudesessionerror",
+      "server_claude_agent_service_toolresulttext",
+      "server_queued_dispatch_queueddispatches_constructor",
+      "server_session_store",
+      "server_session_store_activityduration",
+      "server_session_store_activityresultpreview",
+      "server_session_store_clonesession",
+      "server_session_store_discoveredsession",
+      "server_session_store_pendingchange",
+      "server_session_store_sessionprojection",
+      "server_session_store_sessionstore",
+      "server_session_store_sessionstore_addmessage",
+      "server_session_store_sessionstore_applystream",
+      "server_session_store_sessionstore_clearconversation",
+      "server_session_store_sessionstore_clearfailedprompt",
+      "server_session_store_sessionstore_clearpendingrequest",
+      "server_session_store_sessionstore_clearqueuedispatch",
+      "server_session_store_sessionstore_clearuntrackedterminaldispatch",
+      "server_session_store_sessionstore_constructor",
+      "server_session_store_sessionstore_enqueueansweringprompt",
+      "server_session_store_sessionstore_enqueueprompt",
+      "server_session_store_sessionstore_finishmessage",
+      "server_session_store_sessionstore_finishtaskcompletion",
+      "server_session_store_sessionstore_finishtoolactivity",
+      "server_session_store_sessionstore_list",
+      "server_session_store_sessionstore_mutate",
+      "server_session_store_sessionstore_mutateinmemory",
+      "server_session_store_sessionstore_readafterwrites",
+      "server_session_store_sessionstore_removequeuedprompt",
+      "server_session_store_sessionstore_removeuploads",
+      "server_session_store_sessionstore_renamesession",
+      "server_session_store_sessionstore_reorderqueuedprompts",
+      "server_session_store_sessionstore_replacemessages",
+      "server_session_store_sessionstore_replacetranscript",
+      "server_session_store_sessionstore_replacewithclearedsession",
+      "server_session_store_sessionstore_requiresession",
+      "server_session_store_sessionstore_setbackend",
+      "server_session_store_sessionstore_setfailedprompt",
+      "server_session_store_sessionstore_setmessagecontent",
+      "server_session_store_sessionstore_setopen",
+      "server_session_store_sessionstore_setsuspended",
+      "server_session_store_sessionstore_shiftqueuedprompt",
+      "server_session_store_sessionstore_starttoolactivity",
+      "server_session_store_sessionstore_streammessage",
+      "server_session_store_sessionstore_streamtarget",
+      "server_session_store_sessionstore_syncworkspacemetadata",
+      "server_session_store_sessionstore_terminalrecoverysessions",
+      "server_session_store_sessionstore_updateautomatictitle",
+      "server_session_store_sessionstore_updatequeuedprompt",
+      "server_session_store_sessionstore_updatestatus",
+      "server_session_store_sessionstore_updateworkingdirectory",
+      "server_session_store_storedsession",
+      "server_session_store_storedstate",
+      "server_session_store_streammutation",
+      "server_session_store_test",
+      "server_session_store_test_createstore",
+      "server_session_store_test_temporarydirectories",
+      "shared_contracts_chatmessage",
+      "shared_contracts_queuedprompt",
+      "shared_contracts_sessiondetail",
+      "shared_contracts_sessionstatus"
     ]
   },
   "30": {
@@ -1571,6 +1578,41 @@
     ]
   },
   "33": {
+    "label": "knowledge-tree.ts",
+    "nodes": [
+      "shared_contracts_workspaceentry",
+      "src_app_app_applyrootchoice",
+      "src_app_app_cancelknowledgerestore",
+      "src_app_app_collapseknowledgetree",
+      "src_app_app_createroot",
+      "src_app_app_knowledgetreekeydown",
+      "src_app_app_loadknowledgechain",
+      "src_app_app_loadknowledgefolder",
+      "src_app_app_openknowledgefile",
+      "src_app_app_openknowledgefolder",
+      "src_app_app_refreshknowledgefolder",
+      "src_app_app_selectroot",
+      "src_app_app_toggleknowledgefolder",
+      "src_knowledge_tree",
+      "src_knowledge_tree_collapseknowledgefolder",
+      "src_knowledge_tree_expandknowledgefolder",
+      "src_knowledge_tree_isknowledgefolderexpanded",
+      "src_knowledge_tree_knowledgeancestors",
+      "src_knowledge_tree_knowledgecrumb",
+      "src_knowledge_tree_knowledgecrumbs",
+      "src_knowledge_tree_knowledgeentryrow",
+      "src_knowledge_tree_knowledgefolders",
+      "src_knowledge_tree_knowledgepathchain",
+      "src_knowledge_tree_knowledgerootpath",
+      "src_knowledge_tree_knowledgerow",
+      "src_knowledge_tree_knowledgestatusrow",
+      "src_knowledge_tree_knowledgetreerows",
+      "src_knowledge_tree_orderedworkspaceentries",
+      "src_knowledge_tree_test",
+      "src_knowledge_tree_test_folders"
+    ]
+  },
+  "34": {
     "label": "terminal-session.ts",
     "nodes": [
       "server_terminal_session",
@@ -1604,7 +1646,7 @@
       "server_terminal_session_waitforcomposerpaste"
     ]
   },
-  "34": {
+  "35": {
     "label": "terminal-session.test.ts",
     "nodes": [
       "server_active_sessions_test",
@@ -1637,7 +1679,7 @@
       "server_tmux_test_helpers_waitforprocesscommand"
     ]
   },
-  "35": {
+  "36": {
     "label": "delegated-transcription-service.ts",
     "nodes": [
       "server_app_buildappoptions",
@@ -1668,39 +1710,6 @@
       "server_transcription_service_transcriptionservice_initialize",
       "server_transcription_service_transcriptionservice_stop",
       "server_transcription_service_transcriptionservice_transcribe"
-    ]
-  },
-  "36": {
-    "label": "knowledge-tree.ts",
-    "nodes": [
-      "src_app_app_applyrootchoice",
-      "src_app_app_cancelknowledgerestore",
-      "src_app_app_collapseknowledgetree",
-      "src_app_app_createroot",
-      "src_app_app_knowledgetreekeydown",
-      "src_app_app_loadknowledgechain",
-      "src_app_app_loadknowledgefolder",
-      "src_app_app_openknowledgefile",
-      "src_app_app_openknowledgefolder",
-      "src_app_app_refreshknowledgefolder",
-      "src_app_app_selectroot",
-      "src_app_app_toggleknowledgefolder",
-      "src_knowledge_tree",
-      "src_knowledge_tree_collapseknowledgefolder",
-      "src_knowledge_tree_expandknowledgefolder",
-      "src_knowledge_tree_isknowledgefolderexpanded",
-      "src_knowledge_tree_knowledgeancestors",
-      "src_knowledge_tree_knowledgecrumb",
-      "src_knowledge_tree_knowledgecrumbs",
-      "src_knowledge_tree_knowledgefolders",
-      "src_knowledge_tree_knowledgepathchain",
-      "src_knowledge_tree_knowledgerootpath",
-      "src_knowledge_tree_knowledgerow",
-      "src_knowledge_tree_knowledgestatusrow",
-      "src_knowledge_tree_knowledgetreerows",
-      "src_knowledge_tree_orderedworkspaceentries",
-      "src_knowledge_tree_test",
-      "src_knowledge_tree_test_folders"
     ]
   },
   "37": {
@@ -1799,89 +1808,83 @@
     ]
   },
   "4": {
-    "label": "SessionDetail",
+    "label": "api.ts",
     "nodes": [
-      "server_agent_service_agentservice_renamesession",
-      "server_claude_agent_service_claudeagentservice_activatesession",
-      "server_claude_agent_service_claudeagentservice_clearconversation",
-      "server_claude_agent_service_claudeagentservice_clearserialized",
-      "server_claude_agent_service_claudeagentservice_configureruntime",
-      "server_claude_agent_service_claudeagentservice_constructor",
-      "server_claude_agent_service_claudeagentservice_handlemessage",
-      "server_claude_agent_service_claudeagentservice_publish",
-      "server_claude_agent_service_claudeagentservice_renamesession",
-      "server_claude_agent_service_claudeagentservice_reorderqueuedprompts",
-      "server_claude_agent_service_claudeagentservice_replypermission",
-      "server_claude_agent_service_claudeagentservice_requireidle",
-      "server_claude_agent_service_claudeagentservice_restartserialized",
-      "server_claude_agent_service_claudeagentservice_restartsession",
-      "server_claude_agent_service_claudeagentservice_resumequeued",
-      "server_claude_agent_service_claudeagentservice_resumesession",
-      "server_claude_agent_service_claudeagentservice_serializelifecycle",
-      "server_claude_agent_service_claudeagentservice_starttool",
-      "server_claude_agent_service_claudeagentservice_suspendqueued",
-      "server_claude_agent_service_claudeagentservice_suspendsession",
-      "server_claude_agent_service_ismissingclaudesessionerror",
-      "server_claude_agent_service_toolresulttext",
-      "server_queued_dispatch_queueddispatches_constructor",
-      "server_session_store",
-      "server_session_store_activityduration",
-      "server_session_store_activityresultpreview",
-      "server_session_store_clonesession",
-      "server_session_store_discoveredsession",
-      "server_session_store_pendingchange",
-      "server_session_store_sessionprojection",
-      "server_session_store_sessionstore",
-      "server_session_store_sessionstore_addmessage",
-      "server_session_store_sessionstore_applystream",
-      "server_session_store_sessionstore_clearconversation",
-      "server_session_store_sessionstore_clearfailedprompt",
-      "server_session_store_sessionstore_clearpendingrequest",
-      "server_session_store_sessionstore_clearqueuedispatch",
-      "server_session_store_sessionstore_clearuntrackedterminaldispatch",
-      "server_session_store_sessionstore_constructor",
-      "server_session_store_sessionstore_enqueueansweringprompt",
-      "server_session_store_sessionstore_enqueueprompt",
-      "server_session_store_sessionstore_finishmessage",
-      "server_session_store_sessionstore_finishtaskcompletion",
-      "server_session_store_sessionstore_finishtoolactivity",
-      "server_session_store_sessionstore_list",
-      "server_session_store_sessionstore_mutate",
-      "server_session_store_sessionstore_mutateinmemory",
-      "server_session_store_sessionstore_readafterwrites",
-      "server_session_store_sessionstore_removequeuedprompt",
-      "server_session_store_sessionstore_removeuploads",
-      "server_session_store_sessionstore_renamesession",
-      "server_session_store_sessionstore_reorderqueuedprompts",
-      "server_session_store_sessionstore_replacemessages",
-      "server_session_store_sessionstore_replacetranscript",
-      "server_session_store_sessionstore_replacewithclearedsession",
-      "server_session_store_sessionstore_requiresession",
-      "server_session_store_sessionstore_setbackend",
-      "server_session_store_sessionstore_setfailedprompt",
-      "server_session_store_sessionstore_setmessagecontent",
-      "server_session_store_sessionstore_setopen",
-      "server_session_store_sessionstore_setsuspended",
-      "server_session_store_sessionstore_shiftqueuedprompt",
-      "server_session_store_sessionstore_starttoolactivity",
-      "server_session_store_sessionstore_streammessage",
-      "server_session_store_sessionstore_streamtarget",
-      "server_session_store_sessionstore_syncworkspacemetadata",
-      "server_session_store_sessionstore_terminalrecoverysessions",
-      "server_session_store_sessionstore_updateautomatictitle",
-      "server_session_store_sessionstore_updatequeuedprompt",
-      "server_session_store_sessionstore_updatestatus",
-      "server_session_store_sessionstore_updateworkingdirectory",
-      "server_session_store_storedsession",
-      "server_session_store_storedstate",
-      "server_session_store_streammutation",
-      "server_session_store_test",
-      "server_session_store_test_createstore",
-      "server_session_store_test_temporarydirectories",
-      "shared_contracts_chatmessage",
-      "shared_contracts_queuedprompt",
-      "shared_contracts_sessiondetail",
-      "shared_contracts_sessionstatus"
+      "core",
+      "src_api",
+      "src_api_addknowledgeroot",
+      "src_api_cancelbackgroundtask",
+      "src_api_cancelsession",
+      "src_api_clearconversation",
+      "src_api_deleteknowledgeroot",
+      "src_api_deletesession",
+      "src_api_dispatchqueuedprompt",
+      "src_api_getproviderruntimeoptions",
+      "src_api_getpushsettings",
+      "src_api_getruntimeoptions",
+      "src_api_getsession",
+      "src_api_isqueueddispatchresult",
+      "src_api_listbackgroundtasks",
+      "src_api_listcommands",
+      "src_api_listcomputers",
+      "src_api_listhistory",
+      "src_api_listknowledgeentries",
+      "src_api_listknowledgeroots",
+      "src_api_listsessionlisting",
+      "src_api_listsessions",
+      "src_api_listworkspace",
+      "src_api_movesessiontotmux",
+      "src_api_readknowledgefile",
+      "src_api_readworkspacefile",
+      "src_api_removequeuedprompt",
+      "src_api_renamesession",
+      "src_api_reorderqueuedprompts",
+      "src_api_replyuserinput",
+      "src_api_request",
+      "src_api_requestvoid",
+      "src_api_responseerror",
+      "src_api_restartsession",
+      "src_api_resumesession",
+      "src_api_searchworkspace",
+      "src_api_sendmessage",
+      "src_api_sendtestpushnotification",
+      "src_api_sessionpath",
+      "src_api_setsessionnotificationsmuted",
+      "src_api_suspendsession",
+      "src_api_test",
+      "src_api_test_failwith",
+      "src_api_transcribeaudio",
+      "src_api_updatequeuedprompt",
+      "src_api_uploadsessionfile",
+      "src_app_renamesessionform",
+      "src_app_renamesessionform_submit",
+      "src_app_test",
+      "src_app_test_chooseknowledgeroot",
+      "src_app_test_computer",
+      "src_app_test_dndcontext",
+      "src_app_test_dndprops",
+      "src_app_test_draghandlers",
+      "src_app_test_findsessionaction",
+      "src_app_test_finishqueuereorder",
+      "src_app_test_finishreorder",
+      "src_app_test_fixtureknowledgebinding",
+      "src_app_test_fixtureknowledgebindings",
+      "src_app_test_fixtureknowledgeroots",
+      "src_app_test_get",
+      "src_app_test_historicalsession",
+      "src_app_test_knowledgelistings",
+      "src_app_test_knowledgeroot",
+      "src_app_test_mockaddedknowledgeroot",
+      "src_app_test_mockknowledgeroots",
+      "src_app_test_opennote",
+      "src_app_test_opensessionactions",
+      "src_app_test_opentargetedqueueeditor",
+      "src_app_test_secondcomputer",
+      "src_app_test_secondsession",
+      "src_app_test_session",
+      "src_app_test_sessionaction",
+      "src_app_test_set",
+      "src_app_test_taskcomputer"
     ]
   },
   "40": {
@@ -1974,35 +1977,6 @@
     ]
   },
   "43": {
-    "label": "agent-service.test.ts",
-    "nodes": [
-      "server_agent_service_agentservice_terminalcontinuationstate",
-      "server_agent_service_isforegroundcompletionevent",
-      "server_agent_service_isforegroundlifecycleevent",
-      "server_agent_service_statusfromevents",
-      "server_agent_service_terminalformsteps",
-      "server_agent_service_test",
-      "server_agent_service_test_configurablemodel",
-      "server_agent_service_test_deferredsession",
-      "server_agent_service_test_deferredsession_abort",
-      "server_agent_service_test_deferredsession_constructor",
-      "server_agent_service_test_deferredsession_disconnect",
-      "server_agent_service_test_deferredsession_emit",
-      "server_agent_service_test_deferredsession_getevents",
-      "server_agent_service_test_deferredsession_on",
-      "server_agent_service_test_deferredsession_resolveprompt",
-      "server_agent_service_test_deferredsession_send",
-      "server_agent_service_test_deferredsession_sendandwait",
-      "server_agent_service_test_directories",
-      "server_agent_service_test_messagesasevents",
-      "server_agent_service_test_services",
-      "server_background_task_adapter_copilottaskinfo",
-      "server_background_task_adapter_copilottaskprogress",
-      "shared_contracts_backgroundtaskkind",
-      "shared_contracts_userinputform"
-    ]
-  },
-  "44": {
     "label": "tmux-errors.integration.test.ts",
     "nodes": [
       "server_tmux_errors",
@@ -2029,6 +2003,34 @@
       "server_tmux_errors_test_server",
       "server_tmux_errors_unixsocket",
       "server_tmux_errors_unixsockets"
+    ]
+  },
+  "44": {
+    "label": "recordValue",
+    "nodes": [
+      "server_agent_service_activityduration",
+      "server_agent_service_activitygroupidfor",
+      "server_agent_service_activitykind",
+      "server_agent_service_agentservice_liveactivitygroupid",
+      "server_agent_service_agentservice_loadruntimemodels",
+      "server_agent_service_agentservice_rememberliveactivityevent",
+      "server_agent_service_contexttextlength",
+      "server_agent_service_estimatedcontexttokens",
+      "server_agent_service_eventagentid",
+      "server_agent_service_eventcontextlength",
+      "server_agent_service_isactivitygroupkind",
+      "server_agent_service_isbackgroundtaskevent",
+      "server_agent_service_isunsupportedbackgroundtaskerror",
+      "server_agent_service_messagesfromhistory",
+      "server_agent_service_numbervalue",
+      "server_agent_service_pendinguserinputfromevents",
+      "server_agent_service_recordvalue",
+      "server_agent_service_runtimeinfofromevents",
+      "server_agent_service_stringvalue",
+      "server_agent_service_userinputformfromschema",
+      "server_agent_service_userinputoptions",
+      "server_agent_service_visibleusercontent",
+      "server_agent_service_workingdirectoryfromevents"
     ]
   },
   "45": {
@@ -2137,29 +2139,28 @@
     ]
   },
   "49": {
-    "label": "workspace-browser.ts",
+    "label": "compilerOptions",
     "nodes": [
-      "server_workspace_browser",
-      "server_workspace_browser_filekind",
-      "server_workspace_browser_imagemimetypes",
-      "server_workspace_browser_iswithin",
-      "server_workspace_browser_listworkspace",
-      "server_workspace_browser_readworkspacefile",
-      "server_workspace_browser_relativepath",
-      "server_workspace_browser_resolveworkspacepath",
-      "server_workspace_browser_searchableextensions",
-      "server_workspace_browser_searchworkspace",
-      "server_workspace_browser_searchworkspace_visit",
-      "server_workspace_browser_skippedsearchdirectories",
-      "server_workspace_browser_test",
-      "server_workspace_browser_test_directories",
-      "server_workspace_browser_test_fixture",
-      "server_workspace_browser_workspacebrowsererror",
-      "server_workspace_browser_workspacebrowsererror_constructor",
-      "shared_contracts_workspaceentry",
-      "shared_contracts_workspaceentrykind",
-      "shared_contracts_workspacesearchresult",
-      "src_knowledge_tree_knowledgeentryrow"
+      "ref_es2022",
+      "shell_tsconfig",
+      "shell_tsconfig_compileroptions",
+      "shell_tsconfig_compileroptions_isolatedmodules",
+      "shell_tsconfig_compileroptions_lib",
+      "shell_tsconfig_compileroptions_module",
+      "shell_tsconfig_compileroptions_moduleresolution",
+      "shell_tsconfig_compileroptions_noemit",
+      "shell_tsconfig_compileroptions_nounusedlocals",
+      "shell_tsconfig_compileroptions_nounusedparameters",
+      "shell_tsconfig_compileroptions_skiplibcheck",
+      "shell_tsconfig_compileroptions_strict",
+      "shell_tsconfig_compileroptions_target",
+      "shell_tsconfig_compileroptions_types",
+      "shell_tsconfig_compileroptions_verbatimmodulesyntax",
+      "shell_tsconfig_include",
+      "shell_tsconfig_json_ref_dom",
+      "shell_tsconfig_json_ref_src",
+      "shell_tsconfig_json_ref_vite_client",
+      "shell_tsconfig_json_ref_vite_config_ts"
     ]
   },
   "5": {
@@ -2228,56 +2229,31 @@
     ]
   },
   "50": {
-    "label": "compilerOptions",
+    "label": "agent-service.test.ts",
     "nodes": [
-      "ref_es2022",
-      "shell_tsconfig",
-      "shell_tsconfig_compileroptions",
-      "shell_tsconfig_compileroptions_isolatedmodules",
-      "shell_tsconfig_compileroptions_lib",
-      "shell_tsconfig_compileroptions_module",
-      "shell_tsconfig_compileroptions_moduleresolution",
-      "shell_tsconfig_compileroptions_noemit",
-      "shell_tsconfig_compileroptions_nounusedlocals",
-      "shell_tsconfig_compileroptions_nounusedparameters",
-      "shell_tsconfig_compileroptions_skiplibcheck",
-      "shell_tsconfig_compileroptions_strict",
-      "shell_tsconfig_compileroptions_target",
-      "shell_tsconfig_compileroptions_types",
-      "shell_tsconfig_compileroptions_verbatimmodulesyntax",
-      "shell_tsconfig_include",
-      "shell_tsconfig_json_ref_dom",
-      "shell_tsconfig_json_ref_src",
-      "shell_tsconfig_json_ref_vite_client",
-      "shell_tsconfig_json_ref_vite_config_ts"
+      "server_agent_service_terminalformsteps",
+      "server_agent_service_test",
+      "server_agent_service_test_configurablemodel",
+      "server_agent_service_test_deferredsession",
+      "server_agent_service_test_deferredsession_abort",
+      "server_agent_service_test_deferredsession_constructor",
+      "server_agent_service_test_deferredsession_disconnect",
+      "server_agent_service_test_deferredsession_emit",
+      "server_agent_service_test_deferredsession_getevents",
+      "server_agent_service_test_deferredsession_on",
+      "server_agent_service_test_deferredsession_resolveprompt",
+      "server_agent_service_test_deferredsession_send",
+      "server_agent_service_test_deferredsession_sendandwait",
+      "server_agent_service_test_directories",
+      "server_agent_service_test_messagesasevents",
+      "server_agent_service_test_services",
+      "server_background_task_adapter_copilottaskinfo",
+      "server_background_task_adapter_copilottaskprogress",
+      "shared_contracts_backgroundtaskkind",
+      "shared_contracts_userinputform"
     ]
   },
   "51": {
-    "label": "recordValue",
-    "nodes": [
-      "server_agent_service_activitykind",
-      "server_agent_service_activityresult",
-      "server_agent_service_agentservice_liveactivitygroupid",
-      "server_agent_service_agentservice_loadruntimemodels",
-      "server_agent_service_agentservice_rememberliveactivityevent",
-      "server_agent_service_contexttextlength",
-      "server_agent_service_estimatedcontexttokens",
-      "server_agent_service_eventagentid",
-      "server_agent_service_eventcontextlength",
-      "server_agent_service_isbackgroundtaskevent",
-      "server_agent_service_isunsupportedbackgroundtaskerror",
-      "server_agent_service_messagesfromhistory",
-      "server_agent_service_numbervalue",
-      "server_agent_service_pendinguserinputfromevents",
-      "server_agent_service_recordvalue",
-      "server_agent_service_runtimeinfofromevents",
-      "server_agent_service_stringvalue",
-      "server_agent_service_userinputformfromschema",
-      "server_agent_service_userinputoptions",
-      "server_agent_service_workingdirectoryfromevents"
-    ]
-  },
-  "52": {
     "label": "ComputerSummary",
     "nodes": [
       "server_computer_manager_computermanager_addclient",
@@ -2302,32 +2278,7 @@
       "shared_contracts_computersummary"
     ]
   },
-  "53": {
-    "label": "NewSessionDialog",
-    "nodes": [
-      "src_api_activatesession",
-      "src_api_createsession",
-      "src_api_executecommand",
-      "src_api_listdirectories",
-      "src_api_validatesessiondirectory",
-      "src_app_addknowledgerootdialog",
-      "src_app_addknowledgerootdialog_browse",
-      "src_app_app_movesessiontobrowsedfolder",
-      "src_app_changedirectorydialog",
-      "src_app_changedirectorydialog_browsedirectory",
-      "src_app_changedirectorydialog_submit",
-      "src_app_computerproviders",
-      "src_app_defaultsessionfoldercontrol",
-      "src_app_defaultsessionfoldercontrol_browse",
-      "src_app_defaultsessionfoldercontrol_choosefolder",
-      "src_app_newsessiondialog",
-      "src_app_newsessiondialog_browsedirectory",
-      "src_app_newsessiondialog_submit",
-      "src_app_normalizedruntimeselection",
-      "src_app_workspaceabsolutepath"
-    ]
-  },
-  "54": {
+  "52": {
     "label": "compilerOptions",
     "nodes": [
       "tsconfig_node",
@@ -2352,7 +2303,7 @@
       "tsconfig_node_json_ref_vite_config_ts"
     ]
   },
-  "55": {
+  "53": {
     "label": "compilerOptions",
     "nodes": [
       "ref_server",
@@ -2376,7 +2327,7 @@
       "tsconfig_server_json_ref_shared"
     ]
   },
-  "56": {
+  "54": {
     "label": "directory-browser.ts",
     "nodes": [
       "server_agent_service_agentservice_listdirectories",
@@ -2400,7 +2351,7 @@
       "server_session_directory_validatesessiondirectory"
     ]
   },
-  "57": {
+  "55": {
     "label": "app.ts",
     "nodes": [
       "server_api_origin_test",
@@ -2424,7 +2375,7 @@
       "shared_app_version_parseappversion"
     ]
   },
-  "58": {
+  "56": {
     "label": "event-log.ts",
     "nodes": [
       "server_event_log",
@@ -2446,6 +2397,54 @@
       "server_event_log_test",
       "server_event_log_test_directories",
       "server_event_log_yamlscalar"
+    ]
+  },
+  "57": {
+    "label": "workspace-browser.ts",
+    "nodes": [
+      "server_workspace_browser",
+      "server_workspace_browser_filekind",
+      "server_workspace_browser_imagemimetypes",
+      "server_workspace_browser_iswithin",
+      "server_workspace_browser_listworkspace",
+      "server_workspace_browser_readworkspacefile",
+      "server_workspace_browser_relativepath",
+      "server_workspace_browser_resolveworkspacepath",
+      "server_workspace_browser_searchableextensions",
+      "server_workspace_browser_searchworkspace",
+      "server_workspace_browser_searchworkspace_visit",
+      "server_workspace_browser_skippedsearchdirectories",
+      "server_workspace_browser_test",
+      "server_workspace_browser_test_directories",
+      "server_workspace_browser_test_fixture",
+      "server_workspace_browser_workspacebrowsererror",
+      "server_workspace_browser_workspacebrowsererror_constructor",
+      "shared_contracts_workspaceentrykind",
+      "shared_contracts_workspacesearchresult"
+    ]
+  },
+  "58": {
+    "label": "NewSessionDialog",
+    "nodes": [
+      "src_api_activatesession",
+      "src_api_createsession",
+      "src_api_executecommand",
+      "src_api_listdirectories",
+      "src_api_validatesessiondirectory",
+      "src_app_addknowledgerootdialog",
+      "src_app_addknowledgerootdialog_browse",
+      "src_app_changedirectorydialog",
+      "src_app_changedirectorydialog_browsedirectory",
+      "src_app_changedirectorydialog_submit",
+      "src_app_computerproviders",
+      "src_app_defaultsessionfoldercontrol",
+      "src_app_defaultsessionfoldercontrol_browse",
+      "src_app_defaultsessionfoldercontrol_choosefolder",
+      "src_app_newsessiondialog",
+      "src_app_newsessiondialog_browsedirectory",
+      "src_app_newsessiondialog_submit",
+      "src_app_normalizedruntimeselection",
+      "src_app_workspaceabsolutepath"
     ]
   },
   "59": {
@@ -2578,6 +2577,28 @@
     ]
   },
   "62": {
+    "label": "use-session-knowledge-root.ts",
+    "nodes": [
+      "src_api_getsessionknowledgeroot",
+      "src_api_requestsessionknowledgeroot",
+      "src_api_sessionknowledgerequesterror",
+      "src_api_updatesessionknowledgeroot",
+      "src_session_knowledge_api_test",
+      "src_session_knowledge_api_test_binding",
+      "src_use_session_knowledge_root",
+      "src_use_session_knowledge_root_bindingkey",
+      "src_use_session_knowledge_root_knowledgepositionforbinding",
+      "src_use_session_knowledge_root_sessionidentity",
+      "src_use_session_knowledge_root_test",
+      "src_use_session_knowledge_root_test_binding",
+      "src_use_session_knowledge_root_test_deferred",
+      "src_use_session_knowledge_root_test_first",
+      "src_use_session_knowledge_root_test_root",
+      "src_use_session_knowledge_root_test_second",
+      "src_use_session_knowledge_root_usesessionknowledgeroot"
+    ]
+  },
+  "63": {
     "label": "ReaderWorkspace",
     "nodes": [
       "src_readerworkspace",
@@ -2599,7 +2620,7 @@
       "src_readerworkspace_test_workspace"
     ]
   },
-  "63": {
+  "64": {
     "label": "capture-workbench-review.ts",
     "nodes": [
       "e2e_capture_workbench_review",
@@ -2620,7 +2641,7 @@
       "e2e_workspace_fixtures_workspacefixture"
     ]
   },
-  "64": {
+  "65": {
     "label": "TerminalSessionController",
     "nodes": [
       "server_agent_service_agentservice_istoolcallcomplete",
@@ -2641,7 +2662,7 @@
       "server_terminal_session_terminalsessioncontroller_updatenotice"
     ]
   },
-  "65": {
+  "66": {
     "label": "session-knowledge-store.test.ts",
     "nodes": [
       "server_session_knowledge_store_sessionknowledgepersistenceerror",
@@ -2661,7 +2682,7 @@
       "server_session_knowledge_store_test_root"
     ]
   },
-  "66": {
+  "67": {
     "label": "desktop.json",
     "nodes": [
       "ref_global_shortcut_default",
@@ -2680,7 +2701,7 @@
       "shell_src_tauri_capabilities_desktop_windows"
     ]
   },
-  "67": {
+  "68": {
     "label": "push-notification-service.ts",
     "nodes": [
       "server_push_notification_service",
@@ -2699,7 +2720,7 @@
       "server_push_routes_unsubscribeschema"
     ]
   },
-  "68": {
+  "69": {
     "label": "registerSessionKnowledgeRoutes",
     "nodes": [
       "server_session_knowledge_routes_registersessionknowledgeroutes",
@@ -2716,25 +2737,6 @@
       "server_session_knowledge_store_sessionknowledgereferenceerror",
       "server_session_knowledge_store_sessionknowledgereferenceerror_constructor",
       "server_session_knowledge_store_sessionknowledgestore_flush"
-    ]
-  },
-  "69": {
-    "label": "capture",
-    "nodes": [
-      "src_app_app_shortcutkeys",
-      "src_app_app_stoprecording",
-      "src_app_binding",
-      "src_app_bindinglabel",
-      "src_app_capturablecode",
-      "src_app_ismodifiercode",
-      "src_app_keylabel",
-      "src_app_readstoredshortcuts",
-      "src_app_samebinding",
-      "src_app_shortcuteditor",
-      "src_app_shortcuteditor_capture",
-      "src_app_shortcuteditor_reset",
-      "src_app_shortcuteditor_stoprecording",
-      "src_app_usablebinding"
     ]
   },
   "7": {
@@ -2794,6 +2796,25 @@
     ]
   },
   "70": {
+    "label": "capture",
+    "nodes": [
+      "src_app_app_shortcutkeys",
+      "src_app_app_stoprecording",
+      "src_app_binding",
+      "src_app_bindinglabel",
+      "src_app_capturablecode",
+      "src_app_ismodifiercode",
+      "src_app_keylabel",
+      "src_app_readstoredshortcuts",
+      "src_app_samebinding",
+      "src_app_shortcuteditor",
+      "src_app_shortcuteditor_capture",
+      "src_app_shortcuteditor_reset",
+      "src_app_shortcuteditor_stoprecording",
+      "src_app_usablebinding"
+    ]
+  },
+  "71": {
     "label": "package.json",
     "nodes": [
       "e2e_render_workspace_gifs",
@@ -2811,7 +2832,7 @@
       "ref_ffmpeg_static"
     ]
   },
-  "71": {
+  "72": {
     "label": "settings-local.json",
     "nodes": [
       "ref_allow_hub_config",
@@ -2829,7 +2850,7 @@
       "shell_src_tauri_capabilities_settings_local_windows"
     ]
   },
-  "72": {
+  "73": {
     "label": "session-knowledge-routes.ts",
     "nodes": [
       "server_session_knowledge_routes",
@@ -2847,7 +2868,7 @@
       "server_session_knowledge_store_sessionknowledgeconflicterror_constructor"
     ]
   },
-  "73": {
+  "74": {
     "label": "TranscriptionError",
     "nodes": [
       "server_transcription_service_localtranscriptionservice",
@@ -2865,7 +2886,7 @@
       "server_transcription_service_transcriptionerror_constructor"
     ]
   },
-  "74": {
+  "75": {
     "label": "shortPath",
     "nodes": [
       "src_knowledgerootselector",
@@ -2883,7 +2904,7 @@
       "src_sessionnavigation_sortablesessionitem"
     ]
   },
-  "75": {
+  "76": {
     "label": "react",
     "nodes": [
       "oxlintrc_plugins",
@@ -2900,7 +2921,7 @@
       "src_sessionactions_test"
     ]
   },
-  "76": {
+  "77": {
     "label": "promotion-monitor.test.ts",
     "nodes": [
       "server_promotion_monitor_test",
@@ -2917,7 +2938,7 @@
       "server_promotion_monitor_test_stub"
     ]
   },
-  "77": {
+  "78": {
     "label": "SessionNavigation.tsx",
     "nodes": [
       "src_session_navigation_view",
@@ -2934,7 +2955,7 @@
       "src_sessionnavigation_sortablecomputergroup"
     ]
   },
-  "78": {
+  "79": {
     "label": "scripts",
     "nodes": [
       "package_scripts",
@@ -2948,22 +2969,6 @@
       "package_scripts_test",
       "package_scripts_test_e2e",
       "package_scripts_test_watch"
-    ]
-  },
-  "79": {
-    "label": "session-knowledge-store.ts",
-    "nodes": [
-      "server_session_knowledge_store",
-      "server_session_knowledge_store_bindingschema",
-      "server_session_knowledge_store_identity",
-      "server_session_knowledge_store_recoveryschema",
-      "server_session_knowledge_store_rootcatalog",
-      "server_session_knowledge_store_rootschema",
-      "server_session_knowledge_store_sessionknowledgeevents",
-      "server_session_knowledge_store_state",
-      "server_session_knowledge_store_stateschema",
-      "server_session_knowledge_store_storedbinding",
-      "shared_contracts_updatesessionknowledgerootinput"
     ]
   },
   "8": {
@@ -3021,6 +3026,22 @@
     ]
   },
   "80": {
+    "label": "session-knowledge-store.ts",
+    "nodes": [
+      "server_session_knowledge_store",
+      "server_session_knowledge_store_bindingschema",
+      "server_session_knowledge_store_identity",
+      "server_session_knowledge_store_recoveryschema",
+      "server_session_knowledge_store_rootcatalog",
+      "server_session_knowledge_store_rootschema",
+      "server_session_knowledge_store_sessionknowledgeevents",
+      "server_session_knowledge_store_state",
+      "server_session_knowledge_store_stateschema",
+      "server_session_knowledge_store_storedbinding",
+      "shared_contracts_updatesessionknowledgerootinput"
+    ]
+  },
+  "81": {
     "label": "SessionNavigation.test.tsx",
     "nodes": [
       "src_sessionnavigation_test",
@@ -3034,22 +3055,6 @@
       "src_sessionnavigation_test_session",
       "src_sessionnavigation_test_sessionsbycomputer",
       "src_sessionnavigation_test_worker"
-    ]
-  },
-  "81": {
-    "label": "use-session-knowledge-root.ts",
-    "nodes": [
-      "src_use_session_knowledge_root",
-      "src_use_session_knowledge_root_bindingkey",
-      "src_use_session_knowledge_root_knowledgepositionforbinding",
-      "src_use_session_knowledge_root_sessionidentity",
-      "src_use_session_knowledge_root_test",
-      "src_use_session_knowledge_root_test_binding",
-      "src_use_session_knowledge_root_test_deferred",
-      "src_use_session_knowledge_root_test_first",
-      "src_use_session_knowledge_root_test_root",
-      "src_use_session_knowledge_root_test_second",
-      "src_use_session_knowledge_root_usesessionknowledgeroot"
     ]
   },
   "82": {
@@ -3230,6 +3235,18 @@
     ]
   },
   "91": {
+    "label": "commitSidebarWidth",
+    "nodes": [
+      "src_app_app_commitsidebarwidth",
+      "src_app_app_sidebarresizeend",
+      "src_app_app_sidebarresizekeydown",
+      "src_app_app_sidebarresizemove",
+      "src_app_clampsidebarwidth",
+      "src_app_readstoredsidebarwidth",
+      "src_app_writestored"
+    ]
+  },
+  "92": {
     "label": "composer-layout.test.ts",
     "nodes": [
       "server_composer_layout_test",
@@ -3240,7 +3257,7 @@
       "server_composer_layout_test_stylesheet"
     ]
   },
-  "92": {
+  "93": {
     "label": "MarkdownCodeBlock.tsx",
     "nodes": [
       "src_markdowncodeblock",
@@ -3251,7 +3268,7 @@
       "src_markdowncodeblock_test_originalclipboard"
     ]
   },
-  "93": {
+  "94": {
     "label": "session-navigation-view.test.ts",
     "nodes": [
       "src_session_navigation_view_test",
@@ -3262,7 +3279,7 @@
       "src_session_navigation_view_test_last"
     ]
   },
-  "94": {
+  "95": {
     "label": "activity-spacing.test.ts",
     "nodes": [
       "server_activity_spacing_test",
@@ -3271,7 +3288,16 @@
       "server_activity_spacing_test_stylesheet"
     ]
   },
-  "95": {
+  "96": {
+    "label": ".terminalContinuationState",
+    "nodes": [
+      "server_agent_service_agentservice_terminalcontinuationstate",
+      "server_agent_service_isforegroundcompletionevent",
+      "server_agent_service_isforegroundlifecycleevent",
+      "server_agent_service_statusfromevents"
+    ]
+  },
+  "97": {
     "label": "release-publication.test.ts",
     "nodes": [
       "server_release_publication_test",
@@ -3280,7 +3306,7 @@
       "server_release_publication_test_publicationfixture"
     ]
   },
-  "96": {
+  "98": {
     "label": "MockMediaRecorder",
     "nodes": [
       "src_app_test_mockmediarecorder",
@@ -3289,28 +3315,12 @@
       "src_app_test_mockmediarecorder_stop"
     ]
   },
-  "97": {
+  "99": {
     "label": ".lookupSessionMetadata",
     "nodes": [
       "server_computer_manager_computermanager_listhistory",
       "server_computer_manager_computermanager_lookupsessionmetadata",
       "server_session_service_sessionservice_listhistory"
-    ]
-  },
-  "98": {
-    "label": "MockWebSocket",
-    "nodes": [
-      "src_app_test_mockwebsocket",
-      "src_app_test_mockwebsocket_close",
-      "src_app_test_mockwebsocket_constructor"
-    ]
-  },
-  "99": {
-    "label": "MermaidDiagram.test.tsx",
-    "nodes": [
-      "src_mermaiddiagram_test",
-      "src_mermaiddiagram_test_mermaidmodule",
-      "src_mermaiddiagram_test_render"
     ]
   }
 }

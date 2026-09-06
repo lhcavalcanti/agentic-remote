@@ -4,6 +4,7 @@ import {
   dispatchQueuedPrompt,
   getProviderRuntimeOptions,
   getRuntimeOptions,
+  getSession,
   listBackgroundTasks,
   removeQueuedPrompt,
   sendMessage,
@@ -18,6 +19,18 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('forwards a bounded queue-check signal without using a cached session snapshot', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async (_path: string, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal)
+      expect(init?.cache).toBe('no-store')
+      return Response.json({ session: { id: 'session' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(getSession('computer', 'session', controller.signal)).resolves.toEqual({ id: 'session' })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('requests fresh provider and session model catalogs without browser caching', async () => {
     const fetchMock = vi.fn(async () => Response.json({ models: [] }))
     vi.stubGlobal('fetch', fetchMock)

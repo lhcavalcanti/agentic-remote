@@ -265,6 +265,23 @@ History previews MUST NOT be saved or dispatched as queued rewrites. Command
 validation MUST use the owning session's current catalog and expanded paste
 contents; app-only commands MUST NOT run as a side effect of editing.
 
+An unclaimed missing queue row MUST NOT turn a queued rewrite into an ordinary
+sendable draft. Older runtimes can publish that absence while provider loading
+is still pending and restore the original after refusal; capability metadata,
+elapsed time, and matching transcript text are not delivery receipts. The edit
+identity MUST survive reload and navigation. The UI MUST explain the uncertainty,
+allow checking the owning queue, and require an explicit provider-check
+confirmation before keeping the rewrite as a new draft or discarding it.
+An accepted owned operation or explicit Clear may release the corresponding
+identity; Clear MUST still preserve in-flight save and uncertain-dispatch
+ownership until the appropriate completion or explicit resolution.
+
+Absence of targeted-dispatch support MUST NOT hide Save-only editing where the
+owning runtime implements it. A missing or refused editing route MUST preserve
+the rewrite and explain that the runtime may need updating; it MUST NOT silently
+fall back to sending a new message. Queue-operation errors MUST remain scoped
+to the owning computer and session rather than appearing on a different selection.
+
 Targeted queue delivery MUST be admitted only while the session is available
 and idle. Its claim MUST be durable before provider invocation, preserve the
 original item and queue position in public snapshots, and exclude that item

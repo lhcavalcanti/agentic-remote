@@ -5903,7 +5903,7 @@ describe('App', () => {
     )
   })
 
-  async function openTargetedQueueEditor() {
+  async function openTargetedQueueEditor(targetIndex = 1, dispatchCapability = true) {
     const prompts = ['first original', 'second original', 'third original'].map((content, index) => ({
       id: `q${index + 1}`, content, createdAt: '2026-09-05T00:00:00.000Z',
     }))
@@ -5913,15 +5913,15 @@ describe('App', () => {
     vi.mocked(listComputers).mockResolvedValue([{
       ...computer,
       providers: computer.providers?.map((provider) => ({
-        ...provider, supportsQueuedPromptDispatch: true,
+        ...provider, supportsQueuedPromptDispatch: dispatchCapability ? true : undefined,
       })),
     }])
     vi.mocked(listSessions).mockResolvedValue([queuedSession])
     vi.mocked(getSession).mockResolvedValue(queuedSession)
     const rendered = render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 2' }))
+    fireEvent.click(await screen.findByRole('button', { name: `Edit queued prompt ${targetIndex + 1}` }))
     const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
-    expect(textarea).toHaveValue('second original')
+    expect(textarea).toHaveValue(prompts[targetIndex].content)
     return { rendered, textarea, queuedSession, prompts, key: 'computer-1:session-1' }
   }
 
@@ -6130,7 +6130,49 @@ describe('App', () => {
     expect(localStorage.getItem('agentic-remote:queued-edit')).toContain('q2')
   })
 
-  it('keeps the text when the message being edited leaves the queue', async () => {
+  it.each(['idle', 'error'] as const)('keeps legacy edit ownership through a held %s provider load and FIFO restoration', async (status) => {
+    const { textarea, queuedSession, prompts, key } = await openTargetedQueueEditor(0)
+    fireEvent.change(textarea, { target: { value: 'My legacy rewrite\n' } })
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'computer.updated',
+          computer: { ...computer, providers: computer.providers?.map((provider) => ({
+            ...provider, supportsQueuedPromptDispatch: undefined,
+          })) },
+        }),
+      } as MessageEvent)
+      // Exact legacy shape: shift/publish precedes the awaited provider load.
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...queuedSession, revision: 2, status, queuedPrompts: prompts.slice(1), queuedCount: 2 },
+        }),
+      } as MessageEvent)
+    })
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q1' })
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument()
+    expect(textarea).toHaveValue('My legacy rewrite\n')
+    expect(textarea).toHaveAttribute('placeholder', 'Queue state needs checking · your rewrite is preserved')
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...queuedSession, revision: 3, status, queuedPrompts: prompts },
+        }),
+      } as MessageEvent)
+    })
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q1' })
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeEnabled()
+    expect(textarea).toHaveValue('My legacy rewrite\n')
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('keeps a truly absent item owned until the user checks and explicitly keeps the rewrite', async () => {
     // A message being rewritten is still an ordinary waiting message: the
     // agent can reach it and send it, or it can be removed. Either way it is
     // no longer there to be written back to, and the banner would go on
@@ -6178,12 +6220,253 @@ describe('App', () => {
       } as MessageEvent)
     })
 
-    // Out of edit mode, because there is nothing left to write back to...
-    await waitFor(() =>
-      expect(document.querySelector('.queued-edit-banner')).toBeNull(),
-    )
-    // ...and the rewriting is still there rather than lost to a race.
+    expect(document.querySelector('.queued-edit-banner')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeDisabled()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    fireEvent.click(screen.getByRole('button', { name: "I've checked — keep as draft" }))
+    expect(document.querySelector('.queued-edit-banner')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: "I've checked — keep as draft" }))
+    expect(document.querySelector('.queued-edit-banner')).toBeNull()
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('neither removes nor cancels'))
     expect(screen.getByLabelText('Message')).toHaveValue('my rewritten text')
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(removeQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('retains a queued rewrite when legacy absence arrives before capability loss', async () => {
+    const { textarea, queuedSession, key } = await openTargetedQueueEditor(0)
+    fireEvent.change(textarea, { target: { value: 'Do not detach during a metadata race' } })
+    const missing = { ...queuedSession, queuedPrompts: [], queuedCount: 0, revision: 2 }
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: missing }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: {
+          ...computer, providers: computer.providers?.map((provider) => ({
+            ...provider, supportsQueuedPromptDispatch: undefined,
+          })),
+        } }),
+      } as MessageEvent)
+    })
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q1' })
+    expect(screen.getByRole('button', { name: 'Put this back in the queue' })).toBeDisabled()
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+    expect(updateQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('does not use repeated missing snapshots or matching transcript text as a queued receipt', async () => {
+    const { textarea, queuedSession, key } = await openTargetedQueueEditor(0, false)
+    const rewrite = '  My rewrite with an intentional newline\n'
+    fireEvent.change(textarea, { target: { value: rewrite } })
+    const missing = {
+      ...queuedSession, queuedPrompts: [], queuedCount: 0, revision: 2,
+      messages: [{ id: 'matching', role: 'user' as const, content: rewrite, createdAt: queuedSession.updatedAt }],
+    }
+    vi.mocked(getSession).mockResolvedValue(missing)
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: missing }),
+      } as MessageEvent)
+    })
+    vi.mocked(getSession).mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Check queue' }))
+    await waitFor(() => expect(getSession).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check queue' })).toBeEnabled())
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q1' })
+    expect(textarea).toHaveValue(rewrite)
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeDisabled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('releases a timed-out queue check without releasing the legacy rewrite or blocking explicit resolution', async () => {
+    const { queuedSession, key } = await openTargetedQueueEditor(0, false)
+    const missing = { ...queuedSession, queuedPrompts: [], queuedCount: 0, revision: 2 }
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: missing }),
+      } as MessageEvent)
+    })
+    const controller = new AbortController()
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    try {
+      vi.mocked(getSession).mockImplementationOnce((_computerId, _sessionId, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new Error('Queue check timed out')), { once: true })
+        }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Check queue' }))
+      expect(timeout).toHaveBeenCalledWith(15_000)
+      await act(async () => { controller.abort() })
+      expect(await screen.findByText(/Queue check timed out/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: "I've checked — keep as draft" })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Check queue' })).toBeEnabled()
+      expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+        .toEqual({ promptId: 'q1' })
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(updateQueuedPrompt).not.toHaveBeenCalled()
+    } finally {
+      timeout.mockRestore()
+    }
+  })
+
+  it('restores an already-persisted legacy edit across reload and navigation without borrowing another computer draft', async () => {
+    const key = 'computer-1:session-1'
+    const foreignKey = 'computer-2:session-1'
+    const missing = { ...session, queuedPrompts: [], queuedCount: 0 }
+    const foreign = {
+      ...session, computerId: secondComputer.id, computerName: secondComputer.name,
+      title: 'Independent legacy peer', queuedPrompts: [], queuedCount: 0,
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([missing, foreign])
+    vi.mocked(getSession).mockImplementation(async (computerId) => computerId === computer.id ? missing : foreign)
+    localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+      [key]: { text: 'Persisted legacy rewrite', pastes: [], queuedEdit: { promptId: 'q1' } },
+      [foreignKey]: { text: 'Foreign draft unchanged', pastes: [] },
+    }))
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+      [key]: 'Persisted legacy rewrite', [foreignKey]: 'Foreign draft unchanged',
+    }))
+    localStorage.setItem('agentic-remote:composer-drafts-generation', '1')
+    const first = render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('Persisted legacy rewrite')
+    expect(screen.getByText('Queue state needs checking.')).toBeInTheDocument()
+    fireEvent.click(screen.getByText(foreign.title).closest('button')!)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Foreign draft unchanged'))
+    expect(screen.queryByText('Queue state needs checking.')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText(session.title).closest('button')!)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Persisted legacy rewrite'))
+    first.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('Persisted legacy rewrite')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q1' })
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts') || '{}')[foreignKey])
+      .toBe('Foreign draft unchanged')
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('requires explicit confirmation to discard an unclaimed missing rewrite without cancelling provider work', async () => {
+    const { textarea, queuedSession, key } = await openTargetedQueueEditor(0, false)
+    fireEvent.change(textarea, { target: { value: 'Keep until I deliberately discard' } })
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: {
+          ...queuedSession, queuedPrompts: [], queuedCount: 0,
+        } }),
+      } as MessageEvent)
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Stop editing this queued message' }))
+    expect(textarea).toHaveValue('Keep until I deliberately discard')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop editing this queued message' }))
+    expect(textarea).toHaveValue('')
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('This discards your rewritten text'))
+    expect(removeQueuedPrompt).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('does not silently discard a missing rewrite while a different queued claim is unresolved', async () => {
+    const { textarea, queuedSession, prompts, key } = await openTargetedQueueEditor(0, false)
+    fireEvent.change(textarea, { target: { value: 'Keep this separate rewrite' } })
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: {
+          ...queuedSession, queuedPrompts: prompts.slice(1), queuedCount: 2,
+          queuedDispatch: {
+            promptId: 'q2', attemptId: 'other-attempt', content: 'second original',
+            state: 'uncertain', startedAt: queuedSession.updatedAt,
+          },
+        } }),
+      } as MessageEvent)
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Stop editing this queued message' }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('This discards your rewritten text'))
+    expect(textarea).toHaveValue('Keep this separate rewrite')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q1' })
+    expect(removeQueuedPrompt).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('keeps a labelled Save-only path on an editable runtime without targeted dispatch', async () => {
+    const { textarea, queuedSession, prompts } = await openTargetedQueueEditor(0, false)
+    const content = '  Save-only legacy rewrite\n'
+    fireEvent.change(textarea, { target: { value: content } })
+    const updated = { ...prompts[0], content }
+    vi.mocked(updateQueuedPrompt).mockResolvedValueOnce({
+      session: { ...queuedSession, queuedPrompts: [updated, ...prompts.slice(1)] }, prompt: updated,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Put this back in the queue' }))
+    await waitFor(() => expect(updateQueuedPrompt).toHaveBeenCalledExactlyOnceWith(computer.id, session.id, 'q1', content))
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('explains an unsupported legacy PATCH without detaching or sending the rewrite', async () => {
+    const { textarea, queuedSession, prompts, key } = await openTargetedQueueEditor(0, false)
+    const content = 'Rewrite that this older node cannot save yet'
+    fireEvent.change(textarea, { target: { value: content } })
+    vi.mocked(updateQueuedPrompt).mockRejectedValueOnce(new Error('Not Found'))
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+    await screen.findByText(/runtime may not support PATCH/)
+    expect(textarea).toHaveValue(content)
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q1' })
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+    vi.mocked(removeQueuedPrompt).mockResolvedValueOnce({
+      session: { ...queuedSession, queuedPrompts: prompts.slice(1), queuedCount: 2 }, prompt: prompts[0],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+    await waitFor(() => expect(removeQueuedPrompt).toHaveBeenCalledExactlyOnceWith(computer.id, session.id, 'q1'))
+    await waitFor(() => expect(document.querySelector('.queued-edit-banner')).toBeNull())
+    expect(textarea).toHaveValue(content)
+  })
+
+  it('attributes legacy provider and late save failures only to their owning session', async () => {
+    const first = { id: 'q1', content: 'Original', createdAt: session.updatedAt }
+    const local = { ...session, queuedPrompts: [first], queuedCount: 1 }
+    const remote = {
+      ...session, computerId: secondComputer.id, computerName: secondComputer.name, title: 'Unrelated peer',
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([local, remote])
+    vi.mocked(getSession).mockImplementation(async (computerId) => computerId === computer.id ? local : remote)
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 1' }))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Owned local rewrite' } })
+    let rejectSave: (error: Error) => void = () => {}
+    vi.mocked(updateQueuedPrompt).mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+    await waitFor(() => expect(updateQueuedPrompt).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByText(remote.title).closest('button')!)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(''))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Peer writing stays here' } })
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'error', computerId: computer.id, sessionId: session.id, message: 'Legacy provider load refused' }),
+      } as MessageEvent)
+      rejectSave(new Error('Legacy PATCH is unavailable'))
+    })
+    expect(screen.queryByText(/Legacy provider load refused|Legacy PATCH is unavailable/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Message')).toHaveValue('Peer writing stays here')
+    fireEvent.click(screen.getByText(session.title).closest('button')!)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Owned local rewrite'))
+    expect(await screen.findByText(/Legacy PATCH is unavailable/)).toBeInTheDocument()
   })
 
   it('writes a shortcut out in full when saving it to the queue', async () => {
@@ -6952,16 +7235,20 @@ describe('App', () => {
   })
 
   it.each([
-    { outcome: 'accepted', newer: false },
-    { outcome: 'accepted', newer: true },
-    { outcome: 'refused', newer: false },
-    { outcome: 'refused', newer: true },
-  ])('settles queued-save ownership after two clear replacements ($outcome, newer=$newer)', async ({ outcome, newer }) => {
+    { outcome: 'accepted', newer: false, dispatchCapability: true },
+    { outcome: 'accepted', newer: true, dispatchCapability: true },
+    { outcome: 'refused', newer: false, dispatchCapability: true },
+    { outcome: 'refused', newer: true, dispatchCapability: true },
+    { outcome: 'accepted', newer: false, dispatchCapability: false },
+    { outcome: 'accepted', newer: true, dispatchCapability: false },
+    { outcome: 'refused', newer: false, dispatchCapability: false },
+    { outcome: 'refused', newer: true, dispatchCapability: false },
+  ])('settles queued-save ownership after two clear replacements ($outcome, newer=$newer, targeted=$dispatchCapability)', async ({ outcome, newer, dispatchCapability }) => {
     const foreignKey = 'computer-2:session-1'
     localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
       [foreignKey]: 'Other computer writing',
     }))
-    const { textarea, queuedSession, prompts } = await openTargetedQueueEditor()
+    const { textarea, queuedSession, prompts } = await openTargetedQueueEditor(1, dispatchCapability)
     fireEvent.change(textarea, { target: { value: 'Submitted queue rewrite' } })
     const changed = { ...prompts[1], content: 'Submitted queue rewrite' }
     let settleSave: () => void = () => { throw new Error('The save has not started') }

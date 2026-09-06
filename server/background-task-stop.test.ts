@@ -776,6 +776,93 @@ describe('background shell stop reconciliation', () => {
     })
   })
 
+  describe.each(['native', 'tool'])('unparseable-start %s handoff ordering', (source) => {
+    function handoff(callId: string): SessionEvent {
+      return source === 'native'
+        ? nativeStart('42', callId, 8)
+        : completed(callId, {
+            result: { content: '<command started in background with shellId: 42>' },
+          }, 8)
+    }
+
+    describe.each([
+      { sourceStart: 'opaque-source', destinationStart: '2026-09-01T08:00:00.000Z' },
+      { sourceStart: '2026-09-01T08:00:00.000Z', destinationStart: 'opaque-destination' },
+      { sourceStart: 'opaque-source', destinationStart: 'opaque-destination' },
+      { sourceStart: 'opaque-start', destinationStart: 'opaque-start' },
+    ])('$sourceStart -> $destinationStart', ({ sourceStart, destinationStart }) => {
+      describe.each(['launch', 'inventory', 'unmaterialized'])('source projected by %s', (projection) => {
+        it.each(['completed', 'failed', 'cancelled'])('preserves a distinct newer %s destination and its output', (status) => {
+          const events = [
+            { ...started('older', 'bash', {
+              shellId: 'caller-name', mode: projection === 'launch' ? 'async' : 'sync',
+              command: 'node older.js',
+            }), timestamp: sourceStart },
+            reportedShell('42', destinationStart, 1),
+            started('read-destination', 'read_bash', { shellId: '42' }, 2),
+            completed('read-destination', { result: { content: 'New final output' } }, 3),
+            reportedShell('42', destinationStart, 4, {
+              status, completedAt: '2026-09-01T08:00:03.000Z',
+              error: status === 'failed' ? 'New failure' : undefined, result: 'New final result',
+            }),
+            ...(projection === 'inventory' ? [reportedShell('caller-name', sourceStart, 5)] : []),
+          ]
+          const before = snapshot(events)
+          const destination = before.tasks.find((task) => task.id === '42')
+          expect(destination).toMatchObject({
+            status, result: 'New final result', progress: { recentOutput: 'New final output' },
+          })
+          const result = snapshot([...events, handoff('older')])
+          expect(result.tasks.find((task) => task.id === '42')).toEqual(destination)
+          expect(result.runningCount).toBe(before.runningCount)
+          expect(result.tasks).toHaveLength(before.tasks.length)
+        })
+
+        it('admits a newer identity even when the older destination materializes later', () => {
+          const events = [
+            { ...started('older', 'bash', {
+              shellId: '42', mode: 'sync', command: 'printf old',
+            }), timestamp: destinationStart },
+            completed('older', { result: { content: 'Old final output' } }, 1),
+            { ...started('newer', 'bash', {
+              shellId: 'caller-name', mode: projection === 'launch' ? 'async' : 'sync',
+              command: 'node newer.js',
+            }), timestamp: sourceStart },
+            reportedShell('42', destinationStart, 4),
+            ...(projection === 'inventory' ? [reportedShell('caller-name', sourceStart, 5)] : []),
+          ]
+          expect(snapshot(events).tasks.find((task) => task.id === '42')).toMatchObject({
+            status: 'completed', progress: { recentOutput: 'Old final output' },
+          })
+          const result = snapshot([...events, handoff('newer')])
+          expect(result.runningCount).toBe(1)
+          expect(result.tasks).toEqual([expect.objectContaining({
+            id: '42', status: 'running', command: 'node newer.js', startedAt: sourceStart,
+          })])
+          expect(result.tasks[0].completedAt).toBeUndefined()
+          expect(result.tasks[0].progress?.recentOutput).not.toBe('Old final output')
+        })
+      })
+    })
+
+    it.each(['async', 'sync'])('rejects an unorderable %s handoff without a destination shell identity', (mode) => {
+      const events = [
+        { ...started('launch', 'bash', {
+          shellId: 'caller-name', mode, command: 'node fixture.js',
+        }), timestamp: 'opaque-start' },
+        reportedShell('42', '2026-09-01T08:00:00.000Z', 4, {
+          type: 'agent', status: 'completed', result: 'Unrelated agent result',
+        }),
+      ]
+      const before = snapshot(events)
+      const after = snapshot([...events, handoff('launch')])
+      expect(after.tasks.find((task) => task.id === '42')).toEqual(
+        before.tasks.find((task) => task.id === '42'),
+      )
+      expect(after.tasks).toHaveLength(before.tasks.length)
+    })
+  })
+
   it.each(['completed', 'failed', 'cancelled'])('rejects an older uncorrelated start over a newer %s execution', (status) => {
     const current = reportedShell('42', '2026-09-01T08:00:04.000Z', 6, {
       status, completedAt: '2026-09-01T08:00:05.000Z',
@@ -1934,6 +2021,200 @@ describe('background shell stop reconciliation', () => {
         id: '42', status: 'completed', completedAt: finish.timestamp,
         progress: { recentOutput: 'Native final output' },
       })
+    })
+  })
+
+  describe.each(['read_bash', 'read_shell'])('terminal targeted %s exits', (tool) => {
+    function readExit(callId: string, shellId: string, exitCode: number, seconds = 8, success = true) {
+      return completed(callId, {
+        success,
+        result: { content: `Final process output\n<shellId: ${shellId} completed with exit code ${exitCode}>` },
+      }, seconds)
+    }
+
+    describe.each(['completed', 'failed', 'cancelled', 'stop'])('intervening %s', (terminal) => {
+      function terminalize(shellId: string, startedAt: string): SessionEvent[] {
+        return terminal === 'stop'
+          ? [
+              started('stop', 'stop_bash', { shellId }, 4),
+              completed('stop', stopAcknowledgement(shellId), 5),
+            ]
+          : [reportedShell(shellId, startedAt, 5, {
+              status: terminal, completedAt: '2026-09-01T08:00:05.000Z',
+              error: terminal === 'failed' ? 'Inventory failure' : undefined,
+              result: 'Final inventory result',
+            })]
+      }
+
+      describe.each([true, false])('reader success=%s', (success) => {
+        it.each([0, 7])('merges explicit exit=%s and output without moving completion time', (exitCode) => {
+          const launch = launched('42')
+          const events = [
+            ...launch,
+            started('read', tool, { shellId: '42' }, 2),
+            ...terminalize('42', launch[0].timestamp),
+          ]
+          const before = snapshot(events).tasks[0]
+          const exit = readExit('read', '42', exitCode, 8, success)
+          const result = snapshot([...events, exit])
+          expect(result.runningCount).toBe(0)
+          expect(result.tasks[0]).toMatchObject({
+            status: exitCode === 0
+              ? terminal === 'stop' || terminal === 'cancelled' ? 'cancelled' : 'completed'
+              : 'failed',
+            completedAt: before.completedAt,
+            progress: { recentOutput: exit.data.result?.content },
+            canCancel: false,
+          })
+          expect(result.tasks[0].error).toBe(exitCode === 0 ? undefined : 'Shell exited with status 7')
+          expect(result.tasks[0].result).toBe(before.result)
+          expect(snapshot([
+            ...events, exit,
+            started('read-again', tool, { shellId: '42' }, 9),
+            readExit('read-again', '42', exitCode, 10, success),
+          ])).toEqual(result)
+        })
+      })
+
+      it.each([0, 7])('merges exit=%s into the captured terminal execution after alias reuse', (exitCode) => {
+        const launch = launched('caller-name', 'async', false, 'original')
+        const events = [
+          ...launch,
+          started('read', tool, { shellId: 'caller-name' }, 2),
+          nativeStart('42', 'original', 3),
+          ...terminalize('42', launch[0].timestamp),
+          ...launched('caller-name', 'async', false, 'replacement', 6),
+        ]
+        const before = snapshot(events)
+        const exit = readExit('read', 'caller-name', exitCode)
+        const result = snapshot([...events, exit])
+        expect(result.tasks.find((task) => task.id === '42')).toMatchObject({
+          status: exitCode === 0
+            ? terminal === 'stop' || terminal === 'cancelled' ? 'cancelled' : 'completed'
+            : 'failed',
+          completedAt: '2026-09-01T08:00:05.000Z',
+          progress: { recentOutput: exit.data.result?.content },
+        })
+        expect(result.tasks.find((task) => task.id === 'caller-name')).toEqual(
+          before.tasks.find((task) => task.id === 'caller-name'),
+        )
+        expect(result.runningCount).toBe(1)
+      })
+
+      it.each([
+        { success: true, content: 'Late progress, not a process exit' },
+        { success: false, content: 'Reader failed, not a process exit' },
+        { success: true, content: '<shellId: 99 completed with exit code 0>' },
+        { success: false, content: '<shellId: 99 completed with exit code 7>' },
+      ])('ignores non-exit or mismatched results ($success, $content)', ({ success, content }) => {
+        const launch = launched('42')
+        const events = [
+          ...launch, ...launched('99'),
+          started('read', tool, { shellId: '42' }, 2),
+          ...terminalize('42', launch[0].timestamp),
+        ]
+        expect(snapshot([
+          ...events, completed('read', { success, result: { content } }, 8),
+        ])).toEqual(snapshot(events))
+      })
+
+      it.each([0, 7])('rejects exit=%s after the captured terminal execution is replaced', (exitCode) => {
+        const launch = launched('42', 'async', false, 'original')
+        const events = [
+          ...launch,
+          started('read', tool, { shellId: '42' }, 2),
+          ...terminalize('42', launch[0].timestamp),
+          ...launched('42', 'async', false, 'replacement', 6),
+          reportedShell('42', '2026-09-01T08:00:06.000Z', 7, {
+            status: 'completed', completedAt: '2026-09-01T08:00:07.000Z', result: 'Replacement result',
+          }),
+        ]
+        expect(snapshot([...events, readExit('read', '42', exitCode)])).toEqual(snapshot(events))
+      })
+    })
+
+    it.each([0, 7])('fills missing inventory completion time once from a structured exit=%s', (exitCode) => {
+      const launch = launched('42')
+      const inventory = reportedShell('42', launch[0].timestamp, 4, { status: 'completed' })
+      const exit = completed('read', {
+        result: {
+          ...inventory.data.result,
+          content: '',
+          exit: { type: 'shell_exit', shellId: '42', exitCode, outputPreview: 'Structured final output' },
+        } as NonNullable<ToolComplete['data']['result']>,
+      }, 5)
+      const events = [...launch, started('read', tool, { shellId: '42' }, 2), inventory, exit]
+      const result = snapshot(events)
+      expect(result.tasks[0]).toMatchObject({
+        status: exitCode === 0 ? 'completed' : 'failed',
+        completedAt: exit.timestamp, progress: { recentOutput: 'Structured final output' },
+      })
+      expect(snapshot([
+        ...events, started('again', tool, { shellId: '42' }, 6),
+        { ...exit, timestamp: '2026-09-01T08:00:08.000Z', data: { ...exit.data, toolCallId: 'again' } },
+      ])).toEqual(result)
+    })
+
+    describe.each(['native', 'read'])('already known %s exit', (source) => {
+      it.each([0, 7])('keeps the first authoritative exit=%s outcome and timestamp', (exitCode) => {
+        const events = [
+          ...launched('42'),
+          started('read', tool, { shellId: '42' }, 2),
+          ...(source === 'native'
+            ? [nativeComplete('42', { toolCallId: 'launch-42' }, 4, exitCode)]
+            : [started('first-read', tool, { shellId: '42' }, 3), readExit('first-read', '42', exitCode, 4)]),
+        ]
+        const before = snapshot(events)
+        expect(snapshot([...events, readExit('read', '42', exitCode === 0 ? 7 : 0)]))
+          .toEqual(before)
+        const result = snapshot([...events, readExit('read', '42', exitCode)])
+        expect(result.tasks[0]).toMatchObject({
+          status: exitCode === 0 ? 'completed' : 'failed',
+          completedAt: '2026-09-01T08:00:04.000Z',
+          progress: { recentOutput: expect.stringContaining('Final process output') },
+        })
+        expect(snapshot([
+          ...events, readExit('read', '42', exitCode),
+          nativeComplete('42', { toolCallId: 'launch-42' }, 9, exitCode === 0 ? 7 : 0),
+        ])).toEqual(result)
+      })
+    })
+
+    it.each([0, 7])('does not retain weaker inventory failure ahead of native/read exit=%s', (exitCode) => {
+      const launch = launched('42')
+      const events = [
+        ...launch,
+        started('read', tool, { shellId: '42' }, 2),
+        reportedShell('42', launch[0].timestamp, 3, {
+          status: 'failed', error: 'Inventory failure', completedAt: '2026-09-01T08:00:03.000Z',
+        }),
+        nativeComplete('42', { toolCallId: 'launch-42' }, 4, exitCode),
+        readExit('read', '42', exitCode),
+      ]
+      const result = snapshot(events)
+      expect(result.tasks[0]).toMatchObject({
+        status: exitCode === 0 ? 'completed' : 'failed',
+        completedAt: '2026-09-01T08:00:03.000Z',
+        progress: { recentOutput: expect.stringContaining('Final process output') },
+      })
+      expect(result.tasks[0].error).toBe(exitCode === 0 ? undefined : 'Shell exited with status 7')
+    })
+
+    it('retains matching native final output without extending an observed exit duration', () => {
+      const events = [
+        ...launched('42'),
+        started('read', tool, { shellId: '42' }, 2),
+        readExit('read', '42', 7, 3),
+      ]
+      const finish = nativeComplete('42', { toolCallId: 'launch-42' }, 4, 7)
+      const result = snapshot([...events, finish])
+      expect(result.tasks[0]).toMatchObject({
+        status: 'failed', completedAt: '2026-09-01T08:00:03.000Z',
+        progress: { recentOutput: 'Native final output' },
+      })
+      expect(snapshot([
+        ...events, finish, nativeComplete('42', { toolCallId: 'launch-42' }, 8, 7),
+      ])).toEqual(result)
     })
   })
 

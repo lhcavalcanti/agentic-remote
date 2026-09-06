@@ -722,7 +722,7 @@ function rekeyTask(
   const destination = tasks.get(to)
   if (
     destination && destination !== current &&
-    (isLiveTaskStatus(destination.status) || compareExecutions(current, destination) < 0)
+    (isLiveTaskStatus(destination.status) || !(compareExecutions(current, destination) > 0))
   ) {
     return undefined
   }
@@ -1098,6 +1098,7 @@ export function backgroundTasksFromEvents(
       mode?: ReturnType<typeof shellTaskMode>
     }
     materialized: boolean
+    exitCode?: number
     completion?: Pick<BackgroundTask, 'status' | 'completedAt' | 'error' | 'progress'>
     ids: Set<string>
   }
@@ -1174,12 +1175,15 @@ export function backgroundTasksFromEvents(
     const rightIdentity = 'creationOrder' in right ? right : shellInstances.get(right)
     const leftStart = (leftIdentity || left).startedAt
     const rightStart = (rightIdentity || right).startedAt
-    // Tied clocks need execution order, not the arrival of a refresh or a
-    // delayed handoff. The ordinal belongs to the identity even before a row.
-    if (leftIdentity && rightIdentity && sameExecutionStart(leftStart, rightStart)) {
+    const difference = Date.parse(leftStart) - Date.parse(rightStart)
+    if (Number.isFinite(difference) && difference !== 0) return difference
+    // Tied or unparseable clocks need retained execution order, not the
+    // arrival of a refresh or delayed handoff. Without both identities,
+    // callers must reject an unordered comparison rather than fail open.
+    if (leftIdentity && rightIdentity) {
       return leftIdentity.creationOrder - rightIdentity.creationOrder
     }
-    return Date.parse(leftStart) - Date.parse(rightStart)
+    return difference
   }
   const isStaleUnboundShellStart = (
     id: string,
@@ -1306,23 +1310,28 @@ export function backgroundTasksFromEvents(
     }
     if (identity?.completion) return
     const exitCode = numberValue(data.exitCode)
+    const currentIdentity = shellIdentityOf(current)
+    if (currentIdentity.exitCode !== undefined) {
+      if (currentIdentity.exitCode === exitCode) shellTaskOutput(current, data)
+      return
+    }
+    currentIdentity.exitCode = exitCode
     current.status =
       data.cancelled === true
         ? 'cancelled'
         : exitCode !== undefined && exitCode !== 0
           ? 'failed'
-          : current.status === 'failed' || current.status === 'cancelled'
+          : current.status === 'cancelled' || (exitCode === undefined && current.status === 'failed')
             ? current.status
             : 'completed'
-    current.completedAt = timestamp
+    current.completedAt ??= timestamp
     current.description =
       boundedText(eventString(data, 'description')) || current.description
     if (current.status === 'failed') {
       current.error =
         errorValue(data) ||
-        current.error ||
         (exitCode === undefined
-          ? 'Shell task failed'
+          ? current.error || 'Shell task failed'
           : `Shell exited with status ${exitCode}`)
     } else {
       current.error = undefined
@@ -1474,7 +1483,7 @@ export function backgroundTasksFromEvents(
                 isLiveTaskStatus(destination.status)
               const replacesNewerExecution =
                 destination !== undefined && destination !== known &&
-                compareShellExecutions(known, destination) < 0
+                !(compareShellExecutions(known, destination) > 0)
               if (!stealsLiveSlot && !replacesNewerExecution) {
                 const moved =
                   known.id === shellId
@@ -1845,7 +1854,7 @@ export function backgroundTasksFromEvents(
         ) continue
       } else if (target) {
         const addressed = target.identity ? shellByIdentity(target.identity) : undefined
-        if (!addressed || !isLiveTaskStatus(addressed.status)) continue
+        if (!addressed || (!isLiveTaskStatus(addressed.status) && !shellExit)) continue
         if (
           namedShellId &&
           namedShellId !== target.requestedId &&
@@ -1919,14 +1928,24 @@ export function backgroundTasksFromEvents(
             rekeyShellTask(current, handoffShellId) || current
           if (isShellTool(toolName)) aliases.set(toolCallId, current.id)
         }
-        if (isTerminalTaskStatus(current.status)) continue
+        if (isTerminalTaskStatus(current.status) && !(target && shellExit)) continue
         if (shellExit) {
-          current.status = shellExit.exitCode === 0 ? 'completed' : 'failed'
-          current.completedAt = event.timestamp
-          current.error =
-            current.status === 'failed'
-              ? `Shell exited with status ${shellExit.exitCode}`
-              : undefined
+          const identity = shellIdentityOf(current)
+          if (identity.exitCode !== undefined && identity.exitCode !== shellExit.exitCode) continue
+          if (identity.exitCode === undefined) {
+            // A bound read may finish after inventory or a stop closed the
+            // row. Explicit exit evidence outranks inventory, while a clean
+            // exit does not undo cancellation. The first known exit stands.
+            current.status = shellExit.exitCode !== 0
+              ? 'failed'
+              : current.status === 'cancelled' ? 'cancelled' : 'completed'
+            current.completedAt ??= event.timestamp
+            current.error =
+              current.status === 'failed'
+                ? `Shell exited with status ${shellExit.exitCode}`
+                : undefined
+            identity.exitCode = shellExit.exitCode
+          }
           // The footer form carries only an id and a code, so the command's
           // own output is taken from the result it arrived with. Reading the
           // synthesized exit alone threw away everything the task printed.

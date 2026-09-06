@@ -284,8 +284,8 @@
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
     "src/MermaidDiagram.test.tsx": "db09c107f11b4c5f22c69cc6f8d50ae6bcc25944ec5601a535986122f5dc1281",
     "src/MermaidDiagram.tsx": "98849de396761797dad407e96ea609fe233756b156462b349150fbb6f69f16a2",
-    "src/ReaderWorkspace.test.tsx": "db4603e7632b87f75e532d419c3d7ae22782bb96c6419576e75d78e35903954d",
-    "src/ReaderWorkspace.tsx": "4b737036188071a0350e254497f674820b4efe105543bdbf06be05fcfaf63be2",
+    "src/ReaderWorkspace.test.tsx": "dbc4aceb6299f2618b6c1fdd6f1cd6d10e24472d7cb2ebbb96a041defe135655",
+    "src/ReaderWorkspace.tsx": "2eae2e646c9b6d67e267e91cae990ad78a6ea50839de198858b1e65bbe3a21e8",
     "src/accent-icon.test.ts": "cbbd1e1fd7544f5e9ab88ac50b1cdb8d7dd5b6827ad2323addfc9298ddc447bd",
     "src/accent-icon.ts": "88b76cf4ca66779fa5d1f332479dcb82b8c44ff9aa4b89927291307dc62685f3",
     "src/api.test.ts": "1a3137f0ddbd02b399193521d95dd3ee07854c40be56511d6a3bb90938f9d26d",
@@ -367,36 +367,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "159541c6219783089cb1b479852069976c42bc0b440f11f3642ada7c65149d25",
+    "GRAPH_REPORT.md": "5c9908fbb297fb8598fbc12e66010e965d1031b23e0eee722c75033791edd180",
     "communities.json": "a0bdfa8d9286fa1be964f575135a61e683c5bd22f4e6cea615bc2eee8afe4c29",
-    "graph.html": "cf91ac9eb945da0fbad0f8d1540faa99b49122fa83db6f076621640b9a7702ae",
-    "graph.json": "a53edce248f3bc40374d9db1d4b72ca23475c5cbb9e3e7b7e9e6df796cc94781"
+    "graph.html": "1f5288882b3f6be45bc9f6549ffe45c1437d79db4bb1e9438b7af551fc4ded10",
+    "graph.json": "020772d11675b055daa8428a9111d547d8d78b36ee0533c0c136e586b4986e9d"
   },
   "schema_version": 1,
-  "source_commit": "d4dc6e1eebb22bf327921d409b73f25b89ce52bd",
-  "source_fingerprint": "69870bbf6ef465031ad9ba6e151c5f66569568b00ebc2fdf0a32cba2eee0483d",
+  "source_commit": "1ab0266d4a9aaf955eb7b3e8a93551b947d668d9",
+  "source_fingerprint": "7f70ade433994be10b5205a7c98d2bdd2001f4cd645de165509dd050dd848b98",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    ".github/skills/frontend-design/LICENSE.txt",
-    ".github/skills/frontend-design/SKILL.md",
-    ".github/skills/frontend-design/SOURCE.md",
-    ".github/skills/frontend-design/UI-SKILLS.md",
-    ".github/skills/frontend-design/licenses/antfu-skills-MIT.txt",
-    ".github/skills/frontend-design/licenses/better-ui-MIT.txt",
-    ".github/skills/frontend-design/licenses/frontend-ui-engineering-MIT.txt",
-    ".github/skills/frontend-design/licenses/improve-ui-MIT.txt",
-    ".github/skills/frontend-design/licenses/interface-design-MIT.txt",
-    ".github/skills/frontend-design/licenses/vercel-guidelines-MIT.txt",
-    ".github/skills/frontend-design/references/accessibility-and-input.md",
-    ".github/skills/frontend-design/references/agentic-remote.md",
-    ".github/skills/frontend-design/references/evidence-and-review.md",
-    ".github/skills/frontend-design/references/motion-and-performance.md",
-    ".github/skills/frontend-design/references/product-workspaces.md",
-    ".oxlintrc.json",
-    "README.md",
-    "server/remote-node-client.test.ts",
-    "server/remote-node-client.ts",
-    "src/api.test.ts",
-    "src/api.ts"
+    "src/ReaderWorkspace.test.tsx",
+    "src/ReaderWorkspace.tsx"
   ]
 }

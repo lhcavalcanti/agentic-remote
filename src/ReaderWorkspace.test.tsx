@@ -132,6 +132,124 @@ describe('reader resizing', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '800')
   })
 
+  it.each([
+    { name: 'saved width', saved: '800', initial: 1200, changed: 900, bounded: '540' },
+    { name: 'already clamped width', saved: '800', initial: 900, changed: 500, bounded: '250' },
+    { name: 'shrinking responsive default', saved: undefined, initial: 1200, changed: 640, bounded: '320' },
+    { name: 'growing responsive default', saved: undefined, initial: 1200, changed: 1500, bounded: '510' },
+  ])('preserves $name when bounds change before a stationary pointer-up', ({
+    saved, initial, changed, bounded,
+  }) => {
+    if (saved !== undefined) localStorage.setItem(WIDTH_KEY, saved)
+    const store = vi.spyOn(Storage.prototype, 'setItem')
+    workspaceWidth = initial
+    const rendered = render(workspace())
+    const resizer = handle()
+    const capture = mockCapture(resizer)
+    act(() => pointer(resizer, 'pointerdown', 800))
+    workspaceWidth = changed
+    act(() => notifyResize())
+    expect(resizer).toHaveAttribute('aria-valuenow', bounded)
+    act(() => pointer(resizer, 'pointerup', 800))
+    expect(resizer).toHaveAttribute('aria-valuenow', bounded)
+    expect(resizer).toHaveAttribute('data-resizing', 'false')
+    expect(capture.release).toHaveBeenCalledTimes(1)
+    expect(store).not.toHaveBeenCalled()
+    expect(localStorage.getItem(WIDTH_KEY)).toBe(saved ?? null)
+    workspaceWidth = 1200
+    act(() => notifyResize())
+    expect(resizer).toHaveAttribute('aria-valuenow', saved ?? '408')
+    rendered.unmount()
+    render(workspace())
+    expect(handle()).toHaveAttribute('aria-valuenow', saved ?? '408')
+  })
+
+  it.each([undefined, '800'])(
+    'restores preference %s when a drag returns to its origin after bounds shrink',
+    (saved) => {
+      if (saved !== undefined) localStorage.setItem(WIDTH_KEY, saved)
+      render(workspace())
+      const resizer = handle()
+      act(() => {
+        pointer(resizer, 'pointerdown', 800)
+        pointer(resizer, 'pointermove', 700)
+      })
+      workspaceWidth = saved === undefined ? 640 : 900
+      act(() => notifyResize())
+      act(() => pointer(resizer, 'pointerup', 800))
+      expect(resizer).toHaveAttribute('aria-valuenow', saved === undefined ? '320' : '540')
+      expect(localStorage.getItem(WIDTH_KEY)).toBe(saved ?? null)
+      workspaceWidth = 1200
+      act(() => notifyResize())
+      expect(resizer).toHaveAttribute('aria-valuenow', saved ?? '408')
+    },
+  )
+
+  it.each(['pointercancel', 'lostpointercapture'])(
+    'preserves the preference after %s with zero displacement and changed bounds',
+    (ending) => {
+      localStorage.setItem(WIDTH_KEY, '800')
+      render(workspace())
+      const resizer = handle()
+      const capture = mockCapture(resizer)
+      act(() => pointer(resizer, 'pointerdown', 800))
+      workspaceWidth = 900
+      act(() => notifyResize())
+      act(() => {
+        pointer(resizer, 'pointermove', 800)
+        pointer(resizer, ending, 0)
+        pointer(resizer, 'pointermove', 700)
+      })
+      expect(resizer).toHaveAttribute('aria-valuenow', '540')
+      expect(resizer).toHaveAttribute('data-resizing', 'false')
+      expect(capture.release).toHaveBeenCalledTimes(1)
+      expect(localStorage.getItem(WIDTH_KEY)).toBe('800')
+      workspaceWidth = 1200
+      act(() => notifyResize())
+      expect(resizer).toHaveAttribute('aria-valuenow', '800')
+    },
+  )
+
+  it.each([
+    { name: 'shrink', changed: 900, final: '540' },
+    { name: 'grow', changed: 1600, final: '900' },
+  ])('uses the current bounds when they $name after an effective drag', ({ changed, final }) => {
+    localStorage.setItem(WIDTH_KEY, '800')
+    render(workspace())
+    const resizer = handle()
+    act(() => {
+      pointer(resizer, 'pointerdown', 800)
+      pointer(resizer, 'pointermove', 700)
+    })
+    expect(resizer).toHaveAttribute('aria-valuenow', '840')
+    workspaceWidth = changed
+    act(() => notifyResize())
+    act(() => pointer(resizer, 'pointerup', 700))
+    expect(resizer).toHaveAttribute('aria-valuenow', final)
+    expect(localStorage.getItem(WIDTH_KEY)).toBe(final)
+  })
+
+  it.each(['expanded', 'hidden'] as const)(
+    'preserves responsive sizing when changed bounds end a stationary gesture in %s mode',
+    (mode) => {
+      const rendered = render(workspace())
+      const resizer = handle()
+      const capture = mockCapture(resizer)
+      act(() => pointer(resizer, 'pointerdown', 800))
+      workspaceWidth = 640
+      act(() => notifyResize())
+      act(() => pointer(resizer, 'pointermove', 800))
+      rendered.rerender(workspace(mode))
+      expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+      expect(capture.release).toHaveBeenCalledTimes(1)
+      expect(localStorage.getItem(WIDTH_KEY)).toBeNull()
+      workspaceWidth = 1200
+      rendered.rerender(workspace())
+      expect(handle()).toHaveAttribute('aria-valuenow', '408')
+      expect(handle()).toHaveAttribute('data-resizing', 'false')
+    },
+  )
+
   it('does not freeze the responsive default for a keyboard step blocked by a limit', () => {
     workspaceWidth = 800
     render(workspace())

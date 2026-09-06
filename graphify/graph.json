@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "d4dc6e1eebb22bf327921d409b73f25b89ce52bd",
+  "built_at_commit": "1ab0266d4a9aaf955eb7b3e8a93551b947d668d9",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -72738,7 +72738,7 @@
       "relation": "contains",
       "source": "src_readerworkspace_readerworkspace",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L95",
+      "source_location": "L96",
       "target": "src_readerworkspace_readerworkspace_commitwidth",
       "weight": 1.0
     },
@@ -72749,7 +72749,7 @@
       "relation": "contains",
       "source": "src_readerworkspace_readerworkspace",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L126",
+      "source_location": "L129",
       "target": "src_readerworkspace_readerworkspace_resizeend",
       "weight": 1.0
     },
@@ -72760,7 +72760,7 @@
       "relation": "contains",
       "source": "src_readerworkspace_readerworkspace",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L132",
+      "source_location": "L135",
       "target": "src_readerworkspace_readerworkspace_resizekeydown",
       "weight": 1.0
     },
@@ -72771,7 +72771,7 @@
       "relation": "contains",
       "source": "src_readerworkspace_readerworkspace",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L117",
+      "source_location": "L119",
       "target": "src_readerworkspace_readerworkspace_resizemove",
       "weight": 1.0
     },
@@ -72782,7 +72782,7 @@
       "relation": "contains",
       "source": "src_readerworkspace_readerworkspace",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L102",
+      "source_location": "L103",
       "target": "src_readerworkspace_readerworkspace_resizestart",
       "weight": 1.0
     },
@@ -72806,7 +72806,7 @@
       "relation": "calls",
       "source": "src_readerworkspace_readerworkspace",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L69",
+      "source_location": "L70",
       "target": "src_readerworkspace_storewidth",
       "weight": 1.0
     },
@@ -72818,7 +72818,7 @@
       "relation": "calls",
       "source": "src_readerworkspace_readerworkspace_commitwidth",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L99",
+      "source_location": "L100",
       "target": "src_readerworkspace_storewidth",
       "weight": 1.0
     },
@@ -72830,7 +72830,7 @@
       "relation": "calls",
       "source": "src_readerworkspace_readerworkspace_resizeend",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L128",
+      "source_location": "L131",
       "target": "src_readerworkspace_readerworkspace_resizemove",
       "weight": 1.0
     },
@@ -72842,7 +72842,7 @@
       "relation": "calls",
       "source": "src_readerworkspace_readerworkspace_resizekeydown",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L136",
+      "source_location": "L139",
       "target": "src_readerworkspace_readerworkspace_commitwidth",
       "weight": 1.0
     },
@@ -101814,7 +101814,7 @@
       "label": "commitWidth()",
       "norm_label": "commitwidth()",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L95"
+      "source_location": "L96"
     },
     {
       "_callable": true,
@@ -101826,7 +101826,7 @@
       "label": "resizeEnd()",
       "norm_label": "resizeend()",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L126"
+      "source_location": "L129"
     },
     {
       "_callable": true,
@@ -101838,7 +101838,7 @@
       "label": "resizeKeyDown()",
       "norm_label": "resizekeydown()",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L132"
+      "source_location": "L135"
     },
     {
       "_callable": true,
@@ -101850,7 +101850,7 @@
       "label": "resizeMove()",
       "norm_label": "resizemove()",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L117"
+      "source_location": "L119"
     },
     {
       "_callable": true,
@@ -101862,7 +101862,7 @@
       "label": "resizeStart()",
       "norm_label": "resizestart()",
       "source_file": "src/ReaderWorkspace.tsx",
-      "source_location": "L102"
+      "source_location": "L103"
     },
     {
       "_callable": true,

@@ -410,7 +410,11 @@ type ComposerContent = {
   pastes: CollapsedPaste[]
 }
 
-type ComposerEdit = { content: ComposerContent; cursor: number }
+type ComposerEdit = {
+  content: ComposerContent
+  cursor: number
+  unresolvedPastes?: UnresolvedComposerPaste[]
+}
 
 type ComposerSubmission = ComposerContent & {
   id: string
@@ -671,6 +675,22 @@ function writeComposerContent(
   return { ...drafts, [key]: draft }
 }
 
+function writeComposerEdit(
+  drafts: ComposerDrafts,
+  key: string,
+  edit: ComposerEdit,
+): ComposerDrafts {
+  const existing = drafts[key] || { text: '', pastes: [] }
+  const updated = edit.unresolvedPastes?.length ? {
+    ...drafts,
+    [key]: {
+      ...existing,
+      unresolvedPastes: mergeUnresolvedComposerPastes(existing.unresolvedPastes, edit.unresolvedPastes),
+    },
+  } : drafts
+  return writeComposerContent(updated, key, edit.content)
+}
+
 function readComposerDrafts(): ComposerDrafts {
   const stored = readStoredOrder<unknown>(composerDraftsStorageKey, {})
   if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
@@ -877,6 +897,9 @@ export function reconcileComposerEdit(
   }
   const beforeInput = composerInputValue(before.text)
   const afterInput = composerInputValue(after)
+  if (beforeInput === afterInput) {
+    return { content: before, cursor: before.text.length }
+  }
   let prefix = 0
   while (
     prefix < beforeInput.length &&
@@ -893,8 +916,32 @@ export function reconcileComposerEdit(
   ) {
     suffix += 1
   }
-  return applyComposerEdit(
-    before,
+  const removedLength = beforeInput.length - prefix - suffix
+  let completeSuffix = suffix
+  while (
+    completeSuffix < Math.min(beforeInput.length, afterInput.length) &&
+    beforeInput[beforeInput.length - completeSuffix - 1] ===
+      afterInput[afterInput.length - completeSuffix - 1]
+  ) {
+    completeSuffix += 1
+  }
+  const earliest = Math.max(0, beforeInput.length - completeSuffix - removedLength)
+  // With repeated text, multiple minimal edit ranges can produce the same
+  // value. A longest-prefix guess must not assign or discard a paste whose
+  // ownership differs across those ranges.
+  const ambiguous = earliest < prefix
+    ? activeComposerPastes(before.text, before.pastes).filter((paste) => {
+        const start = composerInputValue(before.text.slice(0, paste.start)).length
+        const end = start + collapsedPasteLabel(paste).length
+        const alwaysBefore = earliest >= end
+        const alwaysAfter = prefix + removedLength <= start
+        const alwaysRemoved = prefix <= start && earliest + removedLength >= end
+        return !alwaysBefore && !alwaysAfter && !alwaysRemoved
+      })
+    : []
+  const ambiguousKeys = new Set(ambiguous.map((paste) => paste.key))
+  const edited = applyComposerEdit(
+    { ...before, pastes: before.pastes.filter((paste) => !ambiguousKeys.has(paste.key)) },
     composerTextPosition(before.text, prefix),
     composerTextPosition(before.text, beforeInput.length - suffix),
     {
@@ -905,6 +952,10 @@ export function reconcileComposerEdit(
       pastes: [],
     },
   )
+  return ambiguous.length ? {
+    ...edited,
+    unresolvedPastes: ambiguous.map(({ start: _start, ...paste }) => paste),
+  } : edited
 }
 
 function composerInputValue(text: string): string {
@@ -9659,7 +9710,7 @@ function App() {
       if (edited.content.text !== value) {
         cursor = edited.cursor
       }
-      return writeComposerContent(current, targetKey, edited.content)
+      return writeComposerEdit(current, targetKey, edited)
     })
     if (cursor !== undefined) {
       focusComposer(targetKey, cursor)
@@ -9690,7 +9741,23 @@ function App() {
     )
   }
 
-  function composerChanged(value: string) {
+  function composerCut(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    composerEditRef.current = undefined
+    const textarea = event.currentTarget
+    if (event.defaultPrevented || textarea.selectionStart === textarea.selectionEnd) {
+      return
+    }
+    rememberComposerEdit(textarea, 'deleteByCut')
+    const captured = composerEditRef.current
+    const native = event.nativeEvent
+    queueMicrotask(() => {
+      if (native.defaultPrevented && composerEditRef.current === captured) {
+        composerEditRef.current = undefined
+      }
+    })
+  }
+
+  function composerChanged(value: string, inputType?: string) {
     if (!selectedKey) {
       return
     }
@@ -9704,7 +9771,11 @@ function App() {
         return writeComposerContent(current, targetKey, { text: '', pastes: [] })
       }
       let edited: ComposerEdit | undefined
-      if (edit?.key === targetKey && edit.before === composerInputValue(existing.text)) {
+      if (
+        edit?.key === targetKey &&
+        edit.before === composerInputValue(existing.text) &&
+        (edit.inputType !== 'deleteByCut' || inputType === 'deleteByCut')
+      ) {
         let start = edit.start
         let end = edit.end
         const removed = edit.before.length - value.length
@@ -9719,6 +9790,7 @@ function App() {
           value.length - (edit.before.length - (end - start))
         if (
           insertedLength >= 0 &&
+          (edit.inputType !== 'deleteByCut' || insertedLength === 0) &&
           edit.before.slice(0, start) === value.slice(0, start) &&
           edit.before.slice(end) === value.slice(start + insertedLength)
         ) {
@@ -9734,7 +9806,7 @@ function App() {
       if (edited.content.text !== value) {
         cursor = edited.cursor
       }
-      return writeComposerContent(current, targetKey, edited.content)
+      return writeComposerEdit(current, targetKey, edited)
     })
     if (cursor !== undefined) {
       focusComposer(targetKey, cursor)
@@ -13002,8 +13074,9 @@ function App() {
                   // resuming is for.
                   disabled={selected.suspended === true}
                   onBeforeInput={composerBeforeInput}
+                  onCut={composerCut}
                   onChange={(event) => {
-                    composerChanged(event.target.value)
+                    composerChanged(event.target.value, (event.nativeEvent as InputEvent).inputType)
                   }}
                   onKeyDown={composerKeyDown}
                   onPaste={composerPasted}

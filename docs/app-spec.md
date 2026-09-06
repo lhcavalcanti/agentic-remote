@@ -318,6 +318,12 @@ stored payload instead of deleting hidden characters. Inserted text is retained
 at the revealed paste's boundary. Selecting and replacing or deleting the
 complete label intentionally removes that paste. Literal lookalike labels MUST
 remain ordinary text, including clipboard copies and queue round-trips.
+Cut MUST capture the actual clipboard selection before deletion; it MUST NOT
+depend on React delivering a `beforeinput` event for `deleteByCut`. Empty or
+canceled cuts must not change ownership or supply a range for a later edit.
+When no trustworthy range exists and repeated text permits different paste
+owners, the payload MUST remain in explicit recovery instead of being assigned
+or deleted by a longest-prefix guess.
 
 Saved paste metadata whose label is missing, duplicated, or claimed by competing
 payloads MUST remain available for explicit recovery, not be guessed into a

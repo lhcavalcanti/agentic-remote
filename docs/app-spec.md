@@ -370,6 +370,15 @@ A durable reply settlement MUST wake eligible queued work after releasing its
 own locks, without clearing a newer question or dispatching from a stopped,
 suspended, deleting, or already-owned session.
 
+Startup MUST resume eligible persisted native queues without requiring a
+post-enqueue completion event. Only previously managed-open native sessions
+qualify, and delivery MUST still require current discovery, ownership, a
+readable empty native composer, and the normal admission/claim guards.
+Unavailable observations or refused claim writes MUST retain FIFO and use
+bounded retry. A queued entry MUST NOT by itself create or reopen a native
+runtime; unknown prior delivery or explicit closed/suspended state stays held.
+Repeated startup MUST NOT duplicate delivery or create additional pollers.
+
 An explicit recovery token MUST match the current failed prompt. For Claude,
 accepting a token-bearing retry MUST atomically retain one canonical FIFO entry
 and consume that recovery, including retries requested while idle. Replayed or stale tokens

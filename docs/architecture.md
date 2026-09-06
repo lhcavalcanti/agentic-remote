@@ -171,6 +171,20 @@ redacts accepted recovery immediately, and retains acknowledgement-only retries.
 Deferred native demand uses the existing coalesced queue wakeup, which cannot
 enter an exclusive Clear lease from an unrelated admission.
 
+Native startup queue intent is captured from managed-open persisted sessions
+before discovery can promote other live terminals. Startup seeds the existing
+guarded drain rather than waiting for a completion newer than the queued text.
+Its stricter readiness checks require completed discovery, the existing owner,
+and a readable empty composer; managed/open/native state is rechecked in the
+claim transaction. The existing bounded claim/settlement retries retain this
+startup intent across transient observation or persistence failures. Queued
+sessions are not force-created by boot recovery, and repeated `start()` calls
+join the same startup rather than reload state or install more pollers.
+An accepted recovery awaiting acknowledgement retains its startup queue intent:
+the acknowledgement's coalesced wake must still satisfy the original startup
+owner, readable-composer, and managed-open claim checks. Unknown delivery remains
+held rather than becoming an accepted receipt or an automatic retry.
+
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then
 replay it after publishing the created/replacement session. Failed identity

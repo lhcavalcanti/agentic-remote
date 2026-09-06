@@ -664,6 +664,118 @@ describe('background shell stop reconciliation', () => {
     expect(result.tasks.find((task) => task.id === 'caller-name')?.status).toBe('running')
   })
 
+  describe.each(['native', 'tool'])('tied-start %s handoff ordering', (source) => {
+    const tiedStart = '2026-09-01T09:00:00.000+01:00'
+    function handoff(callId: string, shellId = '42', seconds = 8): SessionEvent {
+      return source === 'native'
+        ? nativeStart(shellId, callId, seconds)
+        : completed(callId, {
+            result: { content: `<command started in background with shellId: ${shellId}>` },
+          }, seconds)
+    }
+
+    describe.each(['launch', 'inventory', 'unmaterialized'])('source projected by %s', (projection) => {
+      it.each(['completed', 'failed', 'cancelled'])('preserves a distinct newer %s destination and its output', (status) => {
+        const events = [
+          started('older', 'bash', {
+            shellId: 'caller-name', mode: projection === 'launch' ? 'async' : 'sync',
+            command: 'node older.js',
+          }),
+          ...launched('42', 'async', false, 'newer').map((event) =>
+            event.type === 'tool.execution_start' ? { ...event, timestamp: tiedStart } : event),
+          completed('newer', {
+            success: status === 'completed',
+            ...(status === 'cancelled' ? { cancelled: true } : {}),
+            ...(status === 'failed' ? { error: { message: 'New failure' } } : {}),
+            result: { content: 'New terminal output' },
+          }, 3),
+          reportedShell('42', tiedStart, 4, {
+            status, completedAt: '2026-09-01T08:00:03.000Z', result: 'New final result',
+          }),
+          ...(projection === 'unmaterialized' ? [] : [
+            reportedShell('caller-name', tiedStart, 5),
+          ]),
+        ]
+        const before = snapshot(events)
+        const destination = before.tasks.find((task) => task.id === '42')
+        expect(destination).toMatchObject({
+          status, result: 'New final result', progress: { recentOutput: 'New terminal output' },
+          completedAt: '2026-09-01T08:00:03.000Z',
+        })
+        const result = snapshot([...events, handoff('older')])
+        expect(result.tasks.find((task) => task.id === '42')).toEqual(destination)
+        expect(result.runningCount).toBe(before.runningCount)
+        expect(result.tasks).toHaveLength(before.tasks.length)
+        if (projection !== 'unmaterialized') {
+          expect(result.tasks.find((task) => task.id === 'caller-name')).toMatchObject({
+            status: 'running', command: 'node older.js',
+          })
+        }
+      })
+
+      it('allows a genuinely newer invocation to reuse a tied completed slot materialized later', () => {
+        const oldLaunch = started('older', 'bash', {
+          shellId: '42', mode: 'sync', command: 'printf old',
+        })
+        const events = [
+          oldLaunch,
+          completed('older', { result: { content: 'Old final output' } }, 1),
+          { ...started('newer', 'bash', {
+            shellId: 'caller-name', mode: projection === 'launch' ? 'async' : 'sync',
+            command: 'node newer.js',
+          }), timestamp: tiedStart },
+          reportedShell('42', tiedStart, 3),
+          ...(projection === 'unmaterialized' ? [] : [
+            reportedShell('caller-name', oldLaunch.timestamp, 4),
+          ]),
+          reportedShell('42', oldLaunch.timestamp, 5),
+        ]
+        expect(snapshot(events).tasks.find((task) => task.id === '42')).toMatchObject({
+          status: 'completed', progress: { recentOutput: 'Old final output' },
+        })
+        const result = snapshot([...events, handoff('newer')])
+        expect(result.runningCount).toBe(1)
+        expect(result.tasks).toEqual([expect.objectContaining({
+          id: '42', status: 'running', command: 'node newer.js',
+        })])
+        expect(result.tasks[0].completedAt).toBeUndefined()
+        expect(result.tasks[0].progress?.recentOutput).not.toBe('Old final output')
+      })
+    })
+
+    it.each(['async', 'sync'])('protects a tied unmaterialized owner from an older %s handoff', (mode) => {
+      const events = [
+        reportedShell('42', tiedStart, 1, { status: 'completed', result: 'Old slot result' }),
+        started('older', 'bash', { shellId: 'caller-name', mode, command: 'node older.js' }),
+        started('newer', 'bash', { shellId: '42', mode: 'sync', command: 'node newer.js' }),
+      ]
+      const before = snapshot(events)
+      const rejected = snapshot([...events, handoff('older')])
+      expect(rejected.tasks.find((task) => task.id === '42')).toEqual(
+        before.tasks.find((task) => task.id === '42'),
+      )
+      const result = snapshot([...events, handoff('older'), handoff('newer', '42', 9)])
+      expect(result.runningCount).toBe(mode === 'async' ? 2 : 1)
+      expect(result.tasks.find((task) => task.id === '42')).toMatchObject({
+        status: 'running', command: 'node newer.js',
+      })
+    })
+
+    it.each(['async', 'sync'])('allows a newer %s handoff past an older tied unmaterialized owner', (mode) => {
+      const events = [
+        started('older', 'bash', { shellId: '42', mode: 'sync', command: 'node older.js' }),
+        started('newer', 'bash', { shellId: 'caller-name', mode, command: 'node newer.js' }),
+        handoff('newer'),
+      ]
+      const result = snapshot(events)
+      expect(result.runningCount).toBe(1)
+      expect(result.tasks).toEqual([expect.objectContaining({
+        id: '42', status: 'running', command: 'node newer.js',
+      })])
+      expect(snapshot([...events, handoff('older', '42', 9)])).toEqual(result)
+    })
+  })
+
   it.each(['completed', 'failed', 'cancelled'])('rejects an older uncorrelated start over a newer %s execution', (status) => {
     const current = reportedShell('42', '2026-09-01T08:00:04.000Z', 6, {
       status, completedAt: '2026-09-01T08:00:05.000Z',
@@ -1428,6 +1540,30 @@ describe('background shell stop reconciliation', () => {
       expect(result.tasks[0].error).toBe(terminal.error)
     })
 
+    it.each(['unbound', 'read_bash', 'read_shell'])('closes a sync launch materialized by %s inventory without attachment metadata', (source) => {
+      const metadata = reportedShell('42', launch.timestamp, 2)
+      const events = [
+        launch,
+        ...(source === 'unbound' ? [] : [started('inventory', source, { shellId: '42' }, 1)]),
+        metadata,
+        reportedShell('42', '2026-09-01T09:00:00.000+01:00', 2),
+      ]
+      expect(snapshot(events).tasks[0]).toMatchObject({
+        status: 'running', executionMode: 'background', command: 'printf fixture',
+      })
+      const result = snapshot([...events, finish])
+      expect(result.runningCount).toBe(0)
+      expect(result.tasks).toEqual([expect.objectContaining({
+        ...terminal, id: '42', attachmentMode: 'attached',
+      })])
+      expect(result.tasks[0].error).toBe(terminal.error)
+      expect(snapshot([
+        ...events, finish,
+        reportedShell('42', launch.timestamp, 4),
+        nativeStart('99', 'sync-launch', 5, 'shell_detached_started'),
+      ]).tasks[0]).toMatchObject({ ...terminal, id: '99', attachmentMode: 'detached' })
+    })
+
     it('fills missing final inventory diagnostics without replacing the retained completion', () => {
       const result = snapshot([
         launch, finish,
@@ -1472,6 +1608,75 @@ describe('background shell stop reconciliation', () => {
         reportedShell('42', launch.timestamp, 7),
       ])).toEqual(snapshot(events))
     })
+  })
+
+  it('completes a sync launch materialized by its own successful inventory-bearing completion', () => {
+    const launch = started('sync-launch', 'bash', {
+      shellId: '42', mode: 'sync', command: 'printf fixture',
+    })
+    const metadata = reportedShell('42', launch.timestamp, 3)
+    const result = snapshot([
+      launch,
+      { ...metadata, data: {
+        ...metadata.data, toolCallId: 'sync-launch',
+        result: { ...metadata.data.result, content: 'Final ordinary output' },
+      } },
+    ])
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks).toEqual([expect.objectContaining({
+      id: '42', status: 'completed', attachmentMode: 'attached',
+      completedAt: metadata.timestamp, progress: { type: 'shell', recentOutput: 'Final ordinary output' },
+    })])
+  })
+
+  it.each(['inventory', 'launch', 'native', 'tool'])('preserves explicit %s detachment through omitted inventory metadata and ordinary completion', (source) => {
+    const launch = started('sync-launch', 'bash', {
+      shellId: '42', mode: 'sync', detach: source === 'launch', command: 'node fixture-server.js',
+    })
+    const events = [
+      launch,
+      reportedShell('42', launch.timestamp, 1, {
+        ...(source === 'inventory' ? { attachmentMode: 'detached' } : {}),
+      }),
+      ...(source === 'native' ? [nativeStart('42', 'sync-launch', 2, 'shell_detached_started')] : []),
+      ...(source === 'tool' ? [completed('sync-launch', {
+        result: { content: '<command started in detached background with shellId: 42>' },
+      }, 2)] : []),
+      reportedShell('42', launch.timestamp, 3),
+      completed('sync-launch', { result: { content: 'Ordinary output without an exit footer' } }, 4),
+      sessionShutdown(5),
+    ]
+    const result = snapshot(events)
+    expect(result.runningCount).toBe(1)
+    expect(result.tasks).toEqual([expect.objectContaining({
+      id: '42', status: 'running', executionMode: 'background', attachmentMode: 'detached',
+      progress: { type: 'shell', recentOutput: 'Ordinary output without an exit footer' },
+    })])
+    expect(result.tasks[0].completedAt).toBeUndefined()
+  })
+
+  it.each(['native', 'tool'])('preserves a genuine attached %s handoff after inventory materializes a sync launch', (source) => {
+    const launch = started('sync-launch', 'bash', {
+      shellId: 'caller-name', mode: 'sync', command: 'node fixture-server.js',
+    })
+    const events = [
+      launch,
+      reportedShell('caller-name', launch.timestamp, 1),
+      source === 'native'
+        ? nativeStart('42', 'sync-launch', 2)
+        : completed('sync-launch', {
+            result: { content: '<command started in background with shellId: 42>' },
+          }, 2),
+    ]
+    const result = snapshot(events)
+    expect(result.runningCount).toBe(1)
+    expect(result.tasks).toEqual([expect.objectContaining({
+      id: '42', status: 'running', executionMode: 'background', attachmentMode: 'attached',
+    })])
+    expect(result.tasks[0].completedAt).toBeUndefined()
+    expect(snapshot([
+      ...events, nativeComplete('42', { toolCallId: 'sync-launch', startedAt: launch.timestamp }, 3, 0),
+    ]).runningCount).toBe(0)
   })
 
   describe('historical shell inventory aliases', () => {

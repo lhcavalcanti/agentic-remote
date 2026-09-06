@@ -714,6 +714,7 @@ function rekeyTask(
   aliases: Map<string, string>,
   current: BackgroundTask,
   to: string,
+  compareExecutions: (left: BackgroundTask, right: BackgroundTask) => number,
   assumed?: { flags: Set<string>; owners: Map<string, string> },
 ): BackgroundTask | undefined {
   const from = current.id
@@ -721,7 +722,7 @@ function rekeyTask(
   const destination = tasks.get(to)
   if (
     destination && destination !== current &&
-    (isLiveTaskStatus(destination.status) || isOlderExecution(current.startedAt, destination))
+    (isLiveTaskStatus(destination.status) || compareExecutions(current, destination) < 0)
   ) {
     return undefined
   }
@@ -1088,6 +1089,7 @@ export function backgroundTasksFromEvents(
   const aliases = new Map<string, string>()
   type ShellIdentity = {
     startedAt: string
+    creationOrder: number
     toolCallId?: string
     start?: {
       id: string
@@ -1108,6 +1110,7 @@ export function backgroundTasksFromEvents(
   const shellIdentitiesById = new Map<string, ShellIdentity>()
   const shellIdentitiesByStart = new Map<string, Map<string | number, ShellIdentity | null>>()
   const reusedShellIds = new Set<string>()
+  let shellCreationOrder = 0
   const startKey = (startedAt: string): string | number => {
     const instant = Date.parse(startedAt)
     return Number.isFinite(instant) ? instant : startedAt
@@ -1148,7 +1151,8 @@ export function backgroundTasksFromEvents(
       return existing
     }
     const identity: ShellIdentity = {
-      startedAt: task.startedAt, materialized: false, ids: new Set(),
+      startedAt: task.startedAt, creationOrder: shellCreationOrder++,
+      materialized: false, ids: new Set(),
     }
     bindShellIdentity(task, identity)
     return identity
@@ -1162,6 +1166,21 @@ export function backgroundTasksFromEvents(
   const shellIdentityAt = (id: string): ShellIdentity | undefined =>
     shellIdentitiesById.get(id) ||
     shellIdentitiesById.get(taskIdAlias(aliases, id))
+  const compareShellExecutions = (
+    left: ShellIdentity | BackgroundTask,
+    right: ShellIdentity | BackgroundTask,
+  ): number => {
+    const leftIdentity = 'creationOrder' in left ? left : shellInstances.get(left)
+    const rightIdentity = 'creationOrder' in right ? right : shellInstances.get(right)
+    const leftStart = (leftIdentity || left).startedAt
+    const rightStart = (rightIdentity || right).startedAt
+    // Tied clocks need execution order, not the arrival of a refresh or a
+    // delayed handoff. The ordinal belongs to the identity even before a row.
+    if (leftIdentity && rightIdentity && sameExecutionStart(leftStart, rightStart)) {
+      return leftIdentity.creationOrder - rightIdentity.creationOrder
+    }
+    return Date.parse(leftStart) - Date.parse(rightStart)
+  }
   const isStaleUnboundShellStart = (
     id: string,
     startedAt: string,
@@ -1180,9 +1199,9 @@ export function backgroundTasksFromEvents(
     const destination = shellIdentitiesById.get(to)
     if (
       destination && !destination.materialized &&
-      !(Date.parse(current.startedAt) > Date.parse(destination.startedAt))
+      !(compareShellExecutions(current, destination) > 0)
     ) return undefined
-    const moved = rekeyTask(tasks, aliases, current, to, assumed)
+    const moved = rekeyTask(tasks, aliases, current, to, compareShellExecutions, assumed)
     if (moved) claimShellId(to, shellIdentityOf(moved))
     return moved
   }
@@ -1201,14 +1220,17 @@ export function backgroundTasksFromEvents(
       // prior execution's row is waiting for its stop acknowledgement.
       destination && destinationIdentity !== identity &&
       (isLiveTaskStatus(destination.status) ||
-        !(Date.parse(identity.startedAt) > Date.parse(destination.startedAt)))
+        !(compareShellExecutions(identity, destination) > 0))
     ) return undefined
     if (
       destinationIdentity && destinationIdentity !== identity &&
-      !(Date.parse(identity.startedAt) > Date.parse(destinationIdentity.startedAt))
+      !(compareShellExecutions(identity, destinationIdentity) > 0)
     ) return undefined
     const current = {
-      ...shellTask(id, start.timestamp, start.data, mode),
+      ...shellTask(id, start.timestamp, start.data, {
+        ...mode,
+        attachmentMode: mode.attachmentMode ?? start.mode?.attachmentMode ?? 'attached',
+      }),
       ...identity.completion,
     }
     bindShellIdentity(current, identity)
@@ -1452,7 +1474,7 @@ export function backgroundTasksFromEvents(
                 isLiveTaskStatus(destination.status)
               const replacesNewerExecution =
                 destination !== undefined && destination !== known &&
-                isOlderExecution(known.startedAt, destination)
+                compareShellExecutions(known, destination) < 0
               if (!stealsLiveSlot && !replacesNewerExecution) {
                 const moved =
                   known.id === shellId
@@ -1620,7 +1642,8 @@ export function backgroundTasksFromEvents(
         const shellId =
           shellIdFromValue(data) || shellIdFromValue(args) || toolCallId
         const identity: ShellIdentity = {
-          startedAt: event.timestamp, toolCallId, materialized: false, ids: new Set(),
+          startedAt: event.timestamp, creationOrder: shellCreationOrder++,
+          toolCallId, materialized: false, ids: new Set(),
         }
         if (toolCallId && shellId) {
           identity.start = {

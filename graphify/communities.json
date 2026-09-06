@@ -113,22 +113,26 @@
   "1": {
     "label": "App",
     "nodes": [
+      "src_api_addknowledgeroot",
+      "src_api_deleteknowledgeroot",
       "src_api_replypermission",
       "src_app_app",
       "src_app_app_answeruserinput",
       "src_app_app_appendcomposerforkey",
       "src_app_app_appkeydown",
-      "src_app_app_applypwaupdate",
       "src_app_app_attachedfiles",
       "src_app_app_audiodropped",
       "src_app_app_audiofilechanged",
+      "src_app_app_cancelknowledgerestore",
       "src_app_app_cancelselectedbackgroundtask",
       "src_app_app_clearselectedconversation",
       "src_app_app_closeselectedsession",
       "src_app_app_closetopmostlayer",
+      "src_app_app_collapseknowledgetree",
       "src_app_app_commitsidebarwidth",
       "src_app_app_composerkeydown",
       "src_app_app_created",
+      "src_app_app_createroot",
       "src_app_app_drawerisoverlay",
       "src_app_app_failurestampfor",
       "src_app_app_focuscomposer",
@@ -146,15 +150,18 @@
       "src_app_app_moveselectedsessiontotmux",
       "src_app_app_navigatemessagehistory",
       "src_app_app_openbackgroundtasks",
+      "src_app_app_openknowledgefile",
       "src_app_app_opentasksforsession",
       "src_app_app_prependcomposerforkey",
       "src_app_app_rememberrestoreddraft",
+      "src_app_app_removeroot",
       "src_app_app_reofferfailedprompt",
       "src_app_app_replytopermission",
       "src_app_app_resetcomposerhistory",
       "src_app_app_restartselectedsession",
       "src_app_app_restorefailedprompt",
       "src_app_app_selectcommand",
+      "src_app_app_selectroot",
       "src_app_app_selectsession",
       "src_app_app_setcomposer",
       "src_app_app_setcomposerforkey",
@@ -165,7 +172,6 @@
       "src_app_app_sidebarresizemove",
       "src_app_app_sidebarresizestart",
       "src_app_app_sidebartouchend",
-      "src_app_app_sidebartouchstart",
       "src_app_app_stepsession",
       "src_app_app_submitmessage",
       "src_app_app_timelinescrolled",
@@ -182,7 +188,6 @@
       "src_app_isaudiofile",
       "src_app_iseditabletarget",
       "src_app_phoneentercreatesnewline",
-      "src_app_providername",
       "src_app_readaccenttheme",
       "src_app_readselectionfromlocation",
       "src_app_readstoredsidebarwidth",
@@ -203,66 +208,115 @@
     ]
   },
   "10": {
-    "label": "SessionDetail",
+    "label": "RemoteNodeClient",
     "nodes": [
-      "server_agent_service_agentservice_listhistory",
-      "server_agent_service_agentservice_listsessions",
-      "server_provider_session_service_providersessionservice_listhistory",
-      "server_provider_session_service_providersessionservice_listsessions",
-      "server_session_service_sessionservice_listhistory",
-      "server_session_service_sessionservice_listsessions",
-      "server_session_store_activityduration",
-      "server_session_store_activityresultpreview",
-      "server_session_store_clonesession",
-      "server_session_store_sessionstore",
-      "server_session_store_sessionstore_clearconversation",
-      "server_session_store_sessionstore_clearfailedprompt",
-      "server_session_store_sessionstore_clearqueuedispatch",
-      "server_session_store_sessionstore_constructor",
-      "server_session_store_sessionstore_create",
-      "server_session_store_sessionstore_enqueueansweringprompt",
-      "server_session_store_sessionstore_enqueueprompt",
-      "server_session_store_sessionstore_finishmessage",
-      "server_session_store_sessionstore_finishtaskcompletion",
-      "server_session_store_sessionstore_finishtoolactivity",
-      "server_session_store_sessionstore_list",
-      "server_session_store_sessionstore_mutate",
-      "server_session_store_sessionstore_mutateinmemory",
-      "server_session_store_sessionstore_persist",
-      "server_session_store_sessionstore_removequeuedprompt",
-      "server_session_store_sessionstore_removeuploads",
-      "server_session_store_sessionstore_renamesession",
-      "server_session_store_sessionstore_replacemessages",
-      "server_session_store_sessionstore_replacewithclearedsession",
-      "server_session_store_sessionstore_requiresession",
-      "server_session_store_sessionstore_setbackend",
-      "server_session_store_sessionstore_setfailedprompt",
-      "server_session_store_sessionstore_setmessagecontent",
-      "server_session_store_sessionstore_setsuspended",
-      "server_session_store_sessionstore_shiftqueuedprompt",
-      "server_session_store_sessionstore_streammessage",
-      "server_session_store_sessionstore_syncbackends",
-      "server_session_store_sessionstore_syncdiscovered",
-      "server_session_store_sessionstore_syncopen",
-      "server_session_store_sessionstore_syncworkspacemetadata",
-      "server_session_store_sessionstore_terminalrecoverysessions",
-      "server_session_store_sessionstore_updateautomatictitle",
-      "server_session_store_sessionstore_updatestatus",
-      "server_session_store_sessionstore_updateworkingdirectory",
-      "shared_contracts_chatmessage",
-      "shared_contracts_queuedprompt",
-      "shared_contracts_sessiondetail",
-      "shared_contracts_sessionstatus",
-      "shared_contracts_sessionsummary"
-    ]
-  },
-  "100": {
-    "label": "MermaidDiagram.real.test.tsx",
-    "nodes": [
-      "src_mermaiddiagram_real_test"
+      "server_computer_manager_computermanager_addclient",
+      "server_computer_manager_computermanager_computersummary",
+      "server_computer_manager_computermanager_invalidateremotereads",
+      "server_computer_manager_computermanager_registercomputer",
+      "server_computer_manager_computermanager_removecomputer",
+      "server_computer_manager_computermanager_resyncremotecomputer",
+      "server_computer_manager_computermanager_stop",
+      "server_computer_registry_registeredcomputer",
+      "server_remote_node_client_remotenodeclient",
+      "server_remote_node_client_remotenodeclient_activatesession",
+      "server_remote_node_client_remotenodeclient_cancel",
+      "server_remote_node_client_remotenodeclient_cancelbackgroundtask",
+      "server_remote_node_client_remotenodeclient_clearconversation",
+      "server_remote_node_client_remotenodeclient_connect",
+      "server_remote_node_client_remotenodeclient_constructor",
+      "server_remote_node_client_remotenodeclient_deletesession",
+      "server_remote_node_client_remotenodeclient_getinfo",
+      "server_remote_node_client_remotenodeclient_getsession",
+      "server_remote_node_client_remotenodeclient_listbackgroundtasks",
+      "server_remote_node_client_remotenodeclient_listhistory",
+      "server_remote_node_client_remotenodeclient_listknowledge",
+      "server_remote_node_client_remotenodeclient_listsessions",
+      "server_remote_node_client_remotenodeclient_listworkspace",
+      "server_remote_node_client_remotenodeclient_movetoterminal",
+      "server_remote_node_client_remotenodeclient_online",
+      "server_remote_node_client_remotenodeclient_providerruntimeoptions",
+      "server_remote_node_client_remotenodeclient_providers",
+      "server_remote_node_client_remotenodeclient_readknowledgefile",
+      "server_remote_node_client_remotenodeclient_readworkspacefile",
+      "server_remote_node_client_remotenodeclient_removequeuedprompt",
+      "server_remote_node_client_remotenodeclient_request",
+      "server_remote_node_client_remotenodeclient_restartsession",
+      "server_remote_node_client_remotenodeclient_resumesession",
+      "server_remote_node_client_remotenodeclient_runtimeoptions",
+      "server_remote_node_client_remotenodeclient_searchworkspace",
+      "server_remote_node_client_remotenodeclient_setonline",
+      "server_remote_node_client_remotenodeclient_stop",
+      "server_remote_node_client_remotenodeclient_suspendsession",
+      "server_remote_node_client_remotenodeclient_transcribe",
+      "server_remote_node_client_remotenodeclient_validatesessiondirectory",
+      "server_remote_node_client_remotenoderedirecterror",
+      "server_remote_node_client_remotenoderedirecterror_constructor",
+      "server_remote_node_client_remotenoderequesterror",
+      "server_remote_node_client_remotenoderequesterror_constructor",
+      "server_remote_node_client_test",
+      "server_remote_node_client_test_client",
+      "server_remote_node_client_test_listen",
+      "server_remote_node_client_test_servers",
+      "server_remote_node_client_test_session",
+      "server_remote_node_client_test_start",
+      "shared_contracts_nodeinfo"
     ]
   },
   "11": {
+    "label": "ComputerManager",
+    "nodes": [
+      "server_computer_manager_computermanager",
+      "server_computer_manager_computermanager_activatesession",
+      "server_computer_manager_computermanager_cancel",
+      "server_computer_manager_computermanager_cancelbackgroundtask",
+      "server_computer_manager_computermanager_clearconversation",
+      "server_computer_manager_computermanager_configureruntime",
+      "server_computer_manager_computermanager_createsession",
+      "server_computer_manager_computermanager_deletesession",
+      "server_computer_manager_computermanager_emitnodeevent",
+      "server_computer_manager_computermanager_executecommand",
+      "server_computer_manager_computermanager_findcomputer",
+      "server_computer_manager_computermanager_getsession",
+      "server_computer_manager_computermanager_listbackgroundtasks",
+      "server_computer_manager_computermanager_listcomputers",
+      "server_computer_manager_computermanager_listhistory",
+      "server_computer_manager_computermanager_listknowledge",
+      "server_computer_manager_computermanager_listsessions",
+      "server_computer_manager_computermanager_listsessionswithauthority",
+      "server_computer_manager_computermanager_listworkspace",
+      "server_computer_manager_computermanager_localcomputer",
+      "server_computer_manager_computermanager_movetoterminal",
+      "server_computer_manager_computermanager_readknowledgefile",
+      "server_computer_manager_computermanager_readremotesessions",
+      "server_computer_manager_computermanager_readworkspacefile",
+      "server_computer_manager_computermanager_removequeuedprompt",
+      "server_computer_manager_computermanager_renamesession",
+      "server_computer_manager_computermanager_replypermission",
+      "server_computer_manager_computermanager_replyuserinput",
+      "server_computer_manager_computermanager_requireclient",
+      "server_computer_manager_computermanager_requirecomputer",
+      "server_computer_manager_computermanager_restartsession",
+      "server_computer_manager_computermanager_resumesession",
+      "server_computer_manager_computermanager_searchworkspace",
+      "server_computer_manager_computermanager_sendmessage",
+      "server_computer_manager_computermanager_suspendsession",
+      "server_computer_manager_computermanager_transcribeaudio",
+      "server_computer_manager_computermanager_validatesessiondirectory",
+      "server_computer_manager_managedsession",
+      "server_computer_manager_sessionatleastasnew",
+      "server_hub_routes_registerhubroutes",
+      "server_hub_routes_sessionmutecarrier",
+      "server_hub_routes_sessionmutecarrier_setsessionmuted",
+      "server_hub_routes_sessionmutecarrier_settings",
+      "server_hub_routes_test",
+      "server_hub_routes_test_mutecarrier",
+      "shared_contracts_computersummary",
+      "shared_contracts_managedsession",
+      "src_api_sessionlisting"
+    ]
+  },
+  "12": {
     "label": "bundle",
     "nodes": [
       "ref_agentic",
@@ -311,7 +365,7 @@
       "shell_src_tauri_tauri_conf_version"
     ]
   },
-  "12": {
+  "13": {
     "label": "lib.rs",
     "nodes": [
       "apphandle",
@@ -357,7 +411,52 @@
       "state"
     ]
   },
-  "13": {
+  "14": {
+    "label": "agent-service.ts",
+    "nodes": [
+      "server_agent_service",
+      "server_agent_service_activeprompt",
+      "server_agent_service_activityduration",
+      "server_agent_service_activitygroupidfor",
+      "server_agent_service_activityresult",
+      "server_agent_service_agentserviceevents",
+      "server_agent_service_ansisequence",
+      "server_agent_service_commandshortcut",
+      "server_agent_service_creationruntime",
+      "server_agent_service_elicitationcontext",
+      "server_agent_service_elicitationhandler",
+      "server_agent_service_foregroundlifecycleevents",
+      "server_agent_service_isactivitygroupkind",
+      "server_agent_service_messagesfromhistory",
+      "server_agent_service_modelpromptlimits",
+      "server_agent_service_normalizedtitle",
+      "server_agent_service_pendingsdkelicitation",
+      "server_agent_service_pendingsdkpermission",
+      "server_agent_service_pendingsdkuserinput",
+      "server_agent_service_permissiontitle",
+      "server_agent_service_previewtext",
+      "server_agent_service_readablemcpservername",
+      "server_agent_service_readabletoolname",
+      "server_agent_service_runtimeeventtypes",
+      "server_agent_service_runtimeinfomatches",
+      "server_agent_service_sametoollabel",
+      "server_agent_service_stringarray",
+      "server_agent_service_stringarrayvalue",
+      "server_agent_service_stripansi",
+      "server_agent_service_toolactivitycontent",
+      "server_agent_service_userinputformat",
+      "server_agent_service_userinputhandler",
+      "server_agent_service_userinputrequest",
+      "server_agent_service_userinputresponse",
+      "server_agent_service_visibleusercontent",
+      "server_terminal_session_terminalformstep",
+      "shared_contracts_agentmode",
+      "shared_contracts_userinputfield",
+      "shared_contracts_userinputfieldoption",
+      "shared_contracts_userinputfieldvalue"
+    ]
+  },
+  "15": {
     "label": "config.rs",
     "nodes": [
       "duration",
@@ -400,7 +499,50 @@
       "shell_src_tauri_src_config_socket_address_keeps_an_explicit_port"
     ]
   },
-  "14": {
+  "16": {
+    "label": "pwa.ts",
+    "nodes": [
+      "ref_react",
+      "src_api_deletepushsubscription",
+      "src_api_getpushpublickey",
+      "src_api_savepushsubscription",
+      "src_app_app_applypwaupdate",
+      "src_app_app_sidebartouchstart",
+      "src_app_appsettingsdialog",
+      "src_app_appsettingsdialog_checkforupdate",
+      "src_app_appsettingsdialog_testnotification",
+      "src_app_appsettingsdialog_toggle",
+      "src_app_mergeruntimemodeloptions",
+      "src_app_sameruntimeselection",
+      "src_main",
+      "src_pwa",
+      "src_pwa_activatepwaupdate",
+      "src_pwa_activepushsubscription",
+      "src_pwa_applicationserverkey",
+      "src_pwa_checkforpwaupdate",
+      "src_pwa_clearsessionpushnotifications",
+      "src_pwa_disablepushnotifications",
+      "src_pwa_enablepushnotifications",
+      "src_pwa_encodeserverkey",
+      "src_pwa_installedasapp",
+      "src_pwa_normalizeserverkey",
+      "src_pwa_pushnotificationssupported",
+      "src_pwa_pushsubscription",
+      "src_pwa_pwa_update_event",
+      "src_pwa_registerpwa",
+      "src_pwa_sessionnotificationtags",
+      "src_pwa_subscriptionuseskey",
+      "src_pwa_test",
+      "src_pwa_test_install",
+      "src_pwa_test_keybuffer",
+      "src_pwa_test_mockupdatecheck",
+      "src_pwa_waitforinstallingworker",
+      "src_pwa_waitforworkerinstalled",
+      "src_pwa_workeroptions",
+      "src_pwa_workerurl"
+    ]
+  },
+  "17": {
     "label": "hub-routes.ts",
     "nodes": [
       "server_hub_routes",
@@ -443,49 +585,184 @@
       "shared_contracts_knowledgeroot"
     ]
   },
-  "15": {
-    "label": "agent-service.ts",
+  "18": {
+    "label": "SessionService",
     "nodes": [
-      "server_agent_service",
-      "server_agent_service_activeprompt",
-      "server_agent_service_activityduration",
-      "server_agent_service_activitygroupidfor",
-      "server_agent_service_activityresult",
-      "server_agent_service_agentserviceevents",
-      "server_agent_service_ansisequence",
-      "server_agent_service_commandshortcut",
-      "server_agent_service_creationruntime",
-      "server_agent_service_elicitationcontext",
-      "server_agent_service_elicitationhandler",
-      "server_agent_service_foregroundlifecycleevents",
-      "server_agent_service_isactivitygroupkind",
-      "server_agent_service_messagesfromhistory",
-      "server_agent_service_modelpromptlimits",
-      "server_agent_service_normalizedtitle",
-      "server_agent_service_pendingsdkelicitation",
-      "server_agent_service_pendingsdkpermission",
-      "server_agent_service_pendingsdkuserinput",
-      "server_agent_service_permissiontitle",
-      "server_agent_service_previewtext",
-      "server_agent_service_readablemcpservername",
-      "server_agent_service_readabletoolname",
-      "server_agent_service_runtimeeventtypes",
-      "server_agent_service_runtimeinfomatches",
-      "server_agent_service_sametoollabel",
-      "server_agent_service_stripansi",
-      "server_agent_service_toolactivitycontent",
-      "server_agent_service_userinputhandler",
-      "server_agent_service_userinputrequest",
-      "server_agent_service_userinputresponse",
-      "server_agent_service_visibleusercontent",
-      "server_terminal_session_terminalformstep",
-      "shared_contracts_agentmode",
-      "shared_contracts_userinputfield",
-      "shared_contracts_userinputfieldoption",
-      "shared_contracts_userinputfieldvalue"
+      "server_node_routes_registernoderoutes",
+      "server_provider_session_service_providersessionservice_constructor",
+      "server_provider_session_service_providersessionservice_listknowledge",
+      "server_provider_session_service_providersessionservice_readknowledgefile",
+      "server_provider_session_service_providersessionservice_start",
+      "server_provider_session_service_providersessionservice_stop",
+      "server_session_service_sessionservice",
+      "server_session_service_sessionservice_activatesession",
+      "server_session_service_sessionservice_cancel",
+      "server_session_service_sessionservice_cancelbackgroundtask",
+      "server_session_service_sessionservice_clearconversation",
+      "server_session_service_sessionservice_configureruntime",
+      "server_session_service_sessionservice_deletesession",
+      "server_session_service_sessionservice_executecommand",
+      "server_session_service_sessionservice_listbackgroundtasks",
+      "server_session_service_sessionservice_listknowledge",
+      "server_session_service_sessionservice_listworkspace",
+      "server_session_service_sessionservice_movetoterminal",
+      "server_session_service_sessionservice_off",
+      "server_session_service_sessionservice_on",
+      "server_session_service_sessionservice_opensession",
+      "server_session_service_sessionservice_readknowledgefile",
+      "server_session_service_sessionservice_readworkspacefile",
+      "server_session_service_sessionservice_removequeuedprompt",
+      "server_session_service_sessionservice_renamesession",
+      "server_session_service_sessionservice_replypermission",
+      "server_session_service_sessionservice_replyuserinput",
+      "server_session_service_sessionservice_restartsession",
+      "server_session_service_sessionservice_resumesession",
+      "server_session_service_sessionservice_searchworkspace",
+      "server_session_service_sessionservice_sendmessage",
+      "server_session_service_sessionservice_start",
+      "server_session_service_sessionservice_stop",
+      "server_session_service_sessionservice_suspendsession",
+      "server_session_service_sessionservice_validatesessiondirectory",
+      "shared_contracts_workspacefile",
+      "shared_contracts_workspacelisting"
     ]
   },
-  "16": {
+  "19": {
+    "label": "SessionDetail",
+    "nodes": [
+      "server_provider_session_service_providersessionservice",
+      "server_provider_session_service_providersessionservice_activatesession",
+      "server_provider_session_service_providersessionservice_cancel",
+      "server_provider_session_service_providersessionservice_cancelbackgroundtask",
+      "server_provider_session_service_providersessionservice_clearconversation",
+      "server_provider_session_service_providersessionservice_configureruntime",
+      "server_provider_session_service_providersessionservice_createsession",
+      "server_provider_session_service_providersessionservice_deletesession",
+      "server_provider_session_service_providersessionservice_executecommand",
+      "server_provider_session_service_providersessionservice_getsession",
+      "server_provider_session_service_providersessionservice_listbackgroundtasks",
+      "server_provider_session_service_providersessionservice_listcommands",
+      "server_provider_session_service_providersessionservice_listhistory",
+      "server_provider_session_service_providersessionservice_listsessions",
+      "server_provider_session_service_providersessionservice_listworkspace",
+      "server_provider_session_service_providersessionservice_movetoterminal",
+      "server_provider_session_service_providersessionservice_opensession",
+      "server_provider_session_service_providersessionservice_readworkspacefile",
+      "server_provider_session_service_providersessionservice_removequeuedprompt",
+      "server_provider_session_service_providersessionservice_renamesession",
+      "server_provider_session_service_providersessionservice_replypermission",
+      "server_provider_session_service_providersessionservice_replyuserinput",
+      "server_provider_session_service_providersessionservice_restartsession",
+      "server_provider_session_service_providersessionservice_resumesession",
+      "server_provider_session_service_providersessionservice_runtimeoptions",
+      "server_provider_session_service_providersessionservice_searchworkspace",
+      "server_provider_session_service_providersessionservice_sendmessage",
+      "server_provider_session_service_providersessionservice_servicefor",
+      "server_provider_session_service_providersessionservice_sorted",
+      "server_provider_session_service_providersessionservice_suspendsession",
+      "server_provider_session_service_providersessionservice_uploadfile",
+      "server_provider_session_service_providersessionservice_validatesessiondirectory",
+      "server_session_service_sessionservice_getsession",
+      "server_session_service_sessionservice_listhistory",
+      "server_session_service_sessionservice_listsessions",
+      "shared_contracts_sessiondetail",
+      "shared_contracts_sessionsummary"
+    ]
+  },
+  "2": {
+    "label": "contracts.ts",
+    "nodes": [
+      "server_claude_agent_service",
+      "server_claude_agent_service_activeclaudequery",
+      "server_claude_agent_service_authstatusrunner",
+      "server_claude_agent_service_claudeagentserviceevents",
+      "server_claude_agent_service_claudequestion",
+      "server_claude_agent_service_execfileasync",
+      "server_claude_agent_service_pendingclaudeinput",
+      "server_claude_agent_service_pendingclaudepermission",
+      "server_computer_manager",
+      "server_computer_manager_computermanager_listcommands",
+      "server_computer_manager_computermanager_providerruntimeoptions",
+      "server_computer_manager_computermanager_runtimeoptions",
+      "server_computer_manager_computermanager_uploadfile",
+      "server_computer_manager_computermanagerevents",
+      "server_computer_manager_remoteresync",
+      "server_computer_manager_remotesessionlisting",
+      "server_computer_manager_remotesessionread",
+      "server_multi_node_test",
+      "server_multi_node_test_deferred",
+      "server_multi_node_test_directories",
+      "server_multi_node_test_fakesessionservice_createsession",
+      "server_multi_node_test_fakesessionservice_providerruntimeoptions",
+      "server_multi_node_test_fakesessionservice_runtimeoptions",
+      "server_multi_node_test_multipartaudio",
+      "server_multi_node_test_multipartfile",
+      "server_multi_node_test_session",
+      "server_multi_node_test_tasksnapshot",
+      "server_multi_node_test_waitforevent",
+      "server_node_identity",
+      "server_node_identity_storednodeidentity",
+      "server_provider_session_service",
+      "server_provider_session_service_providersessionservice_providerruntimeoptions",
+      "server_provider_session_service_providersessionservice_providers",
+      "server_provider_session_service_providersessionserviceevents",
+      "server_push_notification_service_test",
+      "server_push_notification_service_test_directories",
+      "server_remote_node_client",
+      "server_remote_node_client_headersafe",
+      "server_remote_node_client_normalizenodeurl",
+      "server_remote_node_client_redirect_statuses",
+      "server_remote_node_client_remotenodeclient_configureruntime",
+      "server_remote_node_client_remotenodeclient_createsession",
+      "server_remote_node_client_remotenodeclient_executecommand",
+      "server_remote_node_client_remotenodeclient_listcommands",
+      "server_remote_node_client_remotenodeclient_renamesession",
+      "server_remote_node_client_remotenodeclient_replypermission",
+      "server_remote_node_client_remotenodeclient_replyuserinput",
+      "server_remote_node_client_remotenodeclient_sendmessage",
+      "server_remote_node_client_remotenodeclient_uploadfile",
+      "server_remote_node_client_remotenodeclientevents",
+      "server_session_service",
+      "server_session_service_sessionservice_createsession",
+      "server_session_service_sessionservice_listcommands",
+      "server_session_service_sessionservice_providerruntimeoptions",
+      "server_session_service_sessionservice_providers",
+      "server_session_service_sessionservice_runtimeoptions",
+      "server_session_service_sessionservice_uploadfile",
+      "server_transcription_service_transcriptionservice_transcribe",
+      "shared_contracts",
+      "shared_contracts_activitystatus",
+      "shared_contracts_addcomputerinput",
+      "shared_contracts_addknowledgerootinput",
+      "shared_contracts_agentprovider",
+      "shared_contracts_agentprovidercapability",
+      "shared_contracts_audiotranscription",
+      "shared_contracts_backgroundtaskattachmentmode",
+      "shared_contracts_backgroundtaskexecutionmode",
+      "shared_contracts_configureruntimeinput",
+      "shared_contracts_createsessioninput",
+      "shared_contracts_executecommandinput",
+      "shared_contracts_hubevent",
+      "shared_contracts_managedremovedqueuedprompt",
+      "shared_contracts_messagerole",
+      "shared_contracts_permissionoption",
+      "shared_contracts_permissionreplyinput",
+      "shared_contracts_providerruntimeoptions",
+      "shared_contracts_pushsettings",
+      "shared_contracts_removedqueuedprompt",
+      "shared_contracts_renamesessioninput",
+      "shared_contracts_runtimeoptions",
+      "shared_contracts_runtimereasoningeffort",
+      "shared_contracts_sendmessageinput",
+      "shared_contracts_serverevent",
+      "shared_contracts_sessionexecutionmode",
+      "shared_contracts_sessionfileupload",
+      "shared_contracts_slashcommand",
+      "shared_contracts_userinputreplyinput",
+      "shared_contracts_workspacesearchresponse"
+    ]
+  },
+  "20": {
     "label": "shell.ts",
     "nodes": [
       "src_shell",
@@ -527,48 +804,47 @@
       "src_shell_withdrawshellnotifications"
     ]
   },
-  "17": {
-    "label": "pwa.ts",
+  "21": {
+    "label": ".publish",
     "nodes": [
-      "ref_react",
-      "src_api_deletepushsubscription",
-      "src_api_getpushpublickey",
-      "src_api_savepushsubscription",
-      "src_app_appsettingsdialog",
-      "src_app_appsettingsdialog_checkforupdate",
-      "src_app_appsettingsdialog_testnotification",
-      "src_app_appsettingsdialog_toggle",
-      "src_app_mergeruntimemodeloptions",
-      "src_app_sameruntimeselection",
-      "src_main",
-      "src_pwa",
-      "src_pwa_activatepwaupdate",
-      "src_pwa_activepushsubscription",
-      "src_pwa_applicationserverkey",
-      "src_pwa_checkforpwaupdate",
-      "src_pwa_clearsessionpushnotifications",
-      "src_pwa_disablepushnotifications",
-      "src_pwa_enablepushnotifications",
-      "src_pwa_encodeserverkey",
-      "src_pwa_installedasapp",
-      "src_pwa_normalizeserverkey",
-      "src_pwa_pushnotificationssupported",
-      "src_pwa_pushsubscription",
-      "src_pwa_pwa_update_event",
-      "src_pwa_registerpwa",
-      "src_pwa_sessionnotificationtags",
-      "src_pwa_subscriptionuseskey",
-      "src_pwa_test",
-      "src_pwa_test_install",
-      "src_pwa_test_keybuffer",
-      "src_pwa_test_mockupdatecheck",
-      "src_pwa_waitforinstallingworker",
-      "src_pwa_waitforworkerinstalled",
-      "src_pwa_workeroptions",
-      "src_pwa_workerurl"
+      "server_agent_service_agentservice_activatesession",
+      "server_agent_service_agentservice_attachsdksession",
+      "server_agent_service_agentservice_attachsession",
+      "server_agent_service_agentservice_clearserialized",
+      "server_agent_service_agentservice_createsession",
+      "server_agent_service_agentservice_createterminalsession",
+      "server_agent_service_agentservice_deleteserialized",
+      "server_agent_service_agentservice_hydratesession",
+      "server_agent_service_agentservice_opensession",
+      "server_agent_service_agentservice_publish",
+      "server_agent_service_agentservice_publisherror",
+      "server_agent_service_agentservice_recoverterminalsessions",
+      "server_agent_service_agentservice_replypermission",
+      "server_agent_service_agentservice_requestelicitation",
+      "server_agent_service_agentservice_requestpermission",
+      "server_agent_service_agentservice_requestuserinput",
+      "server_agent_service_agentservice_restartserialized",
+      "server_agent_service_agentservice_stop",
+      "server_agent_service_copilotclientlike",
+      "server_agent_service_copilotclientlike_createsession",
+      "server_agent_service_copilotclientlike_deletesession",
+      "server_agent_service_copilotclientlike_listsessions",
+      "server_agent_service_copilotclientlike_resumesession",
+      "server_agent_service_copilotclientlike_start",
+      "server_agent_service_copilotclientlike_stop",
+      "server_agent_service_copilotsessionlike_abort",
+      "server_agent_service_copilotsessionlike_disconnect",
+      "server_agent_service_ismissingsessionerror",
+      "server_agent_service_removecopilotsessionfiles",
+      "server_session_store_sessionstore_create",
+      "server_session_store_sessionstore_flush",
+      "server_session_store_sessionstore_setopen",
+      "server_session_store_sessionstore_update",
+      "server_terminal_session_terminalsessioncontroller_create",
+      "server_terminal_session_terminalsessioncontroller_replypermission"
     ]
   },
-  "18": {
+  "22": {
     "label": "FakeSessionService",
     "nodes": [
       "server_multi_node_test_fakesessionservice",
@@ -608,47 +884,257 @@
       "server_multi_node_test_fakesessionservice_validatesessiondirectory"
     ]
   },
-  "19": {
-    "label": "ProviderSessionService",
+  "23": {
+    "label": "PushNotificationService",
     "nodes": [
-      "server_provider_session_service_providersessionservice",
-      "server_provider_session_service_providersessionservice_activatesession",
-      "server_provider_session_service_providersessionservice_cancel",
-      "server_provider_session_service_providersessionservice_cancelbackgroundtask",
-      "server_provider_session_service_providersessionservice_clearconversation",
-      "server_provider_session_service_providersessionservice_configureruntime",
-      "server_provider_session_service_providersessionservice_createsession",
-      "server_provider_session_service_providersessionservice_deletesession",
-      "server_provider_session_service_providersessionservice_executecommand",
-      "server_provider_session_service_providersessionservice_getsession",
-      "server_provider_session_service_providersessionservice_listbackgroundtasks",
-      "server_provider_session_service_providersessionservice_listcommands",
-      "server_provider_session_service_providersessionservice_listworkspace",
-      "server_provider_session_service_providersessionservice_movetoterminal",
-      "server_provider_session_service_providersessionservice_opensession",
-      "server_provider_session_service_providersessionservice_readworkspacefile",
-      "server_provider_session_service_providersessionservice_removequeuedprompt",
-      "server_provider_session_service_providersessionservice_renamesession",
-      "server_provider_session_service_providersessionservice_replypermission",
-      "server_provider_session_service_providersessionservice_replyuserinput",
-      "server_provider_session_service_providersessionservice_restartsession",
-      "server_provider_session_service_providersessionservice_resumesession",
-      "server_provider_session_service_providersessionservice_runtimeoptions",
-      "server_provider_session_service_providersessionservice_searchworkspace",
-      "server_provider_session_service_providersessionservice_sendmessage",
-      "server_provider_session_service_providersessionservice_servicefor",
-      "server_provider_session_service_providersessionservice_sorted",
-      "server_provider_session_service_providersessionservice_start",
-      "server_provider_session_service_providersessionservice_stop",
-      "server_provider_session_service_providersessionservice_suspendsession",
-      "server_provider_session_service_providersessionservice_uploadfile",
-      "server_provider_session_service_providersessionservice_validatesessiondirectory",
-      "server_session_service_sessionservice_getsession",
-      "server_session_service_sessionservice_start",
-      "server_session_service_sessionservice_stop"
+      "server_push_notification_service",
+      "server_push_notification_service_brief",
+      "server_push_notification_service_hubeventsource",
+      "server_push_notification_service_hubeventsource_listsessions",
+      "server_push_notification_service_hubeventsource_off",
+      "server_push_notification_service_hubeventsource_on",
+      "server_push_notification_service_pushnotificationservice",
+      "server_push_notification_service_pushnotificationservice_attach",
+      "server_push_notification_service_pushnotificationservice_constructor",
+      "server_push_notification_service_pushnotificationservice_handleevent",
+      "server_push_notification_service_pushnotificationservice_initialize",
+      "server_push_notification_service_pushnotificationservice_movemutedsession",
+      "server_push_notification_service_pushnotificationservice_notifyaction",
+      "server_push_notification_service_pushnotificationservice_notifycompletion",
+      "server_push_notification_service_pushnotificationservice_persist",
+      "server_push_notification_service_pushnotificationservice_publickey",
+      "server_push_notification_service_pushnotificationservice_removemutedsessions",
+      "server_push_notification_service_pushnotificationservice_removesessionquestions",
+      "server_push_notification_service_pushnotificationservice_requirestate",
+      "server_push_notification_service_pushnotificationservice_sendpayload",
+      "server_push_notification_service_pushnotificationservice_sendtestnotification",
+      "server_push_notification_service_pushnotificationservice_sessionkey",
+      "server_push_notification_service_pushnotificationservice_setsessionmuted",
+      "server_push_notification_service_pushnotificationservice_settings",
+      "server_push_notification_service_pushnotificationservice_stop",
+      "server_push_notification_service_pushnotificationservice_subscribe",
+      "server_push_notification_service_pushnotificationservice_unsubscribe",
+      "server_push_notification_service_pushsender",
+      "server_push_notification_service_pushstate",
+      "server_push_routes",
+      "server_push_routes_registerpushroutes",
+      "server_push_routes_sessionmuteschema",
+      "server_push_routes_subscriptionschema",
+      "server_push_routes_testnotificationschema",
+      "server_push_routes_unsubscribeschema"
     ]
   },
-  "2": {
+  "24": {
+    "label": "devDependencies",
+    "nodes": [
+      "concurrently",
+      "jsdom",
+      "oxlint",
+      "package_devdependencies",
+      "package_devdependencies_concurrently",
+      "package_devdependencies_jsdom",
+      "package_devdependencies_oxlint",
+      "package_devdependencies_playwright_test",
+      "package_devdependencies_testing_library_jest_dom",
+      "package_devdependencies_testing_library_react",
+      "package_devdependencies_tsx",
+      "package_devdependencies_types_node",
+      "package_devdependencies_types_react",
+      "package_devdependencies_types_react_dom",
+      "package_devdependencies_types_web_push",
+      "package_devdependencies_types_ws",
+      "package_devdependencies_typescript",
+      "package_devdependencies_vite",
+      "package_devdependencies_vitejs_plugin_react",
+      "package_devdependencies_vitest",
+      "package_json_typescript",
+      "package_json_vite",
+      "playwright_test",
+      "testing_library_jest_dom",
+      "testing_library_react",
+      "tsx",
+      "types_node",
+      "types_react",
+      "types_react_dom",
+      "types_web_push",
+      "types_ws",
+      "vitejs_plugin_react",
+      "vitest"
+    ]
+  },
+  "25": {
+    "label": "WorkspaceDialog",
+    "nodes": [
+      "src_app_followmarkdownlink",
+      "src_app_knowledgereader",
+      "src_app_markdowncomponentsfor",
+      "src_app_markdownimage",
+      "src_app_missingdocumentfragment",
+      "src_app_workspacedialog",
+      "src_app_workspacedialog_movehere",
+      "src_app_workspacedialog_navigatedocument",
+      "src_app_workspacedialog_navigatehistory",
+      "src_app_workspacedialog_remembercurrentscroll",
+      "src_app_workspacedialog_submitsearch",
+      "src_markdown_navigation",
+      "src_markdown_navigation_breadcrumbsegment",
+      "src_markdown_navigation_breadcrumbsegments",
+      "src_markdown_navigation_documentheading",
+      "src_markdown_navigation_documentlink",
+      "src_markdown_navigation_headingslug",
+      "src_markdown_navigation_headingtext",
+      "src_markdown_navigation_inlinetext",
+      "src_markdown_navigation_isexternalsource",
+      "src_markdown_navigation_markdownnode",
+      "src_markdown_navigation_markdownnodetext",
+      "src_markdown_navigation_navigationentry",
+      "src_markdown_navigation_outlinefrommarkdown",
+      "src_markdown_navigation_pushnavigation",
+      "src_markdown_navigation_rehypedocumentheadings",
+      "src_markdown_navigation_rehypedocumentheadings_visit",
+      "src_markdown_navigation_rememberscroll",
+      "src_markdown_navigation_resolvedocumentlink",
+      "src_markdown_navigation_resolvedocumentpath",
+      "src_markdown_navigation_scrolltodocumentfragment",
+      "src_markdown_navigation_test"
+    ]
+  },
+  "26": {
+    "label": "agentic-remote-promotion-setup",
+    "nodes": [
+      "bin_agentic_remote_promotion_setup",
+      "bin_agentic_remote_promotion_setup__entry",
+      "bin_agentic_remote_promotion_setup_config_dir",
+      "bin_agentic_remote_promotion_setup_create_runtime_worktree",
+      "bin_agentic_remote_promotion_setup_die",
+      "bin_agentic_remote_promotion_setup_disable_monitor",
+      "bin_agentic_remote_promotion_setup_enable_monitor",
+      "bin_agentic_remote_promotion_setup_example_profile",
+      "bin_agentic_remote_promotion_setup_init_profile",
+      "bin_agentic_remote_promotion_setup_install_dir",
+      "bin_agentic_remote_promotion_setup_install_monitor",
+      "bin_agentic_remote_promotion_setup_monitor_dest",
+      "bin_agentic_remote_promotion_setup_profile_dest",
+      "bin_agentic_remote_promotion_setup_profile_value",
+      "bin_agentic_remote_promotion_setup_repo_root",
+      "bin_agentic_remote_promotion_setup_require_command",
+      "bin_agentic_remote_promotion_setup_script_dir",
+      "bin_agentic_remote_promotion_setup_script_path",
+      "bin_agentic_remote_promotion_setup_service_file",
+      "bin_agentic_remote_promotion_setup_service_name",
+      "bin_agentic_remote_promotion_setup_status_monitor",
+      "bin_agentic_remote_promotion_setup_systemd_dir",
+      "bin_agentic_remote_promotion_setup_systemd_quote",
+      "bin_agentic_remote_promotion_setup_timer_file",
+      "bin_agentic_remote_promotion_setup_timer_name",
+      "bin_agentic_remote_promotion_setup_uninstall_monitor",
+      "bin_agentic_remote_promotion_setup_usage",
+      "bin_agentic_remote_promotion_setup_user_home",
+      "bin_agentic_remote_promotion_setup_validate_profile",
+      "bin_agentic_remote_promotion_setup_write_units"
+    ]
+  },
+  "27": {
+    "label": "dependencies",
+    "nodes": [
+      "anthropic_ai_claude_agent_sdk",
+      "dnd_kit_core",
+      "dnd_kit_sortable",
+      "dnd_kit_utilities",
+      "fastify",
+      "fastify_multipart",
+      "fastify_websocket",
+      "ffmpeg_static",
+      "ffprobe_static",
+      "github_copilot_sdk",
+      "package_dependencies",
+      "package_dependencies_anthropic_ai_claude_agent_sdk",
+      "package_dependencies_dnd_kit_core",
+      "package_dependencies_dnd_kit_sortable",
+      "package_dependencies_dnd_kit_utilities",
+      "package_dependencies_fastify",
+      "package_dependencies_fastify_multipart",
+      "package_dependencies_fastify_websocket",
+      "package_dependencies_ffmpeg_static",
+      "package_dependencies_ffprobe_static",
+      "package_dependencies_github_copilot_sdk",
+      "package_dependencies_mermaid",
+      "package_dependencies_react",
+      "package_dependencies_react_dom",
+      "package_dependencies_ws",
+      "package_json_mermaid",
+      "react",
+      "react_dom",
+      "ws"
+    ]
+  },
+  "28": {
+    "label": "agentic-remote",
+    "nodes": [
+      "bin_agentic_remote",
+      "bin_agentic_remote__entry",
+      "bin_agentic_remote_command_link",
+      "bin_agentic_remote_config_dir",
+      "bin_agentic_remote_config_value",
+      "bin_agentic_remote_derived_origins",
+      "bin_agentic_remote_die",
+      "bin_agentic_remote_enable_linger",
+      "bin_agentic_remote_env_file",
+      "bin_agentic_remote_pair_info",
+      "bin_agentic_remote_publish_release",
+      "bin_agentic_remote_repo_root",
+      "bin_agentic_remote_require_command",
+      "bin_agentic_remote_rollback_service",
+      "bin_agentic_remote_script_dir",
+      "bin_agentic_remote_script_path",
+      "bin_agentic_remote_service_file",
+      "bin_agentic_remote_service_name",
+      "bin_agentic_remote_setup_service",
+      "bin_agentic_remote_systemd_dir",
+      "bin_agentic_remote_systemd_quote",
+      "bin_agentic_remote_uninstall_service",
+      "bin_agentic_remote_update_service",
+      "bin_agentic_remote_usage",
+      "bin_agentic_remote_validate_host",
+      "bin_agentic_remote_validate_name",
+      "bin_agentic_remote_validate_port",
+      "bin_agentic_remote_validate_role",
+      "bin_agentic_remote_write_service"
+    ]
+  },
+  "29": {
+    "label": "scripts",
+    "nodes": [
+      "shell_package",
+      "shell_package_dependencies",
+      "shell_package_dependencies_tauri_apps_api",
+      "shell_package_description",
+      "shell_package_devdependencies",
+      "shell_package_devdependencies_tauri_apps_cli",
+      "shell_package_devdependencies_typescript",
+      "shell_package_devdependencies_vite",
+      "shell_package_json_typescript",
+      "shell_package_json_vite",
+      "shell_package_name",
+      "shell_package_private",
+      "shell_package_scripts",
+      "shell_package_scripts_build",
+      "shell_package_scripts_build_desktop",
+      "shell_package_scripts_build_ios",
+      "shell_package_scripts_check",
+      "shell_package_scripts_dev",
+      "shell_package_scripts_dev_desktop",
+      "shell_package_scripts_dev_ios",
+      "shell_package_scripts_icons",
+      "shell_package_scripts_ios_init",
+      "shell_package_scripts_tauri",
+      "shell_package_type",
+      "shell_package_version",
+      "tauri_apps_api",
+      "tauri_apps_cli"
+    ]
+  },
+  "3": {
     "label": "background-task-adapter.ts",
     "nodes": [
       "server_background_task_adapter",
@@ -734,570 +1220,38 @@
       "shared_contracts_backgroundtaskstatus"
     ]
   },
-  "20": {
-    "label": "PushNotificationService",
-    "nodes": [
-      "server_push_notification_service",
-      "server_push_notification_service_brief",
-      "server_push_notification_service_hubeventsource",
-      "server_push_notification_service_hubeventsource_listsessions",
-      "server_push_notification_service_hubeventsource_off",
-      "server_push_notification_service_hubeventsource_on",
-      "server_push_notification_service_pushnotificationservice",
-      "server_push_notification_service_pushnotificationservice_attach",
-      "server_push_notification_service_pushnotificationservice_constructor",
-      "server_push_notification_service_pushnotificationservice_handleevent",
-      "server_push_notification_service_pushnotificationservice_initialize",
-      "server_push_notification_service_pushnotificationservice_movemutedsession",
-      "server_push_notification_service_pushnotificationservice_notifyaction",
-      "server_push_notification_service_pushnotificationservice_notifycompletion",
-      "server_push_notification_service_pushnotificationservice_persist",
-      "server_push_notification_service_pushnotificationservice_publickey",
-      "server_push_notification_service_pushnotificationservice_removemutedsessions",
-      "server_push_notification_service_pushnotificationservice_removesessionquestions",
-      "server_push_notification_service_pushnotificationservice_requirestate",
-      "server_push_notification_service_pushnotificationservice_sendpayload",
-      "server_push_notification_service_pushnotificationservice_sendtestnotification",
-      "server_push_notification_service_pushnotificationservice_sessionkey",
-      "server_push_notification_service_pushnotificationservice_setsessionmuted",
-      "server_push_notification_service_pushnotificationservice_settings",
-      "server_push_notification_service_pushnotificationservice_stop",
-      "server_push_notification_service_pushnotificationservice_subscribe",
-      "server_push_notification_service_pushnotificationservice_unsubscribe",
-      "server_push_notification_service_pushsender",
-      "server_push_notification_service_pushstate",
-      "server_push_routes",
-      "server_push_routes_registerpushroutes",
-      "server_push_routes_sessionmuteschema",
-      "server_push_routes_subscriptionschema",
-      "server_push_routes_testnotificationschema",
-      "server_push_routes_unsubscribeschema"
-    ]
-  },
-  "21": {
-    "label": "devDependencies",
-    "nodes": [
-      "concurrently",
-      "jsdom",
-      "oxlint",
-      "package_devdependencies",
-      "package_devdependencies_concurrently",
-      "package_devdependencies_jsdom",
-      "package_devdependencies_oxlint",
-      "package_devdependencies_playwright_test",
-      "package_devdependencies_testing_library_jest_dom",
-      "package_devdependencies_testing_library_react",
-      "package_devdependencies_tsx",
-      "package_devdependencies_types_node",
-      "package_devdependencies_types_react",
-      "package_devdependencies_types_react_dom",
-      "package_devdependencies_types_web_push",
-      "package_devdependencies_types_ws",
-      "package_devdependencies_typescript",
-      "package_devdependencies_vite",
-      "package_devdependencies_vitejs_plugin_react",
-      "package_devdependencies_vitest",
-      "package_json_typescript",
-      "package_json_vite",
-      "playwright_test",
-      "testing_library_jest_dom",
-      "testing_library_react",
-      "tsx",
-      "types_node",
-      "types_react",
-      "types_react_dom",
-      "types_web_push",
-      "types_ws",
-      "vitejs_plugin_react",
-      "vitest"
-    ]
-  },
-  "22": {
-    "label": "multi-node.test.ts",
-    "nodes": [
-      "server_computer_manager_computermanager_constructor",
-      "server_computer_registry",
-      "server_computer_registry_computerregistry",
-      "server_computer_registry_computerregistry_constructor",
-      "server_computer_registry_computerregistry_initialize",
-      "server_computer_registry_computerregistry_list",
-      "server_computer_registry_computerregistry_persist",
-      "server_computer_registry_computerregistry_remove",
-      "server_computer_registry_computerregistry_upsert",
-      "server_computer_registry_registeredcomputer",
-      "server_computer_registry_registrystate",
-      "server_computer_registry_test",
-      "server_computer_registry_test_directories",
-      "server_multi_node_test",
-      "server_multi_node_test_deferred",
-      "server_multi_node_test_directories",
-      "server_multi_node_test_multipartaudio",
-      "server_multi_node_test_multipartfile",
-      "server_multi_node_test_remotesnapshotfixture",
-      "server_multi_node_test_session",
-      "server_multi_node_test_tasksnapshot",
-      "server_multi_node_test_temporarydirectory",
-      "server_multi_node_test_waitforevent",
-      "server_node_identity",
-      "server_node_identity_nodeidentitystore",
-      "server_node_identity_nodeidentitystore_constructor",
-      "server_node_identity_nodeidentitystore_info",
-      "server_node_identity_nodeidentitystore_initialize",
-      "server_node_identity_nodeidentitystore_persist",
-      "server_node_identity_nodeidentitystore_requireidentity",
-      "server_node_identity_nodeidentitystore_token",
-      "server_node_identity_storednodeidentity",
-      "server_remote_node_client_remotenodeclient_constructor"
-    ]
-  },
-  "23": {
-    "label": "WorkspaceDialog",
-    "nodes": [
-      "src_app_followmarkdownlink",
-      "src_app_knowledgereader",
-      "src_app_markdowncomponentsfor",
-      "src_app_markdownimage",
-      "src_app_missingdocumentfragment",
-      "src_app_workspacedialog",
-      "src_app_workspacedialog_movehere",
-      "src_app_workspacedialog_navigatedocument",
-      "src_app_workspacedialog_navigatehistory",
-      "src_app_workspacedialog_remembercurrentscroll",
-      "src_app_workspacedialog_submitsearch",
-      "src_markdown_navigation",
-      "src_markdown_navigation_breadcrumbsegment",
-      "src_markdown_navigation_breadcrumbsegments",
-      "src_markdown_navigation_documentheading",
-      "src_markdown_navigation_documentlink",
-      "src_markdown_navigation_headingslug",
-      "src_markdown_navigation_headingtext",
-      "src_markdown_navigation_inlinetext",
-      "src_markdown_navigation_isexternalsource",
-      "src_markdown_navigation_markdownnode",
-      "src_markdown_navigation_markdownnodetext",
-      "src_markdown_navigation_navigationentry",
-      "src_markdown_navigation_outlinefrommarkdown",
-      "src_markdown_navigation_pushnavigation",
-      "src_markdown_navigation_rehypedocumentheadings",
-      "src_markdown_navigation_rehypedocumentheadings_visit",
-      "src_markdown_navigation_rememberscroll",
-      "src_markdown_navigation_resolvedocumentlink",
-      "src_markdown_navigation_resolvedocumentpath",
-      "src_markdown_navigation_scrolltodocumentfragment",
-      "src_markdown_navigation_test"
-    ]
-  },
-  "24": {
-    "label": "agentic-remote-promotion-setup",
-    "nodes": [
-      "bin_agentic_remote_promotion_setup",
-      "bin_agentic_remote_promotion_setup__entry",
-      "bin_agentic_remote_promotion_setup_config_dir",
-      "bin_agentic_remote_promotion_setup_create_runtime_worktree",
-      "bin_agentic_remote_promotion_setup_die",
-      "bin_agentic_remote_promotion_setup_disable_monitor",
-      "bin_agentic_remote_promotion_setup_enable_monitor",
-      "bin_agentic_remote_promotion_setup_example_profile",
-      "bin_agentic_remote_promotion_setup_init_profile",
-      "bin_agentic_remote_promotion_setup_install_dir",
-      "bin_agentic_remote_promotion_setup_install_monitor",
-      "bin_agentic_remote_promotion_setup_monitor_dest",
-      "bin_agentic_remote_promotion_setup_profile_dest",
-      "bin_agentic_remote_promotion_setup_profile_value",
-      "bin_agentic_remote_promotion_setup_repo_root",
-      "bin_agentic_remote_promotion_setup_require_command",
-      "bin_agentic_remote_promotion_setup_script_dir",
-      "bin_agentic_remote_promotion_setup_script_path",
-      "bin_agentic_remote_promotion_setup_service_file",
-      "bin_agentic_remote_promotion_setup_service_name",
-      "bin_agentic_remote_promotion_setup_status_monitor",
-      "bin_agentic_remote_promotion_setup_systemd_dir",
-      "bin_agentic_remote_promotion_setup_systemd_quote",
-      "bin_agentic_remote_promotion_setup_timer_file",
-      "bin_agentic_remote_promotion_setup_timer_name",
-      "bin_agentic_remote_promotion_setup_uninstall_monitor",
-      "bin_agentic_remote_promotion_setup_usage",
-      "bin_agentic_remote_promotion_setup_user_home",
-      "bin_agentic_remote_promotion_setup_validate_profile",
-      "bin_agentic_remote_promotion_setup_write_units"
-    ]
-  },
-  "25": {
-    "label": "dependencies",
-    "nodes": [
-      "anthropic_ai_claude_agent_sdk",
-      "dnd_kit_core",
-      "dnd_kit_sortable",
-      "dnd_kit_utilities",
-      "fastify",
-      "fastify_multipart",
-      "fastify_websocket",
-      "ffmpeg_static",
-      "ffprobe_static",
-      "github_copilot_sdk",
-      "package_dependencies",
-      "package_dependencies_anthropic_ai_claude_agent_sdk",
-      "package_dependencies_dnd_kit_core",
-      "package_dependencies_dnd_kit_sortable",
-      "package_dependencies_dnd_kit_utilities",
-      "package_dependencies_fastify",
-      "package_dependencies_fastify_multipart",
-      "package_dependencies_fastify_websocket",
-      "package_dependencies_ffmpeg_static",
-      "package_dependencies_ffprobe_static",
-      "package_dependencies_github_copilot_sdk",
-      "package_dependencies_mermaid",
-      "package_dependencies_react",
-      "package_dependencies_react_dom",
-      "package_dependencies_ws",
-      "package_json_mermaid",
-      "react",
-      "react_dom",
-      "ws"
-    ]
-  },
-  "26": {
-    "label": "agentic-remote",
-    "nodes": [
-      "bin_agentic_remote",
-      "bin_agentic_remote__entry",
-      "bin_agentic_remote_command_link",
-      "bin_agentic_remote_config_dir",
-      "bin_agentic_remote_config_value",
-      "bin_agentic_remote_derived_origins",
-      "bin_agentic_remote_die",
-      "bin_agentic_remote_enable_linger",
-      "bin_agentic_remote_env_file",
-      "bin_agentic_remote_pair_info",
-      "bin_agentic_remote_publish_release",
-      "bin_agentic_remote_repo_root",
-      "bin_agentic_remote_require_command",
-      "bin_agentic_remote_rollback_service",
-      "bin_agentic_remote_script_dir",
-      "bin_agentic_remote_script_path",
-      "bin_agentic_remote_service_file",
-      "bin_agentic_remote_service_name",
-      "bin_agentic_remote_setup_service",
-      "bin_agentic_remote_systemd_dir",
-      "bin_agentic_remote_systemd_quote",
-      "bin_agentic_remote_uninstall_service",
-      "bin_agentic_remote_update_service",
-      "bin_agentic_remote_usage",
-      "bin_agentic_remote_validate_host",
-      "bin_agentic_remote_validate_name",
-      "bin_agentic_remote_validate_port",
-      "bin_agentic_remote_validate_role",
-      "bin_agentic_remote_write_service"
-    ]
-  },
-  "27": {
-    "label": "knowledge-tree.ts",
-    "nodes": [
-      "shared_contracts_workspaceentry",
-      "src_api_addknowledgeroot",
-      "src_app_app_cancelknowledgerestore",
-      "src_app_app_collapseknowledgetree",
-      "src_app_app_createroot",
-      "src_app_app_knowledgetreekeydown",
-      "src_app_app_loadknowledgechain",
-      "src_app_app_loadknowledgefolder",
-      "src_app_app_openknowledgefile",
-      "src_app_app_openknowledgefolder",
-      "src_app_app_selectroot",
-      "src_app_app_toggleknowledgefolder",
-      "src_knowledge_tree",
-      "src_knowledge_tree_collapseknowledgefolder",
-      "src_knowledge_tree_expandknowledgefolder",
-      "src_knowledge_tree_isknowledgefolderexpanded",
-      "src_knowledge_tree_knowledgeancestors",
-      "src_knowledge_tree_knowledgecrumb",
-      "src_knowledge_tree_knowledgecrumbs",
-      "src_knowledge_tree_knowledgeentryrow",
-      "src_knowledge_tree_knowledgefolders",
-      "src_knowledge_tree_knowledgefolderstate",
-      "src_knowledge_tree_knowledgepathchain",
-      "src_knowledge_tree_knowledgerootpath",
-      "src_knowledge_tree_knowledgerow",
-      "src_knowledge_tree_knowledgestatusrow",
-      "src_knowledge_tree_knowledgetreerows",
-      "src_knowledge_tree_test",
-      "src_knowledge_tree_test_folders"
-    ]
-  },
-  "28": {
-    "label": ".update",
-    "nodes": [
-      "server_agent_service_agentservice_attachsdksession",
-      "server_agent_service_agentservice_attachsession",
-      "server_agent_service_agentservice_clearserialized",
-      "server_agent_service_agentservice_clearupdatenoticeforexited",
-      "server_agent_service_agentservice_createsession",
-      "server_agent_service_agentservice_deleteserialized",
-      "server_agent_service_agentservice_discoversessions",
-      "server_agent_service_agentservice_publisherror",
-      "server_agent_service_agentservice_refreshdiscovery",
-      "server_agent_service_agentservice_requestelicitation",
-      "server_agent_service_agentservice_requestpermission",
-      "server_agent_service_agentservice_requestuserinput",
-      "server_agent_service_agentservice_restartserialized",
-      "server_agent_service_agentservice_start",
-      "server_agent_service_agentservice_stop",
-      "server_agent_service_copilotclientlike",
-      "server_agent_service_copilotclientlike_createsession",
-      "server_agent_service_copilotclientlike_deletesession",
-      "server_agent_service_copilotclientlike_listsessions",
-      "server_agent_service_copilotclientlike_resumesession",
-      "server_agent_service_copilotclientlike_start",
-      "server_agent_service_copilotclientlike_stop",
-      "server_agent_service_copilotsessionlike_disconnect",
-      "server_agent_service_ismissingsessionerror",
-      "server_agent_service_removecopilotsessionfiles",
-      "server_session_store_sessionstore_flush",
-      "server_session_store_sessionstore_update",
-      "server_terminal_session_terminalsessioncontroller_reset"
-    ]
-  },
-  "29": {
-    "label": "node-routes.ts",
-    "nodes": [
-      "server_file_upload_routes",
-      "server_file_upload_routes_fileuploaderror",
-      "server_file_upload_routes_fileuploaderror_constructor",
-      "server_file_upload_routes_max_session_file_bytes",
-      "server_file_upload_routes_registerfileuploadroutes",
-      "server_file_upload_routes_sessionparams",
-      "server_file_upload_routes_supportedextensions",
-      "server_file_upload_routes_supportssessionfile",
-      "server_file_upload_routes_test",
-      "server_file_upload_routes_test_multipartfile",
-      "server_node_routes",
-      "server_node_routes_audio_filename_header",
-      "server_node_routes_audio_type_header",
-      "server_node_routes_configureruntimeschema",
-      "server_node_routes_createsessionschema",
-      "server_node_routes_directoryqueryschema",
-      "server_node_routes_directoryvalidationschema",
-      "server_node_routes_executecommandschema",
-      "server_node_routes_knowledgefilequeryschema",
-      "server_node_routes_knowledgequeryschema",
-      "server_node_routes_permissionreplyschema",
-      "server_node_routes_renamesessionschema",
-      "server_node_routes_sendmessageschema",
-      "server_node_routes_tokenmatches",
-      "server_node_routes_userinputreplyschema",
-      "server_node_routes_userinputvalueschema",
-      "server_node_routes_workspacefilequeryschema",
-      "server_node_routes_workspacesearchqueryschema"
-    ]
-  },
-  "3": {
-    "label": "contracts.ts",
-    "nodes": [
-      "server_claude_agent_service",
-      "server_claude_agent_service_activeclaudequery",
-      "server_claude_agent_service_authstatusrunner",
-      "server_claude_agent_service_claudeagentserviceevents",
-      "server_claude_agent_service_claudequestion",
-      "server_claude_agent_service_execfileasync",
-      "server_claude_agent_service_pendingclaudeinput",
-      "server_claude_agent_service_pendingclaudepermission",
-      "server_computer_manager",
-      "server_computer_manager_computermanager_listcommands",
-      "server_computer_manager_computermanager_providerruntimeoptions",
-      "server_computer_manager_computermanager_runtimeoptions",
-      "server_computer_manager_computermanager_uploadfile",
-      "server_computer_manager_computermanagerevents",
-      "server_computer_manager_remoteresync",
-      "server_computer_manager_remotesessionlisting",
-      "server_computer_manager_remotesessionread",
-      "server_multi_node_test_fakesessionservice_createsession",
-      "server_multi_node_test_fakesessionservice_providerruntimeoptions",
-      "server_multi_node_test_fakesessionservice_runtimeoptions",
-      "server_provider_session_service",
-      "server_provider_session_service_providersessionservice_providerruntimeoptions",
-      "server_provider_session_service_providersessionservice_providers",
-      "server_provider_session_service_providersessionserviceevents",
-      "server_push_notification_service_test",
-      "server_push_notification_service_test_directories",
-      "server_remote_node_client",
-      "server_remote_node_client_normalizenodeurl",
-      "server_remote_node_client_redirect_statuses",
-      "server_remote_node_client_remotenodeclient_createsession",
-      "server_remote_node_client_remotenodeclient_executecommand",
-      "server_remote_node_client_remotenodeclient_listcommands",
-      "server_remote_node_client_remotenodeclient_renamesession",
-      "server_remote_node_client_remotenodeclient_replypermission",
-      "server_remote_node_client_remotenodeclient_runtimeoptions",
-      "server_remote_node_client_remotenodeclient_sendmessage",
-      "server_remote_node_client_remotenodeclient_uploadfile",
-      "server_remote_node_client_remotenodeclientevents",
-      "server_session_service",
-      "server_session_service_sessionservice_createsession",
-      "server_session_service_sessionservice_listcommands",
-      "server_session_service_sessionservice_providerruntimeoptions",
-      "server_session_service_sessionservice_providers",
-      "server_session_service_sessionservice_runtimeoptions",
-      "server_session_service_sessionservice_uploadfile",
-      "server_transcription_service_transcriptionservice_transcribe",
-      "shared_contracts",
-      "shared_contracts_activitystatus",
-      "shared_contracts_addcomputerinput",
-      "shared_contracts_addknowledgerootinput",
-      "shared_contracts_agentprovider",
-      "shared_contracts_agentprovidercapability",
-      "shared_contracts_audiotranscription",
-      "shared_contracts_backgroundtaskattachmentmode",
-      "shared_contracts_backgroundtaskexecutionmode",
-      "shared_contracts_configureruntimeinput",
-      "shared_contracts_createsessioninput",
-      "shared_contracts_executecommandinput",
-      "shared_contracts_hubevent",
-      "shared_contracts_managedremovedqueuedprompt",
-      "shared_contracts_messagerole",
-      "shared_contracts_permissionoption",
-      "shared_contracts_permissionreplyinput",
-      "shared_contracts_providerruntimeoptions",
-      "shared_contracts_pushsettings",
-      "shared_contracts_removedqueuedprompt",
-      "shared_contracts_renamesessioninput",
-      "shared_contracts_runtimeoptions",
-      "shared_contracts_runtimereasoningeffort",
-      "shared_contracts_sendmessageinput",
-      "shared_contracts_serverevent",
-      "shared_contracts_sessionexecutionmode",
-      "shared_contracts_sessionfileupload",
-      "shared_contracts_slashcommand",
-      "shared_contracts_userinputreplyinput",
-      "shared_contracts_workspacesearchresponse"
-    ]
-  },
   "30": {
-    "label": "SessionService",
+    "label": "app.ts",
     "nodes": [
-      "server_node_routes_registernoderoutes",
-      "server_provider_session_service_providersessionservice_constructor",
-      "server_session_service_sessionservice",
-      "server_session_service_sessionservice_activatesession",
-      "server_session_service_sessionservice_cancel",
-      "server_session_service_sessionservice_cancelbackgroundtask",
-      "server_session_service_sessionservice_clearconversation",
-      "server_session_service_sessionservice_configureruntime",
-      "server_session_service_sessionservice_deletesession",
-      "server_session_service_sessionservice_executecommand",
-      "server_session_service_sessionservice_listbackgroundtasks",
-      "server_session_service_sessionservice_listworkspace",
-      "server_session_service_sessionservice_movetoterminal",
-      "server_session_service_sessionservice_off",
-      "server_session_service_sessionservice_on",
-      "server_session_service_sessionservice_opensession",
-      "server_session_service_sessionservice_readworkspacefile",
-      "server_session_service_sessionservice_removequeuedprompt",
-      "server_session_service_sessionservice_renamesession",
-      "server_session_service_sessionservice_replypermission",
-      "server_session_service_sessionservice_replyuserinput",
-      "server_session_service_sessionservice_restartsession",
-      "server_session_service_sessionservice_resumesession",
-      "server_session_service_sessionservice_searchworkspace",
-      "server_session_service_sessionservice_sendmessage",
-      "server_session_service_sessionservice_suspendsession",
-      "server_session_service_sessionservice_validatesessiondirectory"
+      "server_api_origin_test",
+      "server_api_origin_test_prefixes",
+      "server_api_origin_test_session",
+      "server_api_origin_test_trusted",
+      "server_api_origin_test_untrusted",
+      "server_app",
+      "server_app_build_test",
+      "server_app_build_test_directories",
+      "server_app_buildapp",
+      "server_app_errorstatuscode",
+      "server_app_serverrole",
+      "server_delegated_transcription_service_transcriptioncomputername",
+      "server_index",
+      "server_index_port",
+      "server_index_shutdown",
+      "server_paths",
+      "server_paths_resolvedatadirectory",
+      "server_session_store",
+      "server_session_store_activityduration",
+      "server_session_store_activityresultpreview",
+      "server_session_store_sessionstore_finishtoolactivity",
+      "server_session_store_storedsession",
+      "server_session_store_storedstate",
+      "shared_app_version",
+      "shared_app_version_appversion",
+      "shared_app_version_parseappversion"
     ]
   },
   "31": {
-    "label": "scripts",
-    "nodes": [
-      "shell_package",
-      "shell_package_dependencies",
-      "shell_package_dependencies_tauri_apps_api",
-      "shell_package_description",
-      "shell_package_devdependencies",
-      "shell_package_devdependencies_tauri_apps_cli",
-      "shell_package_devdependencies_typescript",
-      "shell_package_devdependencies_vite",
-      "shell_package_json_typescript",
-      "shell_package_json_vite",
-      "shell_package_name",
-      "shell_package_private",
-      "shell_package_scripts",
-      "shell_package_scripts_build",
-      "shell_package_scripts_build_desktop",
-      "shell_package_scripts_build_ios",
-      "shell_package_scripts_check",
-      "shell_package_scripts_dev",
-      "shell_package_scripts_dev_desktop",
-      "shell_package_scripts_dev_ios",
-      "shell_package_scripts_icons",
-      "shell_package_scripts_ios_init",
-      "shell_package_scripts_tauri",
-      "shell_package_type",
-      "shell_package_version",
-      "tauri_apps_api",
-      "tauri_apps_cli"
-    ]
-  },
-  "32": {
-    "label": "AgentService",
-    "nodes": [
-      "server_agent_service_agentservice",
-      "server_agent_service_agentservice_assertnolivebackgroundtasks",
-      "server_agent_service_agentservice_assertstillidle",
-      "server_agent_service_agentservice_clearconversation",
-      "server_agent_service_agentservice_deletesession",
-      "server_agent_service_agentservice_getsession",
-      "server_agent_service_agentservice_listknowledge",
-      "server_agent_service_agentservice_listworkspace",
-      "server_agent_service_agentservice_movetoterminal",
-      "server_agent_service_agentservice_providers",
-      "server_agent_service_agentservice_readknowledgefile",
-      "server_agent_service_agentservice_readworkspacefile",
-      "server_agent_service_agentservice_requireworkspaceroot",
-      "server_agent_service_agentservice_restartsession",
-      "server_agent_service_agentservice_resumequeued",
-      "server_agent_service_agentservice_resumesession",
-      "server_agent_service_agentservice_searchworkspace",
-      "server_agent_service_agentservice_serializelifecycle",
-      "server_agent_service_agentservice_suspendclaimedsession",
-      "server_agent_service_agentservice_suspendserialized",
-      "server_agent_service_agentservice_suspendsession",
-      "server_agent_service_agentservice_validatedirectory",
-      "server_agent_service_agentservice_validatesessiondirectory",
-      "server_agent_service_agentservice_waitforterminaleventlog",
-      "server_session_store_sessionstore_backend",
-      "server_terminal_session_terminalsessioncontroller_stop"
-    ]
-  },
-  "33": {
-    "label": ".get",
-    "nodes": [
-      "server_agent_service_agentservice_acknowledgefailedprompt",
-      "server_agent_service_agentservice_claimfailure",
-      "server_agent_service_agentservice_dispatchcommand",
-      "server_agent_service_agentservice_drainnextterminalprompt",
-      "server_agent_service_agentservice_drainsdkqueue",
-      "server_agent_service_agentservice_drainterminalqueue",
-      "server_agent_service_agentservice_enqueueprompt",
-      "server_agent_service_agentservice_enqueueterminalprompt",
-      "server_agent_service_agentservice_executecommand",
-      "server_agent_service_agentservice_holddispatch",
-      "server_agent_service_agentservice_resumeclaimedsession",
-      "server_agent_service_agentservice_runcommand",
-      "server_agent_service_agentservice_runprompt",
-      "server_agent_service_agentservice_schedulefailureacknowledgement",
-      "server_agent_service_agentservice_sendadmitted",
-      "server_agent_service_agentservice_sendmessage",
-      "server_agent_service_agentservice_serializequeue",
-      "server_agent_service_agentservice_shouldenqueueterminalprompt",
-      "server_agent_service_agentservice_shouldusenativeterminalqueue",
-      "server_agent_service_agentservice_startmessage",
-      "server_agent_service_agentservice_terminalcommandfeedback",
-      "server_session_store_sessionstore_addmessage",
-      "server_session_store_sessionstore_get",
-      "server_session_store_sessionstore_markterminalpromptdispatched",
-      "server_terminal_session_terminalsessioncontroller_capture",
-      "server_terminal_session_terminalsessioncontroller_send"
-    ]
-  },
-  "34": {
     "label": "directory-browser.ts",
     "nodes": [
       "server_agent_service_agentservice_listdirectories",
@@ -1327,7 +1281,7 @@
       "shared_contracts_directorylisting"
     ]
   },
-  "35": {
+  "32": {
     "label": "compilerOptions",
     "nodes": [
       "tsconfig_app",
@@ -1357,36 +1311,7 @@
       "tsconfig_app_json_ref_vite_client"
     ]
   },
-  "36": {
-    "label": "transcription-service.ts",
-    "nodes": [
-      "server_transcription_media_digests_test",
-      "server_transcription_media_digests_test_sha256",
-      "server_transcription_service",
-      "server_transcription_service_commandoptions",
-      "server_transcription_service_commandresult",
-      "server_transcription_service_commandrunner",
-      "server_transcription_service_configuredthreads",
-      "server_transcription_service_defaultcommandrunner",
-      "server_transcription_service_execfileasync",
-      "server_transcription_service_ffmpegstatic",
-      "server_transcription_service_ffprobestatic",
-      "server_transcription_service_genericmimetypes",
-      "server_transcription_service_localtranscriptionoptions",
-      "server_transcription_service_max_audio_duration_seconds",
-      "server_transcription_service_packagedbinary",
-      "server_transcription_service_packagedffmpegpath",
-      "server_transcription_service_packagedffprobepath",
-      "server_transcription_service_packagedmediadigests",
-      "server_transcription_service_packagedmediapaths",
-      "server_transcription_service_require",
-      "server_transcription_service_sha256",
-      "server_transcription_service_supportedextensions",
-      "server_transcription_service_test",
-      "server_transcription_service_test_directories"
-    ]
-  },
-  "37": {
+  "33": {
     "label": "active-sessions.ts",
     "nodes": [
       "server_active_sessions",
@@ -1414,136 +1339,63 @@
       "server_session_store_discoveredsession"
     ]
   },
-  "38": {
-    "label": ".handleSessionEvent",
+  "34": {
+    "label": "delegated-transcription-service.ts",
     "nodes": [
-      "server_agent_service_activitykind",
-      "server_agent_service_agentservice_handlesessionevent",
-      "server_agent_service_agentservice_liveactivitygroupid",
-      "server_agent_service_agentservice_loadruntimemodels",
-      "server_agent_service_agentservice_rememberliveactivityevent",
-      "server_agent_service_contexttextlength",
-      "server_agent_service_estimatedcontexttokens",
-      "server_agent_service_eventagentid",
-      "server_agent_service_eventcontextlength",
-      "server_agent_service_isbackgroundtaskevent",
-      "server_agent_service_isruntimereasoningeffort",
-      "server_agent_service_isunsupportedbackgroundtaskerror",
-      "server_agent_service_numbervalue",
-      "server_agent_service_pendinguserinputfromevents",
-      "server_agent_service_recordvalue",
-      "server_agent_service_runtimeinfofromevents",
-      "server_agent_service_stringarray",
-      "server_agent_service_stringarrayvalue",
-      "server_agent_service_stringvalue",
-      "server_agent_service_userinputformat",
-      "server_agent_service_userinputformfromschema",
-      "server_agent_service_userinputoptions",
-      "server_agent_service_workingdirectoryfromevents"
+      "server_app_buildappoptions",
+      "server_delegated_transcription_service",
+      "server_delegated_transcription_service_collect",
+      "server_delegated_transcription_service_delegatedtranscriptionoptions",
+      "server_delegated_transcription_service_delegatedtranscriptionservice",
+      "server_delegated_transcription_service_delegatedtranscriptionservice_constructor",
+      "server_delegated_transcription_service_delegatedtranscriptionservice_initialize",
+      "server_delegated_transcription_service_delegatedtranscriptionservice_stop",
+      "server_delegated_transcription_service_delegatedtranscriptionservice_transcribe",
+      "server_delegated_transcription_service_oversized",
+      "server_delegated_transcription_service_statuscodeof",
+      "server_delegated_transcription_service_test",
+      "server_delegated_transcription_service_test_audio",
+      "server_delegated_transcription_service_test_hubcomputer",
+      "server_delegated_transcription_service_test_localservice",
+      "server_delegated_transcription_service_test_manager",
+      "server_delegated_transcription_service_test_workstation",
+      "server_transcription_service_audioupload",
+      "server_transcription_service_max_audio_bytes",
+      "server_transcription_service_supportsaudioupload",
+      "server_transcription_service_transcriptionservice",
+      "server_transcription_service_transcriptionservice_initialize",
+      "server_transcription_service_transcriptionservice_stop"
     ]
   },
-  "39": {
-    "label": "app.ts",
+  "35": {
+    "label": "knowledge-tree.ts",
     "nodes": [
-      "server_api_origin_test",
-      "server_api_origin_test_prefixes",
-      "server_api_origin_test_session",
-      "server_api_origin_test_trusted",
-      "server_api_origin_test_untrusted",
-      "server_app",
-      "server_app_build_test",
-      "server_app_build_test_directories",
-      "server_app_buildapp",
-      "server_app_errorstatuscode",
-      "server_app_serverrole",
-      "server_delegated_transcription_service_transcriptioncomputername",
-      "server_index",
-      "server_index_port",
-      "server_index_shutdown",
-      "server_paths",
-      "server_paths_resolvedatadirectory",
-      "server_session_store",
-      "server_session_store_storedsession",
-      "server_session_store_storedstate",
-      "shared_app_version",
-      "shared_app_version_appversion",
-      "shared_app_version_parseappversion"
+      "shared_contracts_workspaceentry",
+      "src_app_app_knowledgetreekeydown",
+      "src_app_app_loadknowledgechain",
+      "src_app_app_loadknowledgefolder",
+      "src_app_app_openknowledgefolder",
+      "src_app_app_toggleknowledgefolder",
+      "src_knowledge_tree",
+      "src_knowledge_tree_collapseknowledgefolder",
+      "src_knowledge_tree_expandknowledgefolder",
+      "src_knowledge_tree_isknowledgefolderexpanded",
+      "src_knowledge_tree_knowledgeancestors",
+      "src_knowledge_tree_knowledgecrumb",
+      "src_knowledge_tree_knowledgecrumbs",
+      "src_knowledge_tree_knowledgeentryrow",
+      "src_knowledge_tree_knowledgefolders",
+      "src_knowledge_tree_knowledgefolderstate",
+      "src_knowledge_tree_knowledgepathchain",
+      "src_knowledge_tree_knowledgerootpath",
+      "src_knowledge_tree_knowledgerow",
+      "src_knowledge_tree_knowledgestatusrow",
+      "src_knowledge_tree_knowledgetreerows",
+      "src_knowledge_tree_test",
+      "src_knowledge_tree_test_folders"
     ]
   },
-  "4": {
-    "label": "ClaudeAgentService",
-    "nodes": [
-      "server_claude_agent_service_claudeagentservice",
-      "server_claude_agent_service_claudeagentservice_activatesession",
-      "server_claude_agent_service_claudeagentservice_admitsend",
-      "server_claude_agent_service_claudeagentservice_cancel",
-      "server_claude_agent_service_claudeagentservice_cancelbackgroundtask",
-      "server_claude_agent_service_claudeagentservice_canusetool",
-      "server_claude_agent_service_claudeagentservice_claudequestions",
-      "server_claude_agent_service_claudeagentservice_clearconversation",
-      "server_claude_agent_service_claudeagentservice_clearserialized",
-      "server_claude_agent_service_claudeagentservice_configureruntime",
-      "server_claude_agent_service_claudeagentservice_constructor",
-      "server_claude_agent_service_claudeagentservice_createsession",
-      "server_claude_agent_service_claudeagentservice_deleteclaimed",
-      "server_claude_agent_service_claudeagentservice_deleteserialized",
-      "server_claude_agent_service_claudeagentservice_deletesession",
-      "server_claude_agent_service_claudeagentservice_dispatchqueued",
-      "server_claude_agent_service_claudeagentservice_drainqueue",
-      "server_claude_agent_service_claudeagentservice_drainserialized",
-      "server_claude_agent_service_claudeagentservice_effort",
-      "server_claude_agent_service_claudeagentservice_executecommand",
-      "server_claude_agent_service_claudeagentservice_handlemessage",
-      "server_claude_agent_service_claudeagentservice_holddispatch",
-      "server_claude_agent_service_claudeagentservice_listbackgroundtasks",
-      "server_claude_agent_service_claudeagentservice_listcommands",
-      "server_claude_agent_service_claudeagentservice_listhistory",
-      "server_claude_agent_service_claudeagentservice_listknowledge",
-      "server_claude_agent_service_claudeagentservice_listsessions",
-      "server_claude_agent_service_claudeagentservice_listworkspace",
-      "server_claude_agent_service_claudeagentservice_movetoterminal",
-      "server_claude_agent_service_claudeagentservice_opensession",
-      "server_claude_agent_service_claudeagentservice_pendinginput",
-      "server_claude_agent_service_claudeagentservice_permissionmode",
-      "server_claude_agent_service_claudeagentservice_permissiontitle",
-      "server_claude_agent_service_claudeagentservice_providerruntimeoptions",
-      "server_claude_agent_service_claudeagentservice_providers",
-      "server_claude_agent_service_claudeagentservice_publish",
-      "server_claude_agent_service_claudeagentservice_readknowledgefile",
-      "server_claude_agent_service_claudeagentservice_readworkspacefile",
-      "server_claude_agent_service_claudeagentservice_refreshauthentication",
-      "server_claude_agent_service_claudeagentservice_removequeuedprompt",
-      "server_claude_agent_service_claudeagentservice_renamesession",
-      "server_claude_agent_service_claudeagentservice_replypermission",
-      "server_claude_agent_service_claudeagentservice_replyuserinput",
-      "server_claude_agent_service_claudeagentservice_requestuserinput",
-      "server_claude_agent_service_claudeagentservice_requireavailable",
-      "server_claude_agent_service_claudeagentservice_requireidle",
-      "server_claude_agent_service_claudeagentservice_requiresession",
-      "server_claude_agent_service_claudeagentservice_resolveanswer",
-      "server_claude_agent_service_claudeagentservice_resolvepending",
-      "server_claude_agent_service_claudeagentservice_restartserialized",
-      "server_claude_agent_service_claudeagentservice_restartsession",
-      "server_claude_agent_service_claudeagentservice_resumequeued",
-      "server_claude_agent_service_claudeagentservice_resumesession",
-      "server_claude_agent_service_claudeagentservice_runquery",
-      "server_claude_agent_service_claudeagentservice_runtimeoptions",
-      "server_claude_agent_service_claudeagentservice_searchworkspace",
-      "server_claude_agent_service_claudeagentservice_sendmessage",
-      "server_claude_agent_service_claudeagentservice_serializelifecycle",
-      "server_claude_agent_service_claudeagentservice_starttool",
-      "server_claude_agent_service_claudeagentservice_stop",
-      "server_claude_agent_service_claudeagentservice_suspendqueued",
-      "server_claude_agent_service_claudeagentservice_suspendsession",
-      "server_claude_agent_service_claudeagentservice_validatedirectory",
-      "server_claude_agent_service_claudeagentservice_validatesessiondirectory",
-      "server_claude_agent_service_isclaudeauthenticationerror",
-      "server_claude_agent_service_ismissingclaudesessionerror",
-      "server_claude_agent_service_toolresulttext",
-      "server_session_store_sessionstore_remove"
-    ]
-  },
-  "40": {
+  "36": {
     "label": "NewSessionDialog",
     "nodes": [
       "src_api_activatesession",
@@ -1571,33 +1423,34 @@
       "src_app_workspaceabsolutepath"
     ]
   },
-  "41": {
-    "label": ".publish",
+  "37": {
+    "label": "NodeIdentityStore",
     "nodes": [
-      "server_agent_service_agentservice_activatesession",
-      "server_agent_service_agentservice_createterminalsession",
-      "server_agent_service_agentservice_hasunanswereduserinputrow",
-      "server_agent_service_agentservice_hydratesession",
-      "server_agent_service_agentservice_opensession",
-      "server_agent_service_agentservice_publish",
-      "server_agent_service_agentservice_reconcileuntrackedterminaldispatches",
-      "server_agent_service_agentservice_recoverhiddenuserinput",
-      "server_agent_service_agentservice_recoverterminalsessions",
-      "server_agent_service_agentservice_refreshtranscripts",
-      "server_agent_service_agentservice_removequeuedprompt",
-      "server_agent_service_agentservice_renamesession",
-      "server_agent_service_agentservice_syncexternalworkspace",
-      "server_agent_service_agentservice_syncterminalupdatenotice",
-      "server_agent_service_agentservice_synctranscripts",
-      "server_session_store_sessionstore_clearuntrackedterminaldispatch",
-      "server_session_store_sessionstore_queuedispatchat",
-      "server_session_store_sessionstore_setopen",
-      "server_terminal_session_terminalsessioncontroller_create",
-      "server_terminal_session_terminalsessioncontroller_rename",
-      "server_terminal_session_terminalsessioncontroller_updatenotice"
+      "server_computer_manager_computermanager_constructor",
+      "server_computer_manager_computermanager_initialize",
+      "server_computer_registry",
+      "server_computer_registry_computerregistry",
+      "server_computer_registry_computerregistry_constructor",
+      "server_computer_registry_computerregistry_initialize",
+      "server_computer_registry_computerregistry_list",
+      "server_computer_registry_computerregistry_persist",
+      "server_computer_registry_computerregistry_remove",
+      "server_computer_registry_computerregistry_upsert",
+      "server_computer_registry_registrystate",
+      "server_computer_registry_test",
+      "server_computer_registry_test_directories",
+      "server_multi_node_test_remotesnapshotfixture",
+      "server_multi_node_test_temporarydirectory",
+      "server_node_identity_nodeidentitystore",
+      "server_node_identity_nodeidentitystore_constructor",
+      "server_node_identity_nodeidentitystore_info",
+      "server_node_identity_nodeidentitystore_initialize",
+      "server_node_identity_nodeidentitystore_persist",
+      "server_node_identity_nodeidentitystore_requireidentity",
+      "server_node_identity_nodeidentitystore_token"
     ]
   },
-  "42": {
+  "38": {
     "label": "compilerOptions",
     "nodes": [
       "ref_es2022",
@@ -1622,7 +1475,164 @@
       "shell_tsconfig_json_ref_vite_config_ts"
     ]
   },
-  "43": {
+  "39": {
+    "label": ".handleSessionEvent",
+    "nodes": [
+      "server_agent_service_activitykind",
+      "server_agent_service_agentservice_handlesessionevent",
+      "server_agent_service_agentservice_liveactivitygroupid",
+      "server_agent_service_agentservice_loadruntimemodels",
+      "server_agent_service_agentservice_rememberliveactivityevent",
+      "server_agent_service_contexttextlength",
+      "server_agent_service_estimatedcontexttokens",
+      "server_agent_service_eventagentid",
+      "server_agent_service_eventcontextlength",
+      "server_agent_service_isbackgroundtaskevent",
+      "server_agent_service_isruntimereasoningeffort",
+      "server_agent_service_isunsupportedbackgroundtaskerror",
+      "server_agent_service_numbervalue",
+      "server_agent_service_pendinguserinputfromevents",
+      "server_agent_service_recordvalue",
+      "server_agent_service_runtimeinfofromevents",
+      "server_agent_service_stringvalue",
+      "server_agent_service_userinputformfromschema",
+      "server_agent_service_userinputoptions",
+      "server_agent_service_workingdirectoryfromevents"
+    ]
+  },
+  "4": {
+    "label": "ClaudeAgentService",
+    "nodes": [
+      "server_claude_agent_service_claudeagentservice",
+      "server_claude_agent_service_claudeagentservice_activatesession",
+      "server_claude_agent_service_claudeagentservice_admitsend",
+      "server_claude_agent_service_claudeagentservice_cancel",
+      "server_claude_agent_service_claudeagentservice_cancelbackgroundtask",
+      "server_claude_agent_service_claudeagentservice_canusetool",
+      "server_claude_agent_service_claudeagentservice_claudequestions",
+      "server_claude_agent_service_claudeagentservice_clearconversation",
+      "server_claude_agent_service_claudeagentservice_clearserialized",
+      "server_claude_agent_service_claudeagentservice_configureruntime",
+      "server_claude_agent_service_claudeagentservice_constructor",
+      "server_claude_agent_service_claudeagentservice_createsession",
+      "server_claude_agent_service_claudeagentservice_deleteclaimed",
+      "server_claude_agent_service_claudeagentservice_deleteserialized",
+      "server_claude_agent_service_claudeagentservice_deletesession",
+      "server_claude_agent_service_claudeagentservice_detectavailability",
+      "server_claude_agent_service_claudeagentservice_dispatchqueued",
+      "server_claude_agent_service_claudeagentservice_drainqueue",
+      "server_claude_agent_service_claudeagentservice_drainserialized",
+      "server_claude_agent_service_claudeagentservice_effort",
+      "server_claude_agent_service_claudeagentservice_executecommand",
+      "server_claude_agent_service_claudeagentservice_handlemessage",
+      "server_claude_agent_service_claudeagentservice_holddispatch",
+      "server_claude_agent_service_claudeagentservice_listbackgroundtasks",
+      "server_claude_agent_service_claudeagentservice_listcommands",
+      "server_claude_agent_service_claudeagentservice_listhistory",
+      "server_claude_agent_service_claudeagentservice_listknowledge",
+      "server_claude_agent_service_claudeagentservice_listsessions",
+      "server_claude_agent_service_claudeagentservice_listworkspace",
+      "server_claude_agent_service_claudeagentservice_loadmodels",
+      "server_claude_agent_service_claudeagentservice_loadmodels_emptyprompt",
+      "server_claude_agent_service_claudeagentservice_movetoterminal",
+      "server_claude_agent_service_claudeagentservice_opensession",
+      "server_claude_agent_service_claudeagentservice_pendinginput",
+      "server_claude_agent_service_claudeagentservice_permissionmode",
+      "server_claude_agent_service_claudeagentservice_permissiontitle",
+      "server_claude_agent_service_claudeagentservice_providerruntimeoptions",
+      "server_claude_agent_service_claudeagentservice_providers",
+      "server_claude_agent_service_claudeagentservice_publish",
+      "server_claude_agent_service_claudeagentservice_readknowledgefile",
+      "server_claude_agent_service_claudeagentservice_readworkspacefile",
+      "server_claude_agent_service_claudeagentservice_refreshauthentication",
+      "server_claude_agent_service_claudeagentservice_removequeuedprompt",
+      "server_claude_agent_service_claudeagentservice_renamesession",
+      "server_claude_agent_service_claudeagentservice_replypermission",
+      "server_claude_agent_service_claudeagentservice_replyuserinput",
+      "server_claude_agent_service_claudeagentservice_requestuserinput",
+      "server_claude_agent_service_claudeagentservice_requireavailable",
+      "server_claude_agent_service_claudeagentservice_requireidle",
+      "server_claude_agent_service_claudeagentservice_requiresession",
+      "server_claude_agent_service_claudeagentservice_resolveanswer",
+      "server_claude_agent_service_claudeagentservice_resolvepending",
+      "server_claude_agent_service_claudeagentservice_restartserialized",
+      "server_claude_agent_service_claudeagentservice_restartsession",
+      "server_claude_agent_service_claudeagentservice_resumequeued",
+      "server_claude_agent_service_claudeagentservice_resumesession",
+      "server_claude_agent_service_claudeagentservice_runquery",
+      "server_claude_agent_service_claudeagentservice_runtimemodel",
+      "server_claude_agent_service_claudeagentservice_runtimeoptions",
+      "server_claude_agent_service_claudeagentservice_searchworkspace",
+      "server_claude_agent_service_claudeagentservice_sendmessage",
+      "server_claude_agent_service_claudeagentservice_serializelifecycle",
+      "server_claude_agent_service_claudeagentservice_start",
+      "server_claude_agent_service_claudeagentservice_starttool",
+      "server_claude_agent_service_claudeagentservice_stop",
+      "server_claude_agent_service_claudeagentservice_suspendqueued",
+      "server_claude_agent_service_claudeagentservice_suspendsession",
+      "server_claude_agent_service_claudeagentservice_validatedirectory",
+      "server_claude_agent_service_claudeagentservice_validatesessiondirectory",
+      "server_claude_agent_service_isclaudeauthenticationerror",
+      "server_claude_agent_service_ismissingclaudesessionerror",
+      "server_claude_agent_service_toolresulttext",
+      "server_multi_node_test_fakesessionservice_cancelbackgroundtask",
+      "server_multi_node_test_fakesessionservice_listbackgroundtasks",
+      "server_session_store_sessionstore_remove",
+      "shared_contracts_backgroundtasksnapshot",
+      "shared_contracts_runtimemodeloption"
+    ]
+  },
+  "40": {
+    "label": "TerminalSessionController",
+    "nodes": [
+      "server_agent_service_agentservice_constructor",
+      "server_agent_service_agentservice_istoolcallcomplete",
+      "server_agent_service_agentservice_replyuserinput",
+      "server_agent_service_agentservice_syncterminaluserinput",
+      "server_agent_service_agentservice_waitfortoolcompletion",
+      "server_agent_service_persistedformanswer",
+      "server_agent_service_validateuserinputform",
+      "server_terminal_session_terminalsessioncontroller",
+      "server_terminal_session_terminalsessioncontroller_cancel",
+      "server_terminal_session_terminalsessioncontroller_dismissuserinput",
+      "server_terminal_session_terminalsessioncontroller_filluserinputform",
+      "server_terminal_session_terminalsessioncontroller_pendingpermission",
+      "server_terminal_session_terminalsessioncontroller_pendinguserinput",
+      "server_terminal_session_terminalsessioncontroller_rename",
+      "server_terminal_session_terminalsessioncontroller_replyuserinput",
+      "server_terminal_session_terminalsessioncontroller_reset",
+      "server_terminal_session_terminalsessioncontroller_restart",
+      "server_terminal_session_terminalsessioncontroller_sending",
+      "server_terminal_session_terminalsessioncontroller_stop",
+      "server_terminal_session_terminalsessioncontroller_updatenotice"
+    ]
+  },
+  "41": {
+    "label": "transcription-service.ts",
+    "nodes": [
+      "server_transcription_media_digests_test",
+      "server_transcription_media_digests_test_sha256",
+      "server_transcription_service",
+      "server_transcription_service_commandoptions",
+      "server_transcription_service_commandresult",
+      "server_transcription_service_configuredthreads",
+      "server_transcription_service_defaultcommandrunner",
+      "server_transcription_service_execfileasync",
+      "server_transcription_service_ffmpegstatic",
+      "server_transcription_service_ffprobestatic",
+      "server_transcription_service_genericmimetypes",
+      "server_transcription_service_localtranscriptionoptions",
+      "server_transcription_service_packagedbinary",
+      "server_transcription_service_packagedffmpegpath",
+      "server_transcription_service_packagedffprobepath",
+      "server_transcription_service_packagedmediadigests",
+      "server_transcription_service_packagedmediapaths",
+      "server_transcription_service_require",
+      "server_transcription_service_sha256",
+      "server_transcription_service_supportedextensions"
+    ]
+  },
+  "42": {
     "label": "compilerOptions",
     "nodes": [
       "tsconfig_node",
@@ -1647,7 +1657,7 @@
       "tsconfig_node_json_ref_vite_config_ts"
     ]
   },
-  "44": {
+  "43": {
     "label": "compilerOptions",
     "nodes": [
       "ref_server",
@@ -1671,31 +1681,7 @@
       "tsconfig_server_json_ref_shared"
     ]
   },
-  "45": {
-    "label": "claude-agent-service.test.ts",
-    "nodes": [
-      "server_claude_agent_service_claudeagentservice_detectavailability",
-      "server_claude_agent_service_claudeagentservice_getsession",
-      "server_claude_agent_service_claudeagentservice_loadmodels",
-      "server_claude_agent_service_claudeagentservice_loadmodels_emptyprompt",
-      "server_claude_agent_service_claudeagentservice_runtimemodel",
-      "server_claude_agent_service_claudeagentservice_start",
-      "server_claude_agent_service_claudesdk",
-      "server_claude_agent_service_test",
-      "server_claude_agent_service_test_directories",
-      "server_claude_agent_service_test_fixture",
-      "server_claude_agent_service_test_models",
-      "server_claude_agent_service_test_queryhandle",
-      "server_claude_agent_service_test_textresult",
-      "server_claude_agent_service_test_waitforidle",
-      "server_session_store_sessionstore_initialize",
-      "server_session_store_test",
-      "server_session_store_test_createstore",
-      "server_session_store_test_temporarydirectories",
-      "shared_contracts_runtimemodeloption"
-    ]
-  },
-  "46": {
+  "44": {
     "label": "event-log.ts",
     "nodes": [
       "server_event_log",
@@ -1719,7 +1705,7 @@
       "server_event_log_yamlscalar"
     ]
   },
-  "47": {
+  "45": {
     "label": "workspace-browser.ts",
     "nodes": [
       "server_workspace_browser",
@@ -1743,49 +1729,92 @@
       "shared_contracts_workspacesearchresult"
     ]
   },
-  "48": {
-    "label": "delegated-transcription-service.ts",
+  "46": {
+    "label": "node-routes.ts",
     "nodes": [
-      "server_delegated_transcription_service",
-      "server_delegated_transcription_service_collect",
-      "server_delegated_transcription_service_delegatedtranscriptionservice",
-      "server_delegated_transcription_service_delegatedtranscriptionservice_constructor",
-      "server_delegated_transcription_service_delegatedtranscriptionservice_initialize",
-      "server_delegated_transcription_service_delegatedtranscriptionservice_stop",
-      "server_delegated_transcription_service_delegatedtranscriptionservice_transcribe",
-      "server_delegated_transcription_service_oversized",
-      "server_delegated_transcription_service_statuscodeof",
-      "server_delegated_transcription_service_test",
-      "server_delegated_transcription_service_test_audio",
-      "server_delegated_transcription_service_test_hubcomputer",
-      "server_delegated_transcription_service_test_localservice",
-      "server_delegated_transcription_service_test_manager",
-      "server_delegated_transcription_service_test_workstation",
-      "server_transcription_service_audioupload",
-      "server_transcription_service_max_audio_bytes",
-      "server_transcription_service_supportsaudioupload"
+      "server_node_routes",
+      "server_node_routes_audio_filename_header",
+      "server_node_routes_audio_type_header",
+      "server_node_routes_configureruntimeschema",
+      "server_node_routes_createsessionschema",
+      "server_node_routes_directoryqueryschema",
+      "server_node_routes_directoryvalidationschema",
+      "server_node_routes_executecommandschema",
+      "server_node_routes_knowledgefilequeryschema",
+      "server_node_routes_knowledgequeryschema",
+      "server_node_routes_permissionreplyschema",
+      "server_node_routes_renamesessionschema",
+      "server_node_routes_sendmessageschema",
+      "server_node_routes_tokenmatches",
+      "server_node_routes_userinputreplyschema",
+      "server_node_routes_userinputvalueschema",
+      "server_node_routes_workspacefilequeryschema",
+      "server_node_routes_workspacesearchqueryschema"
+    ]
+  },
+  "47": {
+    "label": "agent-service.test.ts",
+    "nodes": [
+      "server_agent_service_terminalformsteps",
+      "server_agent_service_test",
+      "server_agent_service_test_configurablemodel",
+      "server_agent_service_test_deferredsession",
+      "server_agent_service_test_deferredsession_abort",
+      "server_agent_service_test_deferredsession_disconnect",
+      "server_agent_service_test_deferredsession_emit",
+      "server_agent_service_test_deferredsession_getevents",
+      "server_agent_service_test_deferredsession_on",
+      "server_agent_service_test_deferredsession_resolveprompt",
+      "server_agent_service_test_deferredsession_sendandwait",
+      "server_agent_service_test_directories",
+      "server_agent_service_test_messagesasevents",
+      "server_background_task_adapter_copilottaskinfo",
+      "server_background_task_adapter_copilottaskprogress",
+      "shared_contracts_backgroundtaskkind",
+      "shared_contracts_userinputform"
+    ]
+  },
+  "48": {
+    "label": "TranscriptionError",
+    "nodes": [
+      "server_transcription_service_commandrunner",
+      "server_transcription_service_localtranscriptionservice",
+      "server_transcription_service_localtranscriptionservice_assertpackagedmediaintegrity",
+      "server_transcription_service_localtranscriptionservice_assertruntimeavailable",
+      "server_transcription_service_localtranscriptionservice_constructor",
+      "server_transcription_service_localtranscriptionservice_convertaudio",
+      "server_transcription_service_localtranscriptionservice_initialize",
+      "server_transcription_service_localtranscriptionservice_probeduration",
+      "server_transcription_service_localtranscriptionservice_runwhisper",
+      "server_transcription_service_localtranscriptionservice_stop",
+      "server_transcription_service_localtranscriptionservice_transcribe",
+      "server_transcription_service_max_audio_duration_seconds",
+      "server_transcription_service_test",
+      "server_transcription_service_test_directories",
+      "server_transcription_service_test_fixture",
+      "server_transcription_service_transcriptionerror",
+      "server_transcription_service_transcriptionerror_constructor"
     ]
   },
   "49": {
-    "label": "TerminalSessionController",
+    "label": "capture",
     "nodes": [
-      "server_agent_service_agentservice_constructor",
-      "server_agent_service_agentservice_istoolcallcomplete",
-      "server_agent_service_agentservice_replypermission",
-      "server_agent_service_agentservice_replyuserinput",
-      "server_agent_service_agentservice_syncterminaluserinput",
-      "server_agent_service_agentservice_waitfortoolcompletion",
-      "server_agent_service_persistedformanswer",
-      "server_agent_service_validateuserinputform",
-      "server_terminal_session_terminalsessioncontroller",
-      "server_terminal_session_terminalsessioncontroller_dismissuserinput",
-      "server_terminal_session_terminalsessioncontroller_filluserinputform",
-      "server_terminal_session_terminalsessioncontroller_pendingpermission",
-      "server_terminal_session_terminalsessioncontroller_pendinguserinput",
-      "server_terminal_session_terminalsessioncontroller_replypermission",
-      "server_terminal_session_terminalsessioncontroller_replyuserinput",
-      "server_terminal_session_terminalsessioncontroller_restart",
-      "server_terminal_session_terminalsessioncontroller_sending"
+      "src_app_app_releaserecording",
+      "src_app_app_shortcutkeys",
+      "src_app_app_startrecording",
+      "src_app_app_stoprecording",
+      "src_app_binding",
+      "src_app_bindinglabel",
+      "src_app_capturablecode",
+      "src_app_ismodifiercode",
+      "src_app_keylabel",
+      "src_app_readstoredshortcuts",
+      "src_app_samebinding",
+      "src_app_shortcuteditor",
+      "src_app_shortcuteditor_capture",
+      "src_app_shortcuteditor_reset",
+      "src_app_shortcuteditor_stoprecording",
+      "src_app_usablebinding"
     ]
   },
   "5": {
@@ -1794,7 +1823,9 @@
       "src_accent_icon",
       "src_accent_icon_applyaccenticon",
       "src_accent_icon_test",
+      "src_api_addcomputer",
       "src_api_configureruntime",
+      "src_api_removecomputer",
       "src_app",
       "src_app_accenttheme",
       "src_app_accentthemes",
@@ -1811,6 +1842,9 @@
       "src_app_compactactivitytext",
       "src_app_compacttokens",
       "src_app_composerhistorystate",
+      "src_app_computersdialog",
+      "src_app_computersdialog_remove",
+      "src_app_computersdialog_submit",
       "src_app_contextsizelabel",
       "src_app_conversationmessages",
       "src_app_defaultruntimecontrols",
@@ -1835,6 +1869,7 @@
       "src_app_ordertasksforreading",
       "src_app_pdfviewer",
       "src_app_permissioncard",
+      "src_app_providername",
       "src_app_readdefaultruntimesettings",
       "src_app_readdefaultsessionfolders",
       "src_app_readstoredorder",
@@ -1862,70 +1897,26 @@
     ]
   },
   "50": {
-    "label": "agent-service.test.ts",
+    "label": "file-upload-routes.ts",
     "nodes": [
-      "server_agent_service_terminalformsteps",
-      "server_agent_service_test",
-      "server_agent_service_test_configurablemodel",
-      "server_agent_service_test_deferredsession",
-      "server_agent_service_test_deferredsession_abort",
-      "server_agent_service_test_deferredsession_disconnect",
-      "server_agent_service_test_deferredsession_emit",
-      "server_agent_service_test_deferredsession_getevents",
-      "server_agent_service_test_deferredsession_on",
-      "server_agent_service_test_deferredsession_resolveprompt",
-      "server_agent_service_test_deferredsession_sendandwait",
-      "server_agent_service_test_directories",
-      "server_agent_service_test_messagesasevents",
-      "server_background_task_adapter_copilottaskinfo",
-      "server_background_task_adapter_copilottaskprogress",
-      "shared_contracts_backgroundtaskkind",
-      "shared_contracts_userinputform"
+      "server_file_upload_routes",
+      "server_file_upload_routes_fileuploaderror",
+      "server_file_upload_routes_fileuploaderror_constructor",
+      "server_file_upload_routes_max_session_file_bytes",
+      "server_file_upload_routes_registerfileuploadroutes",
+      "server_file_upload_routes_sessionparams",
+      "server_file_upload_routes_supportedextensions",
+      "server_file_upload_routes_supportssessionfile",
+      "server_file_upload_routes_test",
+      "server_file_upload_routes_test_multipartfile",
+      "server_transcription_routes",
+      "server_transcription_routes_registertranscriptionroutes",
+      "server_transcription_routes_test",
+      "server_transcription_routes_test_multipartaudio",
+      "server_transcription_routes_transcriptionmultipartoptions"
     ]
   },
   "51": {
-    "label": "CopilotSessionLike",
-    "nodes": [
-      "server_agent_service_agentservice_cancel",
-      "server_agent_service_copilotsessionlike",
-      "server_agent_service_copilotsessionlike_abort",
-      "server_agent_service_copilotsessionlike_getevents",
-      "server_agent_service_copilotsessionlike_on",
-      "server_agent_service_copilotsessionlike_sendandwait",
-      "server_agent_service_test_fakecopilotclient",
-      "server_agent_service_test_fakecopilotclient_createsession",
-      "server_agent_service_test_fakecopilotclient_deletesession",
-      "server_agent_service_test_fakecopilotclient_listmodels",
-      "server_agent_service_test_fakecopilotclient_listsessions",
-      "server_agent_service_test_fakecopilotclient_resumesession",
-      "server_agent_service_test_fakecopilotclient_start",
-      "server_agent_service_test_fakecopilotclient_stop",
-      "server_background_task_adapter_copilottasksapi",
-      "server_terminal_session_terminalsessioncontroller_cancel"
-    ]
-  },
-  "52": {
-    "label": "capture",
-    "nodes": [
-      "src_app_app_releaserecording",
-      "src_app_app_shortcutkeys",
-      "src_app_app_startrecording",
-      "src_app_app_stoprecording",
-      "src_app_binding",
-      "src_app_bindinglabel",
-      "src_app_capturablecode",
-      "src_app_ismodifiercode",
-      "src_app_keylabel",
-      "src_app_readstoredshortcuts",
-      "src_app_samebinding",
-      "src_app_shortcuteditor",
-      "src_app_shortcuteditor_capture",
-      "src_app_shortcuteditor_reset",
-      "src_app_shortcuteditor_stoprecording",
-      "src_app_usablebinding"
-    ]
-  },
-  "53": {
     "label": "desktop.json",
     "nodes": [
       "ref_global_shortcut_default",
@@ -1944,26 +1935,7 @@
       "shell_src_tauri_capabilities_desktop_windows"
     ]
   },
-  "54": {
-    "label": "BackgroundTaskSnapshot",
-    "nodes": [
-      "server_agent_service_agentservice_cancelbackgroundtask",
-      "server_agent_service_agentservice_commandcatalog",
-      "server_agent_service_agentservice_ensureloaded",
-      "server_agent_service_agentservice_listbackgroundtasks",
-      "server_agent_service_agentservice_listcommands",
-      "server_agent_service_agentservice_movetoterminalserialized",
-      "server_agent_service_agentservice_readbackgroundtasks",
-      "server_agent_service_agentservice_replacebackgroundtasks",
-      "server_agent_service_agentservice_sessioncommandcatalog",
-      "server_agent_service_agentservice_syncbackgroundtasks",
-      "server_multi_node_test_fakesessionservice_cancelbackgroundtask",
-      "server_multi_node_test_fakesessionservice_listbackgroundtasks",
-      "server_terminal_session_terminalsessioncontroller_has",
-      "shared_contracts_backgroundtasksnapshot"
-    ]
-  },
-  "55": {
+  "52": {
     "label": ".oxlintrc.json",
     "nodes": [
       "oxlintrc",
@@ -1981,7 +1953,7 @@
       "ref_warn"
     ]
   },
-  "56": {
+  "53": {
     "label": "settings-local.json",
     "nodes": [
       "ref_allow_hub_config",
@@ -1999,25 +1971,25 @@
       "shell_src_tauri_capabilities_settings_local_windows"
     ]
   },
-  "57": {
-    "label": "TranscriptionError",
+  "54": {
+    "label": "CopilotSessionLike",
     "nodes": [
-      "server_transcription_service_localtranscriptionservice",
-      "server_transcription_service_localtranscriptionservice_assertpackagedmediaintegrity",
-      "server_transcription_service_localtranscriptionservice_assertruntimeavailable",
-      "server_transcription_service_localtranscriptionservice_constructor",
-      "server_transcription_service_localtranscriptionservice_convertaudio",
-      "server_transcription_service_localtranscriptionservice_initialize",
-      "server_transcription_service_localtranscriptionservice_probeduration",
-      "server_transcription_service_localtranscriptionservice_runwhisper",
-      "server_transcription_service_localtranscriptionservice_stop",
-      "server_transcription_service_localtranscriptionservice_transcribe",
-      "server_transcription_service_test_fixture",
-      "server_transcription_service_transcriptionerror",
-      "server_transcription_service_transcriptionerror_constructor"
+      "server_agent_service_copilotsessionlike",
+      "server_agent_service_copilotsessionlike_getevents",
+      "server_agent_service_copilotsessionlike_on",
+      "server_agent_service_copilotsessionlike_sendandwait",
+      "server_agent_service_test_fakecopilotclient",
+      "server_agent_service_test_fakecopilotclient_createsession",
+      "server_agent_service_test_fakecopilotclient_deletesession",
+      "server_agent_service_test_fakecopilotclient_listmodels",
+      "server_agent_service_test_fakecopilotclient_listsessions",
+      "server_agent_service_test_fakecopilotclient_resumesession",
+      "server_agent_service_test_fakecopilotclient_start",
+      "server_agent_service_test_fakecopilotclient_stop",
+      "server_background_task_adapter_copilottasksapi"
     ]
   },
-  "58": {
+  "55": {
     "label": "scripts",
     "nodes": [
       "package_scripts",
@@ -2033,7 +2005,7 @@
       "package_scripts_test_watch"
     ]
   },
-  "59": {
+  "56": {
     "label": ".configureRuntime",
     "nodes": [
       "server_agent_service_agentmode",
@@ -2049,68 +2021,7 @@
       "server_terminal_session_terminalsessioncontroller_configure"
     ]
   },
-  "6": {
-    "label": "ComputerManager",
-    "nodes": [
-      "server_computer_manager_computermanager",
-      "server_computer_manager_computermanager_activatesession",
-      "server_computer_manager_computermanager_addclient",
-      "server_computer_manager_computermanager_cancel",
-      "server_computer_manager_computermanager_cancelbackgroundtask",
-      "server_computer_manager_computermanager_clearconversation",
-      "server_computer_manager_computermanager_computersummary",
-      "server_computer_manager_computermanager_configureruntime",
-      "server_computer_manager_computermanager_createsession",
-      "server_computer_manager_computermanager_deletesession",
-      "server_computer_manager_computermanager_emitnodeevent",
-      "server_computer_manager_computermanager_executecommand",
-      "server_computer_manager_computermanager_findcomputer",
-      "server_computer_manager_computermanager_getsession",
-      "server_computer_manager_computermanager_initialize",
-      "server_computer_manager_computermanager_invalidateremotereads",
-      "server_computer_manager_computermanager_listbackgroundtasks",
-      "server_computer_manager_computermanager_listcomputers",
-      "server_computer_manager_computermanager_listhistory",
-      "server_computer_manager_computermanager_listknowledge",
-      "server_computer_manager_computermanager_listsessions",
-      "server_computer_manager_computermanager_listsessionswithauthority",
-      "server_computer_manager_computermanager_listworkspace",
-      "server_computer_manager_computermanager_localcomputer",
-      "server_computer_manager_computermanager_movetoterminal",
-      "server_computer_manager_computermanager_readknowledgefile",
-      "server_computer_manager_computermanager_readremotesessions",
-      "server_computer_manager_computermanager_readworkspacefile",
-      "server_computer_manager_computermanager_registercomputer",
-      "server_computer_manager_computermanager_removecomputer",
-      "server_computer_manager_computermanager_removequeuedprompt",
-      "server_computer_manager_computermanager_renamesession",
-      "server_computer_manager_computermanager_replypermission",
-      "server_computer_manager_computermanager_replyuserinput",
-      "server_computer_manager_computermanager_requireclient",
-      "server_computer_manager_computermanager_requirecomputer",
-      "server_computer_manager_computermanager_restartsession",
-      "server_computer_manager_computermanager_resumesession",
-      "server_computer_manager_computermanager_resyncremotecomputer",
-      "server_computer_manager_computermanager_searchworkspace",
-      "server_computer_manager_computermanager_sendmessage",
-      "server_computer_manager_computermanager_stop",
-      "server_computer_manager_computermanager_suspendsession",
-      "server_computer_manager_computermanager_transcribeaudio",
-      "server_computer_manager_computermanager_validatesessiondirectory",
-      "server_computer_manager_managedsession",
-      "server_computer_manager_sessionatleastasnew",
-      "server_hub_routes_registerhubroutes",
-      "server_hub_routes_sessionmutecarrier",
-      "server_hub_routes_sessionmutecarrier_setsessionmuted",
-      "server_hub_routes_sessionmutecarrier_settings",
-      "server_hub_routes_test",
-      "server_hub_routes_test_mutecarrier",
-      "shared_contracts_computersummary",
-      "shared_contracts_managedsession",
-      "src_api_sessionlisting"
-    ]
-  },
-  "60": {
+  "57": {
     "label": "promotion-monitor.test.ts",
     "nodes": [
       "server_promotion_monitor_test",
@@ -2126,22 +2037,7 @@
       "server_promotion_monitor_test_stub"
     ]
   },
-  "61": {
-    "label": "TranscriptionService",
-    "nodes": [
-      "server_app_buildappoptions",
-      "server_delegated_transcription_service_delegatedtranscriptionoptions",
-      "server_transcription_routes",
-      "server_transcription_routes_registertranscriptionroutes",
-      "server_transcription_routes_test",
-      "server_transcription_routes_test_multipartaudio",
-      "server_transcription_routes_transcriptionmultipartoptions",
-      "server_transcription_service_transcriptionservice",
-      "server_transcription_service_transcriptionservice_initialize",
-      "server_transcription_service_transcriptionservice_stop"
-    ]
-  },
-  "62": {
+  "58": {
     "label": "bridge.rs",
     "nodes": [
       "shell_src_tauri_src_bridge",
@@ -2156,7 +2052,7 @@
       "shell_src_tauri_src_bridge_script_defines_the_bridge_and_carries_identity"
     ]
   },
-  "63": {
+  "59": {
     "label": "package.json",
     "nodes": [
       "package",
@@ -2170,7 +2066,89 @@
       "ref_ffmpeg_static"
     ]
   },
-  "64": {
+  "6": {
+    "label": "AgentService",
+    "nodes": [
+      "server_agent_service_agentservice",
+      "server_agent_service_agentservice_acknowledgefailedprompt",
+      "server_agent_service_agentservice_assertnolivebackgroundtasks",
+      "server_agent_service_agentservice_assertstillidle",
+      "server_agent_service_agentservice_cancel",
+      "server_agent_service_agentservice_cancelbackgroundtask",
+      "server_agent_service_agentservice_claimfailure",
+      "server_agent_service_agentservice_clearconversation",
+      "server_agent_service_agentservice_commandcatalog",
+      "server_agent_service_agentservice_deletesession",
+      "server_agent_service_agentservice_dispatchcommand",
+      "server_agent_service_agentservice_drainterminalqueue",
+      "server_agent_service_agentservice_enqueueterminalprompt",
+      "server_agent_service_agentservice_ensureloaded",
+      "server_agent_service_agentservice_executecommand",
+      "server_agent_service_agentservice_getsession",
+      "server_agent_service_agentservice_hasunanswereduserinputrow",
+      "server_agent_service_agentservice_holddispatch",
+      "server_agent_service_agentservice_listbackgroundtasks",
+      "server_agent_service_agentservice_listcommands",
+      "server_agent_service_agentservice_listhistory",
+      "server_agent_service_agentservice_listknowledge",
+      "server_agent_service_agentservice_listsessions",
+      "server_agent_service_agentservice_listworkspace",
+      "server_agent_service_agentservice_movetoterminal",
+      "server_agent_service_agentservice_movetoterminalserialized",
+      "server_agent_service_agentservice_providers",
+      "server_agent_service_agentservice_readbackgroundtasks",
+      "server_agent_service_agentservice_readknowledgefile",
+      "server_agent_service_agentservice_readworkspacefile",
+      "server_agent_service_agentservice_recoverhiddenuserinput",
+      "server_agent_service_agentservice_renamesession",
+      "server_agent_service_agentservice_replacebackgroundtasks",
+      "server_agent_service_agentservice_requireworkspaceroot",
+      "server_agent_service_agentservice_restartsession",
+      "server_agent_service_agentservice_resumeclaimedsession",
+      "server_agent_service_agentservice_resumequeued",
+      "server_agent_service_agentservice_resumesession",
+      "server_agent_service_agentservice_runcommand",
+      "server_agent_service_agentservice_schedulefailureacknowledgement",
+      "server_agent_service_agentservice_searchworkspace",
+      "server_agent_service_agentservice_sendadmitted",
+      "server_agent_service_agentservice_sendmessage",
+      "server_agent_service_agentservice_serializelifecycle",
+      "server_agent_service_agentservice_sessioncommandcatalog",
+      "server_agent_service_agentservice_shouldenqueueterminalprompt",
+      "server_agent_service_agentservice_shouldusenativeterminalqueue",
+      "server_agent_service_agentservice_suspendclaimedsession",
+      "server_agent_service_agentservice_suspendserialized",
+      "server_agent_service_agentservice_suspendsession",
+      "server_agent_service_agentservice_syncbackgroundtasks",
+      "server_agent_service_agentservice_syncexternalworkspace",
+      "server_agent_service_agentservice_syncterminalupdatenotice",
+      "server_agent_service_agentservice_synctranscripts",
+      "server_agent_service_agentservice_terminalcommandfeedback",
+      "server_agent_service_agentservice_validatedirectory",
+      "server_agent_service_agentservice_validatesessiondirectory",
+      "server_agent_service_agentservice_waitforterminaleventlog",
+      "server_session_store_sessionstore_backend",
+      "server_session_store_sessionstore_get",
+      "server_terminal_session_terminalsessioncontroller_capture",
+      "server_terminal_session_terminalsessioncontroller_has",
+      "server_terminal_session_terminalsessioncontroller_send"
+    ]
+  },
+  "60": {
+    "label": "claude-agent-service.test.ts",
+    "nodes": [
+      "server_claude_agent_service_claudeagentservice_getsession",
+      "server_claude_agent_service_claudesdk",
+      "server_claude_agent_service_test",
+      "server_claude_agent_service_test_directories",
+      "server_claude_agent_service_test_fixture",
+      "server_claude_agent_service_test_models",
+      "server_claude_agent_service_test_queryhandle",
+      "server_claude_agent_service_test_textresult",
+      "server_claude_agent_service_test_waitforidle"
+    ]
+  },
+  "61": {
     "label": "UserInputFieldControl",
     "nodes": [
       "src_app_userinputfieldcontrol",
@@ -2183,7 +2161,7 @@
       "src_app_userinputfieldcontrol_toggleoption"
     ]
   },
-  "65": {
+  "62": {
     "label": "settings.ts",
     "nodes": [
       "shell_src_settings",
@@ -2195,7 +2173,7 @@
       "shell_src_settings_trimmed"
     ]
   },
-  "66": {
+  "63": {
     "label": "knowledge-restore.ts",
     "nodes": [
       "src_knowledge_position",
@@ -2207,7 +2185,18 @@
       "src_knowledge_restore_test_state"
     ]
   },
-  "67": {
+  "64": {
+    "label": ".terminalContinuationState",
+    "nodes": [
+      "server_agent_service_agentservice_terminalcontinuationstate",
+      "server_agent_service_isforegroundcompletionevent",
+      "server_agent_service_isforegroundlifecycleevent",
+      "server_agent_service_statusfromevents",
+      "server_session_store_sessionstore_updatestatus",
+      "shared_contracts_sessionstatus"
+    ]
+  },
+  "65": {
     "label": "composer-layout.test.ts",
     "nodes": [
       "server_composer_layout_test",
@@ -2217,17 +2206,7 @@
       "server_composer_layout_test_stylesheet"
     ]
   },
-  "68": {
-    "label": "removeComputer",
-    "nodes": [
-      "src_api_addcomputer",
-      "src_api_removecomputer",
-      "src_app_computersdialog",
-      "src_app_computersdialog_remove",
-      "src_app_computersdialog_submit"
-    ]
-  },
-  "69": {
+  "66": {
     "label": "activity-spacing.test.ts",
     "nodes": [
       "server_activity_spacing_test",
@@ -2236,7 +2215,174 @@
       "server_activity_spacing_test_stylesheet"
     ]
   },
+  "67": {
+    "label": "release-publication.test.ts",
+    "nodes": [
+      "server_release_publication_test",
+      "server_release_publication_test_directories",
+      "server_release_publication_test_exec",
+      "server_release_publication_test_publicationfixture"
+    ]
+  },
+  "68": {
+    "label": "MockMediaRecorder",
+    "nodes": [
+      "src_app_test_mockmediarecorder",
+      "src_app_test_mockmediarecorder_istypesupported",
+      "src_app_test_mockmediarecorder_start",
+      "src_app_test_mockmediarecorder_stop"
+    ]
+  },
+  "69": {
+    "label": "MermaidDiagram.tsx",
+    "nodes": [
+      "src_mermaiddiagram",
+      "src_mermaiddiagram_drawdiagram",
+      "src_mermaiddiagram_drawing",
+      "src_mermaiddiagram_mermaiddiagram"
+    ]
+  },
   "7": {
+    "label": "SessionStore",
+    "nodes": [
+      "server_agent_service_agentservice_clearupdatenoticeforexited",
+      "server_agent_service_agentservice_discoversessions",
+      "server_agent_service_agentservice_drainnextterminalprompt",
+      "server_agent_service_agentservice_drainsdkqueue",
+      "server_agent_service_agentservice_enqueueprompt",
+      "server_agent_service_agentservice_reconcileuntrackedterminaldispatches",
+      "server_agent_service_agentservice_refreshdiscovery",
+      "server_agent_service_agentservice_refreshtranscripts",
+      "server_agent_service_agentservice_removequeuedprompt",
+      "server_agent_service_agentservice_runprompt",
+      "server_agent_service_agentservice_serializequeue",
+      "server_agent_service_agentservice_start",
+      "server_agent_service_agentservice_startmessage",
+      "server_agent_service_agentservice_uploadfile",
+      "server_claude_agent_service_claudeagentservice_uploadfile",
+      "server_session_store_clonesession",
+      "server_session_store_safeuploadname",
+      "server_session_store_sessionstore",
+      "server_session_store_sessionstore_addmessage",
+      "server_session_store_sessionstore_clearconversation",
+      "server_session_store_sessionstore_clearfailedprompt",
+      "server_session_store_sessionstore_clearqueuedispatch",
+      "server_session_store_sessionstore_clearuntrackedterminaldispatch",
+      "server_session_store_sessionstore_constructor",
+      "server_session_store_sessionstore_enqueueansweringprompt",
+      "server_session_store_sessionstore_enqueueprompt",
+      "server_session_store_sessionstore_finishmessage",
+      "server_session_store_sessionstore_finishtaskcompletion",
+      "server_session_store_sessionstore_initialize",
+      "server_session_store_sessionstore_list",
+      "server_session_store_sessionstore_markterminalpromptdispatched",
+      "server_session_store_sessionstore_mutate",
+      "server_session_store_sessionstore_mutateinmemory",
+      "server_session_store_sessionstore_persist",
+      "server_session_store_sessionstore_queuedispatchat",
+      "server_session_store_sessionstore_removequeuedprompt",
+      "server_session_store_sessionstore_removeuploads",
+      "server_session_store_sessionstore_renamesession",
+      "server_session_store_sessionstore_replacemessages",
+      "server_session_store_sessionstore_replacewithclearedsession",
+      "server_session_store_sessionstore_requiresession",
+      "server_session_store_sessionstore_saveupload",
+      "server_session_store_sessionstore_setbackend",
+      "server_session_store_sessionstore_setfailedprompt",
+      "server_session_store_sessionstore_setmessagecontent",
+      "server_session_store_sessionstore_setsuspended",
+      "server_session_store_sessionstore_shiftqueuedprompt",
+      "server_session_store_sessionstore_streammessage",
+      "server_session_store_sessionstore_syncbackends",
+      "server_session_store_sessionstore_syncdiscovered",
+      "server_session_store_sessionstore_syncopen",
+      "server_session_store_sessionstore_syncworkspacemetadata",
+      "server_session_store_sessionstore_terminalrecoverysessions",
+      "server_session_store_sessionstore_updateautomatictitle",
+      "server_session_store_sessionstore_updateworkingdirectory",
+      "server_session_store_test",
+      "server_session_store_test_createstore",
+      "server_session_store_test_temporarydirectories",
+      "shared_contracts_chatmessage",
+      "shared_contracts_queuedprompt"
+    ]
+  },
+  "70": {
+    "label": "ActivityKind",
+    "nodes": [
+      "server_agent_service_activitytoolstart",
+      "server_session_store_sessionstore_starttoolactivity",
+      "shared_contracts_activitykind"
+    ]
+  },
+  "71": {
+    "label": "MockWebSocket",
+    "nodes": [
+      "src_app_test_mockwebsocket",
+      "src_app_test_mockwebsocket_close",
+      "src_app_test_mockwebsocket_constructor"
+    ]
+  },
+  "72": {
+    "label": "MermaidDiagram.test.tsx",
+    "nodes": [
+      "src_mermaiddiagram_test",
+      "src_mermaiddiagram_test_mermaidmodule",
+      "src_mermaiddiagram_test_render"
+    ]
+  },
+  "73": {
+    "label": "tsconfig.json",
+    "nodes": [
+      "tsconfig",
+      "tsconfig_files",
+      "tsconfig_references"
+    ]
+  },
+  "74": {
+    "label": "vite.config.ts",
+    "nodes": [
+      "vite_config",
+      "vite_config_generatebundle",
+      "vite_config_packageversion"
+    ]
+  },
+  "75": {
+    "label": "@fastify/static",
+    "nodes": [
+      "fastify_static",
+      "package_dependencies_fastify_static"
+    ]
+  },
+  "76": {
+    "label": "lucide-react",
+    "nodes": [
+      "lucide_react",
+      "package_dependencies_lucide_react"
+    ]
+  },
+  "77": {
+    "label": "pdfjs-dist",
+    "nodes": [
+      "package_dependencies_pdfjs_dist",
+      "package_json_pdfjs_dist"
+    ]
+  },
+  "78": {
+    "label": "react-markdown",
+    "nodes": [
+      "package_dependencies_react_markdown",
+      "react_markdown"
+    ]
+  },
+  "79": {
+    "label": "remark-gfm",
+    "nodes": [
+      "package_dependencies_remark_gfm",
+      "remark_gfm"
+    ]
+  },
+  "8": {
     "label": "agentic-remote-promotion-monitor",
     "nodes": [
       "bin_agentic_remote_promotion_monitor",
@@ -2296,99 +2442,79 @@
       "bin_agentic_remote_promotion_monitor_validation_worktree_removable"
     ]
   },
-  "70": {
-    "label": ".terminalContinuationState",
+  "80": {
+    "label": "web-push",
     "nodes": [
-      "server_agent_service_agentservice_terminalcontinuationstate",
-      "server_agent_service_isforegroundcompletionevent",
-      "server_agent_service_isforegroundlifecycleevent",
-      "server_agent_service_statusfromevents"
+      "package_dependencies_web_push",
+      "web_push"
     ]
   },
-  "71": {
-    "label": ".saveUpload",
+  "81": {
+    "label": "zod",
     "nodes": [
-      "server_agent_service_agentservice_uploadfile",
-      "server_claude_agent_service_claudeagentservice_uploadfile",
-      "server_session_store_safeuploadname",
-      "server_session_store_sessionstore_saveupload"
+      "package_dependencies_zod",
+      "zod"
     ]
   },
-  "72": {
-    "label": "release-publication.test.ts",
+  "82": {
+    "label": "sw.js",
     "nodes": [
-      "server_release_publication_test",
-      "server_release_publication_test_directories",
-      "server_release_publication_test_exec",
-      "server_release_publication_test_publicationfixture"
+      "public_sw",
+      "public_sw_shell"
     ]
   },
-  "73": {
-    "label": "MockMediaRecorder",
+  "83": {
+    "label": "service-worker.test.ts",
     "nodes": [
-      "src_app_test_mockmediarecorder",
-      "src_app_test_mockmediarecorder_istypesupported",
-      "src_app_test_mockmediarecorder_start",
-      "src_app_test_mockmediarecorder_stop"
+      "server_service_worker_test",
+      "server_service_worker_test_worker"
     ]
   },
-  "74": {
-    "label": "MermaidDiagram.tsx",
+  "84": {
+    "label": "build.rs",
     "nodes": [
-      "src_mermaiddiagram",
-      "src_mermaiddiagram_drawdiagram",
-      "src_mermaiddiagram_drawing",
-      "src_mermaiddiagram_mermaiddiagram"
+      "shell_src_tauri_build",
+      "shell_src_tauri_build_main"
     ]
   },
-  "75": {
-    "label": "ActivityKind",
+  "85": {
+    "label": "main.rs",
     "nodes": [
-      "server_agent_service_activitytoolstart",
-      "server_session_store_sessionstore_starttoolactivity",
-      "shared_contracts_activitykind"
+      "shell_src_tauri_src_main",
+      "shell_src_tauri_src_main_main"
     ]
   },
-  "76": {
-    "label": "MockWebSocket",
+  "86": {
+    "label": "mermaid",
     "nodes": [
-      "src_app_test_mockwebsocket",
-      "src_app_test_mockwebsocket_close",
-      "src_app_test_mockwebsocket_constructor"
+      "mermaid_mermaid"
     ]
   },
-  "77": {
-    "label": "MermaidDiagram.test.tsx",
+  "87": {
+    "label": "pdfjs-dist",
     "nodes": [
-      "src_mermaiddiagram_test",
-      "src_mermaiddiagram_test_mermaidmodule",
-      "src_mermaiddiagram_test_render"
+      "pdfjs_dist_pdfjs_dist"
     ]
   },
-  "78": {
-    "label": "tsconfig.json",
+  "88": {
+    "label": "agentic-remote-shell",
     "nodes": [
-      "tsconfig",
-      "tsconfig_files",
-      "tsconfig_references"
+      "pkg_agentic_remote_shell"
     ]
   },
-  "79": {
-    "label": "vite.config.ts",
+  "89": {
+    "label": "accent-theme.test.ts",
     "nodes": [
-      "vite_config",
-      "vite_config_generatebundle",
-      "vite_config_packageversion"
+      "server_accent_theme_test"
     ]
   },
-  "8": {
+  "9": {
     "label": "api.ts",
     "nodes": [
       "src_api",
       "src_api_cancelbackgroundtask",
       "src_api_cancelsession",
       "src_api_clearconversation",
-      "src_api_deleteknowledgeroot",
       "src_api_deletesession",
       "src_api_getproviderruntimeoptions",
       "src_api_getpushsettings",
@@ -2424,7 +2550,6 @@
       "src_api_test_failwith",
       "src_api_transcribeaudio",
       "src_api_uploadsessionfile",
-      "src_app_app_removeroot",
       "src_app_app_stopselectedsession",
       "src_app_renamesessionform",
       "src_app_renamesessionform_submit",
@@ -2441,190 +2566,40 @@
       "src_app_test_taskcomputer"
     ]
   },
-  "80": {
-    "label": "@fastify/static",
-    "nodes": [
-      "fastify_static",
-      "package_dependencies_fastify_static"
-    ]
-  },
-  "81": {
-    "label": "lucide-react",
-    "nodes": [
-      "lucide_react",
-      "package_dependencies_lucide_react"
-    ]
-  },
-  "82": {
-    "label": "pdfjs-dist",
-    "nodes": [
-      "package_dependencies_pdfjs_dist",
-      "package_json_pdfjs_dist"
-    ]
-  },
-  "83": {
-    "label": "react-markdown",
-    "nodes": [
-      "package_dependencies_react_markdown",
-      "react_markdown"
-    ]
-  },
-  "84": {
-    "label": "remark-gfm",
-    "nodes": [
-      "package_dependencies_remark_gfm",
-      "remark_gfm"
-    ]
-  },
-  "85": {
-    "label": "web-push",
-    "nodes": [
-      "package_dependencies_web_push",
-      "web_push"
-    ]
-  },
-  "86": {
-    "label": "zod",
-    "nodes": [
-      "package_dependencies_zod",
-      "zod"
-    ]
-  },
-  "87": {
-    "label": "sw.js",
-    "nodes": [
-      "public_sw",
-      "public_sw_shell"
-    ]
-  },
-  "88": {
-    "label": "service-worker.test.ts",
-    "nodes": [
-      "server_service_worker_test",
-      "server_service_worker_test_worker"
-    ]
-  },
-  "89": {
-    "label": "build.rs",
-    "nodes": [
-      "shell_src_tauri_build",
-      "shell_src_tauri_build_main"
-    ]
-  },
-  "9": {
-    "label": "RemoteNodeClient",
-    "nodes": [
-      "server_provider_session_service_providersessionservice_listknowledge",
-      "server_provider_session_service_providersessionservice_readknowledgefile",
-      "server_remote_node_client_headersafe",
-      "server_remote_node_client_remotenodeclient",
-      "server_remote_node_client_remotenodeclient_activatesession",
-      "server_remote_node_client_remotenodeclient_cancel",
-      "server_remote_node_client_remotenodeclient_cancelbackgroundtask",
-      "server_remote_node_client_remotenodeclient_clearconversation",
-      "server_remote_node_client_remotenodeclient_configureruntime",
-      "server_remote_node_client_remotenodeclient_connect",
-      "server_remote_node_client_remotenodeclient_deletesession",
-      "server_remote_node_client_remotenodeclient_getinfo",
-      "server_remote_node_client_remotenodeclient_getsession",
-      "server_remote_node_client_remotenodeclient_listbackgroundtasks",
-      "server_remote_node_client_remotenodeclient_listhistory",
-      "server_remote_node_client_remotenodeclient_listknowledge",
-      "server_remote_node_client_remotenodeclient_listsessions",
-      "server_remote_node_client_remotenodeclient_listworkspace",
-      "server_remote_node_client_remotenodeclient_movetoterminal",
-      "server_remote_node_client_remotenodeclient_online",
-      "server_remote_node_client_remotenodeclient_providerruntimeoptions",
-      "server_remote_node_client_remotenodeclient_providers",
-      "server_remote_node_client_remotenodeclient_readknowledgefile",
-      "server_remote_node_client_remotenodeclient_readworkspacefile",
-      "server_remote_node_client_remotenodeclient_removequeuedprompt",
-      "server_remote_node_client_remotenodeclient_replyuserinput",
-      "server_remote_node_client_remotenodeclient_request",
-      "server_remote_node_client_remotenodeclient_restartsession",
-      "server_remote_node_client_remotenodeclient_resumesession",
-      "server_remote_node_client_remotenodeclient_searchworkspace",
-      "server_remote_node_client_remotenodeclient_setonline",
-      "server_remote_node_client_remotenodeclient_stop",
-      "server_remote_node_client_remotenodeclient_suspendsession",
-      "server_remote_node_client_remotenodeclient_transcribe",
-      "server_remote_node_client_remotenodeclient_validatesessiondirectory",
-      "server_remote_node_client_remotenoderedirecterror",
-      "server_remote_node_client_remotenoderedirecterror_constructor",
-      "server_remote_node_client_remotenoderequesterror",
-      "server_remote_node_client_remotenoderequesterror_constructor",
-      "server_remote_node_client_test",
-      "server_remote_node_client_test_client",
-      "server_remote_node_client_test_listen",
-      "server_remote_node_client_test_servers",
-      "server_remote_node_client_test_session",
-      "server_remote_node_client_test_start",
-      "server_session_service_sessionservice_listknowledge",
-      "server_session_service_sessionservice_readknowledgefile",
-      "shared_contracts_nodeinfo",
-      "shared_contracts_workspacefile",
-      "shared_contracts_workspacelisting"
-    ]
-  },
   "90": {
-    "label": "main.rs",
-    "nodes": [
-      "shell_src_tauri_src_main",
-      "shell_src_tauri_src_main_main"
-    ]
-  },
-  "91": {
-    "label": "mermaid",
-    "nodes": [
-      "mermaid_mermaid"
-    ]
-  },
-  "92": {
-    "label": "pdfjs-dist",
-    "nodes": [
-      "pdfjs_dist_pdfjs_dist"
-    ]
-  },
-  "93": {
-    "label": "agentic-remote-shell",
-    "nodes": [
-      "pkg_agentic_remote_shell"
-    ]
-  },
-  "94": {
-    "label": "accent-theme.test.ts",
-    "nodes": [
-      "server_accent_theme_test"
-    ]
-  },
-  "95": {
     "label": "promotion-setup.test.ts",
     "nodes": [
       "server_promotion_setup_test"
     ]
   },
-  "96": {
+  "91": {
     "label": "safe-area.test.ts",
     "nodes": [
       "server_safe_area_test"
     ]
   },
-  "97": {
+  "92": {
     "label": "service-unit.test.ts",
     "nodes": [
       "server_service_unit_test"
     ]
   },
-  "98": {
+  "93": {
     "label": "shell/vite.config.ts",
     "nodes": [
       "shell_vite_config"
     ]
   },
-  "99": {
+  "94": {
     "label": "env.d.ts",
     "nodes": [
       "src_env_d"
+    ]
+  },
+  "95": {
+    "label": "MermaidDiagram.real.test.tsx",
+    "nodes": [
+      "src_mermaiddiagram_real_test"
     ]
   }
 }

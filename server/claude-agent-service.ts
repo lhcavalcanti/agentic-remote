@@ -817,8 +817,12 @@ export class ClaudeAgentService
       // ran a turn against a conversation on its way out.
       throw new Error('Session not found')
     }
-    return this.admissions.run(sessionId, () =>
-      this.admitSend(sessionId, content, enqueue, acknowledgesFailure))
+    try {
+      return await this.admissions.run(sessionId, () =>
+        this.admitSend(sessionId, content, enqueue, acknowledgesFailure))
+    } finally {
+      if (this.drainRequested.has(sessionId)) this.wakeQueue(sessionId)
+    }
   }
 
   private async admitSend(
@@ -839,6 +843,7 @@ export class ClaudeAgentService
           (session.status !== 'running' && session.status !== 'waiting' &&
             !this.active.has(sessionId) && !this.startingQueries.has(sessionId))))
       this.admissions.markCommitted(sessionId)
+      this.drainRequested.add(sessionId)
       this.publish(queued)
       this.wakeQueue(sessionId)
       return queued
@@ -901,6 +906,8 @@ export class ClaudeAgentService
         content,
         createdAt: new Date().toISOString(),
       })
+      this.admissions.markCommitted(sessionId)
+      this.drainRequested.add(sessionId)
       this.publish(queued)
       // A drain that failed put its prompt back and left no query running to
       // take it off again. Without this the queue stands still and every
@@ -933,6 +940,8 @@ export class ClaudeAgentService
         content,
         createdAt: new Date().toISOString(),
       })
+      this.admissions.markCommitted(sessionId)
+      this.drainRequested.add(sessionId)
       this.publish(queued)
       return queued
     }

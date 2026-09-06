@@ -153,6 +153,12 @@ admission epoch, inactive state, and identity again in the replacement
 transaction. No original provider/history is disposed on a busy refusal.
 Failed exclusive operations release their lease and reawaken only deferred
 queue demand. The existing post-commit replacement cleanup contract is unchanged.
+Successful normal and recovery enqueues mark their admission committed and
+record queue demand immediately after persistence, before publication can
+throw. Send/command finalizers wake that demand only after releasing their
+admission and queue locks; an exclusive Clear keeps it deferred until its own
+lease is released. SDK command queue rejection is not acceptance when the
+provider explicitly returns `queued: false`; a lost RPC result remains uncertain.
 
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then

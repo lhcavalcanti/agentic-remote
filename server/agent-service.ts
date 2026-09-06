@@ -2916,13 +2916,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }),
       )
     } finally {
-      if (!this.stopped && this.store.get(id)) {
-        if (this.externalSessionIds.has(id) && this.deferredTerminalDrains.delete(id)) {
-          void this.drainTerminalQueue(id).catch((error: unknown) => this.publishError(id, error))
-        } else if (!this.externalSessionIds.has(id) && this.sdkDrainRequested.has(id)) {
-          this.wakeSdkQueue(id)
-        }
-      }
+      this.wakeDeferredQueue(id)
     }
   }
 
@@ -3259,8 +3253,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
-    return this.admissions.run(sessionId, () =>
-      this.sendAdmittedMessage(sessionId, rawContent, enqueue, acknowledgedFailure))
+    try {
+      return await this.admissions.run(sessionId, () =>
+        this.sendAdmittedMessage(sessionId, rawContent, enqueue, acknowledgedFailure))
+    } finally {
+      this.wakeDeferredQueue(sessionId)
+    }
   }
 
   private async sendAdmittedMessage(
@@ -3641,7 +3639,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return this.enqueuePrompt(sessionId, content, false, answers)
     }
 
-    return this.startMessage(sessionId, content)
+    return this.startMessage(sessionId, content, false, undefined, answers)
   }
 
   async removeQueuedPrompt(
@@ -3681,6 +3679,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const queued = answers
         ? await this.store.enqueueAnsweringPrompt(sessionId, prompt, answers)
         : await this.store.enqueuePrompt(sessionId, prompt)
+      this.admissions.markCommitted(sessionId)
+      if (this.externalSessionIds.has(sessionId)) this.deferredTerminalDrains.add(sessionId)
+      else this.sdkDrainRequested.add(sessionId)
       this.publish(queued)
       return queued
     })
@@ -3770,9 +3771,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     content: string,
     fromQueue = false,
     reservation?: QueuedPromptReservation,
+    answers?: string,
   ): Promise<SessionDetail> {
     return this.admissions.run(sessionId, () =>
-      this.startAdmittedMessage(sessionId, content, fromQueue, reservation), true)
+      this.startAdmittedMessage(sessionId, content, fromQueue, reservation, answers), true)
   }
 
   private async startAdmittedMessage(
@@ -3780,12 +3782,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     content: string,
     fromQueue: boolean,
     reservation?: QueuedPromptReservation,
+    answers?: string,
   ): Promise<SessionDetail> {
     // Anything already waiting goes first. A resume whose drain failed leaves
     // the prompt back on the queue, and a message written afterwards would
     // otherwise start straight away and run ahead of one written before it.
     if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
-      const queued = await this.enqueuePrompt(sessionId, content)
+      const queued = await this.enqueuePrompt(sessionId, content, false, answers)
       // A drain that failed put its prompt back and left nothing running to
       // take it off again. Without this the queue stays where it is, and every
       // message written afterwards joins it rather than starting anything.
@@ -3956,7 +3959,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // The marker was holding the queue shut. Nothing else will come back to
     // it, so the prompts it was blocking are started here.
     if (cleared.queuedPrompts?.length) {
-      void this.drainTerminalQueue(sessionId).catch(() => undefined)
+      if (this.externalSessionIds.has(sessionId)) {
+        void this.drainTerminalQueue(sessionId).catch((error: unknown) => this.publishError(sessionId, error))
+      } else {
+        this.wakeSdkQueue(sessionId)
+      }
     }
     return cleared
   }
@@ -3967,8 +3974,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     enqueue = false,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
-    return this.admissions.run(sessionId, () =>
-      this.executeAdmittedCommand(sessionId, rawCommand, enqueue, acknowledgedFailure))
+    try {
+      return await this.admissions.run(sessionId, () =>
+        this.executeAdmittedCommand(sessionId, rawCommand, enqueue, acknowledgedFailure))
+    } finally {
+      this.wakeDeferredQueue(sessionId)
+    }
   }
 
   private async executeAdmittedCommand(
@@ -4217,13 +4228,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('External terminal is no longer available')
     }
     if (enqueue) {
-      this.admissions.markCommitted(sessionId)
-      const result = await session.rpc.commands.enqueue({
-        command: canonicalCommand,
-      })
+      let result: Awaited<ReturnType<typeof session.rpc.commands.enqueue>>
+      try {
+        result = await session.rpc.commands.enqueue({ command: canonicalCommand })
+      } catch (error) {
+        // A lost RPC result is uncertain; only an explicit refusal proves
+        // that no command was accepted while Clear waited.
+        this.admissions.markCommitted(sessionId)
+        throw error
+      }
       if (!result.queued) {
         throw new Error('This session does not support command queueing')
       }
+      this.admissions.markCommitted(sessionId)
     } else {
       this.admissions.markCommitted(sessionId)
       const result = await session.rpc.commands.invoke({
@@ -6255,6 +6272,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }).finally(() => { pending.completion = undefined })
     pending.completion = completion
     return completion
+  }
+
+  private wakeDeferredQueue(sessionId: string): void {
+    const session = this.store.get(sessionId)
+    if (this.stopped || !session) return
+    if (this.externalSessionIds.has(sessionId) && session.status === 'idle' &&
+        this.deferredTerminalDrains.delete(sessionId)) {
+      void this.drainTerminalQueue(sessionId).catch((error: unknown) => this.publishError(sessionId, error))
+    } else if (!this.externalSessionIds.has(sessionId) && this.sdkDrainRequested.has(sessionId)) {
+      this.wakeSdkQueue(sessionId)
+    }
   }
 
   private wakeSdkQueue(sessionId: string): void {

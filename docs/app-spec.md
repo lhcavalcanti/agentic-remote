@@ -138,6 +138,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   delivery handoffs. It MUST NOT cancel those handoffs merely to become idle.
   Work admitted while Clear waits MUST cause refusal before the original
   provider or history is replaced, even if that work completes quickly.
+  A successfully persisted enqueue MUST count as admitted work before its
+  response is published, even if the previous turn becomes idle meanwhile.
+  A refused queue write MUST NOT count as a successful admission. Deferred
+  eligible FIFO work MUST wake after the enqueue and Clear release their locks.
   Replacement MUST revalidate idleness and identity at its mutation boundary.
 - Cleared and deleted session identities MUST stay retired across restart,
   including after their last replacement is deleted. Retirement metadata MUST

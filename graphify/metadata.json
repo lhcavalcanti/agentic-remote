@@ -330,8 +330,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "9484b929ce7c692ec56437bce4e1c68988e433ea6c65c4f6120093fe4176c33b",
-    "src/App.tsx": "bc83a46ce696f5db162138ac4bdb3e7ce56f0b1d8c2048a5da9d30d38d6f7285",
+    "src/App.test.tsx": "ff82eb9f5d6132b12c667a01bc77a9707ee3f0f35268ebe91062835b999d49f7",
+    "src/App.tsx": "8600c0a3b7519d097146a515446b8ff693eb50b28718e0db1c5d8aa05d115d83",
     "src/DocumentViewControls.test.tsx": "3688110dc748a313bb0568e1ed693377e4effdbeecfa91864d5fd3abdf063b7b",
     "src/DocumentViewControls.tsx": "ce73b7ea6f5cb6b93b74bbe6d3a2ed3f490520ec19cf7649c997d191946bdefd",
     "src/KnowledgeRootChoices.test.tsx": "885ba0e9b94d09726a5e314359dc9a63d9eeea0c82731290f7b45681c196f310",
@@ -443,18 +443,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "76d57a38e9d768862550e4b723e0c16d9c2d686cd127dd5104c33dc7d85fbf37",
+    "GRAPH_REPORT.md": "3b74d4f300d123565e3cf085862d9756e62f4281f1f3e08983f0a5e7a9a134ad",
     "communities.json": "aa285c548a4d41b24224fe9c63b372ba20710003ae491bfb97f25ddea7abc304",
-    "graph.html": "8b59762b34ce1e0e56f6628e8ad85e8fa163acfb29c9137d5899c7d93291b92f",
-    "graph.json": "1b84aecb31edad5d6f543ccf10459b18ea39681441e16e5b267d1f69e15e6864"
+    "graph.html": "0e3592ce4241cc30c6184572eeb7d99132557648c44c49136f737cf2f7135595",
+    "graph.json": "d308b34d56850df12c3b8eec064407288a16d0692df0aac5f8bd4d1c2a855b33"
   },
   "schema_version": 1,
-  "source_commit": "c6b9ef9109fcfbf3598721b02e5ba2fe59e75d30",
-  "source_fingerprint": "6e2fd6d767efd454c6bb14f0b1dc03dcea7991927fe29c229ce14c7d6f5d4481",
+  "source_commit": "add27c7702e839d17e8539e9a57d9128f415fbbc",
+  "source_fingerprint": "b795a5c266a381e7dc4aef9174aa656be3347d4bb17135420edbef8eb6e028fc",
   "working_tree_changes": [
-    "e2e/check-workspace-review-regressions.ts",
-    "e2e/workspace-fixtures.test.ts",
-    "e2e/workspace-fixtures.ts",
-    "src/index.css"
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

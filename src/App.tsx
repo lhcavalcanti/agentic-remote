@@ -7558,7 +7558,7 @@ function App() {
     setRoots((current) => current.some((entry) => entry.id === root.id)
       ? current : [structuredClone(root), ...current])
   }, [markKnowledgeRootRemoved, setRoots])
-  const sessionKnowledgeRoot = useSessionKnowledgeRoot(selected, knowledgeMode !== 'hidden', acceptKnowledgeRoot)
+  const sessionKnowledgeRoot = useSessionKnowledgeRoot(selected, knowledgeMode !== 'hidden' || addRootOpen, acceptKnowledgeRoot)
   const sessionKnowledgeRootRef = useRef(sessionKnowledgeRoot)
   sessionKnowledgeRootRef.current = sessionKnowledgeRoot
   const rememberedKnowledgePosition = selectedKey ? knowledgePositions[selectedKey] : undefined
@@ -7591,6 +7591,14 @@ function App() {
       ? { kind: 'root', rootId: expectedKnowledgeRootId }
       : { kind: 'working-folder' })
   }, [expectedKnowledgeRootId, rootPicker, selectedKey, sessionKnowledgeRoot.binding])
+
+  useLayoutEffect(() => {
+    const owner = rootCreationOwner.current
+    const binding = sessionKnowledgeRoot.binding
+    if (addRootOpen && owner && owner.key === selectedKey && owner.revision === undefined && binding) {
+      owner.revision = binding.revision
+    }
+  }, [addRootOpen, selectedKey, sessionKnowledgeRoot.binding])
 
   useLayoutEffect(() => {
     if (!selectedKey || !hasSelectedSession || !sessionRootReady || !knowledgeRootsLoaded || knowledgeMode === 'hidden') return
@@ -10543,22 +10551,25 @@ function App() {
     ) {
       return
     }
-    promptForEmptyKnowledgeRoot.current = false
     const selectedComputerOnline =
       selected &&
       computers.some(
         (computer) =>
           computer.id === selected.computerId && computer.online,
       )
+    if (roots.length === 0 && selected && selectedComputerOnline && !sessionKnowledgeRoot.binding) {
+      return
+    }
+    promptForEmptyKnowledgeRoot.current = false
     if (roots.length === 0 && selected && selectedComputerOnline) {
       setAddRootInitialLocation({
         computerId: selected.computerId,
         path: selected.cwd,
       })
-      rootCreationOwner.current = { key: selectedKey }
+      rootCreationOwner.current = { key: selectedKey, revision: sessionKnowledgeRoot.binding?.revision }
       setAddRootOpen(true)
     }
-  }, [computers, knowledgeMode, knowledgeRootsLoaded, roots.length, selected])
+  }, [computers, knowledgeMode, knowledgeRootsLoaded, roots.length, selected, selectedKey, sessionKnowledgeRoot.binding])
 
   /** Whether the sidebar is the drawer that slides over everything. */
   function drawerIsOverlay(): boolean {
@@ -10672,7 +10683,8 @@ function App() {
   }
 
   function beginRootCreation(location?: { computerId: string; path: string }, revision?: number) {
-    rootCreationOwner.current = { key: selectedKey, revision }
+    rootCreationOwner.current = { key: selectedKey, revision: revision ?? sessionKnowledgeRoot.binding?.revision }
+    if (selected && !sessionKnowledgeRoot.binding) sessionKnowledgeRoot.refresh()
     promptForEmptyKnowledgeRoot.current = false
     setRootPicker(undefined)
     setAddRootInitialLocation(location)
@@ -10696,7 +10708,7 @@ function App() {
     try {
       if (rootChoice.kind === 'working-folder') {
         if (!rootPicker.session) throw new Error('Choose a session before using its working folder.')
-        rootCreationOwner.current = { key: ownerKey }
+        rootCreationOwner.current = { key: ownerKey, revision: expectedRevision }
         await createRoot(rootPicker.session.computerId, rootPicker.session.cwd, expectedRevision)
       } else if (rootPicker.session) {
         await sessionKnowledgeRoot.saveRoot(rootChoice.kind === 'none' ? null : rootChoice.rootId, expectedRevision)
@@ -11101,9 +11113,10 @@ function App() {
       throw new Error('The selected session changed. Reopen the folder picker before adding a root.')
     }
     const saveRoot = selected ? sessionKnowledgeRoot.saveRoot : undefined
-    const revision = expectedRevision ?? owner.revision ?? sessionKnowledgeRoot.binding?.revision
+    const revision = expectedRevision ?? owner.revision
     if (saveRoot && revision === undefined) {
-      throw new Error('Wait for this session\'s saved root to load before adding a folder.')
+      sessionKnowledgeRoot.refresh()
+      throw new Error(sessionKnowledgeRoot.error || 'Wait for this session\'s saved root to load before adding a folder.')
     }
     const lifetime = knowledgeComputerLifetimes.current.get(computerId) || 0
     const removalSequence = knowledgeRootRemovalSequence.current

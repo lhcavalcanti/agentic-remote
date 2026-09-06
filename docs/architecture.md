@@ -268,6 +268,12 @@ errors while recording either success or failure propagate rather than being
 classified as probe failures. State validation and SDK startup errors are
 likewise not swallowed by the discovery-only exception.
 
+`SessionReplacementCleanupError` carries the exact replacement accepted by the
+store when subsequent upload removal fails. Providers publish its removal and
+replacement events before reporting that cleanup warning. A pre-commit write
+failure remains a refusal and publishes no replacement identity. This
+distinction concerns post-commit upload cleanup, not provider-history rollback.
+
 Providers await mutations before publishing or acting on their results.
 `readAfterWrites()` queues a read behind admitted changes before runtime,
 dispatch, or lifecycle decisions; a read-only batch does not write or

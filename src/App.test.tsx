@@ -1568,6 +1568,39 @@ describe('App', () => {
     expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
   })
 
+  it.each(['skills', 'mcp'] as const)('closes the retired %s resource modal on committed-clear websocket events despite a cleanup warning', async (kind) => {
+    const target = resourceSession()
+    const replacement = { ...target, id: 'committed-replacement', replacedSessionIds: [target.id], messages: [] }
+    let resolveOld!: (value: ManagedSessionSkillsSnapshot | ManagedSessionMcpServersSnapshot) => void
+    const pending = new Promise<ManagedSessionSkillsSnapshot | ManagedSessionMcpServersSnapshot>((resolve) => { resolveOld = resolve })
+    if (kind === 'skills') vi.mocked(listSessionSkills).mockReturnValueOnce(pending as Promise<ManagedSessionSkillsSnapshot>)
+    else vi.mocked(listSessionMcpServers).mockReturnValueOnce(pending as Promise<ManagedSessionMcpServersSnapshot>)
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: kind === 'skills' ? 'View session skills' : 'View session MCP servers' }))
+    const call = kind === 'skills' ? vi.mocked(listSessionSkills) : vi.mocked(listSessionMcpServers)
+    await waitFor(() => expect(call).toHaveBeenCalledOnce())
+    const signal = call.mock.calls[0][3]
+    vi.mocked(getSession).mockResolvedValue(replacement)
+    await act(async () => {
+      for (const event of [
+        { type: 'session.removed', computerId: target.computerId, sessionId: target.id, replacedBy: replacement.id },
+        { type: 'session.upserted', session: replacement },
+        { type: 'error', computerId: target.computerId, sessionId: replacement.id, message: 'Conversation cleared, but previous uploads could not be removed.' },
+      ]) MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent)
+    })
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+    expect(signal?.aborted).toBe(true)
+    await act(async () => resolveOld({
+      computerId: target.computerId, sessionId: target.id, provider: 'copilot',
+      scope: 'session', capturedAt: target.updatedAt,
+      ...(kind === 'skills' ? { skills: [{ name: 'retired-resource' }] } : { servers: [{ name: 'retired-resource', status: 'connected' }] }),
+    } as ManagedSessionSkillsSnapshot | ManagedSessionMcpServersSnapshot))
+    expect(screen.queryByText('retired-resource')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+  })
+
   it('makes a diagram the block, not something inside a code block', async () => {
     // Overriding only `code` leaves React Markdown's own `<pre>` wrapped round
     // the result, which boxes the diagram in a code block and gives the source

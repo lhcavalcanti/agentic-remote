@@ -226,6 +226,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   aborting an inference turn or disconnecting its shared provider transport.
   A refused clear MUST retain the authoritative session's resource observations;
   retirement follows the replacement commit, including post-commit cleanup failure.
+  A committed replacement MUST publish its removal/replacement identity events
+  even when upload cleanup fails, reporting cleanup separately so connected
+  clients retire their old resource views.
 - Lists MUST support filtering, refresh, keyboard tab navigation and phone-sized
   layouts. Loading, empty, unavailable and error states MUST remain actionable;
   viewing metadata MUST NOT dismiss an unanswered agent question or permission.

@@ -17,6 +17,25 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it.each([false, true])('preserves the submission token and accepted=%s receipt from HTTP errors', async (accepted) => {
+    const submission = { sessionId: 'replacement', failedAt: 'resend:current-token', accepted }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: accepted ? 'Already delivered; bookkeeping failed' : 'Check the current recovery',
+      submission,
+    }, { status: 409 })))
+    await expect(sendMessage('computer', 'session', { content: 'recovered', acknowledgesFailure: 'old' }))
+      .rejects.toMatchObject({ statusCode: 409, submission })
+  })
+
+  it('does not trust malformed receipt fields or expose an internal server message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      statusCode: 500, error: 'Internal Server Error', message: 'private exception details',
+      submission: { sessionId: 'session', failedAt: 'token', accepted: 'true' },
+    }, { status: 500 })))
+    await expect(sendMessage('computer', 'session', { content: 'recovered' }))
+      .rejects.toMatchObject({ message: 'Internal Server Error', statusCode: 500, submission: undefined })
+  })
+
   it('requests fresh provider and session model catalogs without browser caching', async () => {
     const fetchMock = vi.fn(async () => Response.json({ models: [] }))
     vi.stubGlobal('fetch', fetchMock)

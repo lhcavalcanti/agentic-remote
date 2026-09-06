@@ -78,6 +78,13 @@ validate_name() {
     die "name must be a single non-empty line"
 }
 
+validate_release_id() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] ||
+    die "release ID contains unsupported characters"
+  [[ "$1" != current ]] ||
+    die "release ID current is reserved for the active-release pointer"
+}
+
 systemd_quote() {
   local value="$1"
   value="${value//\\/\\\\}"
@@ -180,11 +187,10 @@ quarantine_inactive_rejected_releases() {
 
 publish_release() {
   local releases_dir release_id release_dir temporary_link staging_dir
+  release_id="${1:-$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}}"
+  validate_release_id "$release_id"
   [[ -s "$REPO_ROOT/dist/build-info.json" ]] ||
     die "production build identity is missing; rebuild the app"
-  release_id="${1:-$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}}"
-  [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] ||
-    die "release ID contains unsupported characters"
   releases_dir="$CONFIG_DIR/releases"
   mkdir -p "$releases_dir"
   releases_dir="$(readlink -f -- "$releases_dir")"
@@ -296,8 +302,7 @@ setup_service() {
       --release-id)
         (($# >= 2)) || die "--release-id requires a value"
         release_id="$2"
-        [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] ||
-          die "release ID contains unsupported characters"
+        validate_release_id "$release_id"
         shift 2
         ;;
       *)

@@ -1653,6 +1653,15 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   )
 }
 
+function desktopInstallPromptIdentity(pane: string): string | undefined {
+  if (!isTerminalDesktopInstallPrompt(pane)) return undefined
+  const lines = pane.split('\n')
+  const cleaned = lines.map(cleanDialogLine)
+  const prompt = cleaned.findLastIndex((line) => /^Install it now\?$/i.test(line))
+  const frame = activeBottomFrame(lines, prompt)
+  return frame ? cleaned.slice(frame.start, frame.end + 1).join('\n') : undefined
+}
+
 function hasComposerAfter(lines: string[], index: number): boolean {
   return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
 }
@@ -1791,7 +1800,19 @@ async function clearAutomaticStartupPrompts(
       // Agentic Remote already supplies the remote supervision UI. Opening a
       // browser to install a separate desktop app cannot help this headless
       // terminal and keeps the first real prompt from reaching the composer.
+      const identity = desktopInstallPromptIdentity(pane)
       await validateOwner()
+      const current = await capture()
+      if (
+        identity === undefined ||
+        hasTerminalCommandPermissionQuestion(current) ||
+        parseTerminalPermission(current) ||
+        parseTerminalUserInput(current) ||
+        parseTerminalFormPrompt(current) ||
+        desktopInstallPromptIdentity(current) !== identity
+      ) {
+        return
+      }
       await execFileAsync('tmux', ['send-keys', '-t', target, 'n'])
       await waitUntilClosed(isTerminalDesktopInstallPrompt)
     } else {

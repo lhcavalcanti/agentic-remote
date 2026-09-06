@@ -175,6 +175,9 @@ cannot hide an unverified candidate behind the previous healthy pointer. The
 promotion record contains the promoted and previous release paths as well as
 their commits. The profile's release root must identify the application CLI's
 release directory; a mismatch is refused before changing the runtime source.
+The release identifier `current` is reserved for the active symlink. Both setup
+argument parsing and publication reject it before installing dependencies,
+building, creating release paths, or quarantining existing inventory.
 
 Graduate only what `origin/main` already contains. A clean local `main` can sit
 ahead of its upstream, so comparing `HEAD` against `refs/remotes/origin/main`

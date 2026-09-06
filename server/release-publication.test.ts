@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import {
   mkdir,
   mkdtemp,
@@ -40,7 +41,7 @@ async function publicationFixture() {
   await writeFile(path.join(repository, 'dist', 'sw.js'), '// unchanged worker')
   const script = await readFile(new URL('../bin/agentic-remote', import.meta.url), 'utf8')
   const functions = [
-    'config_value', 'validate_host', 'validate_port', 'validate_role', 'validate_name',
+    'config_value', 'validate_host', 'validate_port', 'validate_role', 'validate_name', 'validate_release_id',
     'derived_origins', 'quarantine_inactive_rejected_releases', 'publish_release',
     'setup_service', 'rollback_service',
   ].map((name) => {
@@ -53,12 +54,13 @@ async function publicationFixture() {
   const run = (
     command: 'publish_release' | 'rollback_service' | 'setup_service',
     environment: Record<string, string> = {},
+    arguments_: string[] = [],
   ) => exec(
     'bash',
     ['-euc', `
       die() { printf '%s\\n' "$*" >&2; exit 1; }
       require_command() { :; }
-      pnpm() { :; }
+      pnpm() { printf '%s\\n' "$*" >> "$REPO_ROOT/setup-commands"; }
       write_service() { :; }
       enable_linger() { :; }
       systemctl() { printf '%s\\n' "$*" > "$CONFIG_DIR/service-call"; }
@@ -71,8 +73,8 @@ async function publicationFixture() {
         command node "$@"
       }
       ${functions}
-      ${command}${command === 'setup_service' ? ' --name fixture' : ''}
-    `],
+      ${command}${command === 'setup_service' ? ' --name fixture' : ''} "$@"
+    `, 'fixture', ...arguments_],
     {
       cwd: directory,
       env: {
@@ -97,6 +99,42 @@ async function publicationFixture() {
 }
 
 describe('immutable build publication', () => {
+  it.each(['publish_release', 'setup_service'] as const)(
+    'rejects reserved current in %s before creating paths or running setup',
+    async (command) => {
+      const { repository, config, run, build } = await publicationFixture()
+      await build('valid-build')
+      let error: unknown
+      try {
+        await run(command, {}, command === 'setup_service' ? ['--release-id', 'current'] : ['current'])
+      } catch (caught) {
+        error = caught
+      }
+      expect.soft(String(error)).toMatch(/current.*reserved|reserved.*current/i)
+      expect.soft(existsSync(config)).toBe(false)
+      expect.soft(existsSync(path.join(repository, 'setup-commands'))).toBe(false)
+      await run('publish_release')
+      expect(await realpath(path.join(config, 'releases', 'current')))
+        .not.toBe(path.join(config, 'releases', 'current'))
+    },
+  )
+
+  it('rejects reserved current before touching an existing healthy release or rejected inventory', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    await build('healthy')
+    await run('publish_release')
+    const current = path.join(config, 'releases', 'current')
+    const previous = await realpath(current)
+    const rejected = path.join(config, 'releases', 'rejected')
+    await mkdir(rejected)
+    await writeFile(path.join(rejected, '.promotion-failed'), 'do not move for an invalid setup')
+    await expect(run('setup_service', {}, ['--release-id', 'current'])).rejects.toThrow(/reserved/i)
+    expect(await realpath(current)).toBe(previous)
+    expect(await readFile(path.join(previous, 'dist', 'index.html'), 'utf8')).toBe('healthy')
+    expect(existsSync(path.join(repository, 'setup-commands'))).toBe(false)
+    expect(await readFile(path.join(rejected, '.promotion-failed'), 'utf8')).toBe('do not move for an invalid setup')
+  })
+
   it('preserves build identity through copying, republishing, and rollback without Git', async () => {
     const { config, run, build } = await publicationFixture()
     const current = path.join(config, 'releases', 'current')

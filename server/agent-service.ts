@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
+import { SubmissionError } from '../shared/submission-error.js'
 import {
   CopilotClient,
   RuntimeConnection,
@@ -99,7 +100,11 @@ interface ActivePrompt {
   assistantMessageId: string
 }
 
-interface RecoveryResendClaim {
+interface DeliveryBoundary {
+  accepted: boolean
+}
+
+interface RecoveryResendClaim extends DeliveryBoundary {
   failedAt: string
   release(): void
 }
@@ -1517,17 +1522,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly drainingSessions = new Set<string>()
   /** Old and replacement recovery tokens held by an in-flight dispatch. */
   private readonly claimedFailures = new Set<string>()
-  /**
-   * Sessions whose current send has reached the runtime.
-   *
-   * Anything that fails after this point leaves a send that may well have
-   * arrived, whatever kind of failure it is.
-   */
-  private readonly deliveredSends = new Set<string>()
+  private readonly recoveryClaims = new Map<string, RecoveryResendClaim>()
   /** What a cleared session became, so outstanding work can follow it. */
   private readonly replacedInto = new Map<string, string>()
   /** Sleeping acknowledgement retries, cleared when the service stops. */
-  private readonly acknowledgementTimers = new Set<NodeJS.Timeout>()
+  private readonly acknowledgementTimers = new Map<NodeJS.Timeout, () => void>()
   /** Marker clearances still outstanding after an accepted send. */
   private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
   private readonly pendingTerminalQueueSettlements = new Map<string, PendingTerminalQueueSettlement>()
@@ -1800,10 +1799,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async stop(): Promise<void> {
     this.stopped = true
-    for (const timer of this.acknowledgementTimers) {
+    for (const [timer, finish] of this.acknowledgementTimers) {
       clearTimeout(timer)
+      finish()
     }
     this.acknowledgementTimers.clear()
+    await Promise.allSettled([...this.pendingAcknowledgements.values()])
     if (this.discoveryTimer) {
       clearInterval(this.discoveryTimer)
       this.discoveryTimer = undefined
@@ -1883,14 +1884,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       .list()
       .filter((session) => session.isOpen)
       .map((session) => ({
-        ...session,
+        ...this.publicSession(session),
         messages: [],
       }))
   }
 
   listHistory(): SessionDetail[] {
     return this.store.list().map((session) => ({
-      ...session,
+      ...this.publicSession(session),
       messages: [],
     }))
   }
@@ -2031,22 +2032,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   getSession(id: string): SessionDetail | undefined {
-    return this.store.get(id)
+    const session = this.store.get(id)
+    return session ? this.publicSession(session) : undefined
   }
 
   async openSession(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
     if (this.externalSessionIds.has(id)) {
-      return stored
+      return this.publicSession(stored)
     }
     if (this.hydratedSessions.has(id)) {
-      return stored
+      return this.publicSession(stored)
     }
     if (stored.suspended) {
       // Having nothing running is what was asked for, not evidence that the
       // session is gone. Closing it here would drop it from recovery and take
       // the conversation with it.
-      return stored
+      return this.publicSession(stored)
     }
     if (this.store.backend(id) === 'terminal') {
       const closed = await this.store.setOpen(id, false, true)
@@ -2056,12 +2058,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     const inFlight = this.hydratingSessions.get(id)
     if (inFlight) {
-      return inFlight
+      return this.publicSession(await inFlight)
     }
     const hydration = this.hydrateSession(id)
     this.hydratingSessions.set(id, hydration)
     try {
-      return await hydration
+      return this.publicSession(await hydration)
     } finally {
       this.hydratingSessions.delete(id)
     }
@@ -2071,10 +2073,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const session = await this.openSession(id)
     const opened = await this.store.setOpen(id, true, true)
     this.publish(opened)
-    return {
+    return this.publicSession({
       ...opened,
       messages: session.messages,
-    }
+    })
   }
 
   async createSession(
@@ -3214,6 +3216,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
     }
     const claim = await this.claimFailure(sessionId, content, acknowledgedFailure)
+    const delivery: DeliveryBoundary = claim ?? { accepted: false }
     let sent: SessionDetail
     try {
       // The failure this send is answering, and only when it is answering
@@ -3230,18 +3233,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           content,
           enqueue,
           claim?.failedAt,
+          delivery,
         )
       } finally {
         releaseDispatch()
       }
-      this.deliveredSends.delete(sessionId)
     } catch (error) {
-      this.deliveredSends.delete(sessionId)
-      // The durable replacement marker remains uncertain. An incomplete send
-      // must not be acknowledged merely because its receipt may have been lost.
-      // Its old token stays consumed; only a new explicit decision may retry.
+      if (delivery.accepted) {
+        await this.settleRecoveryResend(sessionId, content, claim, this.store.get(sessionId))
+        throw this.submissionFailure(error, sessionId, claim, true)
+      }
       claim?.release()
-      throw error
+      throw this.submissionFailure(error, sessionId, claim, false)
     }
     return this.settleRecoveryResend(sessionId, content, claim, sent)
   }
@@ -3251,13 +3254,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     submitted: string,
     acknowledged?: string,
   ): Promise<RecoveryResendClaim | undefined> {
-    if (acknowledged !== undefined && this.claimedFailures.has(`${sessionId}:${acknowledged}`)) {
-      throw Object.assign(
-        new Error('That recovery decision is still being dispatched. Check the conversation before trying again.'),
-        { statusCode: 409 },
+    const outstanding = acknowledged === undefined ? undefined : this.recoveryClaims.get(acknowledged)
+    if (outstanding) {
+      throw new SubmissionError(
+        outstanding.accepted
+          ? 'That recovery was already delivered. Its acknowledgement is still pending; do not resend it.'
+          : 'That recovery decision is still being dispatched. Check the conversation before trying again.',
+        409,
+        { sessionId: this.recoverySessionId(sessionId), failedAt: acknowledged, accepted: false },
       )
     }
+    if (acknowledged !== undefined && this.claimedFailures.has(`${sessionId}:${acknowledged}`)) {
+      throw Object.assign(new Error('That recovery decision is still being dispatched.'), { statusCode: 409 })
+    }
     const stored = this.store.get(sessionId)?.failedPrompt
+    if (acknowledged === undefined && stored?.failedAt?.startsWith('resend:') &&
+      stored.content.trim() === submitted.trim()) {
+      throw new SubmissionError(
+        'This text belongs to an unresolved recovery. Check the conversation and use its current recovery decision before retrying.',
+        409,
+        { sessionId, failedAt: stored.failedAt, accepted: false },
+      )
+    }
     if (acknowledged !== undefined && stored?.failedAt !== acknowledged) {
       throw Object.assign(
         new Error(
@@ -3292,34 +3310,78 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const release = () => {
       this.claimedFailures.delete(key)
       this.claimedFailures.delete(replacementKey)
+      this.recoveryClaims.delete(failedAt)
     }
+    const claim: RecoveryResendClaim = { failedAt, accepted: false, release }
+    let claimed: SessionDetail
     try {
-      const claimed = await this.store.claimFailedPrompt(sessionId, stored, submitted, failedAt)
-      this.publish(claimed)
-      return { failedAt, release }
+      claimed = await this.store.claimFailedPrompt(sessionId, stored, submitted, failedAt)
     } catch (error) {
       release()
       throw error
     }
+    this.recoveryClaims.set(failedAt, claim)
+    try {
+      this.publish(claimed)
+      return claim
+    } catch (error) {
+      release()
+      throw this.submissionFailure(error, sessionId, claim, false)
+    }
   }
 
-  private async settleRecoveryResend(
+  private recoverySessionId(sessionId: string): string {
+    let current = sessionId
+    const seen = new Set<string>()
+    while (this.replacedInto.has(current) && !seen.has(current)) {
+      seen.add(current)
+      current = this.replacedInto.get(current)!
+    }
+    if (this.store.get(current)) return current
+    return this.store.list().find((session) => session.replacedSessionIds?.includes(sessionId))?.id ?? sessionId
+  }
+
+  private submissionFailure(
+    error: unknown,
+    sessionId: string,
+    claim: RecoveryResendClaim | undefined,
+    accepted: boolean,
+  ): unknown {
+    if (!claim && !accepted) return error
+    const status = error && typeof error === 'object' ? Reflect.get(error, 'statusCode') : undefined
+    const statusCode = accepted ? 409 : typeof status === 'number' && status >= 400 && status < 600 ? status : 500
+    const message = accepted
+      ? 'The request was accepted, but later bookkeeping failed. It was not resent. Check the conversation before sending anything else.'
+      : statusCode < 500 && error instanceof Error
+        ? error.message
+        : 'The recovery attempt could not be completed. Check the terminal before retrying.'
+    return new SubmissionError(message, statusCode, {
+      sessionId: this.recoverySessionId(sessionId),
+      ...(claim ? { failedAt: claim.failedAt } : {}),
+      accepted,
+    }, { cause: error, uncertainDelivery: accepted || isUncertainDelivery(error) })
+  }
+
+  private async settleRecoveryResend<T extends SessionDetail | undefined>(
     sessionId: string,
     submitted: string,
     claim: RecoveryResendClaim | undefined,
-    delivered: SessionDetail,
-  ): Promise<SessionDetail> {
+    delivered: T,
+  ): Promise<SessionDetail | T> {
     if (!claim) return delivered
+    claim.accepted = true
     try {
-      return await this.acknowledgeFailedPrompt(sessionId, submitted, claim.failedAt) ?? delivered
-    } catch (error) {
-      this.scheduleFailureAcknowledgement(sessionId, submitted, claim.failedAt)
-      throw Object.assign(new Error(
-        'The resend was accepted, but its recovery acknowledgement could not be saved. Check the conversation before making another recovery decision.',
-        { cause: error },
-      ), { statusCode: 409, uncertainDelivery: true })
-    } finally {
+      const settled = await this.acknowledgeFailedPrompt(this.recoverySessionId(sessionId), submitted, claim.failedAt)
       claim.release()
+      return settled ?? delivered
+    } catch (error) {
+      this.scheduleFailureAcknowledgement(sessionId, submitted, claim)
+      throw new SubmissionError(
+        'The resend was accepted, but its recovery acknowledgement did not complete. It will be retried without resending; check the conversation before sending more work.',
+        409,
+        { sessionId: this.recoverySessionId(sessionId), failedAt: claim.failedAt, accepted: true },
+        { cause: error, uncertainDelivery: true },
+      )
     }
   }
 
@@ -3333,8 +3395,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private scheduleFailureAcknowledgement(
     sessionId: string,
     submitted: string,
-    acknowledged: string,
+    claim: RecoveryResendClaim,
   ): void {
+    const acknowledged = claim.failedAt
     const key = `${sessionId}:${acknowledged}`
     if (this.pendingAcknowledgements.has(key)) {
       return
@@ -3345,6 +3408,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const attempt = async (wait: number): Promise<void> => {
       let current = sessionId
       while (!this.stopped) {
+        current = this.recoverySessionId(current)
         if (!this.store.get(current)) {
           // Cleared while this was sleeping. The replacement inherits the
           // marker, so the retry follows it rather than giving up and leaving
@@ -3367,12 +3431,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             `Still could not clear the recovery marker for ${current}:`,
             error,
           )
+          if (this.stopped) return
           await new Promise((resolve) => {
             // Unreferenced so a retry that is sleeping cannot hold the process
             // open after everything else has finished shutting down.
-            const timer = setTimeout(resolve, wait)
+            const timer = setTimeout(() => {
+              this.acknowledgementTimers.delete(timer)
+              resolve(undefined)
+            }, wait)
             timer.unref?.()
-            this.acknowledgementTimers.add(timer)
+            this.acknowledgementTimers.set(timer, () => resolve(undefined))
           })
           // Backed off, so an outage costs one attempt a minute rather than
           // two a second.
@@ -3382,6 +3450,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const running = attempt(500).finally(() => {
       this.pendingAcknowledgements.delete(key)
+      claim.release()
     })
     this.pendingAcknowledgements.set(key, running)
   }
@@ -3394,6 +3463,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // the marker it answers are written together rather than one after the
     // other with a crash possible in between.
     answers?: string,
+    delivery?: DeliveryBoundary,
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
@@ -3413,6 +3483,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           answers,
           terminalBacked,
           true,
+          delivery,
         )
       })
     }
@@ -3423,6 +3494,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue,
       answers,
       terminalBacked,
+      false,
+      delivery,
     )
   }
 
@@ -3433,6 +3506,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     answers: string | undefined,
     terminalBacked: boolean,
     startupLocked = false,
+    delivery?: DeliveryBoundary,
   ): Promise<SessionDetail> {
     // Detection is awaited, and suspending can finish while it is: the guard
     // above spoke for a session that was still running.
@@ -3463,6 +3537,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             answers,
             terminalBacked,
             true,
+            delivery,
           ),
         )
       }
@@ -3483,6 +3558,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             answers,
             terminalBacked,
             true,
+            delivery,
           ),
         )
       }
@@ -3499,6 +3575,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               answers,
               terminalBacked,
               true,
+              delivery,
             ),
           )
         }
@@ -3596,7 +3673,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       startupReady &&
       this.store.get(sessionId)?.queuedPrompts?.length
     ) {
-      return this.enqueueTerminalPrompt(sessionId, content, false, answers)
+      return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery)
     }
     if (
       enqueue &&
@@ -3604,7 +3681,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       terminalBacked &&
       (await this.shouldEnqueueTerminalPrompt(sessionId))
     ) {
-      return this.enqueueTerminalPrompt(sessionId, content, false, answers)
+      return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery)
     }
     const nativeEnqueue = this.shouldUseNativeTerminalQueue(
       sessionId,
@@ -3614,7 +3691,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
-      this.deliveredSends.add(sessionId)
+      if (delivery) delivery.accepted = true
       if (startupLocked && startupReady && !nativeEnqueue) {
         this.terminalAdmissionDispatched.add(sessionId)
       }
@@ -3648,10 +3725,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!enqueue) {
         throw new Error('This session is already responding')
       }
-      return this.enqueuePrompt(sessionId, content, false, answers)
+      return this.enqueuePrompt(sessionId, content, false, answers, delivery)
     }
 
-    return this.startMessage(sessionId, content)
+    return this.startMessage(sessionId, content, false, answers, delivery)
   }
 
   async removeQueuedPrompt(
@@ -3676,6 +3753,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     content: string,
     command = false,
     answers?: string,
+    delivery?: DeliveryBoundary,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
@@ -3691,6 +3769,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const queued = answers
         ? await this.store.enqueueAnsweringPrompt(sessionId, prompt, answers)
         : await this.store.enqueuePrompt(sessionId, prompt)
+      if (delivery) delivery.accepted = true
       this.publish(queued)
       return queued
     })
@@ -3701,9 +3780,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     content: string,
     command = false,
     answers?: string,
+    delivery?: DeliveryBoundary,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(sessionId, content, command, answers)
+    const queued = await this.enqueuePrompt(sessionId, content, command, answers, delivery)
     if (!wasIdle) {
       return queued
     }
@@ -3779,12 +3859,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     fromQueue = false,
+    answers?: string,
+    delivery?: DeliveryBoundary,
   ): Promise<SessionDetail> {
     // Anything already waiting goes first. A resume whose drain failed leaves
     // the prompt back on the queue, and a message written afterwards would
     // otherwise start straight away and run ahead of one written before it.
     if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
-      const queued = await this.enqueuePrompt(sessionId, content)
+      const queued = await this.enqueuePrompt(sessionId, content, false, answers, delivery)
       // A drain that failed put its prompt back and left nothing running to
       // take it off again. Without this the queue stays where it is, and every
       // message written afterwards joins it rather than starting anything.
@@ -3820,6 +3902,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // runPrompt writes to the store from its own catch and finally paths, so a
     // failure there would escape this fire-and-forget call as an unhandled
     // rejection and abort the process.
+    if (delivery) delivery.accepted = true
     void this.runPrompt(sdkSession, content, assistantMessageId).catch(
       (error: unknown) => {
         this.publishError(sessionId, error)
@@ -3967,6 +4050,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     await this.store.readAfterWrites(sessionId)
     const claim = await this.claimFailure(sessionId, command, acknowledgedFailure)
+    const delivery: DeliveryBoundary = claim ?? { accepted: false }
     let ran: SessionDetail
     try {
       ran = await this.runCommand(
@@ -3974,10 +4058,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         command,
         enqueue,
         claim?.failedAt,
+        delivery,
       )
     } catch (error) {
+      if (delivery.accepted) {
+        await this.settleRecoveryResend(sessionId, command, claim, this.store.get(sessionId))
+        throw this.submissionFailure(error, sessionId, claim, true)
+      }
       claim?.release()
-      throw error
+      throw this.submissionFailure(error, sessionId, claim, false)
     }
     return this.settleRecoveryResend(sessionId, command, claim, ran)
   }
@@ -3989,6 +4078,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // The failure this command answers, so a queued one and the marker it
     // answers are written together rather than one after the other.
     answers?: string,
+    delivery?: DeliveryBoundary,
   ): Promise<SessionDetail> {
 
     if (!command.startsWith('/')) {
@@ -4043,6 +4133,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             argument,
             enqueue,
             answers,
+            delivery,
           )
         })
       }
@@ -4052,6 +4143,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         argument,
         enqueue,
         answers,
+        delivery,
       )
     } finally {
       releaseDispatch()
@@ -4130,6 +4222,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // The failure this command answers, so a queued one and the marker it
     // answers are written together rather than one after the other.
     answers?: string,
+    delivery?: DeliveryBoundary,
   ): Promise<SessionDetail> {
     const catalog = await this.sessionCommandCatalog(sessionId)
     const commandInfo = catalog.commands.find(
@@ -4173,6 +4266,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         canonicalCommand,
         true,
         answers,
+        delivery,
       )
     }
     const nativeEnqueue =
@@ -4223,6 +4317,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           : []),
       )
     ) {
+      if (delivery) delivery.accepted = true
       const feedback = await this.terminalCommandFeedback(
         sessionId,
         canonicalCommand,
@@ -4259,6 +4354,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!result.queued) {
         throw new Error('This session does not support command queueing')
       }
+      if (delivery) delivery.accepted = true
     } else {
       const result = await session.rpc.commands.invoke({
         name: canonicalName,
@@ -4275,27 +4371,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // Command dispatch already owns the terminal-admission slot. Re-entering
         // sendMessage here can queue behind that same slot when a stale terminal
         // owner disappeared and the command fell back to the SDK.
-        try {
-          const sent = await this.sendAdmittedWithBackend(
-            sessionId,
-            result.prompt,
-            busy,
-            undefined,
-            false,
-          )
-          this.deliveredSends.delete(sessionId)
-          return sent
-        } catch (error) {
-          if (this.deliveredSends.has(sessionId)) {
-            this.deliveredSends.delete(sessionId)
-            throw Object.assign(
-              error instanceof Error ? error : new Error(String(error)),
-              { uncertainDelivery: true },
-            )
-          }
-          throw error
-        }
+        return this.sendAdmittedWithBackend(
+          sessionId, result.prompt, busy, answers, false, false, delivery,
+        )
       }
+      if (delivery) delivery.accepted = true
       const content =
         result.kind === 'text'
           ? stripAnsi(result.text)
@@ -6493,7 +6573,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private publish(session: SessionDetail): void {
-    this.emit('event', { type: 'session.upserted', session })
+    this.emit('event', { type: 'session.upserted', session: this.publicSession(session) })
+  }
+
+  private publicSession(session: SessionDetail): SessionDetail {
+    return session.failedPrompt && this.recoveryClaims.get(session.failedPrompt.failedAt)?.accepted
+      ? { ...session, failedPrompt: undefined }
+      : session
   }
 
   private publishError(sessionId: string, error: unknown): void {

@@ -4410,7 +4410,7 @@ describe('AgentService deletion', () => {
       : undefined
     try {
       await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
-        .rejects.toBe(failure)
+        .rejects.toMatchObject({ cause: failure, statusCode: 409, submission: { accepted: false } })
       const recovery = service.store.get(client.session.sessionId)!.failedPrompt!
       expect(recovery).toMatchObject({ content: 'Recovered prompt', uncertain: true })
       expect(recovery.failedAt).not.toBe(failedAt)
@@ -6456,7 +6456,6 @@ describe('AgentService deletion', () => {
     directories.push(directory)
     const client = new FakeCopilotClient()
     client.models = [configurableModel()]
-    let service: AgentService
     const terminal = {
       ownsStartupPrompt: vi.fn(() => true),
       has: vi.fn(async () => false),
@@ -6464,15 +6463,12 @@ describe('AgentService deletion', () => {
         if (content === '/plan') {
           return false
         }
-        ;(
-          service as unknown as { deliveredSends: Set<string> }
-        ).deliveredSends.add(client.session.sessionId)
-        throw new Error('state write failed')
+        return true
       }),
       cancel: vi.fn(async () => true),
       capture: vi.fn(async () => undefined),
     }
-    service = new AgentService(
+    const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
       async () => [
@@ -6492,6 +6488,8 @@ describe('AgentService deletion', () => {
     await service.store.update(client.session.sessionId, (session) => {
       session.status = 'idle'
     })
+    vi.spyOn(service.store, 'markTerminalPromptDispatched')
+      .mockRejectedValueOnce(new Error('state write failed'))
 
     await expect(
       service.executeCommand(client.session.sessionId, '/plan'),

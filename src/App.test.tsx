@@ -8058,6 +8058,247 @@ describe('App', () => {
     )
   })
 
+  it.each(['stay', 'navigate', 'replace'] as const)(
+    'binds a failed submission to the returned recovery token across %s',
+    async (mode) => {
+      const oldToken = '2026-09-06T00:00:00.000Z'
+      const nextToken = 'resend:11111111-1111-4111-8111-111111111111'
+      const submitted = 'Edited recovered request'
+      let current: ManagedSession = {
+        ...session, revision: 20, messages: [],
+        failedPrompt: { content: 'Original recovered request', failedAt: oldToken, uncertain: true },
+      }
+      localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+        'computer-1:session-2': 'Unrelated second-session draft',
+      }))
+      vi.mocked(listSessions).mockResolvedValue([current, secondSession])
+      vi.mocked(getSession).mockImplementation(async (_computer, id) =>
+        id === secondSession.id ? secondSession : current,
+      )
+      let refuse!: (error: unknown) => void
+      vi.mocked(sendMessage).mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject }))
+      render(<App />)
+      await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Original recovered request'))
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: submitted } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+      current = {
+        ...current, revision: 21,
+        failedPrompt: { content: submitted, failedAt: nextToken, uncertain: true },
+      }
+      await act(async () => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.upserted', session: current }),
+        } as MessageEvent)
+      })
+      if (mode === 'replace') {
+        current = { ...current, id: 'session-1-replaced', revision: 22, replacedSessionIds: ['session-1'] }
+        await act(async () => {
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({
+              type: 'session.removed', computerId: computer.id,
+              sessionId: session.id, replacedBy: current.id,
+            }),
+          } as MessageEvent)
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({ type: 'session.upserted', session: current }),
+          } as MessageEvent)
+        })
+      } else if (mode === 'navigate') {
+        fireEvent.click(screen.getByText('Second chat'))
+        await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Unrelated second-session draft'))
+      }
+      const receipt = { sessionId: current.id, failedAt: nextToken, accepted: false }
+      await act(async () => {
+        refuse(Object.assign(new Error('Delivery was not completed'), { statusCode: 409, submission: receipt }))
+      })
+      const key = `${computer.id}:${current.id}`
+      await waitFor(() => expect(JSON.parse(localStorage.getItem('agentic-remote:composer-draft-failures') || '{}')[key])
+        .toBe(nextToken))
+      if (mode === 'navigate') {
+        expect(screen.getByLabelText('Message')).toHaveValue('Unrelated second-session draft')
+        fireEvent.click(screen.getByText('Project chat'))
+      }
+      await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(submitted))
+      vi.mocked(sendMessage).mockResolvedValue({ ...current, revision: 23, failedPrompt: undefined })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendMessage).toHaveBeenLastCalledWith(
+        computer.id, current.id, expect.objectContaining({
+          content: submitted, acknowledgesFailure: nextToken,
+        }),
+      ))
+      expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts') || '{}')['computer-1:session-2'])
+        .toBe('Unrelated second-session draft')
+    },
+  )
+
+  it('does not restore a draft when a failed response confirms the recovery was accepted', async () => {
+    const oldToken = '2026-09-06T00:00:00.000Z'
+    const nextToken = 'resend:22222222-2222-4222-8222-222222222222'
+    const content = 'Already delivered recovery'
+    let current: ManagedSession = {
+      ...session, revision: 30, messages: [],
+      failedPrompt: { content, failedAt: oldToken, uncertain: true },
+    }
+    vi.mocked(listSessions).mockResolvedValue([current])
+    vi.mocked(getSession).mockImplementation(async () => current)
+    let refuse!: (error: unknown) => void
+    vi.mocked(sendMessage).mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject }))
+    render(<App />)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    current = { ...current, revision: 31, failedPrompt: { content, failedAt: nextToken, uncertain: true } }
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent)
+      refuse(Object.assign(new Error('Delivered; acknowledgement will be retried'), {
+        statusCode: 409, submission: { sessionId: session.id, failedAt: nextToken, accepted: true },
+      }))
+    })
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(''))
+    expect(sendMessage).toHaveBeenCalledOnce()
+    current = { ...current, revision: 32, failedPrompt: undefined }
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent)
+    })
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+  })
+
+  it('retains a recovery binding across a lost response, an absent marker and browser reload', async () => {
+    const token = '2026-09-06T00:00:00.000Z'
+    const content = 'Do not anonymously replay this draft'
+    let current: ManagedSession = {
+      ...session, revision: 40, messages: [],
+      failedPrompt: { content, failedAt: token, uncertain: true },
+    }
+    vi.mocked(listSessions).mockImplementation(async () => [current])
+    vi.mocked(getSession).mockImplementation(async () => current)
+    let refuse!: (error: unknown) => void
+    vi.mocked(sendMessage).mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject }))
+    render(<App />)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    current = { ...current, revision: 42, failedPrompt: undefined }
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent)
+      refuse(new Error('The response connection was lost'))
+    })
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('agentic-remote:composer-submission-failures') || '{}'))
+      .toEqual({ 'computer-1:session-1': token }))
+    cleanup()
+    render(<App />)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error('That recovery decision was already used'))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenLastCalledWith(
+      computer.id, session.id, expect.objectContaining({ content, acknowledgesFailure: token }),
+    ))
+  })
+
+  it('moves the bound failed draft when replacement arrives after the HTTP error', async () => {
+    const token = '2026-09-06T00:00:00.000Z'
+    const next = 'resend:33333333-3333-4333-8333-333333333333'
+    const content = 'Edited draft that follows a late replacement'
+    let current: ManagedSession = {
+      ...session, revision: 50, messages: [],
+      failedPrompt: { content, failedAt: token, uncertain: true },
+    }
+    vi.mocked(listSessions).mockImplementation(async () => [current, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computer, id) => id === secondSession.id ? secondSession : current)
+    vi.mocked(sendMessage).mockRejectedValueOnce(Object.assign(new Error('Dispatch was interrupted'), {
+      statusCode: 409, submission: { sessionId: 'late-replacement', failedAt: next, accepted: false },
+    }))
+    render(<App />)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('agentic-remote:composer-draft-failures') || '{}')['computer-1:session-1']).toBe(next))
+    current = {
+      ...current, id: 'late-replacement', revision: 52, replacedSessionIds: [session.id],
+      failedPrompt: { content, failedAt: next, uncertain: true },
+    }
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.removed', computerId: computer.id, sessionId: session.id, replacedBy: current.id }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent)
+    })
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
+    vi.mocked(sendMessage).mockResolvedValue({ ...current, revision: 53, failedPrompt: undefined })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenLastCalledWith(
+      computer.id, current.id, expect.objectContaining({ acknowledgesFailure: next, content }),
+    ))
+  })
+
+  it('does not put an accepted background submission into the newly selected session', async () => {
+    const token = '2026-09-06T00:00:00.000Z'
+    const next = 'resend:44444444-4444-4444-8444-444444444444'
+    const content = 'Accepted in the first session'
+    let current: ManagedSession = {
+      ...session, revision: 60, messages: [],
+      failedPrompt: { content, failedAt: token, uncertain: true },
+    }
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({ 'computer-1:session-2': 'Keep the other draft' }))
+    vi.mocked(listSessions).mockImplementation(async () => [current, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computer, id) => id === secondSession.id ? secondSession : current)
+    let refuse!: (error: unknown) => void
+    vi.mocked(sendMessage).mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject }))
+    render(<App />)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByText('Second chat'))
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Keep the other draft'))
+    current = { ...current, revision: 62, failedPrompt: undefined }
+    await act(async () => {
+      refuse(Object.assign(new Error('Accepted; acknowledgement is pending'), {
+        statusCode: 409, submission: { sessionId: session.id, failedAt: next, accepted: true },
+      }))
+    })
+    expect(screen.getByLabelText('Message')).toHaveValue('Keep the other draft')
+    fireEvent.click(screen.getByText('Project chat'))
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(''))
+    expect(sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('does not resurrect a deleted session when its recovery response arrives late', async () => {
+    const token = '2026-09-06T00:00:00.000Z'
+    const current: ManagedSession = {
+      ...session, messages: [],
+      failedPrompt: { content: 'A deleted recovery draft', failedAt: token },
+    }
+    vi.mocked(listSessions).mockResolvedValue([current, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computer, id) => id === secondSession.id ? secondSession : current)
+    let refuse!: (error: unknown) => void
+    vi.mocked(sendMessage).mockImplementationOnce(() => new Promise((_resolve, reject) => { refuse = reject }))
+    render(<App />)
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('A deleted recovery draft'))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.removed', computerId: computer.id, sessionId: session.id }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      refuse(Object.assign(new Error('The owner disappeared'), {
+        statusCode: 409, submission: { sessionId: session.id, failedAt: 'resend:deleted', accepted: false },
+      }))
+    })
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts') || '{}')['computer-1:session-1']).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-draft-failures') || '{}')['computer-1:session-1']).toBeUndefined()
+  })
+
   it('keeps waiting when the node that owns a replacement did not answer', async () => {
     // The hub answers for a paired computer out of its own cache when the node
     // request fails, and a failed request does not have to mean the computer

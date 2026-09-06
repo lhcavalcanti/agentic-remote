@@ -68,6 +68,16 @@ const folderTrustPane = [
   '╰────────────────────────────────────────────────────────────────────────╯',
 ].join('\n')
 
+const desktopInstallPane = [
+  '╭───────────────────────────────────────────────╮',
+  'THE GITHUB COPILOT APP',
+  'Now generally available!',
+  'Install it now?',
+  '❯ Yes, install      No, thanks',
+  '←/→ to choose · Enter to select · Y / N',
+  '╰───────────────────────────────────────────────╯',
+].join('\n')
+
 function readyComposer(text = '', working = false): string {
   return [
     '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
@@ -158,25 +168,49 @@ async function ownedStartupFixture(initialPane?: string, footer = '') {
   directories.push(directory)
   const executable = path.join(directory, 'copilot-startup.mjs')
   const output = path.join(directory, 'received.json')
+  const replacementPath = path.join(directory, 'replacement-pane.txt')
   await writeFile(output, JSON.stringify({ keys: '', pastes: [], submits: 0 }))
   await writeFile(executable, `#!/usr/bin/env node
 ${fixtureReceiptWriter(output)}
+import { readFileSync } from 'node:fs'
 const state = { keys: '', pastes: [], submits: 0 }
 const save = () => writeReceipt(state)
 const makeComposer = ${readyComposer.toString()}
 const composer = (text = '') => makeComposer(text) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
 let confirmed = ${initialPane === undefined}
+let desktop = ${initialPane === desktopInstallPane}
+let replaced = false
 let input = ''
 let pasted
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
+process.on('SIGUSR2', () => {
+  const pane = readFileSync(${JSON.stringify(replacementPath)}, 'utf8')
+  replaced = true
+  desktop = pane.includes('THE GITHUB COPILOT APP') && pane.includes('Install it now?')
+  confirmed = pane.includes('╹')
+  draw(pane)
+})
 process.stdin.on('data', (data) => {
   const text = data.toString()
+  if (replaced) {
+    state.keys += text
+    save()
+    if (desktop && text.includes('n')) {
+      desktop = false
+      confirmed = true
+      draw(composer())
+    } else if (confirmed) {
+      draw(composer(state.keys))
+    }
+    return
+  }
   if (!confirmed) {
     state.keys += text
     save()
-    if (/[\\r\\n]/.test(text)) {
+    if (/[\\r\\n]/.test(text) || (desktop && text.includes('n'))) {
+      desktop = false
       confirmed = true
       draw(composer())
     }
@@ -208,7 +242,7 @@ draw(${JSON.stringify(initialPane)} ?? composer())
   const controller = new TmuxTerminalSessionController()
   const sessionId = randomUUID()
   await controller.create(sessionId, directory, 'Owned startup', false)
-  return { controller, sessionId, output }
+  return { controller, sessionId, output, replacementPath }
 }
 
 beforeEach(async () => {
@@ -246,6 +280,55 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it.each([
+    ['an empty composer', readyComposer()],
+    ['an existing draft', readyComposer('Keep this native draft')],
+    ['a different permission dialog', folderTrustPane],
+  ])('does not decline a desktop prompt replaced by %s during owner validation', async (_name, replacement) => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture(sessionInUsePane)
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{ pid: number; target: string } | undefined>
+    }
+    const owner = await inspectable.owner(sessionId, undefined, true)
+    expect(owner).toBeDefined()
+    await writeFile(replacementPath, desktopInstallPane)
+    process.kill(owner!.pid, 'SIGUSR2')
+    await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane && isTerminalDesktopInstallPrompt(pane)))
+    const originalOwner = inspectable.owner.bind(controller)
+    let initialOwnerRead = false
+    let replaced = false
+    const spy = vi.spyOn(inspectable, 'owner').mockImplementation(async (id, target, fresh) => {
+      const current = await originalOwner(id, target, fresh)
+      if (!fresh && current) initialOwnerRead = true
+      if (fresh && current && initialOwnerRead && !replaced) {
+        replaced = true
+        await writeFile(replacementPath, replacement)
+        process.kill(current.pid, 'SIGUSR2')
+        await eventually(
+          async () => (await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', current.target])).stdout,
+          (pane) => !isTerminalDesktopInstallPrompt(pane),
+        )
+      }
+      return current
+    })
+    try {
+      await controller.resolveStartupPrompt(sessionId)
+      expect(replaced).toBe(true)
+      expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: '', pastes: [], submits: 0 })
+      const pane = await controller.capture(sessionId)
+      if (replacement.includes('Keep this native draft')) expect(pane).toContain('Keep this native draft')
+      if (replacement === folderTrustPane) expect(pane).toContain('Confirm folder trust')
+    } finally {
+      spy.mockRestore()
+    }
+  }, 15000)
+
+  it('declines an unchanged live desktop prompt exactly once after owner validation', async () => {
+    const { controller, sessionId, output } = await ownedStartupFixture(desktopInstallPane)
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: 'n', pastes: [], submits: 0 })
+  }, 15000)
+
   it.each([
     ['Fixture Model · High · 1.1M context (0%)', false, false],
     ['Fixture preview · 128k context (37%)', false, false],

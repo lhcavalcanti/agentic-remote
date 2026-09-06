@@ -243,6 +243,19 @@ Questions and permissions are the highest-priority UI state.
 - Successful delivery or durable queue admission MUST settle only its own
   recovery token. Failed acknowledgement writes after accepted delivery MUST be
   surfaced and retried without repeating delivery or clearing a newer recovery.
+- Confirmed delivery MUST remain accepted when later activity, command feedback,
+  or persistence fails. Its recovery claim MUST remain reserved until token-scoped
+  acknowledgement settles; a fresh-token or anonymous retry MUST NOT deliver it
+  again while that acknowledgement is pending.
+- A failed recovery submission MUST return its current recovery token and owning
+  session through both local and paired-node HTTP paths. The browser MUST bind
+  any restored draft to that token, including across navigation, reload and clear
+  replacement. A confirmed accepted submission MUST NOT be restored as an unsent
+  draft. Missing error metadata MUST retain the original binding rather than
+  silently turning a retry into an independent message.
+- Automatic desktop-install decline MUST recapture the pane after awaited owner
+  validation and confirm the same live prompt before sending `n`. Disappearance
+  or replacement by a composer, draft, or another dialog MUST receive no input.
 - Form identity MUST preserve word boundaries. Terminal form reads MUST use
   tmux's joined soft-wrap capture instead of guessing whether a line break
   separated words or split an identifier.

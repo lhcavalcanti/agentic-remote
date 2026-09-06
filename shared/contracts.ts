@@ -349,6 +349,8 @@ export interface ComputerSummary {
   isLocal: boolean
   online: boolean
   baseUrl?: string
+  /** Opaque runtime registration lifetime; changes on a same-ID re-pair. */
+  registrationId?: string
   providers?: AgentProviderCapability[]
 }
 

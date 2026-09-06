@@ -63,6 +63,17 @@ history is not transferred between providers.
   names. After that query ends, the app can show its clearly labelled in-memory
   last-known snapshot. Before a report exists, or after a service restart, the
   view is explicitly unavailable until normal session activity reports it.
+- Claude command descriptions are observed from the normal turn's cached
+  initialization and command-change reports, not awaited anew by each view.
+  Refreshing unchanged observations preserves their capture time. A refused
+  clear keeps those observations; a committed replacement retires them even
+  if subsequent cleanup fails.
+- Resource requests expire on the server after ten seconds, before the browser's
+  fifteen-second fallback. Disconnects and shutdown propagate cancellation
+  through the hub and node to the metadata request. They do not stop inference
+  or dispose an existing provider session. If the installed SDK/transport has
+  no cancellable metadata adapter, inspection is unavailable or uses an existing
+  report rather than invoking an unbounded RPC.
 - Experimental resource RPCs are capability-gated. A valid empty catalog,
   unsupported inspection, offline computer, and failed request are distinct
   states. Raw MCP configs, environment values, headers, URLs, arguments, and

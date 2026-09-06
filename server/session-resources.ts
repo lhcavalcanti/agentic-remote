@@ -1,5 +1,6 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk'
 import type { CopilotClient, CopilotSession } from '@github/copilot-sdk'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type {
   AgentProvider,
   ServerEvent,
@@ -17,6 +18,7 @@ import type { SessionService } from './session-service.js'
 import { RemoteNodeRedirectError } from './remote-node-errors.js'
 
 export const MAX_SESSION_RESOURCES = 2_000
+export const SESSION_RESOURCE_TIMEOUT_MS = 10_000
 
 export const resourceMessages = {
   unavailable: 'This runtime does not expose read-only session resource metadata.',
@@ -34,6 +36,8 @@ const errorMessages = {
   computer: 'Computer is not registered.',
   failed: 'Unable to read session resource metadata.',
   invalid: 'The runtime returned invalid session resource metadata.',
+  cancelled: 'Session resource request was cancelled.',
+  timeout: 'Session resource request timed out. Try refreshing.',
 } as const
 
 export class SessionResourceError extends Error {
@@ -44,13 +48,84 @@ export class SessionResourceError extends Error {
     this.name = 'SessionResourceError'
     this.statusCode = reason === 'missing' || reason === 'computer' ? 404
       : reason === 'stopped' ? 503
-        : reason === 'changed' || reason === 'pairing' ? 409 : 502
+        : reason === 'changed' || reason === 'pairing' ? 409
+          : reason === 'cancelled' ? 499 : reason === 'timeout' ? 504 : 502
   }
 }
 
 export function safeResourceError(error: unknown): SessionResourceError | RemoteNodeRedirectError {
   return error instanceof SessionResourceError || error instanceof RemoteNodeRedirectError
     ? error : new SessionResourceError('failed')
+}
+
+export interface ResourceRead {
+  signal: AbortSignal
+  cancel: (error: SessionResourceError) => void
+  assertActive: () => void
+}
+
+/** Every reader must settle its own transport work when this signal aborts. */
+export class ResourceReads {
+  private readonly active = new Set<AbortController>()
+  private stopped = false
+
+  start(): void { this.stopped = false }
+
+  stop(error = new SessionResourceError('stopped')): void {
+    this.stopped = true
+    for (const controller of this.active) controller.abort(error)
+  }
+
+  async run<T>(signal: AbortSignal | undefined, read: (request: ResourceRead) => Promise<T>): Promise<T> {
+    if (this.stopped) throw new SessionResourceError('stopped')
+    const controller = new AbortController()
+    const cancel = (error: SessionResourceError) => controller.abort(error)
+    const abort = () => cancel(signal?.reason instanceof SessionResourceError
+      ? signal.reason : new SessionResourceError('cancelled'))
+    const assertActive = () => {
+      if (controller.signal.aborted) throw controller.signal.reason
+    }
+    if (signal?.aborted) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
+    const timeout = setTimeout(() => cancel(new SessionResourceError('timeout')), SESSION_RESOURCE_TIMEOUT_MS)
+    timeout.unref?.()
+    this.active.add(controller)
+    try {
+      assertActive()
+      const result = await read({ signal: controller.signal, cancel, assertActive })
+      assertActive()
+      return result
+    } catch (error) {
+      assertActive()
+      throw error
+    } finally {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+      this.active.delete(controller)
+    }
+  }
+}
+
+export function resourceRequestHandler(app: FastifyInstance) {
+  const reads = new ResourceReads()
+  app.addHook('preClose', async () => { reads.stop() })
+  return async <T>(
+    request: FastifyRequest, reply: FastifyReply, read: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> => {
+    const controller = new AbortController()
+    const cancel = () => controller.abort(new SessionResourceError('cancelled'))
+    request.raw.once('aborted', cancel)
+    reply.raw.once('close', cancel)
+    if (request.raw.aborted || reply.raw.destroyed) cancel()
+    try {
+      return await reads.run(controller.signal, ({ signal }) => read(signal))
+    } catch (error) {
+      throw safeResourceError(error)
+    } finally {
+      request.raw.off('aborted', cancel)
+      reply.raw.off('close', cancel)
+    }
+  }
 }
 
 export function isResourceMethodUnavailable(error: unknown): boolean {
@@ -348,46 +423,47 @@ export function sameResourceOwner(before: SessionDetail, after: SessionDetail | 
 // storage. Their results are discarded when their original owner changes.
 async function readServiceResources<T>(
   service: SessionService, sessionId: string,
-  read: (session: SessionDetail, provider: AgentProvider) => Promise<T>,
+  signal: AbortSignal | undefined,
+  read: (session: SessionDetail, provider: AgentProvider, signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  let changed = false
-  const session = service.getSession(sessionId)
-  if (!session) throw new SessionResourceError('missing')
-  const listener = (event: ServerEvent) => {
-    if ((event.type === 'session.removed' && event.sessionId === sessionId) ||
-      (event.type === 'session.upserted' && event.session.id === sessionId &&
-        !sameResourceOwner(session, event.session))) changed = true
-  }
-  service.on('event', listener)
-  try {
-    const result = await read(session, session.provider ?? 'copilot')
-    if (changed || !sameResourceOwner(session, service.getSession(sessionId))) {
-      throw new SessionResourceError('changed')
+  return new ResourceReads().run(signal, async (request) => {
+    const session = service.getSession(sessionId)
+    if (!session) throw new SessionResourceError('missing')
+    const listener = (event: ServerEvent) => {
+      if ((event.type === 'session.removed' && event.sessionId === sessionId) ||
+        (event.type === 'session.upserted' && event.session.id === sessionId &&
+          !sameResourceOwner(session, event.session))) request.cancel(new SessionResourceError('changed'))
     }
-    return result
-  } catch (error) {
-    throw safeResourceError(error)
-  } finally {
-    service.off('event', listener)
-  }
+    service.on('event', listener)
+    try {
+      const result = await read(session, session.provider ?? 'copilot', request.signal)
+      request.assertActive()
+      if (!sameResourceOwner(session, service.getSession(sessionId))) throw new SessionResourceError('changed')
+      return result
+    } catch (error) {
+      throw safeResourceError(error)
+    } finally {
+      service.off('event', listener)
+    }
+  })
 }
 
-export function readSessionSkills(service: SessionService, sessionId: string): Promise<SessionSkillsSnapshot> {
-  return readServiceResources(service, sessionId, async (_session, provider) => {
+export function readSessionSkills(service: SessionService, sessionId: string, signal?: AbortSignal): Promise<SessionSkillsSnapshot> {
+  return readServiceResources(service, sessionId, signal, async (_session, provider, signal) => {
     if (!service.listSkills || !service.providers().some((entry) =>
       entry.id === provider && entry.supportsSessionResources === true)) {
       return unavailableSkills(sessionId, provider, resourceMessages.update)
     }
-    return sanitizeSkillsSnapshot(await service.listSkills(sessionId), sessionId, provider)
+    return sanitizeSkillsSnapshot(await service.listSkills(sessionId, signal), sessionId, provider)
   })
 }
 
-export function readSessionMcpServers(service: SessionService, sessionId: string): Promise<SessionMcpServersSnapshot> {
-  return readServiceResources(service, sessionId, async (_session, provider) => {
+export function readSessionMcpServers(service: SessionService, sessionId: string, signal?: AbortSignal): Promise<SessionMcpServersSnapshot> {
+  return readServiceResources(service, sessionId, signal, async (_session, provider, signal) => {
     if (!service.listMcpServers || !service.providers().some((entry) =>
       entry.id === provider && entry.supportsSessionResources === true)) {
       return unavailableMcp(sessionId, provider, resourceMessages.update)
     }
-    return sanitizeMcpSnapshot(await service.listMcpServers(sessionId), sessionId, provider)
+    return sanitizeMcpSnapshot(await service.listMcpServers(sessionId, signal), sessionId, provider)
   })
 }

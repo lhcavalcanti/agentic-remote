@@ -1,6 +1,13 @@
-import type { SlashCommand } from '../shared/contracts'
+import type { ManagedSession, SlashCommand } from '../shared/contracts'
 
 export type SessionResourceTab = 'skills' | 'mcp'
+
+export function sessionResourceOwner(session: ManagedSession): string {
+  return JSON.stringify([
+    session.computerId, session.id, session.provider || 'copilot',
+    session.cwd, session.executionMode, Boolean(session.suspended),
+  ])
+}
 
 export const sessionResourceCommands: SlashCommand[] = [
   {

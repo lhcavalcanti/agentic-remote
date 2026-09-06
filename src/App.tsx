@@ -95,6 +95,7 @@ import {
   isSessionResourceCommandName,
   sessionResourceCommand,
   sessionResourceCommands,
+  sessionResourceOwner,
   type SessionResourceTab,
 } from './session-resource-commands'
 import { SessionNavigation } from './SessionNavigation'
@@ -1690,9 +1691,11 @@ function DialogFrame({
 interface SessionResourcesView {
   id: number
   ownerKey: string
+  signature: string
   computerId: string
   provider: AgentProvider
   lifetime: number
+  registrationId?: string
   tab: SessionResourceTab
   filter: string
 }
@@ -1701,6 +1704,7 @@ function SessionResourcesDialog({
   view,
   session,
   lifetime,
+  registrationId,
   online,
   supported,
   onClose,
@@ -1708,14 +1712,16 @@ function SessionResourcesDialog({
   view?: SessionResourcesView
   session?: ManagedSession
   lifetime: number
+  registrationId?: string
   online: boolean
   supported: boolean
   onClose: () => void
 }) {
   const sameOwner = Boolean(view && session &&
     view.ownerKey === sessionKey(session) &&
+    view.signature === sessionResourceOwner(session) &&
     view.provider === (session.provider || 'copilot') &&
-    view.lifetime === lifetime)
+    view.lifetime === lifetime && view.registrationId === registrationId)
   useEffect(() => {
     if (view && !sameOwner) onClose()
   }, [view, sameOwner, onClose])
@@ -9262,6 +9268,8 @@ function App() {
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as HubEvent
         if (event.type === 'session.upserted') {
+          setResourcesView((view) => view?.ownerKey === sessionKey(event.session) &&
+            view.signature !== sessionResourceOwner(event.session) ? undefined : view)
           eventSequenceRef.current += 1
           sessionEventSequenceRef.current.set(
             sessionKey(event.session),
@@ -9282,6 +9290,7 @@ function App() {
           // under an ancestor waits for a reload that may never come.
           claimReplacedSessions([event.session])
         } else if (event.type === 'session.removed') {
+          setResourcesView((view) => view?.ownerKey === `${event.computerId}:${event.sessionId}` ? undefined : view)
           const removedKey = `${event.computerId}:${event.sessionId}`
           // Said outright, so a later answer that simply does not mention it
           // is not what settles it, and a delayed clear response must not put
@@ -9364,6 +9373,8 @@ function App() {
           },
           }))
         } else if (event.type === 'computer.updated') {
+          setResourcesView((view) => view?.computerId === event.computer.id &&
+            view.registrationId !== event.computer.registrationId ? undefined : view)
           // The hub filters retired clients before publishing this event.
           // A new pairing may be announced by another tab without a refresh.
           forgottenComputers.current.delete(event.computer.id)
@@ -10949,9 +10960,11 @@ function App() {
     setResourcesView({
       id: ++resourcesViewId.current,
       ownerKey: sessionKey(selected),
+      signature: sessionResourceOwner(selected),
       computerId: selected.computerId,
       provider: selected.provider || 'copilot',
       lifetime: knowledgeComputerLifetimes.current.get(selected.computerId) || 0,
+      registrationId: computers.find((computer) => computer.id === selected.computerId)?.registrationId,
       tab,
       filter,
     })
@@ -14100,6 +14113,7 @@ function App() {
       ) : null}
       <SessionResourcesDialog
         lifetime={resourcesView ? knowledgeComputerLifetimes.current.get(resourcesView.computerId) || 0 : 0}
+        registrationId={computers.find((computer) => computer.id === selected?.computerId)?.registrationId}
         onClose={closeSessionResources}
         online={selectedComputerOnline}
         session={selected}

@@ -8,6 +8,7 @@ import type { SessionDetail } from '../shared/contracts.js'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
 import { SessionStore } from './session-store.js'
+import type { CopilotResourceMethod } from './session-resource-transport.js'
 
 const fixtures: { directory: string; stop: () => Promise<unknown> }[] = []
 const releases: (() => void)[] = []
@@ -16,6 +17,7 @@ type Skills = Awaited<ReturnType<CopilotSession['rpc']['skills']['list']>>
 type Mcp = Awaited<ReturnType<CopilotSession['rpc']['mcp']['list']>>
 type DiscoveredSkills = Awaited<ReturnType<CopilotClient['rpc']['skills']['discover']>>
 type DiscoveredMcp = Awaited<ReturnType<CopilotClient['rpc']['mcp']['discover']>>
+type ClaudeMcpRead = (signal?: AbortSignal) => ReturnType<Query['mcpServerStatus']>
 
 function deferred<T>() {
   let resolve!: (result: T) => void
@@ -81,13 +83,21 @@ async function copilotFixture(mode: 'loaded' | 'unloaded' | 'tmux' | 'suspended'
     resumeSession: vi.fn(async () => sdk),
     deleteSession: vi.fn(async () => {}),
     listSessions: vi.fn(async () => []),
+    requestResource: vi.fn(async (method: CopilotResourceMethod, params: Record<string, unknown>, _signal: AbortSignal): Promise<unknown> => {
+      switch (method) {
+        case 'session.skills.list': return sdk.rpc.skills.list()
+        case 'session.mcp.list': return sdk.rpc.mcp.list()
+        case 'skills.discover': return client.rpc.skills.discover(params as Parameters<CopilotClient['rpc']['skills']['discover']>[0])
+        case 'mcp.discover': return client.rpc.mcp.discover(params as Parameters<CopilotClient['rpc']['mcp']['discover']>[0])
+      }
+    }),
     rpc: {
       commands: { list: sdk.rpc.commands.list },
       models: { list: vi.fn(async () => ({ models: [] })) },
-      skills: { discover: vi.fn(async (): Promise<DiscoveredSkills> => ({ skills: [
+      skills: { discover: vi.fn(async (_params?: Parameters<CopilotClient['rpc']['skills']['discover']>[0]): Promise<DiscoveredSkills> => ({ skills: [
         { name: 'workspace', description: 'Global state', source: 'personal-copilot', userInvocable: true, enabled: true },
       ] })) },
-      mcp: { discover: vi.fn(async (): Promise<DiscoveredMcp> => ({ servers: [
+      mcp: { discover: vi.fn(async (_params?: Parameters<CopilotClient['rpc']['mcp']['discover']>[0]): Promise<DiscoveredMcp> => ({ servers: [
         { name: 'configured', enabled: true, source: 'workspace', type: 'stdio' },
         { name: 'disabled', enabled: false, source: 'user', type: 'http' },
       ] })) },
@@ -116,7 +126,7 @@ async function claudeFixture() {
     release: () => void
     yielded: ReturnType<typeof deferred<void>>
     skills: ReturnType<typeof vi.fn<Query['supportedCommands']>>
-    mcp: ReturnType<typeof vi.fn<Query['mcpServerStatus']>>
+    mcp: ReturnType<typeof vi.fn<ClaudeMcpRead>>
   }[] = []
   let init: Record<string, unknown> = {
     skills: ['review'], mcp_servers: [{ name: 'initial', status: 'pending' }],
@@ -128,7 +138,7 @@ async function claudeFixture() {
       { name: 'review', description: 'Safe description', argumentHint: '[path]' },
       { name: 'help', description: 'Builtin, not a skill', argumentHint: '' },
     ])
-    const mcp = vi.fn<Query['mcpServerStatus']>(async () => [{
+    const mcp = vi.fn<ClaudeMcpRead>(async () => [{
       name: 'runtime', status: 'failed', scope: 'project',
       error: 'PRIVATE_MCP_ERROR', config: { type: 'http', url: 'https://example.invalid/PRIVATE_CONFIG' },
       tools: [{ name: 'PRIVATE_TOOL' }],
@@ -139,6 +149,9 @@ async function claudeFixture() {
         type: 'system', subtype: 'init', session_id: 'session', cwd,
         ...init, apiKeySource: 'PRIVATE_ACCOUNT', plugins: [{ name: 'PRIVATE_PLUGIN', path: 'PRIVATE_PATH' }],
       } as unknown as SDKMessage
+      if (init.commandsChanged !== undefined) {
+        yield { type: 'system', subtype: 'commands_changed', commands: init.commandsChanged } as SDKMessage
+      }
       yielded.resolve()
       await Promise.race([
         finished.promise,
@@ -155,6 +168,10 @@ async function claudeFixture() {
       supportedModels: async () => [],
       supportedCommands: skills,
       mcpServerStatus: mcp,
+      initializationResult: async () => ({ commands: await skills() }),
+      request: async (_input: { subtype: 'mcp_status' }, options: { signal: AbortSignal }) => ({
+        response: { mcpServers: await mcp(options.signal) },
+      }),
     }) as unknown as Query
   })
   const sdk = {
@@ -191,9 +208,40 @@ afterEach(async () => {
   await Promise.all(fixtures.map(({ stop }) => stop()))
   await Promise.all(fixtures.splice(0).map(({ directory }) => rm(directory, { recursive: true, force: true })))
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('read-only Copilot resource views', () => {
+  it.each(['abort', 'timeout', 'stop'] as const)('settles provider work on %s without turning cancellation into workspace discovery', async (reason) => {
+    const { service, client, sdk } = await copilotFixture()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let pending = 0
+    let providerSignal!: AbortSignal
+    client.requestResource.mockImplementationOnce((_method, _params, signal) => {
+      providerSignal = signal
+      pending += 1
+      return new Promise((_resolve, reject) => {
+        const abort = () => { pending -= 1; reject(signal.reason) }
+        signal.addEventListener('abort', abort, { once: true })
+      })
+    })
+    const controller = new AbortController()
+    const reading = service.listSkills('session', controller.signal).catch((error: unknown) => error)
+    expect(pending).toBe(1)
+    if (reason === 'abort') controller.abort()
+    else if (reason === 'timeout') await vi.advanceTimersByTimeAsync(10_001)
+    else await service.stop()
+    expect(await reading).toMatchObject({ statusCode: reason === 'timeout' ? 504 : reason === 'stop' ? 503 : 499 })
+    expect(pending).toBe(0)
+    expect(providerSignal.aborted).toBe(true)
+    expect(client.requestResource).toHaveBeenCalledOnce()
+    expect(client.rpc.skills.discover).not.toHaveBeenCalled()
+    expect(sdk.send).not.toHaveBeenCalled()
+    expect(sdk.abort).not.toHaveBeenCalled()
+    if (reason !== 'stop') expect(sdk.disconnect).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('reads only a loaded SDK session without startup, prompt, command, terminal, or store operations', async () => {
     const { cwd, store, service, sdk, client, terminal } = await copilotFixture()
     const before = await readFile(path.join(cwd, 'state.json'), 'utf8')
@@ -306,6 +354,99 @@ describe('read-only Copilot resource views', () => {
 })
 
 describe('read-only Claude resource views', () => {
+  it('observes command updates without fetching commands on refresh or relabelling builtins as skills', async () => {
+    const { service, begin, end } = await claudeFixture()
+    const turn = await begin({
+      skills: ['review'], mcp_servers: [],
+      commandsChanged: [
+        { name: 'review', description: 'Updated description', argumentHint: '[file]' },
+        { name: 'help', description: 'Not a skill', argumentHint: '' },
+      ],
+    })
+    const first = await service.listSkills('session')
+    const second = await service.listSkills('session')
+    expect(second).toEqual(first)
+    expect(second.skills).toEqual([{ name: 'review', commandName: 'review', description: 'Updated description', argumentHint: '[file]' }])
+    expect(turn.skills).toHaveBeenCalledOnce()
+    await end()
+    expect(await service.listSkills('session')).toMatchObject({
+      scope: 'last-known', capturedAt: first.capturedAt, skills: first.skills,
+    })
+  })
+
+  it('retires observations if replacement committed before post-commit cleanup failed', async () => {
+    const { service, store, begin, end } = await claudeFixture()
+    await begin()
+    await end()
+    const replace = store.replaceWithClearedSession.bind(store)
+    vi.spyOn(store, 'replaceWithClearedSession').mockImplementationOnce(async (...args) => {
+      await replace(...args)
+      throw new Error('Post-commit cleanup failed')
+    })
+    await expect(service.clearConversation('session')).rejects.toThrow('Post-commit cleanup failed')
+    expect(store.get('session')).toBeUndefined()
+    const observations = Reflect.get(service, 'resourceObservations') as Map<string, unknown>
+    expect(observations.has('session')).toBe(false)
+    const replacement = store.list()[0]
+    expect(await service.listSkills(replacement.id)).toMatchObject({ scope: 'unavailable' })
+  })
+
+  it.each(['abort', 'timeout', 'query-end', 'stop'] as const)('settles Claude metadata on %s without retiring last-known observations', async (reason) => {
+    const { service, begin, end } = await claudeFixture()
+    const turn = await begin()
+    const before = await service.listMcpServers('session')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let pending = 0
+    let providerSignal!: AbortSignal
+    turn.mcp.mockImplementationOnce((signal) => {
+      providerSignal = signal!
+      pending += 1
+      return new Promise((_resolve, reject) => {
+        signal!.addEventListener('abort', () => { pending -= 1; reject(signal!.reason) }, { once: true })
+      })
+    })
+    const controller = new AbortController()
+    const reading = service.listMcpServers('session', controller.signal).catch((error: unknown) => error)
+    expect(pending).toBe(1)
+    if (reason === 'abort') controller.abort()
+    else if (reason === 'timeout') await vi.advanceTimersByTimeAsync(10_001)
+    else if (reason === 'query-end') await end()
+    else await service.stop()
+    expect(await reading).toMatchObject({
+      statusCode: reason === 'timeout' ? 504 : reason === 'query-end' ? 409 : reason === 'stop' ? 503 : 499,
+    })
+    expect(pending).toBe(0)
+    expect(providerSignal.aborted).toBe(true)
+    if (reason !== 'stop') {
+      expect(turn.options.abortController?.signal.aborted).toBe(false)
+      if (reason !== 'query-end') await end()
+      expect(await service.listMcpServers('session')).toMatchObject({
+        scope: 'last-known', capturedAt: before.capturedAt, servers: before.servers,
+      })
+    }
+  })
+
+  it.each(['provider', 'store', 'busy'] as const)('preserves resource observations when clear is refused by %s', async (failure) => {
+    const { service, sdk, store, begin, end } = await claudeFixture()
+    await begin()
+    const skills = await service.listSkills('session')
+    const mcp = await service.listMcpServers('session')
+    if (failure !== 'busy') await end()
+    if (failure === 'provider') sdk.deleteSession.mockRejectedValueOnce(new Error('Provider refused clear'))
+    if (failure === 'store') {
+      vi.spyOn(store, 'replaceWithClearedSession').mockRejectedValueOnce(new Error('State write refused'))
+    }
+    await expect(service.clearConversation('session')).rejects.toThrow()
+    if (failure === 'busy') await end()
+    expect(service.getSession('session')).toBeDefined()
+    expect(await service.listSkills('session')).toMatchObject({
+      scope: 'last-known', capturedAt: skills.capturedAt, skills: skills.skills,
+    })
+    expect(await service.listMcpServers('session')).toMatchObject({
+      scope: 'last-known', capturedAt: mcp.capturedAt, servers: mcp.servers,
+    })
+  })
+
   it('is unavailable before a turn and uses only safe active metadata and honest last-known timestamps', async () => {
     const { service, cwd, query, begin, end, store } = await claudeFixture()
     expect(await service.listSkills('session')).toMatchObject({ scope: 'unavailable' })
@@ -364,12 +505,12 @@ describe('read-only Claude resource views', () => {
   it('rejects late reads from superseded queries and keeps the newer snapshot', async () => {
     const { service, begin, end } = await claudeFixture()
     const first = await begin()
-    const pending = deferred<Awaited<ReturnType<Query['supportedCommands']>>>()
-    first.skills.mockReturnValueOnce(pending.promise)
-    const reading = service.listSkills('session').catch((error: unknown) => error)
+    const pending = deferred<Awaited<ReturnType<Query['mcpServerStatus']>>>()
+    first.mcp.mockReturnValueOnce(pending.promise)
+    const reading = service.listMcpServers('session').catch((error: unknown) => error)
     await end()
     await begin({ skills: ['new-skill'], mcp_servers: [] })
-    pending.resolve([{ name: 'review', description: 'stale', argumentHint: '' }])
+    pending.resolve([{ name: 'stale', status: 'connected' }])
     expect(await reading).toMatchObject({ statusCode: 409 })
     expect(await service.listSkills('session')).toMatchObject({ scope: 'session', skills: [{ name: 'new-skill' }] })
   })

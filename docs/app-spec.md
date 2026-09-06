@@ -195,7 +195,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   information and provider error strings MUST NOT be exposed.
 - Resource views MUST preserve hidden history drafts and collapsed pastes.
   Queued rewrites MUST NOT execute these local view commands. A changed or retired
-  session/pairing MUST invalidate pending results and close its old view.
+  session/pairing MUST invalidate pending results and close its old view, including
+  cwd, execution-mode, suspension and same-ID re-pair transitions.
+- Resource reads MUST have an owning-server deadline. Cancellation, disconnect
+  and shutdown MUST settle metadata requests and release their listeners without
+  aborting an inference turn or disconnecting its shared provider transport.
+  A refused clear MUST retain the authoritative session's resource observations;
+  retirement follows the replacement commit, including post-commit cleanup failure.
 - Lists MUST support filtering, refresh, keyboard tab navigation and phone-sized
   layouts. Loading, empty, unavailable and error states MUST remain actionable;
   viewing metadata MUST NOT dismiss an unanswered agent question or permission.

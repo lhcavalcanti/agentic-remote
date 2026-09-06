@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { EventEmitter } from 'node:events'
+import { EventEmitter, getEventListeners } from 'node:events'
 import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -44,15 +44,52 @@ class ResourceService extends EventEmitter {
   listHistory = this.listSessions
   openSession = vi.fn(async (): Promise<SessionDetail> => { throw new Error('Opening a session is forbidden in a resource view') })
   listCommands = vi.fn(async () => [])
-  listSkills = vi.fn(async (): Promise<SessionSkillsSnapshot> => ({
+  listSkills = vi.fn(async (_id: string, _signal?: AbortSignal): Promise<SessionSkillsSnapshot> => ({
     sessionId: this.session.id, provider: this.provider, scope: 'session', capturedAt,
     skills: [{ name: `${this.label}-skill`, enabled: false, source: 'project' }],
   }))
-  listMcpServers = vi.fn(async (): Promise<SessionMcpServersSnapshot> => ({
+  listMcpServers = vi.fn(async (_id: string, _signal?: AbortSignal): Promise<SessionMcpServersSnapshot> => ({
     sessionId: this.session.id, provider: this.provider, scope: 'session', capturedAt,
     servers: [{ name: `${this.label}-server`, status: 'needs-auth', source: 'user' }],
   }))
   service(): SessionService { return this as unknown as SessionService }
+}
+
+function rememberApp(app: FastifyInstance) {
+  apps.push(app)
+  // Aborted fetches can open replacement idle pool sockets during shutdown.
+  // Close only this fixture's sockets, including arrivals after close starts.
+  let closing = false
+  app.server.on('connection', (socket) => { if (closing) socket.destroy() })
+  app.addHook('preClose', async () => {
+    closing = true
+    app.server.closeAllConnections()
+  })
+}
+
+function blockSkills(service: ResourceService) {
+  let signal: AbortSignal | undefined
+  let pending = 0
+  service.listSkills.mockImplementationOnce((_id, requestSignal) => {
+    signal = requestSignal
+    pending += 1
+    return new Promise<SessionSkillsSnapshot>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: unknown) => {
+        if (settled) return
+        settled = true
+        pending -= 1
+        signal?.removeEventListener('abort', abort)
+        if (error) reject(error)
+        else resolve({ sessionId: 'session', provider: service.provider, scope: 'session', capturedAt, skills: [] })
+      }
+      const abort = () => finish(signal?.reason)
+      if (signal?.aborted) abort()
+      else signal?.addEventListener('abort', abort, { once: true })
+      releases.push(() => finish())
+    })
+  })
+  return { signal: () => signal, pending: () => pending }
 }
 
 async function dataDirectory() {
@@ -76,7 +113,7 @@ async function pairedFixture() {
     role: 'node', logger: false, dataDirectory: await dataDirectory(),
     service: nodeService.service(), transcriptionService: transcription,
   })
-  apps.push(node.app)
+  rememberApp(node.app)
   const redirect: { path?: string; status: 307 | 308 } = { status: 307 }
   let redirected = 0
   node.app.get('/resource-redirect-target', async () => {
@@ -95,7 +132,7 @@ async function pairedFixture() {
     role: 'hub', logger: false, dataDirectory: await dataDirectory(),
     service: hubService.service(), transcriptionService: transcription,
   })
-  apps.push(hub.app)
+  rememberApp(hub.app)
   const pairing = { baseUrl, token: node.identity.token }
   const computer = await hub.manager!.registerComputer(pairing)
   const get = (kind: 'skills' | 'mcp', id = computer.id, sessionId = 'session') =>
@@ -123,6 +160,90 @@ afterEach(async () => {
 })
 
 describe('session resource hub and authenticated node routes', () => {
+  it.each(['getInfo', 'listHistory'] as const)('cancels hub forwarding during %s without reaching provider inspection', async (stage) => {
+    const { hub, computer, nodeService } = await pairedFixture()
+    const getInfo = RemoteNodeClient.prototype.getInfo
+    const listHistory = RemoteNodeClient.prototype.listHistory
+    let signal: AbortSignal | undefined
+    let pending = false
+    const block = (supplied: AbortSignal): Promise<never> => {
+      signal = supplied
+      pending = true
+      return new Promise<never>((_resolve, reject) => {
+        const abort = () => { pending = false; reject(supplied.reason) }
+        supplied.addEventListener('abort', abort, { once: true })
+      })
+    }
+    if (stage === 'getInfo') {
+      vi.spyOn(RemoteNodeClient.prototype, 'getInfo').mockImplementation(function (this: RemoteNodeClient, supplied) {
+        return supplied ? block(supplied) : getInfo.call(this)
+      })
+    } else {
+      vi.spyOn(RemoteNodeClient.prototype, 'listHistory').mockImplementation(function (this: RemoteNodeClient, supplied) {
+        return supplied ? block(supplied) : listHistory.call(this)
+      })
+    }
+    const controller = new AbortController()
+    const reading = hub.manager!.listSkills(computer.id, 'session', controller.signal).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(pending).toBe(true))
+    controller.abort()
+    expect(await reading).toMatchObject({ statusCode: 499 })
+    expect(pending).toBe(false)
+    expect(getEventListeners(signal!, 'abort')).toHaveLength(0)
+    expect(nodeService.listSkills).not.toHaveBeenCalled()
+    expect(nodeService.openSession).not.toHaveBeenCalled()
+  })
+
+  it('changes its public registration lifetime on same-ID re-pair and cancels the old owner', async () => {
+    const { hub, nodeService, computer, pairing, get } = await pairedFixture()
+    const listeners = nodeService.listenerCount('event')
+    const blocked = blockSkills(nodeService)
+    const reading = get('skills')
+    await vi.waitFor(() => expect(blocked.pending()).toBe(1))
+    const replacement = await hub.manager!.registerComputer(pairing)
+    expect(replacement.id).toBe(computer.id)
+    expect(replacement.registrationId).toBeTruthy()
+    expect(replacement.registrationId).not.toBe(computer.registrationId)
+    expect(hub.manager!.listComputers().find((entry) => entry.id === computer.id)?.registrationId)
+      .toBe(replacement.registrationId)
+    expect((await reading).statusCode).toBe(409)
+    await vi.waitFor(() => expect(blocked.pending()).toBe(0))
+    expect(nodeService.listenerCount('event')).toBe(listeners)
+  })
+
+  it('bounds a hung paired provider read before the browser deadline', async () => {
+    const { nodeService, get } = await pairedFixture()
+    const listeners = nodeService.listenerCount('event')
+    const blocked = blockSkills(nodeService)
+    const response = await get('skills')
+    expect(response.statusCode).toBe(504)
+    expect(response.json().error).toContain('timed out')
+    expect(response.headers['cache-control']).toBe('no-store')
+    await vi.waitFor(() => expect(blocked.pending()).toBe(0))
+    expect(blocked.signal()?.aborted).toBe(true)
+    expect(getEventListeners(blocked.signal()!, 'abort')).toHaveLength(0)
+    expect(nodeService.listenerCount('event')).toBe(listeners)
+  }, 15_000)
+
+  it.each(['disconnect', 'close'] as const)('releases paired provider work on browser %s', async (reason) => {
+    const { hub, computer, nodeService } = await pairedFixture()
+    const baseUrl = await hub.app.listen({ host: '127.0.0.1', port: 0 })
+    const listeners = nodeService.listenerCount('event')
+    const blocked = blockSkills(nodeService)
+    const controller = new AbortController()
+    const reading = fetch(`${baseUrl}/api/computers/${computer.id}/sessions/session/skills`, {
+      signal: controller.signal, headers: { host: 'localhost' },
+    }).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(blocked.pending()).toBe(1))
+    if (reason === 'disconnect') controller.abort()
+    else await hub.app.close()
+    await reading
+    await vi.waitFor(() => expect(blocked.pending()).toBe(0))
+    expect(nodeService.listenerCount('event')).toBe(listeners)
+    expect(getEventListeners(blocked.signal()!, 'abort')).toHaveLength(0)
+    expect(nodeService.openSession).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['/node-api/info', 'skills', 307],
     ['/node-api/history', 'skills', 308],
@@ -157,8 +278,8 @@ describe('session resource hub and authenticated node routes', () => {
     expect((await get('skills', hub.identity.info.id)).json()).toMatchObject({
       computerId: hub.identity.info.id, provider: 'copilot', skills: [{ name: 'hub-skill' }],
     })
-    expect(nodeService.listSkills).toHaveBeenCalledExactlyOnceWith('session')
-    expect(nodeService.listMcpServers).toHaveBeenCalledExactlyOnceWith('session')
+    expect(nodeService.listSkills).toHaveBeenCalledExactlyOnceWith('session', expect.any(AbortSignal))
+    expect(nodeService.listMcpServers).toHaveBeenCalledExactlyOnceWith('session', expect.any(AbortSignal))
     expect(nodeService.openSession).not.toHaveBeenCalled()
     expect(hubService.openSession).not.toHaveBeenCalled()
     expect(nodeService.listCommands).not.toHaveBeenCalled()
@@ -256,7 +377,8 @@ describe('session resource hub and authenticated node routes', () => {
     if (repair) await hub.manager!.registerComputer(pairing)
     pending.resolve(snapshot)
     const response = await reading
-    expect(response.statusCode).toBe(repair ? 409 : 404)
+    // Cancellation settles at removal, before any later registration exists.
+    expect(response.statusCode).toBe(404)
     expect(response.body).not.toContain('stale-response')
     if (repair) expect((await get('skills')).json().skills[0].name).toBe('node-skill')
   })

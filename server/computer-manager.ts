@@ -1,5 +1,6 @@
 import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import type {
   AddComputerInput,
   AgentProvider,
@@ -46,6 +47,8 @@ import {
   sanitizeSkillsSnapshot,
   sanitizeMcpSnapshot,
   SessionResourceError,
+  ResourceReads,
+  type ResourceRead,
   unavailableSkills,
   unavailableMcp,
 } from './session-resources.js'
@@ -100,6 +103,8 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   private readonly remoteResyncs = new Map<string, RemoteResync>()
   private resourcesStopped = false
   private resourceEpoch = 0
+  private readonly resourceReads = new ResourceReads()
+  private readonly localRegistrationId = randomUUID()
 
   constructor(
     private readonly localService: SessionService,
@@ -110,6 +115,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   }
 
   async initialize(): Promise<void> {
+    this.resourceReads.start()
     this.resourceEpoch += 1
     this.resourcesStopped = false
     await this.registry.initialize()
@@ -122,6 +128,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   }
 
   stop(): void {
+    this.resourceReads.stop()
     this.resourceEpoch += 1
     this.resourcesStopped = true
     const clients = [...this.clients.values()]
@@ -137,14 +144,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   listComputers(): ComputerSummary[] {
     return [
       this.localComputer(),
-      ...this.registry.list().map((computer) => ({
-        id: computer.id,
-        name: computer.name,
-        isLocal: false,
-        online: this.clients.get(computer.id)?.online ?? false,
-        baseUrl: computer.baseUrl,
-        providers: this.clients.get(computer.id)?.providers,
-      })),
+      ...this.registry.list().map((computer) => this.computerSummary(computer)),
     ]
   }
 
@@ -364,31 +364,32 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : this.requireClient(computerId).listCommands(sessionId)
   }
 
-  async listSkills(computerId: string, sessionId: string): Promise<ManagedSessionSkillsSnapshot> {
-    const snapshot = await this.readResources(computerId, sessionId, {
+  async listSkills(computerId: string, sessionId: string, signal?: AbortSignal): Promise<ManagedSessionSkillsSnapshot> {
+    const snapshot = await this.resourceReads.run(signal, (request) => this.readResources(computerId, sessionId, request, {
       local: readSessionSkills,
-      remote: (client, provider) => client.listSkills(sessionId, provider),
+      remote: (client, provider) => client.listSkills(sessionId, provider, request.signal),
       normalize: sanitizeSkillsSnapshot,
       unavailable: unavailableSkills,
-    })
+    }))
     return { ...snapshot, computerId }
   }
 
-  async listMcpServers(computerId: string, sessionId: string): Promise<ManagedSessionMcpServersSnapshot> {
-    const snapshot = await this.readResources(computerId, sessionId, {
+  async listMcpServers(computerId: string, sessionId: string, signal?: AbortSignal): Promise<ManagedSessionMcpServersSnapshot> {
+    const snapshot = await this.resourceReads.run(signal, (request) => this.readResources(computerId, sessionId, request, {
       local: readSessionMcpServers,
-      remote: (client, provider) => client.listMcpServers(sessionId, provider),
+      remote: (client, provider) => client.listMcpServers(sessionId, provider, request.signal),
       normalize: sanitizeMcpSnapshot,
       unavailable: unavailableMcp,
-    })
+    }))
     return { ...snapshot, computerId }
   }
 
   private async readResources<T>(
     computerId: string,
     sessionId: string,
+    request: ResourceRead,
     readers: {
-      local: (service: SessionService, sessionId: string) => Promise<T>
+      local: (service: SessionService, sessionId: string, signal: AbortSignal) => Promise<T>
       remote: (client: RemoteNodeClient, provider: AgentProvider) => Promise<T>
       normalize: (raw: unknown, sessionId: string, provider: AgentProvider) => T
       unavailable: (sessionId: string, provider: AgentProvider, message: string) => T
@@ -412,33 +413,32 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       if (computerId === this.identity.info.id) {
         const session = this.localService.getSession(sessionId)
         if (!session) throw new SessionResourceError('missing')
-        const result = await readers.local(this.localService, sessionId)
+        const result = await readers.local(this.localService, sessionId, request.signal)
         assertRegistration()
         return readers.normalize(result, sessionId, session.provider ?? 'copilot')
       }
       const client = this.requireClient(computerId)
       let owner: SessionDetail | undefined
       let lastEvent: SessionDetail | undefined
-      let changed = false
       const listener = (event: ServerEvent) => {
-        if (event.type === 'session.removed' && event.sessionId === sessionId) changed = true
+        if (event.type === 'session.removed' && event.sessionId === sessionId) request.cancel(new SessionResourceError('changed'))
         if (event.type === 'session.upserted' && event.session.id === sessionId) {
           lastEvent = event.session
-          if (owner && !sameResourceOwner(owner, event.session)) changed = true
+          if (owner && !sameResourceOwner(owner, event.session)) request.cancel(new SessionResourceError('changed'))
         }
       }
       const assertCurrent = () => {
         assertRegistration()
-        if (changed) throw new SessionResourceError('changed')
+        request.assertActive()
       }
       client.on('event', listener)
       try {
-        const info = await client.getInfo()
+        const info = await client.getInfo(request.signal)
         assertCurrent()
         if (info.id !== computerId) throw new SessionResourceError('pairing')
         // The session detail route hydrates/opens an SDK session. History is a
         // pure identity read and also includes suspended and closed sessions.
-        const history = await client.listHistory()
+        const history = await client.listHistory(request.signal)
         assertCurrent()
         if (!Array.isArray(history)) throw new SessionResourceError('invalid')
         owner = history.find((session) => session?.id === sessionId)
@@ -452,7 +452,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
           ? await readers.remote(client, provider)
           : readers.unavailable(sessionId, provider, resourceMessages.update)
         assertCurrent()
-        const currentHistory = await client.listHistory()
+        const currentHistory = await client.listHistory(request.signal)
         assertCurrent()
         if (!Array.isArray(currentHistory)) throw new SessionResourceError('invalid')
         if (!sameResourceOwner(owner, currentHistory.find((session) => session?.id === sessionId))) {
@@ -1110,6 +1110,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       name: this.identity.info.name,
       isLocal: true,
       online: true,
+      registrationId: this.localRegistrationId,
       providers: this.localService.providers(),
     }
   }
@@ -1121,6 +1122,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       isLocal: false,
       online: this.clients.get(computer.id)?.online ?? false,
       baseUrl: computer.baseUrl,
+      registrationId: this.clients.get(computer.id)?.registrationId,
       providers: this.clients.get(computer.id)?.providers,
     }
   }

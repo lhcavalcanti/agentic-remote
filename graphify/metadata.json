@@ -120,9 +120,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 101,
+  "communities": 109,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5868,
+  "edges": 5871,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -231,7 +231,7 @@
     "server/session-store-providers.test.ts": "07465b5fada184615b1b40769b7973e8f2dcc6f0b61a6bb0cc0c35154e258d54",
     "server/session-store.test.ts": "44a9af488dc4240982aafd7c395c7643afeb0512556ecb0fc5276191ae5f19bc",
     "server/session-store.ts": "8fb440f932541e9fe5f07223dd8accc5e50f161285137eaca1641efab38bb508",
-    "server/terminal-session.test.ts": "1a029b567c9bf1cf24ebceda01c07bf2df9a76aff8bc4ec631e495a2ee15813c",
+    "server/terminal-session.test.ts": "1737d800bed51811da53c87a43a9f7fa7acc57f4e56a61a511815429eb1810fb",
     "server/terminal-session.ts": "d7b6ba5737e16e5095b00935d989e953363a93e54ca5a0afa89afa59500cc2d1",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -295,7 +295,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2259,
+  "nodes": 2260,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -347,17 +347,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d5a25c589f4840e5d394a6ebe303d70978dc97f9ec845d629ad82e8a7c7db3d5",
-    "communities.json": "92ac273033a1c551d6d38071099f36c44f61098a9b5d1f3aeb44fb17a196c175",
-    "graph.html": "89e77538e88da4364897324776c50961b4ad3f7125f1ffa4102f4e996b361a37",
-    "graph.json": "9a2995d68109ce4f0dc5df1b717c4f724f76fc4ab323089e0b5d4eede8d34c9b"
+    "GRAPH_REPORT.md": "609f3b300cdf9c0c73e17b96339421e3eac9dd45a38d36bb26f22e37c13b8d5d",
+    "communities.json": "6d7eadeb4d69179871bc5856c0c66da4a4237bf9e08defa8cfc77e9df0b99c0f",
+    "graph.html": "4d2ffbcc71761b318c8849f07d03948ae6c3718727b8885b76fde719a99ce32a",
+    "graph.json": "7def9ee49a4b254038f685589b67cfad034678592c949b274124c7a89037934e"
   },
   "schema_version": 1,
-  "source_commit": "8f9e876b3ad1b07163db7619ac5a10663d02eb7f",
-  "source_fingerprint": "d3a8b0eba1115a0c4f81188690c35060c7863108f061e3714a6335c655a008d9",
+  "source_commit": "1ee49fbb9d071cd32b67e5bff58074248cd2d9bf",
+  "source_fingerprint": "56845a8884ff25fbdd2b5633db93a8a23034edd766ebb8574d974623fc950e42",
   "working_tree_changes": [
-    "docs/architecture.md",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts"
+    "server/terminal-session.test.ts"
   ]
 }

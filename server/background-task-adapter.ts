@@ -630,6 +630,27 @@ function shellTaskMode(
   }
 }
 
+function isShellStopTool(name: string): boolean {
+  return name === 'stop_bash' || name === 'stop_shell'
+}
+
+function shellStopAcknowledged(
+  data: Record<string, unknown>,
+  requestedId: string,
+  currentId: string,
+): boolean {
+  if (data.success !== true) return false
+  const status = toolTelemetryProperties(data).shell_status
+  if (status !== undefined) return status === 'stopped'
+  const last = rawTailText(data.result)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1)
+  return last === `<command with id: ${requestedId} stopped>` ||
+    last === `<command with id: ${currentId} stopped>`
+}
+
 /** Tools that report on a shell somebody else started. */
 function isShellObserverTool(name: string | undefined): boolean {
   if (!name) {
@@ -641,8 +662,7 @@ function isShellObserverTool(name: string | undefined): boolean {
   return (
     tool === 'read_bash' ||
     tool === 'read_shell' ||
-    tool === 'stop_bash' ||
-    tool === 'stop_shell' ||
+    isShellStopTool(tool) ||
     tool === 'list_bash' ||
     tool === 'bash_output' ||
     isShellTool(tool)
@@ -1000,6 +1020,8 @@ export function backgroundTasksFromEvents(
   // Which tool a call belongs to. Only the start event says so, and the
   // completion has to know whether it came from something that reads shells.
   const toolNames = new Map<string, string>()
+  const shellInstances = new WeakMap<BackgroundTask, object>()
+  const shellStopTargets = new Map<string, { shellId: string; instance: object }>()
   const assumed = { flags: assumedBackground, owners: assumedOwners }
   const aliases = new Map<string, string>()
   const shellStarts = new Map<
@@ -1126,10 +1148,18 @@ export function backgroundTasksFromEvents(
       ...taskInfoListFromValue(data.result),
     ]
     for (const listedTask of listedTasks) {
-      tasks.set(
-        listedTask.id,
-        normalizeBackgroundTask(listedTask, undefined, false),
-      )
+      const previous = tasks.get(listedTask.id)
+      const current = normalizeBackgroundTask(listedTask, undefined, false)
+      if (
+        previous?.type === 'shell' && current.type === 'shell' &&
+        previous.startedAt === current.startedAt
+      ) {
+        // Refreshing the same runtime record is not a new execution. An
+        // explicit launch still creates a distinct instance, even if clocks tie.
+        const instance = shellInstances.get(previous)
+        if (instance) shellInstances.set(current, instance)
+      }
+      tasks.set(listedTask.id, current)
       aliases.set(listedTask.id, listedTask.id)
       // The CLI has reported this task itself, so nothing about it is being
       // assumed any more and the turn ending must not end it.
@@ -1265,6 +1295,15 @@ export function backgroundTasksFromEvents(
       const startedCallId = eventString(data, 'toolCallId')
       if (startedCallId) {
         toolNames.set(startedCallId, toolName)
+        if (isShellStopTool(toolName)) {
+          const shellId = shellIdFromValue(args)
+          const task = shellId ? tasks.get(taskIdAlias(aliases, shellId)) : undefined
+          if (shellId && task?.type === 'shell') {
+            const instance = shellInstances.get(task) || {}
+            shellInstances.set(task, instance)
+            shellStopTargets.set(startedCallId, { shellId, instance })
+          }
+        }
       }
       if (isShellTool(toolName)) {
         const mode = shellTaskMode(data, args, assumeBackground)
@@ -1410,10 +1449,32 @@ export function backgroundTasksFromEvents(
       // content that happens to end with a completion footer -- a file being
       // read, an agent quoting a transcript -- and matching on the id would
       // close whichever live shell holds that recycled number.
-      const observesShells = isShellObserverTool(
-        eventString(data, 'toolName') || toolNames.get(toolCallId),
-      )
+      const toolName = toolNames.get(toolCallId) || normalizedToolName(data)
+      const observesShells = isShellObserverTool(toolName)
       let current = tasks.get(id)
+      if (isShellStopTool(toolName)) {
+        const target = shellStopTargets.get(toolCallId)
+        shellStopTargets.delete(toolCallId)
+        const addressed = target ? tasks.get(taskIdAlias(aliases, target.shellId)) : undefined
+        // A stop answers for the instance it addressed, not a later shell
+        // that reused the same ID while the control request was in flight.
+        if (
+          !target || addressed?.type !== 'shell' ||
+          shellInstances.get(addressed) !== target.instance ||
+          (addressed.status !== 'running' && addressed.status !== 'queued')
+        ) continue
+        current = addressed
+        if (!shellExit) {
+          if (shellStopAcknowledged(data, target.shellId, current.id)) {
+            current.status = 'cancelled'
+            current.completedAt = event.timestamp
+            current.error = undefined
+            current.canCancel = false
+          }
+          continue
+        }
+        if (taskIdAlias(aliases, shellExit.shellId) !== current.id) continue
+      }
       if (!current && !ownsShellStart && observesShells && namedShellId) {
         current = tasks.get(taskIdAlias(aliases, namedShellId))
       }

@@ -1960,6 +1960,7 @@ function hasLiveTerminalComposer(pane: string): boolean {
     (line) =>
       isTerminalChrome(line) ||
       isTerminalContextFooter(line) ||
+      /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||
       (/\/update\b/u.test(line) && /\b\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),

@@ -5565,7 +5565,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('keeps persisted terminal prompts ahead of a startup send', async () => {
+  async function startupFifoFixture(startup = true) {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-startup-fifo-'),
     )
@@ -5581,12 +5581,13 @@ describe('AgentService deletion', () => {
       ' ←/→ to choose · Enter to select · Y / N',
       ' ╰───────────────────────────────────────────────╯',
     ].join('\n')
-    let currentPane = startupPane
+    let currentPane = startup ? startupPane : '╻▄▄▄▄\n┃\n╹▀▀▀▀'
     const terminal = {
       has: vi.fn(async () => true),
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
       capture: vi.fn(async () => currentPane),
+      inputReady: vi.fn(async () => true),
       canHandleStartupPrompt: vi.fn(async () => true),
       resolveStartupPrompt: vi.fn(async () => {
         currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
@@ -5610,32 +5611,140 @@ describe('AgentService deletion', () => {
       terminal,
     )
     await service.start()
-    await service.store.enqueuePrompt(client.session.sessionId, {
+    const sessionId = client.session.sessionId
+    const olderPrompt = {
       id: randomUUID(),
       content: 'Older queued prompt',
       createdAt: new Date().toISOString(),
-    })
-    await service.store.update(client.session.sessionId, (session) => {
+    }
+    await service.store.update(sessionId, (session) => {
       session.status = 'running'
     })
+    return {
+      service,
+      terminal,
+      sessionId,
+      olderPrompt,
+      enqueueOlder: () => service.store.enqueuePrompt(sessionId, olderPrompt),
+      persisted: async () => JSON.parse(
+        await readFile(path.join(directory, 'state', 'state.json'), 'utf8'),
+      ).sessions[sessionId],
+    }
+  }
 
-    await service.sendMessage(
-      client.session.sessionId,
-      'New startup prompt',
-      true,
-    )
+  it.each([
+    { enqueue: true, arrival: 'before', startup: true },
+    { enqueue: false, arrival: 'before', startup: true },
+    { enqueue: false, arrival: 'owner-detection', startup: true },
+    { enqueue: false, arrival: 'startup-resolution', startup: true },
+    { enqueue: false, arrival: 'input-readiness', startup: true },
+    { enqueue: false, arrival: 'before', startup: false },
+    { enqueue: false, arrival: 'owner-detection', startup: false },
+    { enqueue: false, arrival: 'empty', startup: true },
+    { enqueue: false, arrival: 'empty', startup: false },
+    { enqueue: true, arrival: 'startup-resolution', startup: true },
+  ])('keeps persisted terminal prompts ahead of a startup send (enqueue=$enqueue, arrival=$arrival, startup=$startup)', async ({ enqueue, arrival, startup }) => {
+    const context = await startupFifoFixture(startup)
+    const { service, terminal, sessionId, enqueueOlder, persisted } = context
+    try {
+      if (arrival === 'before') {
+        await enqueueOlder()
+      } else if (arrival === 'owner-detection') {
+        terminal.has.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return true
+        })
+      } else if (arrival === 'startup-resolution') {
+        const resolve = terminal.resolveStartupPrompt.getMockImplementation()!
+        terminal.resolveStartupPrompt.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return resolve()
+        })
+      } else if (arrival === 'input-readiness') {
+        terminal.inputReady.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return true
+        })
+      }
+      const send = service.sendMessage(sessionId, 'New startup prompt', enqueue)
+      if (arrival !== 'empty' && !enqueue) {
+        await expect(send).rejects.toMatchObject({
+          statusCode: 409,
+          message: expect.stringContaining('queue'),
+        })
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect((await persisted()).queuedPrompts).toEqual([context.olderPrompt])
+      } else {
+        await send
+        expect(terminal.send).toHaveBeenCalledExactlyOnceWith(
+          sessionId,
+          arrival === 'empty' ? 'New startup prompt' : 'Older queued prompt',
+          false,
+        )
+        expect(((await persisted()).queuedPrompts ?? []).map((prompt: { content: string }) => prompt.content))
+          .toEqual(arrival === 'empty' ? [] : ['New startup prompt'])
+      }
+      expect(terminal.resolveStartupPrompt).toHaveBeenCalledTimes(startup ? 1 : 0)
+    } finally {
+      await service.stop()
+    }
+  })
 
-    expect(terminal.send).toHaveBeenCalledWith(
-      client.session.sessionId,
-      'Older queued prompt',
-      false,
-    )
-    expect(
-      service.store
-        .get(client.session.sessionId)
-        ?.queuedPrompts?.map((prompt) => prompt.content),
-    ).toEqual(['New startup prompt'])
-    await service.stop()
+  it.each([
+    { startup: true, enqueue: false, recovery: 'acknowledged' },
+    { startup: false, enqueue: false, recovery: 'acknowledged' },
+    { startup: true, enqueue: true, recovery: 'acknowledged' },
+    { startup: false, enqueue: true, recovery: 'acknowledged' },
+    { startup: true, enqueue: false, recovery: 'unacknowledged' },
+    { startup: true, enqueue: false, recovery: 'replaced-during-detection' },
+  ])('preserves an earlier native recovery ahead of remaining FIFO (startup=$startup, enqueue=$enqueue, recovery=$recovery)', async ({ startup, enqueue, recovery }) => {
+    const { service, terminal, sessionId, olderPrompt, enqueueOlder, persisted } = await startupFifoFixture(startup)
+    const token = '2026-09-04T00:00:00.000Z'
+    const submitted = 'Earlier failed prompt'
+    try {
+      await enqueueOlder()
+      await service.store.update(sessionId, (session) => {
+        session.failedPrompt = { content: submitted, failedAt: token, uncertain: true }
+      })
+      if (recovery === 'replaced-during-detection') {
+        terminal.has.mockImplementationOnce(async () => {
+          await service.store.update(sessionId, (session) => {
+            session.failedPrompt = {
+              content: 'A newer failure', failedAt: 'newer-failure', uncertain: true,
+            }
+          })
+          return true
+        })
+      }
+      const send = service.sendMessage(
+        sessionId, submitted, enqueue, recovery === 'unacknowledged' ? undefined : token,
+      )
+      if (recovery !== 'acknowledged') {
+        await expect(send).rejects.toMatchObject({ statusCode: 409 })
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect((await persisted()).queuedPrompts).toEqual([olderPrompt])
+        expect((await persisted()).failedPrompt.failedAt)
+          .toBe(recovery === 'unacknowledged' ? token : 'newer-failure')
+      } else {
+        await send
+        expect((await persisted()).failedPrompt).toBeUndefined()
+        if (!enqueue) {
+          expect(terminal.send).toHaveBeenCalledExactlyOnceWith(sessionId, submitted, false)
+          expect((await persisted()).queuedPrompts).toEqual([olderPrompt])
+        } else {
+          const queued = (await persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content)
+          if (startup) {
+            expect(terminal.send).toHaveBeenCalledExactlyOnceWith(sessionId, olderPrompt.content, false)
+            expect(queued).toEqual([submitted])
+          } else {
+            expect(terminal.send).not.toHaveBeenCalled()
+            expect(queued).toEqual([olderPrompt.content, submitted])
+          }
+        }
+      }
+    } finally {
+      await service.stop()
+    }
   })
 
   it('resolves owned startup before queueing a terminal command', async () => {

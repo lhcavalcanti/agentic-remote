@@ -3564,6 +3564,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (current.suspended || this.suspendingSessions.has(sessionId) || this.deletingSessions.has(sessionId)) {
       throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409 })
     }
+    // Startup and owner detection are awaited, so FIFO may have grown meanwhile.
+    // Only the claimed failure holding that queue may be resent ahead of it.
+    if (
+      terminalBacked &&
+      !enqueue &&
+      current.queuedPrompts?.length &&
+      (answers === undefined || current.failedPrompt?.failedAt !== answers)
+    ) {
+      throw Object.assign(
+        new Error(
+          'Older prompts are waiting in the queue. Wait for them to finish, or use Queue to add this message after them.',
+        ),
+        { statusCode: 409 },
+      )
+    }
     if (
       enqueue &&
       startupLocked &&

@@ -271,6 +271,68 @@ describe('TmuxTerminalSessionController', () => {
     expect(await controller.inputReady(sessionId)).toBe(true)
   }, 15_000)
 
+  it.each([
+    [' Changes    +0 -0', false, false],
+    ['Changes +12 -3', false, false],
+    [' Changes    +0 -3\n Fixture Model · High · 1.1M context (7%)', false, false],
+    [' Changes    +12 -0\n Fixture Model · High · 1.1M context (0%)\n 0.0.999 available · /update', true, true],
+  ] as const)('admits an exact change-summary footer: %s (working=%s, queue=%s)', async (footer, working, enqueue) => {
+    const { controller, sessionId, output } = await deliveryFixture(working, undefined, undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(!working)
+    await expect(controller.send(sessionId, 'One change-summary message', enqueue)).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['One change-summary message'], submits: [enqueue ? 'queue' : 'enter'],
+    })
+  }, 15_000)
+
+  it.each(['Changes +0 -0', ' Changes    +12 -3'])(
+    'returns a fresh owned session with a change-summary footer: %s',
+    async (changes) => {
+      const footer = `${changes}\n Fixture Model · High · 1.1M context (0%)`
+      const { controller, sessionId, output } = await ownedStartupFixture(undefined, footer)
+      expect(await controller.capture(sessionId)).toContain(footer)
+      expect(await controller.inputReady(sessionId)).toBe(true)
+      await expect(controller.send(sessionId, 'First message after startup', false)).resolves.toBe(true)
+      const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+        JSON.parse(value).submits === 1,
+      )
+      expect(JSON.parse(received)).toEqual({
+        keys: '', pastes: ['First message after startup'], submits: 1,
+      })
+    },
+    15_000,
+  )
+
+  it.each([
+    'Changes +1 -2 and more',
+    'Summary: Changes +1 -2',
+    'Changes +1 -2 · Are you sure?',
+    'Changes +1 -2\nA different view is loading',
+    'Change +1 -2',
+    'changes +1 -2',
+    'Changes +1',
+    'Changes -1 +2',
+    'Changes +1 --2',
+    'Changes +1.5 -2',
+    'Changes +1 -2.5',
+    'Changes +1,000 -2',
+    'Changes +1e3 -2',
+  ])('rejects a change-summary near-match footer: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(false, `${readyComposer()}\n${footer}`)
+    await controller.send(sessionId, 'Warmup', true)
+    const before = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    await expect(controller.send(sessionId, 'Do not paste this', true))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await readFile(output, 'utf8')).toBe(before)
+  }, 15_000)
+
   it('requires explicit consent for session-use confirmation in an owned startup', async () => {
     const { controller, sessionId, output } = await ownedStartupFixture(sessionInUsePane)
     expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('')
@@ -473,6 +535,12 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
     ['an incomplete composer frame', '╻▄▄▄▄\n┃', 'Queue this', true, undefined],
     ['a replaced composer', `${readyComposer()}\nLoading a new view…`, '/usage', false, { allowDuringAgentExecution: true }],
     ['a footer with unrelated output', `${readyComposer()}\nFixture Model · High · 1.1M context (0%)\nLoading a different view...`, 'Must not be pasted', false, undefined],
+    ['a change-summary footer over a working composer', `${readyComposer('', true)}\nChanges +12 -3`, 'Do not interrupt', false, undefined],
+    ['a change-summary footer over an existing draft', `${readyComposer('unfinished draft')}\nChanges +12 -3`, 'Queue this', true, undefined],
+    ['a change-summary footer over a settings overlay', `${readyComposer()}\nSettings\n↑/↓ navigate · enter edit · esc close\nChanges +12 -3`, 'Queue this', true, undefined],
+    ['a change-summary footer over a session-use confirmation', `${sessionInUsePane}\nChanges +12 -3`, 'Do not consent', false, undefined],
+    ['a change-summary footer over a folder-trust confirmation', `${folderTrustPane}\nChanges +12 -3`, 'Do not consent', false, undefined],
+    ['a change-summary footer over a non-composer frame', '╭────────╮\n│        │\n╰────────╯\nChanges +12 -3', 'Queue this', true, undefined],
     ['working hints without a composer', 'Working\nesc interrupt', 'Queue this', true, undefined],
   ] as const)('does not paste into %s after a previously ready send', async (_name, pane, content, enqueue, options) => {
     const { controller, sessionId, output } = await deliveryFixture(false, pane)

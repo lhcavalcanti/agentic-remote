@@ -118,9 +118,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 109,
+  "communities": 113,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5755,
+  "edges": 5761,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -178,8 +178,8 @@
     "server/active-sessions.test.ts": "ce862ad23138fa1d120e95839025e4ff11908254dfff7d6141a91b76acf48de0",
     "server/active-sessions.ts": "3a86fe9ec604721f7f9d6b4b0777d316887abbfcca794d90bd6c2c79fa707380",
     "server/activity-spacing.test.ts": "b6446956cba3c708e2c4ff4a47016528851f6d69519e5e548c14ae062f9a03ca",
-    "server/agent-service.test.ts": "325d029786b1d72342874190f1e74d9045fbd8661c58ba67aeb75bd73cbed60f",
-    "server/agent-service.ts": "4d6ccc65dbf2158ad1871ea1f48dd4174f50e5088e44bf90eeac01ebbc03fe90",
+    "server/agent-service.test.ts": "bceb73d01dde779af93aa1a0e747a2912b5af933cd0433350581003e7e577f8c",
+    "server/agent-service.ts": "711a952aba005822269317875fc7278797f242bfdc595944e3bddf997dbce1aa",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "e98adc8f9c5e58e398a6b2e04105967c5d9f8300ee042b77fae9329823b9de72",
@@ -230,8 +230,8 @@
     "server/session-store-providers.test.ts": "07465b5fada184615b1b40769b7973e8f2dcc6f0b61a6bb0cc0c35154e258d54",
     "server/session-store.test.ts": "c01fd8a8f8c5190dbb0926d09d93efabd6142c2c606640e0eab72e7614c064b4",
     "server/session-store.ts": "c0fb64011cb080496e7962ce69135ccbbcf06908b0c3afe748411bb474f6393f",
-    "server/terminal-session.test.ts": "1737d800bed51811da53c87a43a9f7fa7acc57f4e56a61a511815429eb1810fb",
-    "server/terminal-session.ts": "5c15f30b9a04caf02fa9205788d7574a041e0d86adadf5d97c44eff54a61501c",
+    "server/terminal-session.test.ts": "6d8733765808806d3166dcef8c7a22191ef7ce467f6e1a8ec633af1a10206cd5",
+    "server/terminal-session.ts": "d583fc7e11f2f8073ced1a530949000fedf462fc1ad41074041ecd2c7bc47361",
     "server/tmux-test-helpers.ts": "cfa80cfa5218c9d8d713a9805067f7a58759c0065c94ee6e6ae4fd62a5986116",
     "server/transcription-media-digests.test.ts": "dc7e6f6658dc2bdab766874a8e850c8fe837fb25252e82c8e6f255c0254ddd8d",
     "server/transcription-routes.test.ts": "60c7b050221db2d94015c288f29d422fb2aab628ce6e7e43a60f4f8073d16b09",
@@ -291,7 +291,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2223,
+  "nodes": 2224,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -343,21 +343,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6b92483e8c0da13fa5aaf482131c53949a6012a97354295c1a1f3670feb3b170",
-    "communities.json": "0368c294e10cfa3aa9a9445804c4ca2f5a71b6e1d88b33cabd97da8979f7a89f",
-    "graph.html": "b5c6fa985b60461366c2339d0110ef8ac89f61c78dbdc857aed6815141a87bd6",
-    "graph.json": "c2e80bc3ceee2b4ce118fbcca52efead4e2e71dcffaa11f8d403df47c1e32fa1"
+    "GRAPH_REPORT.md": "a4251f1f66b79272d7a3252e8ae9b8b5feb1ed27603a85c89048f4fd5feedfc2",
+    "communities.json": "10e3b5ee6fd143731ab50327a358581832669836e3df12b80645df663e39d054",
+    "graph.html": "6d3d4b42d7fa045c05d9774718d1811eccad4d5f73dd70ef49f991464ebce49c",
+    "graph.json": "f1bdb81a35a45d8237cf59ef9aadde910c034e816aed4e1b9fc9c7014d8a3e6e"
   },
   "schema_version": 1,
-  "source_commit": "c3e648174bb4cea7865ae8a9e4742f0d95d92cad",
-  "source_fingerprint": "40b8032fbf7f5fddd6fa95f0351587bb3856c0e0f10a24a877c6cf000ffc9d07",
+  "source_commit": "df78d7fe13edac26a776996cdf4376b4069129db",
+  "source_fingerprint": "c13ae319b204e49f56492e50924e375f044f5ba05d54e2b46559d2606ba95ba7",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
     "server/agent-service.test.ts",
     "server/agent-service.ts",
-    "server/recovery-resend-durability.test.ts",
-    "server/session-store.ts",
-    "shared/contracts.ts"
+    "server/terminal-session.test.ts",
+    "server/terminal-session.ts"
   ]
 }

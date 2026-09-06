@@ -157,11 +157,24 @@ Recovery and terminal admission wait for a successful discovery rather than
 treating an unreadable or differently namespaced tmux server as absent. The
 session read route returns the last committed view during that wait; opening a
 read-only view must not close the retained identity or cancel boot recovery.
-Explicit activation waits for ownership confirmation. The
-existing discovery poll completes deferred recovery under per-session lifecycle
-ownership. Destructive operations retain their strict absence checks; state
-validation, persistence and SDK startup failures are not swallowed by this
-discovery-only exception.
+Explicit activation waits for ownership confirmation.
+
+Even after aggregate discovery succeeds, an individual ownership probe can
+remain unreadable. That session keeps its retained view, queued work, and
+persisted managed-open/backend eligibility, including across a service restart.
+Its ownership recovery stays pending on the existing discovery poll; an
+unreadable probe is never evidence of absence. Other sessions confirm or recover
+independently and remain usable. Successfully handled identities are not
+recovered or startup-reconciled again while a different session is deferred.
+Transcript refresh and runtime admission wait only for the affected identity.
+
+Deferred recovery runs under per-session lifecycle ownership and re-reads
+eligibility and configuration before creating a missing owner. Destructive
+operations retain their strict absence checks. A genuine launch failure still
+closes that recovery candidate and reports `Boot recovery failed`; persistence
+errors while recording either success or failure propagate rather than being
+classified as probe failures. State validation and SDK startup errors are
+likewise not swallowed by the discovery-only exception.
 
 Providers await mutations before publishing or acting on their results.
 `readAfterWrites()` queues a read behind admitted changes before runtime,

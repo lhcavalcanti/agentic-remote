@@ -3392,9 +3392,10 @@ describe('AgentService deletion', () => {
       undefined,
     )
     expect(service.store.get(firstId)).toMatchObject({
-      status: 'error',
-      activity: 'Boot recovery failed',
+      status: 'idle',
+      isOpen: true,
     })
+    expect(service.store.shouldRecoverTerminalSession(firstId)).toBe(true)
     expect(service.store.get(secondId)).toMatchObject({
       status: 'idle',
       isOpen: true,

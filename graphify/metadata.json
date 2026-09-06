@@ -10,6 +10,7 @@
     "server/active-sessions.test.ts",
     "server/active-sessions.ts",
     "server/activity-spacing.test.ts",
+    "server/agent-service-recovery.test.ts",
     "server/agent-service.test.ts",
     "server/agent-service.ts",
     "server/api-origin.test.ts",
@@ -120,9 +121,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 109,
+  "communities": 113,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5871,
+  "edges": 5907,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -155,7 +156,7 @@
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
     "docs/app-spec.md": "46c5d7509878c73c9b7adbbde5e3936d9e20593654c459470b552ec7982c843b",
-    "docs/architecture.md": "451c8985bfd0e66e895c079e23a0be6b3650be19420a6388f5800ad77d370d18",
+    "docs/architecture.md": "cf6d29fc772a5c4fb6cfdb7334149df9ee9ff6d2d958d37482520103d42dce75",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
@@ -180,8 +181,9 @@
     "server/active-sessions.test.ts": "68cb7a2338036dddaf72ae263f4803d4bd5819aa38381d5bfb80a80b903236f8",
     "server/active-sessions.ts": "872f54657ac39271fb18b7b44fc01db06c693c101641e4147a16797fe16941fc",
     "server/activity-spacing.test.ts": "b6446956cba3c708e2c4ff4a47016528851f6d69519e5e548c14ae062f9a03ca",
-    "server/agent-service.test.ts": "182accc9dbe74a1f767fb8cabd5326f468e86bd3639da0af83c32b03b941921f",
-    "server/agent-service.ts": "a0c3fa83c6c5f490ab7cc83a85bc47d3931592f6ffb6e851d54412bbde606e4d",
+    "server/agent-service-recovery.test.ts": "720aead606cb7e99fc48d1efedfdc4477c4587a28d5567b778d8c0924a76e22d",
+    "server/agent-service.test.ts": "46839020b3015694ba52fc401232ce639b0ee6e336d6e778478d29c7d7156fac",
+    "server/agent-service.ts": "09a6ed435585b00655f171a2557513aa2d76f7eca018eb642b88b1c573b46ac0",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "e98adc8f9c5e58e398a6b2e04105967c5d9f8300ee042b77fae9329823b9de72",
@@ -295,7 +297,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2260,
+  "nodes": 2271,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -347,15 +349,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "609f3b300cdf9c0c73e17b96339421e3eac9dd45a38d36bb26f22e37c13b8d5d",
-    "communities.json": "6d7eadeb4d69179871bc5856c0c66da4a4237bf9e08defa8cfc77e9df0b99c0f",
-    "graph.html": "4d2ffbcc71761b318c8849f07d03948ae6c3718727b8885b76fde719a99ce32a",
-    "graph.json": "7def9ee49a4b254038f685589b67cfad034678592c949b274124c7a89037934e"
+    "GRAPH_REPORT.md": "1a69b3cbf4457c32d0409dc195357b79ddf966f0f3981872ca803a9d996e6bcd",
+    "communities.json": "3ccba2907746a48b6985fa8abadfc250ca0ae737ab20bf419b52f09009bb3555",
+    "graph.html": "cf19c37a1719ed80fa4d45b293a1cd54d33baf49cb2db9d1433f4d070511668b",
+    "graph.json": "793dd5f97484f25351163ee8a7eac03b0114e4e56fd3793789f42e23a706282a"
   },
   "schema_version": 1,
-  "source_commit": "1ee49fbb9d071cd32b67e5bff58074248cd2d9bf",
-  "source_fingerprint": "56845a8884ff25fbdd2b5633db93a8a23034edd766ebb8574d974623fc950e42",
+  "source_commit": "d7c8f7226da267c587aa34d7a40c948dc3e25e9c",
+  "source_fingerprint": "6f93bc651ee423e19e88341187b9322e58b6930422527b830f0847761d7c0627",
   "working_tree_changes": [
-    "server/terminal-session.test.ts"
+    "docs/architecture.md",
+    "server/agent-service-recovery.test.ts",
+    "server/agent-service.test.ts",
+    "server/agent-service.ts"
   ]
 }

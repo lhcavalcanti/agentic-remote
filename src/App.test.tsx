@@ -2917,6 +2917,204 @@ describe('App', () => {
     })
   })
 
+  it.each([
+    ['rename', false, false], ['rename', true, false],
+    ['detail', false, false], ['detail', true, false],
+    ['queue removal', false, false], ['queue removal', true, false],
+    ['rename', false, true], ['detail', false, true],
+  ] as const)(
+    'keeps accepted recovery redacted after serialized %s bytes arrive late (durable revision advanced=%s, newer token=%s)',
+    async (surface, persisted, newerToken) => {
+      const actualApi = await vi.importActual<typeof import('./api')>('./api')
+      const recovery = { content: 'Previously accepted recovery', failedAt: 'resend:held-response', uncertain: true }
+      const queued = { id: 'held-queue', content: 'Independent queue item', createdAt: session.updatedAt }
+      const initial: ManagedSession = {
+        ...session, revision: 6, messages: [], failedPrompt: recovery,
+        queuedPrompts: surface === 'queue removal' ? [queued] : [], queuedCount: surface === 'queue removal' ? 1 : 0,
+      }
+      const returned: ManagedSession = {
+        ...initial,
+        revision: newerToken ? 7 : 6,
+        failedPrompt: newerToken
+          ? { content: 'A genuinely newer recovery', failedAt: 'resend:newer-response', uncertain: true }
+          : recovery,
+        title: surface === 'rename' ? 'Serialized rename' : initial.title,
+        queuedPrompts: [], queuedCount: 0,
+        messages: surface === 'detail'
+          ? [{ id: 'serialized-detail', role: 'assistant', content: 'Legitimate serialized detail history', createdAt: session.updatedAt }]
+          : [],
+      }
+      const bytes = JSON.stringify(surface === 'queue removal' ? { session: returned, prompt: queued } : { session: returned })
+      let release: (() => void) | undefined
+      let settled = false
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        new Promise<Response>((resolve) => {
+          release = () => resolve(new Response(bytes, {
+            status: 200, headers: { 'content-type': 'application/json' },
+          }))
+        }),
+      )
+      vi.mocked(listSessions).mockResolvedValue([initial])
+      vi.mocked(getSession).mockResolvedValue(initial)
+      if (surface === 'rename') {
+        vi.mocked(renameSession).mockImplementation(async (...args) => {
+          const result = await actualApi.renameSession(...args)
+          settled = true
+          return result
+        })
+      } else if (surface === 'detail') {
+        vi.mocked(getSession).mockImplementation(async (...args) => {
+          const result = await actualApi.getSession(...args)
+          settled = true
+          return result
+        })
+      } else {
+        vi.mocked(removeQueuedPrompt).mockImplementation(async (...args) => {
+          const result = await actualApi.removeQueuedPrompt(...args)
+          settled = true
+          return result
+        })
+      }
+      try {
+        render(<App />)
+        const editor = await screen.findByLabelText('Message')
+        await waitFor(() => expect(editor).toHaveValue(recovery.content))
+        if (surface === 'rename') {
+          fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+          fireEvent.change(screen.getByLabelText('Session name'), { target: { value: returned.title } })
+          fireEvent.submit(screen.getByLabelText('Session name').closest('form')!)
+        } else if (surface === 'queue removal') {
+          fireEvent.click(screen.getByRole('button', { name: 'Remove queued prompt 1' }))
+        }
+        await waitFor(() => expect(release).toBeDefined())
+        expect(settled).toBe(false)
+        await act(async () => {
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({
+              type: 'session.upserted',
+              session: { ...returned, messages: [], failedPrompt: undefined, revision: persisted ? 9 : 6 },
+            }),
+          } as MessageEvent)
+        })
+        await waitFor(() => expect(editor).toHaveValue(''))
+        await act(async () => { release!() })
+        await waitFor(() => expect(settled).toBe(true))
+        await act(async () => { await Promise.resolve() })
+        if (surface === 'detail' && !persisted) {
+          expect(await screen.findByText('Legitimate serialized detail history')).toBeInTheDocument()
+        }
+        expect(editor).toHaveValue(newerToken ? 'A genuinely newer recovery' : '')
+      } finally {
+        release?.()
+        fetchSpy.mockRestore()
+      }
+    },
+  )
+
+  it('allows a fresh equal-revision detail request after an acceptance event', async () => {
+    const actualApi = await vi.importActual<typeof import('./api')>('./api')
+    const failed: ManagedSession = {
+      ...session, revision: 6,
+      failedPrompt: { content: 'Uncertain recovery after restart', failedAt: 'resend:restart', uncertain: true },
+    }
+    vi.mocked(listSessions).mockResolvedValue([failed, secondSession])
+    vi.mocked(getSession).mockResolvedValue(failed)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ session: failed }), { status: 200 }),
+    )
+    try {
+      render(<App />)
+      const editor = await screen.findByLabelText('Message')
+      await waitFor(() => expect(editor).toHaveValue(failed.failedPrompt!.content))
+      await act(async () => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.upserted', session: { ...failed, failedPrompt: undefined } }),
+        } as MessageEvent)
+      })
+      await waitFor(() => expect(editor).toHaveValue(''))
+      vi.mocked(getSession).mockImplementation((computerId, id) =>
+        id === secondSession.id ? Promise.resolve(secondSession) : actualApi.getSession(computerId, id),
+      )
+      fireEvent.click(screen.getAllByText(secondSession.title)[0])
+      await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent(secondSession.title))
+      fireEvent.click(screen.getAllByText(session.title)[0])
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce())
+      await waitFor(() => expect(editor).toHaveValue(failed.failedPrompt!.content))
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it.each(['newer recovery event', 'clear replacement'] as const)(
+    'preserves %s when older serialized rename bytes arrive',
+    async (change) => {
+      const actualApi = await vi.importActual<typeof import('./api')>('./api')
+      const failed: ManagedSession = {
+        ...session, revision: 6,
+        failedPrompt: { content: 'Old recovery', failedAt: 'resend:old-event', uncertain: true },
+      }
+      const newer: ManagedSession = {
+        ...failed,
+        ...(change === 'clear replacement'
+          ? { id: 'replacement-event', title: 'Replacement session', replacedSessionIds: [session.id] }
+          : {}),
+        failedPrompt: { content: 'New event-owned recovery', failedAt: 'resend:new-event', uncertain: true },
+      }
+      const bytes = JSON.stringify({ session: { ...failed, title: 'Held serialized rename' } })
+      let release: (() => void) | undefined
+      let settled = false
+      vi.mocked(listSessions).mockResolvedValue([failed])
+      vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+        change === 'clear replacement' && id === newer.id ? newer : failed,
+      )
+      vi.mocked(renameSession).mockImplementation(async (...args) => {
+        const response = await actualApi.renameSession(...args)
+        settled = true
+        return response
+      })
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        new Promise<Response>((resolve) => { release = () => resolve(new Response(bytes, { status: 200 })) }),
+      )
+      try {
+        render(<App />)
+        await screen.findByLabelText('Message')
+        fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+        fireEvent.change(screen.getByLabelText('Session name'), { target: { value: 'Held serialized rename' } })
+        fireEvent.submit(screen.getByLabelText('Session name').closest('form')!)
+        await waitFor(() => expect(release).toBeDefined())
+        await act(async () => {
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({ type: 'session.upserted', session: { ...failed, failedPrompt: undefined } }),
+          } as MessageEvent)
+        })
+        await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(''))
+        await act(async () => {
+          const socket = MockWebSocket.instances[0]
+          if (change === 'clear replacement') {
+            socket?.onmessage?.({
+              data: JSON.stringify({
+                type: 'session.removed', computerId: session.computerId,
+                sessionId: session.id, replacedBy: newer.id,
+              }),
+            } as MessageEvent)
+          }
+          socket?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: newer }) } as MessageEvent)
+        })
+        await act(async () => { release!() })
+        await waitFor(() => expect(settled).toBe(true))
+        await act(async () => { await Promise.resolve() })
+        await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(newer.failedPrompt!.content))
+        if (change === 'clear replacement') {
+          expect(document.querySelector('.conversation-header__title')).toHaveTextContent(newer.title)
+          expect(screen.queryByText('Held serialized rename')).not.toBeInTheDocument()
+        }
+      } finally {
+        release?.()
+        fetchSpy.mockRestore()
+      }
+    },
+  )
+
   it('renames the selected session from the conversation header', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

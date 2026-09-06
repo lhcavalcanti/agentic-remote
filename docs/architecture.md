@@ -290,6 +290,18 @@ session. If a response is lost or an older peer omits metadata, the original
 binding remains rather than permitting an anonymous resend. Accepted receipts
 do not restore submitted text. Unrelated writing remains untouched.
 
+The browser also orders already-serialized HTTP results against observed
+session events. API requests capture the client event sequence before fetching;
+decoded session objects, arrays and queue-removal envelopes retain that local
+provenance in a WeakMap, without wire fields or fabricated durable revisions.
+The common session merger uses the existing per-session event watermark: an
+overtaken equal/older-revision result may hydrate history or return mutation
+data, but inherits the current recovery field instead of reviving an accepted
+one or clearing a newer recovery. Fresh reads after the event and genuinely
+newer durable results remain admissible. Removed session/computer ownership is
+also checked. State observations discard request provenance so later local
+reconciliation cannot misclassify them as pending HTTP responses.
+
 The private `recoveryResend` field is additive within saved-state version 1.
 It is omitted from public session snapshots and validated on load; malformed
 receipt metadata fails startup rather than silently becoming retryable.

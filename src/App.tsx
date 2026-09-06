@@ -172,6 +172,12 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import {
+  currentSessionEventSequence,
+  nextSessionEventSequence,
+  projectSessionResponse,
+  sessionResponseStartedAt,
+} from './session-response-order'
 import { applyAccentIcon } from './accent-icon'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
@@ -835,14 +841,19 @@ const webCommands: SlashCommand[] = [
 ]
 
 function sortSessions(sessions: ManagedSession[]): ManagedSession[] {
-  return [...sessions].sort((left, right) =>
+  // Stored observations must not inherit the provenance of a pending HTTP
+  // result when a later snapshot reconciliation reuses them.
+  return sessions.map((entry) =>
+    sessionResponseStartedAt(entry) === undefined ? entry : { ...entry },
+  ).sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
   )
 }
 
-function upsertSession(
+function upsertSessionSnapshot(
   sessions: ManagedSession[],
   session: ManagedSession,
+  lastEventAt = 0,
 ): ManagedSession[] {
   const key = sessionKey(session)
   const existing = sessions.find((entry) => sessionKey(entry) === key)
@@ -854,8 +865,9 @@ function upsertSession(
   ) {
     return sessions
   }
+  const projected = projectSessionResponse(session, existing, lastEventAt)
   return sortSessions([
-    session,
+    projected,
     ...sessions.filter((entry) => sessionKey(entry) !== key),
   ])
 }
@@ -6428,7 +6440,7 @@ function App() {
   const recordingStartedAtRef = useRef(0)
   const discardRecordingRef = useRef(false)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
-  const eventSequenceRef = useRef(0)
+  const eventSequenceRef = useRef(currentSessionEventSequence())
   const backgroundTaskSnapshotsRef = useRef(backgroundTaskSnapshots)
   const computersRef = useRef(computers)
   // The sessions as last committed, so reconciliation can be worked out
@@ -6622,6 +6634,23 @@ function App() {
   // sessions. Ordinary status changes are tracked separately.
   const computerEventSequenceRef = useRef(new Map<string, number>())
   const computerRecordSequenceRef = useRef(new Map<string, number>())
+  const upsertSession = useCallback((current: ManagedSession[], incoming: ManagedSession) => {
+    const key = sessionKey(incoming)
+    const startedAt = sessionResponseStartedAt(incoming)
+    const lastEventAt = sessionEventSequenceRef.current.get(key) || 0
+    if (
+      startedAt !== undefined &&
+      (((computerEventSequenceRef.current.get(incoming.computerId) || 0) > startedAt) ||
+        (lastEventAt > startedAt && removedSessions.current.has(key)))
+    ) return current
+    return upsertSessionSnapshot(current, incoming, lastEventAt)
+  }, [])
+  const currentSessionResponse = useCallback((incoming: ManagedSession) =>
+    projectSessionResponse(
+      incoming,
+      sessionsRef.current.find((entry) => sessionKey(entry) === sessionKey(incoming)),
+      sessionEventSequenceRef.current.get(sessionKey(incoming)) || 0,
+    ), [])
   const sidebarResizeRef = useRef<
     | { pointerId: number; startX: number; startWidth: number; width: number }
     | undefined
@@ -7876,7 +7905,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [])
+  }, [upsertSession])
 
   useEffect(() => {
     if (loading) {
@@ -7961,7 +7990,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [selectedComputerId, selectedSessionId])
+  }, [selectedComputerId, selectedSessionId, upsertSession])
 
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
@@ -8348,7 +8377,7 @@ function App() {
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as HubEvent
         if (event.type === 'session.upserted') {
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           sessionEventSequenceRef.current.set(
             sessionKey(event.session),
             eventSequenceRef.current,
@@ -8379,7 +8408,7 @@ function App() {
           // conversation, with the overlapping snapshot unable to settle it
           // because this very removal moved its watermark on.
           pendingReplacements.current.delete(removedKey)
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           sessionEventSequenceRef.current.set(
             removedKey,
             eventSequenceRef.current,
@@ -8437,7 +8466,7 @@ function App() {
           acceptedSubmissionTokens.current.delete(removedKey)
         } else if (event.type === 'session.tasks.updated') {
           const key = `${event.computerId}:${event.sessionId}`
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           backgroundTaskEventSequenceRef.current.set(
           key,
           eventSequenceRef.current,
@@ -8451,7 +8480,7 @@ function App() {
           },
           }))
         } else if (event.type === 'computer.updated') {
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           // Only the computer record is newer, not its sessions. A paired node
           // going offline is an ordinary update, and treating it as reason to
           // reject the snapshot discards every session that computer has.
@@ -8461,7 +8490,7 @@ function App() {
           )
           setComputers((current) => upsertComputer(current, event.computer))
         } else if (event.type === 'computer.removed') {
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           computerEventSequenceRef.current.set(
             event.computerId,
             eventSequenceRef.current,
@@ -8552,7 +8581,7 @@ function App() {
       }
       socket?.close()
     }
-  }, [])
+  }, [upsertSession])
 
   const latestContent = selected?.messages.at(-1)?.content
   useEffect(() => {
@@ -9948,7 +9977,7 @@ function App() {
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
     try {
-      const updated = isCommand
+      const response = isCommand
         ? await executeCommand(selected.computerId, selected.id, {
             // A restored prompt can be a slash command, and it answers the
             // failure just as a message does.
@@ -9963,6 +9992,7 @@ function App() {
             content,
             enqueue: shouldEnqueue,
           })
+      const updated = currentSessionResponse(response)
       const resultKey = followReplacementsRef.current(targetKey)
       const acknowledged = submittedRecoveryToken
       acknowledgedStamp = acknowledged
@@ -10334,7 +10364,7 @@ function App() {
       // speak for it or for what it became. Written before the list is
       // touched, and into the ref as well, so a snapshot already in flight
       // cannot put it back or drop a replacement it has never heard of.
-      eventSequenceRef.current += 1
+      eventSequenceRef.current = nextSessionEventSequence()
       sessionEventSequenceRef.current.set(targetKey, eventSequenceRef.current)
       sessionEventSequenceRef.current.set(clearedKey, eventSequenceRef.current)
       const retire = (sessions: ManagedSession[]) => {

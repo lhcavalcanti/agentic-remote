@@ -272,6 +272,12 @@ Questions and permissions are the highest-priority UI state.
   replacement. A confirmed accepted submission MUST NOT be restored as an unsent
   draft. Missing error metadata MUST retain the original binding rather than
   silently turning a retry into an independent message.
+- HTTP session results serialized before an observed recovery event MUST NOT
+  overwrite that event's recovery field at an equal or older durable revision.
+  Immediate equal-revision redaction events and fresh reads issued after them
+  MUST remain valid. The client MUST preserve detail hydration, genuinely newer
+  revisions/recovery tokens, and session/computer replacement ownership rather
+  than rejecting every equal-revision update.
 - Automatic desktop-install decline MUST recapture the pane after awaited owner
   validation and confirm the same live prompt before sending `n`. Disappearance
   or replacement by a composer, draft, or another dialog MUST receive no input.

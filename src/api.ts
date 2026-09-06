@@ -25,6 +25,7 @@ import type {
   WorkspaceSearchResponse,
 } from '../shared/contracts'
 import { parseSubmissionReceipt, SubmissionError } from '../shared/submission-error'
+import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
 
 async function responseError(response: Response): Promise<Error> {
   const payload = (await response.json().catch(() => null)) as
@@ -55,6 +56,7 @@ async function request<TResult>(
   path: string,
   init?: RequestInit,
 ): Promise<TResult> {
+  const startedAtSequence = currentSessionEventSequence()
   const headers = new Headers(init?.headers)
   if (
     init?.body != null &&
@@ -70,7 +72,7 @@ async function request<TResult>(
   if (!response.ok) {
     throw await responseError(response)
   }
-  return response.json() as Promise<TResult>
+  return rememberSessionResponse(await response.json() as TResult, startedAtSequence)
 }
 
 async function requestVoid(path: string, init: RequestInit): Promise<void> {

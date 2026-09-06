@@ -62,6 +62,7 @@ import {
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
 import { PWA_UPDATE_EVENT } from './pwa'
+import * as shell from './shell'
 
 vi.mock('./api', () => ({
   listSessions: vi.fn(),
@@ -7431,6 +7432,110 @@ describe('App', () => {
       ).toContain('Followed on'),
     )
   })
+
+  it.each([false, true])(
+    'keeps clear ownership when an upsert overtakes selection cleanup (local clear: %s)',
+    async (localClear) => {
+      window.history.replaceState({}, '', '/?computer=computer-1&session=session-1')
+      const replacement: ManagedSession = {
+        ...session, id: 'session-1-cleared', title: 'Cleared conversation',
+        replacedSessionIds: [session.id], messages: [],
+      }
+      vi.mocked(listSessions).mockResolvedValue([secondSession, session])
+      vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+        id === replacement.id ? replacement : id === secondSession.id ? secondSession : session,
+      )
+      let answerClear: ((value: ManagedSession) => void) | undefined
+      vi.mocked(clearConversation).mockImplementation(() =>
+        new Promise((resolve) => { answerClear = resolve }),
+      )
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.change(textarea, { target: { value: 'Continue after clear' } })
+      await waitFor(() => expect(MockWebSocket.instances[0]).toBeDefined())
+      if (localClear) {
+        fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+        await waitFor(() => expect(answerClear).toBeDefined())
+      }
+      // This earlier effect delivers the next frame after removal rendered,
+      // before that render's selection cleanup has consumed its old list.
+      const badge = vi.spyOn(shell, 'setShellBadge').mockImplementationOnce(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+        } as MessageEvent)
+      })
+      try {
+        await act(async () => {
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({
+              type: 'session.removed', computerId: computer.id,
+              sessionId: session.id, replacedBy: replacement.id,
+            }),
+          } as MessageEvent)
+        })
+        expect(document.querySelector('.session-item--active')?.textContent)
+          .toContain('Cleared conversation')
+        expect(screen.getByLabelText('Message')).toHaveValue('Continue after clear')
+      } finally {
+        badge.mockRestore()
+        await act(async () => { answerClear?.(replacement) })
+      }
+      expect(document.querySelector('.session-item--active')?.textContent)
+        .toContain('Cleared conversation')
+    },
+  )
+
+  it.each([
+    ['accept', 'removal'],
+    ['reject', 'removal'],
+    ['accept', 'snapshot'],
+    ['reject', 'snapshot'],
+  ] as const)(
+    'holds an unlinked local clear until its response can %s the replacement after %s',
+    async (outcome, source) => {
+      window.history.replaceState({}, '', '/?computer=computer-1&session=session-1')
+      const replacement: ManagedSession = {
+        ...session, id: 'session-1-cleared', title: 'Cleared conversation',
+        replacedSessionIds: [session.id], messages: [],
+      }
+      vi.mocked(listSessions).mockResolvedValue([secondSession, session])
+      vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+        id === replacement.id ? replacement : id === secondSession.id ? secondSession : session,
+      )
+      let accept: ((value: ManagedSession) => void) | undefined
+      let reject: ((error: Error) => void) | undefined
+      vi.mocked(clearConversation).mockImplementation(() => new Promise((resolve, refuse) => {
+        accept = resolve
+        reject = refuse
+      }))
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+      await waitFor(() => expect(accept).toBeDefined())
+      if (source === 'removal') {
+        await act(async () => {
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({
+              type: 'session.removed', computerId: computer.id, sessionId: session.id,
+            }),
+          } as MessageEvent)
+        })
+      } else {
+        vi.mocked(listSessions).mockResolvedValue([secondSession])
+        await act(async () => {
+          MockWebSocket.instances[0]?.onopen?.()
+          await Promise.resolve()
+        })
+      }
+      expect(new URLSearchParams(window.location.search).get('session')).toBe(session.id)
+      await act(async () => {
+        if (outcome === 'accept') accept?.(replacement)
+        else reject?.(new Error('Clear response was lost'))
+      })
+      await waitFor(() => expect(document.querySelector('.session-item--active')?.textContent)
+        .toContain(outcome === 'accept' ? 'Cleared conversation' : 'Second chat'))
+    },
+  )
 
   it('follows a clear when the reader goes back to the old session', async () => {
     // The clear happens while another session is open, so nothing moves the

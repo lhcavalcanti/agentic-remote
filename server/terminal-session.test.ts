@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -101,6 +101,70 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  async function clearFixture() {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-clear-test-'))
+    directories.push(directory)
+    const originalCwd = path.join(directory, 'original')
+    const replacementCwd = path.join(directory, 'replacement')
+    await mkdir(originalCwd)
+    await mkdir(replacementCwd)
+    const executable = path.join(directory, 'copilot-clear-fake')
+    await writeFile(executable, '#!/usr/bin/env bash\nsleep 60\n')
+    await chmod(executable, 0o755)
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', '')
+    vi.stubEnv('COPILOT_BIN', executable)
+    vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+    const controller = new TmuxTerminalSessionController()
+    const sessionId = randomUUID()
+    const location = await controller.create(sessionId, originalCwd, 'Original conversation', false, {
+      model: 'original-model', contextTier: 'default', reasoningEffort: 'high', mode: 'plan',
+    })
+    const snapshot = async () => {
+      const pid = Number((await execFileAsync('tmux', [
+        'display-message', '-p', '-t', location.windowId, '#{pane_pid}',
+      ])).stdout.trim())
+      await waitForProcessCommand(pid, [executable])
+      return {
+        pid,
+        command: (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').filter(Boolean),
+        cwd: await readlink(`/proc/${pid}/cwd`),
+      }
+    }
+    return { controller, sessionId, replacementCwd, executable, snapshot, location }
+  }
+
+  it('restores the original terminal command and cwd when replacement commit rejects', async () => {
+    const { controller, sessionId, replacementCwd, snapshot } = await clearFixture()
+    const original = await snapshot()
+    const replacementId = randomUUID()
+    await expect(controller.reset(sessionId, replacementId, replacementCwd, {
+      model: 'replacement-model', contextTier: 'long_context', reasoningEffort: 'low', mode: 'autopilot',
+    }, async () => {
+      expect(await controller.has(replacementId)).toBe(true)
+      expect((await snapshot()).cwd).toBe(replacementCwd)
+      throw new Error('Replacement write refused')
+    })).rejects.toThrow('Replacement write refused')
+    const restored = await snapshot()
+    expect(restored.pid).not.toBe(original.pid)
+    expect(restored.command).toEqual(original.command)
+    expect(restored.cwd).toBe(original.cwd)
+    expect(await controller.has(sessionId)).toBe(true)
+    expect(await controller.has(replacementId)).toBe(false)
+  })
+
+  it('reports both the rejected replacement and a failed terminal restoration', async () => {
+    const { controller, sessionId, replacementCwd, location } = await clearFixture()
+    const failure = new Error('Replacement write refused')
+    await expect(controller.reset(sessionId, randomUUID(), replacementCwd, undefined, async () => {
+      await execFileAsync('tmux', ['kill-pane', '-t', location.windowId])
+      throw failure
+    })).rejects.toMatchObject({
+      name: 'AggregateError',
+      errors: [failure, expect.any(Error)],
+      message: 'Conversation clear failed and the original terminal session could not be restored',
+    })
+  }, 25_000)
+
   it.each([
     ['current', 0, false],
     ['current', 2400, false],

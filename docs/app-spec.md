@@ -127,6 +127,30 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.
+- Clear MUST keep the reader on the live replacement unless they navigate
+  elsewhere, including gaps between removal, replacement, and response delivery.
+- A refused replacement write MUST preserve the original provider history and
+  uploads. A terminal clear MUST restore the original command and working
+  folder before reporting that refusal, or explicitly report restoration failure.
+- Cleanup failures after a replacement commits MUST be surfaced on the new
+  session; they MUST NOT roll back the accepted identity or destroy its runtime.
+- Clear MUST exclude new session admissions while joining earlier loading and
+  delivery handoffs. It MUST NOT cancel those handoffs merely to become idle.
+  Work admitted while Clear waits MUST cause refusal before the original
+  provider or history is replaced, even if that work completes quickly.
+  A successfully persisted enqueue MUST count as admitted work before its
+  response is published, even if the previous turn becomes idle meanwhile.
+  A refused queue write MUST NOT count as a successful admission. Deferred
+  eligible FIFO work MUST wake after the enqueue and Clear release their locks.
+  A native message or command with possible pane effects MUST protect joined
+  Clear even when delivery is uncertain. It MUST still reject with uncertainty,
+  not claim successful delivery. Definite preflight failures MUST NOT count as
+  native activity.
+  Replacement MUST revalidate idleness and identity at its mutation boundary.
+- Cleared and deleted session identities MUST stay retired across restart,
+  including after their last replacement is deleted. Retirement metadata MUST
+  commit atomically with the identity change, and stale provider listings MUST
+  NOT recreate those identities.
 - Delete MUST close the owning provider process/session after confirmation and
   remove Agentic Remote state and session uploads.
 
@@ -197,6 +221,12 @@ Questions and permissions are the highest-priority UI state.
   a service restart, including structured ask-user forms.
 - If an SDK callback was lost, answering the recovered question MUST resume as a
   normal user turn.
+- While the owning service is running, an accepted SDK reply whose settlement
+  write failed MUST remain retryable without resolving the provider callback
+  again. A conflicting reply MUST be rejected, and settlement MUST preserve
+  newer questions, permissions, and their waiting status.
+- Multi-question flows MUST commit the next question card before advancing
+  their private request identity or collected answers.
 - A newly arriving question or permission MUST scroll into view.
 - Entering a session that is already waiting MUST scroll to the action card.
 
@@ -238,6 +268,52 @@ keyboard Return inserts a newline.
 The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not
 required to be individually editable.
+
+An app-queued terminal prompt MUST be durably removed from automatic retry
+before delivery begins. A failed completion write MUST NOT resend the prompt;
+the service MUST retain the delivery outcome and retry only persistence. After
+restart, an unresolved delivery MUST expose its text as uncertain recovery and
+hold later queued work until the reader explicitly deals with it.
+
+An app-queued SDK or Claude prompt MUST remain durable until its complete turn
+record is committed. Failed turn admission MUST NOT depend on a compensating
+enqueue that can also fail during a storage outage. Native FIFO delivery MUST
+recheck idleness at delivery rather than steer a turn that began while queued
+command confirmation was being persisted.
+
+Shutdown MUST close new admissions before awaiting provider or storage work.
+Already-admitted work MUST finish its commit/registration boundary before
+provider teardown; a commit completed during shutdown MUST NOT start a new
+provider turn. Unsent queued text MUST be restored or remain as durable,
+explicit recovery when the cancellation write is refused. Storage MUST finish
+admitted writes and refuse late mutations after shutdown.
+
+Queue drains MUST coalesce wake-ups and re-read the committed canonical queue
+after a reserved head is edited or removed. Stale reservations MAY retry;
+ordinary authentication or storage failures MUST NOT cause a hot retry loop.
+A durable reply settlement MUST wake eligible queued work after releasing its
+own locks, without clearing a newer question or dispatching from a stopped,
+suspended, deleting, or already-owned session.
+
+Startup MUST resume eligible persisted native queues without requiring a
+post-enqueue completion event. Only previously managed-open native sessions
+qualify, and delivery MUST still require current discovery, ownership, a
+readable empty native composer, and the normal admission/claim guards.
+Unavailable observations or refused claim writes MUST retain FIFO and use
+bounded retry. A queued entry MUST NOT by itself create or reopen a native
+runtime; unknown prior delivery or explicit closed/suspended state stays held.
+Repeated startup MUST NOT duplicate delivery or create additional pollers.
+
+An explicit recovery token MUST match the current failed prompt. Accepting a
+token-bearing retry MUST atomically retain one canonical FIFO entry and consume
+that recovery, including retries requested while idle. Replayed or stale tokens
+MUST NOT dispatch or enqueue another copy, or clear a newer recovery. Unrelated
+ordinary sends MUST NOT consume recovery. A new uncertain provider-start outcome
+MUST remain explicitly uncertain; the supplied token is not proof of delivery.
+
+If provider lookup fails before a query is registered, its unstarted queued
+admission MUST be restored before completion cleanup can erase it. Refused
+restoration MUST retain durable recovery, and cleanup MUST preserve newer owners.
 
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
@@ -492,6 +568,28 @@ Persistent state MUST NOT include:
 - Voice recordings
 - Temporary transcription artifacts
 - Live `.env` files or credentials
+
+Awaited session mutations MUST become visible only after their state write
+commits. A refused write MUST NOT leave the mutation in memory, subsequent
+successful writes, snapshots, or queue dispatch decisions. Mutations sharing a
+coalesced write MUST share its commit outcome; a later batch MUST start from
+committed state, not a rejected batch. Validation failures MUST NOT leave
+partially applied changes.
+
+Removing or replacing a session MUST NOT turn an earlier committed mutation
+into a rejected call. State-dependent reductions and equality guards MUST
+respect admitted mutation order, including runtime permission changes, working
+directories, and questions arriving while an earlier reply is being recorded.
+
+Live streamed text MAY remain volatile until the next persisted mutation.
+Publishing a live delta MUST NOT expose unrelated, uncommitted session or queue
+changes.
+
+History fetched before a newer local admission MUST NOT overwrite that turn,
+its status, or its pending input when installed. Transcript ownership checks
+MUST run at mutation preparation, including the commit-to-registration gap.
+Rejecting stale history MUST preserve the polling version and live-watermark
+guards without disabling legitimate external/native history refresh.
 
 ## 14. Error handling
 

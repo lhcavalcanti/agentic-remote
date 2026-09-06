@@ -56,7 +56,7 @@ export interface TerminalSessionController {
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
   /** Ends the window running a session without forgetting the session. */
@@ -108,6 +108,7 @@ export interface TerminalSessionController {
   ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
+  sendWhenIdle?(sessionId: string, content: string): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
   /**
@@ -246,45 +247,52 @@ export class TmuxTerminalSessionController
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      const resolvedCwd = await realpath(cwd)
+      if (!(await stat(resolvedCwd)).isDirectory()) {
+        throw new Error('Terminal working directory is not a folder')
+      }
       const owner = await this.owner(sessionId)
       if (!owner) {
         return false
       }
       const originalCommand = await processCommand(owner.pid)
+      const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, replacementId, input)
-      await execFileAsync('tmux', [
-        'respawn-pane',
-        '-k',
-        '-t',
-        owner.target,
-        '/usr/bin/sleep',
-        '300',
-      ])
       try {
-        await clearState()
         await execFileAsync('tmux', [
           'respawn-pane',
           '-k',
           '-t',
           owner.target,
           '-c',
-          cwd,
+          resolvedCwd,
           ...command,
         ])
         await this.waitForNewOwner(replacementId, owner.pid)
+        // The old provider history must still exist until this commit accepts
+        // the replacement; otherwise the original command cannot recover it.
+        await commitReplacement()
       } catch (error) {
-        await execFileAsync('tmux', [
-          'respawn-pane',
-          '-k',
-          '-t',
-          owner.target,
-          '-c',
-          cwd,
-          ...originalCommand,
-        ]).catch(() => undefined)
+        try {
+          await execFileAsync('tmux', [
+            'respawn-pane',
+            '-k',
+            '-t',
+            owner.target,
+            '-c',
+            originalCwd,
+            ...originalCommand,
+          ])
+          await this.waitForNewOwner(sessionId, owner.pid)
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            'Conversation clear failed and the original terminal session could not be restored',
+          )
+        }
         throw error
       }
       return true
@@ -833,6 +841,19 @@ export class TmuxTerminalSessionController
     content: string,
     enqueue: boolean,
   ): Promise<boolean> {
+    return this.sendInternal(sessionId, content, enqueue, false)
+  }
+
+  async sendWhenIdle(sessionId: string, content: string): Promise<boolean> {
+    return this.sendInternal(sessionId, content, false, true)
+  }
+
+  private async sendInternal(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    idleOnly: boolean,
+  ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const target = await this.target(sessionId)
       if (!target) {
@@ -882,6 +903,9 @@ export class TmuxTerminalSessionController
           { statusCode: 409 },
         )
       }
+      if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
+        throw Object.assign(new Error('The terminal started working before queued delivery; nothing was sent'), { statusCode: 409 })
+      }
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -890,29 +914,34 @@ export class TmuxTerminalSessionController
         '--',
         content,
       ])
-      await execFileAsync('tmux', [
-        'paste-buffer',
-        '-p',
-        '-d',
-        '-b',
-        buffer,
-        '-t',
-        target,
-      ])
-      // From here on tmux has the text. Anything that goes wrong afterwards --
-      // reading the pane, the tty, the terminal settings, or the Enter itself
-      // -- leaves a send that may well have arrived, so it is reported as
-      // uncertain rather than as a plain failure the reader should simply
-      // retry.
+      // The paste can reach the pane even if its acknowledgement is lost.
+      // Preflight and buffer preparation above have not changed native input.
+      let pasteAcknowledged = false
       try {
+        await execFileAsync('tmux', [
+          'paste-buffer',
+          '-p',
+          '-d',
+          '-b',
+          buffer,
+          '-t',
+          target,
+        ])
+        pasteAcknowledged = true
         return await this.finishSend(
           target,
           content,
           confirmation,
           paneBeforePaste,
           enqueue,
+          idleOnly,
         )
       } catch (error) {
+        if (!pasteAcknowledged && error && typeof error === 'object' &&
+            'syscall' in error && typeof error.syscall === 'string' &&
+            /^spawn(?: |$)/.test(error.syscall)) {
+          throw error
+        }
         if (
           error &&
           typeof error === 'object' &&
@@ -936,6 +965,7 @@ export class TmuxTerminalSessionController
     confirmation: string,
     paneBeforePaste: string,
     enqueue: boolean,
+    idleOnly = false,
   ): Promise<boolean> {
       if (
         !(await waitForComposerPaste(
@@ -1001,6 +1031,12 @@ export class TmuxTerminalSessionController
         }
       }
       try {
+        if (idleOnly) {
+          const current = await capturePane(target)
+          if (isTerminalAgentWorking(current) || isTerminalOverlay(current)) {
+            throw new Error('The terminal changed before queued submission')
+          }
+        }
         await execFileAsync(
           'tmux',
           enqueue
@@ -1339,7 +1375,7 @@ export function isTerminalOverlay(pane: string): boolean {
 // The CLI only offers to interrupt while the agent is working, so this marks
 // the frames whose new lines belong to a turn rather than to a command.
 export function isTerminalAgentWorking(pane: string): boolean {
-  return /esc\s+interrupt/i.test(pane.split('\n').slice(-6).join(' '))
+  return /esc\s+interrupt/i.test(terminalControlLines(pane).slice(-6).join(' '))
 }
 
 /**

@@ -31,7 +31,11 @@ import { SessionStore } from './session-store.js'
 import { parseTerminalPermission } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
-  readonly sessionId = 'active-session'
+  readonly sessionId: string
+
+  constructor(sessionId = 'active-session') {
+    this.sessionId = sessionId
+  }
   readonly backgroundTasks: CopilotTaskInfo[] = []
   readonly taskProgress = new Map<string, CopilotTaskProgress>()
   readonly sentPrompts: string[] = []
@@ -2047,7 +2051,7 @@ describe('AgentService deletion', () => {
       // The state directory disappearing mid-prompt is what happens when a
       // write outlives its data directory; runPrompt persists from its own
       // completion and failure paths, and it is dispatched fire-and-forget.
-      vi.spyOn(store, 'update').mockRejectedValue(
+      vi.spyOn(store, 'updateIf').mockRejectedValue(
         new Error('state directory is gone'),
       )
       client.session.resolvePrompt()
@@ -2246,7 +2250,8 @@ describe('AgentService deletion', () => {
       wasFreeform: false,
     })
     expect(updated.pendingUserInput).toBeUndefined()
-    expect(updated.status).toBe('running')
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(updated.status).toBe('idle')
     await service.stop()
   })
 
@@ -2388,7 +2393,8 @@ describe('AgentService deletion', () => {
       content: values,
     })
     expect(updated.pendingUserInput).toBeUndefined()
-    expect(updated.status).toBe('running')
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(updated.status).toBe('idle')
     await service.stop()
   })
 
@@ -2426,6 +2432,10 @@ describe('AgentService deletion', () => {
     ).toEqual({ kind: 'approve-once' })
     expect(allowAll.runtime?.allowAllPermissions).toBe(true)
 
+    vi.spyOn(client, 'createSession').mockImplementationOnce(async (config) => {
+      client.createdConfigs.push(config)
+      return new DeferredSession('guarded-session')
+    })
     const guarded = await service.createSession(directory, false, false)
     const guardedHandler = client.createdConfigs.at(-1)?.onPermissionRequest
     if (!guardedHandler) {
@@ -2454,6 +2464,7 @@ describe('AgentService deletion', () => {
     await service.replyPermission(guarded.id, request.requestId, 'allow-once')
     await expect(response).resolves.toEqual({ kind: 'approve-once' })
     expect(guarded.runtime?.allowAllPermissions).toBe(false)
+    expect(service.getSession(allowAll.id)?.runtime?.allowAllPermissions).toBe(true)
 
     await service.stop()
   })
@@ -4771,9 +4782,15 @@ describe('AgentService deletion', () => {
     ])
     let eventVersion: string | undefined = 'events-v0'
     let events: SessionEvent[] = []
+    const composer = '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'
+    let pane = composer
     const terminal = {
       has: vi.fn(async () => true),
-      send: vi.fn(async () => true),
+      send: vi.fn(async (_id: string, content: string) => {
+        if (content === '/usage') pane = ` \u25cf Usage ready\n${composer}`
+        return true
+      }),
+      capture: vi.fn(async () => pane),
       cancel: vi.fn(async () => true),
     }
     const service = new AgentService(

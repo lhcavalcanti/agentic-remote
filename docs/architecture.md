@@ -89,6 +89,208 @@ authentication to the hub or another node.
 - Repositories, credentials, and provider session databases remain on the
   owning computer's persistent local filesystem; recovery does not use NFS.
 
+### Session-store commit boundary
+
+`SessionStore` prepares mutations against private candidates, writes compact
+JSON to the existing replacement file, and installs the candidate only after
+the atomic rename succeeds. All reads, including backend/dispatch metadata and
+streaming snapshots, use the committed view. A failed write rejects every
+mutation covered by that write without publishing or retaining its candidate.
+Later queued mutations prepare against the last committed view. A callback
+that throws is discarded without changing other mutations in its batch.
+
+Writes queued behind an in-flight write still coalesce. The pending batch is
+closed **before** preparing and serializing its snapshot, so a call received
+during I/O waits for a subsequent write rather than receiving an acknowledgement
+for a snapshot that does not include it. Results are read after installation;
+they may include other mutations committed in the same batch. `flush()` waits
+for outstanding writes and propagates write failure.
+
+Session removal and replacement are separate commit boundaries, both before
+and after the destructive operation. Earlier callers receive their successful
+snapshot while its ID still exists; a later replacement can then inherit those
+committed values without retroactively rejecting the earlier caller. Each
+batch settles only its own mutations. This deliberately adds a boundary for
+destructive operations, not for ordinary metadata, queue, or event bursts.
+
+Synchronous text deltas remain volatile. An in-memory change journal preserves
+their order relative to queued mutations, including a transcript replacement
+that has not started writing yet. Adjacent tokens coalesce; the journal holds
+changes, not history snapshots. Live messages detach from a checkpoint once per
+view, rather than taking a transaction copy or serializing history per token.
+The existing outward snapshot boundary and transcript/event-log caches remain
+independent.
+
+Only deltas, never pending durable mutations, are replayed over a newly
+committed view. Deltas received during I/O remain pending for the next
+checkpoint; after a failed write, its deltas are retained but its durable
+mutations are discarded. Commit revisions account for intervening deltas,
+including when the committed mutation clears their message.
+
+Mutation callbacks must be synchronous and confined to the supplied session;
+they run when their batch starts, not when the API call is admitted. Providers
+must derive state-dependent changes and no-op comparisons from that candidate,
+not from a previously returned snapshot. Runtime-event reduction and transcript
+projections therefore merge the candidate's current runtime, notices, working
+directory, and pending question. `updateIf()` can explicitly decline a change;
+it does not turn a write or validation error into a no-op. Reply completion
+clears only the matching request and preserves another request's waiting state.
+
+Transcript reads capture an O(1) admission epoch before fetching history.
+Installation rechecks that epoch and current SDK ownership against the actual
+mutation candidate, before cloning history or running its projections. A
+pending commit-to-registration handoff remains protected even before a live
+prompt owner is installed. Rejected observations do not advance event-log
+fingerprints or erase a newer live watermark. The same boundary protects SDK
+hydration and recovered question cards; native/external reconciliation remains
+available and retains its existing version and dispatch-watermark gates.
+
+Clear acquires an exclusive lease from `SessionAdmissions`, without admitting
+itself into the work it must join. Async-local permits allow already-admitted
+handoffs to finish their nested work, but cannot be reused after they finish.
+Clear refuses if any joined handoff committed work, then revalidates the
+admission epoch, inactive state, and identity again in the replacement
+transaction. No original provider/history is disposed on a busy refusal.
+Failed exclusive operations release their lease and reawaken only deferred
+queue demand. The existing post-commit replacement cleanup contract is unchanged.
+Successful normal and recovery enqueues mark their admission committed and
+record queue demand immediately after persistence, before publication can
+throw. Send/command finalizers wake that demand only after releasing their
+admission and queue locks; an exclusive Clear keeps it deferred until its own
+lease is released. SDK command queue rejection is not acceptance when the
+provider explicitly returns `queued: false`; a lost RPC result remains uncertain.
+Direct native messages and commands share an effect latch: success or explicit
+delivery uncertainty protects joined Clear before returning or throwing.
+Uncertainty does not become known delivery. The controller includes lost paste
+acknowledgements in its uncertainty boundary; pre-paste capture/buffer failures
+and a paste process that could not spawn remain definite, effect-free failures.
+
+Native startup queue intent is captured from managed-open persisted sessions
+before discovery can promote other live terminals. Startup seeds the existing
+guarded drain rather than waiting for a completion newer than the queued text.
+Its stricter readiness checks require completed discovery, the existing owner,
+and a readable empty composer; managed/open/native state is rechecked in the
+claim transaction. The existing bounded claim/settlement retries retain this
+startup intent across transient observation or persistence failures. Queued
+sessions are not force-created by boot recovery, and repeated `start()` calls
+join the same startup rather than reload state or install more pollers.
+
+An SDK object's registration is not admission of its persisted identity.
+Creation and clear buffer SDK metadata until the identity write succeeds, then
+replay it after publishing the created/replacement session. Failed identity
+writes discard dependent metadata, while genuine SDK creation/configuration
+errors retain their existing reporting and recovery behavior.
+
+Discovery waits for provider creation to settle, including cleanup of a refused
+identity write. Rejected SDK identities are detached, deleted from the provider,
+and excluded from later discovery; cleanup failures are surfaced and remain
+quarantined in the running service. Late SDK attachments and events cannot
+reinstall a retired owner. A clear keeps the original SDK identity until the
+replacement commits, then retires it. Persisted replacement lineage prevents
+stale provider listings from rediscovering the original after restart. Cleanup
+failure after an accepted clear is reported without undoing the committed clear.
+
+Providers await mutations before publishing or acting on their results.
+`readAfterWrites()` queues a read behind admitted changes before runtime,
+dispatch, or lifecycle decisions; a read-only batch does not write or
+checkpoint volatile tokens. Admission markers remain held across that wait.
+It is not a lock: later provider work still requires the existing live checks
+and queue/lifecycle ownership rules. Selecting and removing a queue head uses
+one store transaction. Reorder operations use this same boundary and must not
+add per-operation rollback. External provider delivery is not part of the
+filesystem transaction.
+
+SDK and Claude queue preparation durably reserves the current FIFO head without
+removing its text. Turn admission then atomically appends the user/assistant
+records, marks the turn running, and removes only the matching reserved head.
+A refused admission leaves the FIFO item intact even if every subsequent write
+also fails; there is no compensating enqueue that can fail and lose it. The
+private reservation is discarded on restart, before any turn was sent, so the
+original queued work remains available. Edits or a newer reservation invalidate
+an older prepared admission.
+
+Provider admissions share a tracked lifetime covering public sends, queued
+drains, provider loading, commit, and query registration. Shutdown closes that
+gate synchronously, cancels existing provider waits, and drains admitted
+boundaries before teardown. It does not wait for a full turn before cancelling
+the provider. Late SDK attachments are disposed rather than installed.
+Claude registration has its own owned completion signal; a stopped or
+superseded registration cannot launch a query or clear another owner's state.
+
+Queued SDK/Claude admissions retain a private handoff marker and existing
+uncertain-recovery text in the turn commit. A confirmed handoff clears that
+marker without redelivering work. Shutdown before handoff restores the exact
+committed queue entry and removes only its provisional transcript records.
+If that restoration cannot be saved, restart exposes the retained text as
+uncertain recovery instead of losing it or automatically replaying it.
+Settlement of an older handoff does not overwrite a newer owner's activity.
+
+Queue wake-ups are coalesced and scheduled only after reply and drain locks
+have been released. A typed stale-reservation rejection requests a fresh pass
+over the committed canonical FIFO; authentication/storage failures stop that
+pass until a new trigger. Completion and durable reply settlement are both
+triggers. Every pass rechecks ownership, pending cards, and stop/suspend/delete
+state before committing or dispatching work.
+
+`SessionStore.close()` fences new mutations and uploads, drains admitted
+writes, and checkpoints remaining streamed text. Provider teardown and
+owned-query cancellation precede that final storage boundary; late completion
+callbacks cannot publish updates or write into a closed store.
+
+Claude recovery submissions honor the `acknowledgesFailure` value forwarded by
+the provider router. `claimRecoveryPrompt()` compares it with the candidate's
+current recovery, appends exactly one retry to canonical FIFO, records token
+consumption, and clears only that recovery in one commit. The queue pump is
+woken only after that commit. This is durable queue acceptance, not a claim that
+an external provider received the retry. Plain direct sends retain their existing
+behavior. Subsequent queued handoffs use fresh recovery timestamps, so a consumed
+token cannot be reused for a later uncertain attempt.
+
+Claude startup distinguishes three outcomes: lookup failed before any query
+invocation, invocation outcome is uncertain before registration, and a registered
+query completed. The first restores the matching unstarted admission without
+calling `finishMessage()`; the second preserves explicit uncertain recovery
+without automatic replay; only the third uses ordinary completion cleanup.
+Restoration refuses to overwrite a newer active or registering owner. A failed
+restoration retains the original durable admission for a later retry or restart.
+
+Terminal queue delivery first atomically claims the exact FIFO head, moving its
+content into the existing uncertain-recovery record before any keystrokes are
+sent. A private `terminalQueueDispatch` identity hides that provisional recovery
+from the public snapshot while delivery is in flight. Completion clears the
+claim and records command feedback together. If completion persistence fails,
+the service retries only that write, with bounded backoff on its existing poll;
+it never repeats the terminal action. New delivery cannot consume an unresolved
+claim or overlap an admitted direct dispatch. A refused pre-delivery claim is
+retried even when no new terminal event arrives. If a delivered command's pane
+cannot be read, observation is retried rather than assuming a turn started;
+retried settlement rechecks current native work and overlay state, and the
+next claim cannot run into a working pane. Overlay closure is observed before
+continuing the FIFO. On restart an orphan
+claim becomes visible uncertain recovery, not a
+retryable queue item. Older runtimes also retain the existing recovery record.
+Settlement preserves a newer native completion or permission state instead of
+restoring the claim's obsolete running state.
+
+### Durable identity retirement
+
+Version-1 state can include an identifier-only `retiredSessionIds` ledger.
+Clear and delete record retirement in the same atomic write as the identity
+change, independently of any surviving session. Deleting the last replacement
+therefore cannot make an ancestor discoverable again when external provider
+cleanup failed. Direct creation, provider discovery, reads, and terminal
+recovery all reject or exclude retired identities.
+
+Legacy `replacedSessionIds` are indexed in memory without an eager file rewrite
+and retained by subsequent successful writes. Retirement lookups are cached by
+immutable snapshot array, so reads and streamed tokens do not scan the ledger.
+Rejected candidate writes never expose their retirement entries.
+
+The on-disk version and atomic-rename boundary remain unchanged, but the ledger
+is additive persistent metadata. A runtime predating retirement support can
+ignore it; rollout and rollback of this stateful change require explicit review
+rather than assuming an older binary preserves retirement.
+
 ## Pairing flow
 
 1. Install the second computer with `--role node`.

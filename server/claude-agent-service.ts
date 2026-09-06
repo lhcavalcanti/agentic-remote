@@ -809,6 +809,7 @@ export class ClaudeAgentService
     sessionId: string,
     content: string,
     enqueue = false,
+    acknowledgesFailure?: string,
   ): Promise<SessionDetail> {
     if (this.stopped) throw new Error('The session service is stopping')
     if (this.deletingSessions.has(sessionId)) {
@@ -816,14 +817,32 @@ export class ClaudeAgentService
       // ran a turn against a conversation on its way out.
       throw new Error('Session not found')
     }
-    return this.admissions.run(sessionId, () => this.admitSend(sessionId, content, enqueue))
+    return this.admissions.run(sessionId, () =>
+      this.admitSend(sessionId, content, enqueue, acknowledgesFailure))
   }
 
   private async admitSend(
     sessionId: string,
     content: string,
     enqueue: boolean,
+    acknowledgesFailure?: string,
   ): Promise<SessionDetail> {
+    if (acknowledgesFailure !== undefined) {
+      const text = content.trim()
+      if (!text) throw new Error('Message cannot be empty')
+      const queued = await this.store.claimRecoveryPrompt(sessionId, {
+        id: randomUUID(), content: text, createdAt: new Date().toISOString(),
+      }, acknowledgesFailure, (session) =>
+        !this.stopped && !this.deletingSessions.has(sessionId) &&
+        !this.suspendingSessions.has(sessionId) && !this.admissionClosed.has(sessionId) &&
+        (enqueue || Boolean(session.queuedPrompts?.length) ||
+          (session.status !== 'running' && session.status !== 'waiting' &&
+            !this.active.has(sessionId) && !this.startingQueries.has(sessionId))))
+      this.admissions.markCommitted(sessionId)
+      this.publish(queued)
+      this.wakeQueue(sessionId)
+      return queued
+    }
     if (this.admissionClosed.has(sessionId)) {
       // Resuming, and the prompt already queued has not been claimed yet, or a
       // drain has taken its prompt off and not yet marked the session running.
@@ -1343,7 +1362,10 @@ export class ClaudeAgentService
     const toolIds = new Set<string>()
     const registering = this.startingQueries.get(sessionId)
     const finishRegistration = this.startedQuery.get(sessionId)
+    const canFinishRegistration = () => !this.active.has(sessionId) &&
+      (!this.startingQueries.has(sessionId) || this.startingQueries.get(sessionId) === registering)
     let registered = false
+    let invocationStarted = false
     let aborted = false
     try {
       const hasProviderSession = Boolean(
@@ -1353,12 +1375,13 @@ export class ClaudeAgentService
           this.active.has(sessionId) || this.startingQueries.get(sessionId) !== registering) {
         aborted = true
         const admission = this.pendingQueueAdmissions.get(sessionId)
-        if (admission?.assistantId === assistantId) await this.settleQueueAdmission(sessionId)
-        else await this.store.cancelPromptAdmission(sessionId, assistantId, () => !this.active.has(sessionId))
+        if (admission?.assistantId === assistantId) await this.settleQueueAdmission(sessionId, canFinishRegistration)
+        else await this.store.cancelPromptAdmission(sessionId, assistantId, canFinishRegistration)
         return
       }
       const admission = this.pendingQueueAdmissions.get(sessionId)
       if (admission?.assistantId === assistantId) admission.started = true
+      invocationStarted = true
       const activeQuery = this.sdk.query({
         prompt,
         options: {
@@ -1421,14 +1444,34 @@ export class ClaudeAgentService
         dir: idle.cwd,
       }).catch(() => undefined)
     } catch (error) {
-      if (!this.store.get(sessionId) || (this.active.has(sessionId) && this.active.get(sessionId) !== owned)) {
+      if (!this.store.get(sessionId)) {
         return
       }
-      aborted = abortController.signal.aborted
       if (isClaudeAuthenticationError(error)) {
         this.available = false
         this.unavailableReason = 'Run claude auth login on this computer'
       }
+      if (!registered) {
+        // There is no completed turn to finish. In particular, finishMessage
+        // would erase the committed queue admission before it can be restored.
+        aborted = true
+        const detail = error instanceof Error ? error.message : String(error)
+        const message = invocationStarted
+          ? `Provider start outcome is uncertain: ${detail}. Inspect the conversation before retrying.`
+          : `Not sent: provider startup failed: ${detail}`
+        const admission = this.pendingQueueAdmissions.get(sessionId)
+        if (admission?.assistantId === assistantId) {
+          if (invocationStarted) admission.uncertain = message
+          await this.settleQueueAdmission(sessionId, canFinishRegistration)
+        } else {
+          await this.store.cancelPromptAdmission(sessionId, assistantId, canFinishRegistration, {
+            message, ...(invocationStarted ? { uncertain: true } : {}),
+          })
+        }
+        throw error
+      }
+      if (this.active.has(sessionId) && this.active.get(sessionId) !== owned) return
+      aborted = abortController.signal.aborted
       await this.store.finishMessage(sessionId, assistantId).catch(() => undefined)
       const failed = await this.store.updateIf(sessionId, (stored) => {
         if (owned && this.active.get(sessionId) !== owned) return false
@@ -1788,13 +1831,17 @@ export class ClaudeAgentService
     }
   }
 
-  private async settleQueueAdmission(sessionId: string): Promise<SessionDetail | undefined> {
+  private async settleQueueAdmission(
+    sessionId: string,
+    canBecomeIdle: () => boolean = () => !this.active.has(sessionId) && !this.startingQueries.has(sessionId),
+  ): Promise<SessionDetail | undefined> {
     const pending = this.pendingQueueAdmissions.get(sessionId)
     if (!pending) return
     if (pending.completion) return pending.completion
-    const completion = this.store.settleSdkQueueAdmission(
-      sessionId, pending.assistantId, pending.started, () => !this.active.has(sessionId),
-    ).then((session) => {
+    const settling = pending.uncertain
+      ? this.store.failSdkQueueAdmission(sessionId, pending.assistantId, pending.uncertain, canBecomeIdle)
+      : this.store.settleSdkQueueAdmission(sessionId, pending.assistantId, pending.started, canBecomeIdle)
+    const completion = settling.then((session) => {
       if (this.pendingQueueAdmissions.get(sessionId) === pending) {
         this.pendingQueueAdmissions.delete(sessionId)
       }

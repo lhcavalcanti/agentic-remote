@@ -4,6 +4,7 @@ import type { SessionDetail } from '../shared/contracts.js'
 export interface PendingQueueAdmission {
   assistantId: string
   started: boolean
+  uncertain?: string
   completion?: Promise<SessionDetail>
 }
 

@@ -79,6 +79,7 @@ interface StoredSession extends SessionDetail {
   queuedPromptReservation?: { id: string; promptId: string }
   sdkQueueAdmission?: SdkQueueAdmission
   transcriptEpoch?: string
+  lastClaimedRecovery?: string
 }
 
 interface PendingMutation {
@@ -132,6 +133,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     queuedPromptReservation: _queuedPromptReservation,
     sdkQueueAdmission,
     transcriptEpoch: _transcriptEpoch,
+    lastClaimedRecovery: _lastClaimedRecovery,
     contextCwd: _contextCwd,
     workspaceTitle: _workspaceTitle,
     executionMode: _executionMode,
@@ -215,6 +217,10 @@ export class SessionStore {
       if (session.transcriptEpoch !== undefined &&
           (typeof session.transcriptEpoch !== 'string' || !session.transcriptEpoch)) {
         throw new Error('Invalid transcript admission metadata')
+      }
+      if (session.lastClaimedRecovery !== undefined &&
+          (typeof session.lastClaimedRecovery !== 'string' || !session.lastClaimedRecovery)) {
+        throw new Error('Invalid recovery claim metadata')
       }
       session.provider ??= 'copilot'
       session.isOpen = session.managedOpen === true
@@ -818,10 +824,13 @@ export class SessionStore {
     isCurrent: () => boolean,
     reservation?: QueuedPromptReservation,
   ): Promise<SessionDetail> {
-    this.lastSdkAdmissionAt = Math.max(Date.now(), this.lastSdkAdmissionAt + 1)
-    const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
     const userId = randomUUID()
     return this.mutate(sessionId, (session) => {
+      this.lastSdkAdmissionAt = Math.max(
+        Date.now(), this.lastSdkAdmissionAt + 1,
+        (Date.parse(session.lastClaimedRecovery || '') || 0) + 1,
+      )
+      const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
       if (session.suspended) {
         throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409 })
       }
@@ -902,6 +911,7 @@ export class SessionStore {
     sessionId: string,
     assistantId: string,
     canBecomeIdle: () => boolean = () => true,
+    failure?: { message: string; uncertain?: boolean },
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const index = session.messages.findIndex((message) => message.id === assistantId)
@@ -909,15 +919,42 @@ export class SessionStore {
       const user = session.messages[index - 1]
       if (!assistant || assistant.role !== 'assistant' || user?.role !== 'user') return
       assistant.streaming = false
-      assistant.content = 'Not sent: the session service stopped before provider dispatch.'
+      assistant.content = failure?.message || 'Not sent: the session service stopped before provider dispatch.'
       if (canBecomeIdle()) {
         session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'idle'
         session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
       }
       if (!session.failedPrompt) {
-        session.failedPrompt = { content: user.content, failedAt: new Date().toISOString() }
+        const failedAt = new Date(Math.max(
+          Date.now(), (Date.parse(session.lastClaimedRecovery || '') || 0) + 1,
+        )).toISOString()
+        session.failedPrompt = {
+          content: user.content, failedAt, ...(failure?.uncertain ? { uncertain: true } : {}),
+        }
       }
     })
+  }
+
+  async failSdkQueueAdmission(
+    sessionId: string,
+    assistantId: string,
+    message: string,
+    canBecomeIdle: () => boolean = () => true,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const admission = session.sdkQueueAdmission!
+      if (session.failedPrompt?.failedAt === admission.startedAt) session.failedPrompt.uncertain = true
+      const assistant = session.messages.find((entry) => entry.id === assistantId)
+      if (assistant) {
+        assistant.streaming = false
+        assistant.content = message
+      }
+      session.sdkQueueAdmission = undefined
+      if (canBecomeIdle()) {
+        session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'error'
+        session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
+      }
+    }, (session) => session.sdkQueueAdmission?.assistantId === assistantId)
   }
 
   terminalQueueDispatch(sessionId: string): TerminalQueueDispatch | undefined {
@@ -1064,6 +1101,33 @@ export class SessionStore {
         (answers === undefined || session.failedPrompt.failedAt === answers)
       ) {
         session.failedPrompt = undefined
+      }
+    })
+  }
+
+  async claimRecoveryPrompt(
+    sessionId: string,
+    prompt: QueuedPrompt,
+    token: string,
+    isCurrent: (session: Readonly<SessionDetail>) => boolean,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (!token || session.failedPrompt?.failedAt !== token || session.lastClaimedRecovery === token) {
+        throw Object.assign(new Error('That recovery has already been handled or replaced; refresh before retrying.'), { statusCode: 409 })
+      }
+      if (session.terminalQueueDispatch || session.sdkQueueAdmission ||
+          session.suspended || !isCurrent(session)) {
+        throw Object.assign(new Error('The session changed before recovery admission; the recovery was not consumed.'), { statusCode: 409 })
+      }
+      // Consumption and retained work are one durable operation. A replay
+      // cannot append another copy or clear a different recovery.
+      session.queuedPrompts = [...(session.queuedPrompts || []), prompt]
+      session.queuedCount = session.queuedPrompts.length
+      session.lastClaimedRecovery = token
+      session.failedPrompt = undefined
+      if (session.status === 'error') {
+        session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'idle'
+        session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
       }
     })
   }

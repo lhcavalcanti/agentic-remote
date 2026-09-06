@@ -287,6 +287,17 @@ A durable reply settlement MUST wake eligible queued work after releasing its
 own locks, without clearing a newer question or dispatching from a stopped,
 suspended, deleting, or already-owned session.
 
+An explicit recovery token MUST match the current failed prompt. Accepting a
+token-bearing retry MUST atomically retain one canonical FIFO entry and consume
+that recovery, including retries requested while idle. Replayed or stale tokens
+MUST NOT dispatch or enqueue another copy, or clear a newer recovery. Unrelated
+ordinary sends MUST NOT consume recovery. A new uncertain provider-start outcome
+MUST remain explicitly uncertain; the supplied token is not proof of delivery.
+
+If provider lookup fails before a query is registered, its unstarted queued
+admission MUST be restored before completion cleanup can erase it. Refused
+restoration MUST retain durable recovery, and cleanup MUST preserve newer owners.
+
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
 

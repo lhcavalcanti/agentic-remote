@@ -216,6 +216,23 @@ writes, and checkpoints remaining streamed text. Provider teardown and
 owned-query cancellation precede that final storage boundary; late completion
 callbacks cannot publish updates or write into a closed store.
 
+Claude recovery submissions honor the `acknowledgesFailure` value forwarded by
+the provider router. `claimRecoveryPrompt()` compares it with the candidate's
+current recovery, appends exactly one retry to canonical FIFO, records token
+consumption, and clears only that recovery in one commit. The queue pump is
+woken only after that commit. This is durable queue acceptance, not a claim that
+an external provider received the retry. Plain direct sends retain their existing
+behavior. Subsequent queued handoffs use fresh recovery timestamps, so a consumed
+token cannot be reused for a later uncertain attempt.
+
+Claude startup distinguishes three outcomes: lookup failed before any query
+invocation, invocation outcome is uncertain before registration, and a registered
+query completed. The first restores the matching unstarted admission without
+calling `finishMessage()`; the second preserves explicit uncertain recovery
+without automatic replay; only the third uses ordinary completion cleanup.
+Restoration refuses to overwrite a newer active or registering owner. A failed
+restoration retains the original durable admission for a later retry or restart.
+
 Terminal queue delivery first atomically claims the exact FIFO head, moving its
 content into the existing uncertain-recovery record before any keystrokes are
 sent. A private `terminalQueueDispatch` identity hides that provisional recovery

@@ -375,6 +375,49 @@ describe('background shell stop reconciliation', () => {
     ])).toEqual(snapshot([current]))
   })
 
+  it.each(['inventory', 'native'])('keeps pending stop identity across equivalent %s timestamps', (source) => {
+    const equivalent = '2026-09-01T09:00:00.000+01:00'
+    const refreshed = source === 'inventory'
+      ? reportedShell('42', equivalent, 3)
+      : nativeStart('42', undefined, 3, 'shell_started', equivalent)
+    const result = snapshot([
+      ...launched('42'),
+      started('stop', 'stop_bash', { shellId: '42' }, 2),
+      refreshed,
+      completed('stop', stopAcknowledgement('42'), 4),
+    ])
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks[0].status).toBe('cancelled')
+  })
+
+  it.each(['inventory', 'native'])('keeps terminal state across equivalent %s timestamps', (source) => {
+    const equivalent = '2026-09-01T09:00:00.000+01:00'
+    const refreshed = source === 'inventory'
+      ? reportedShell('42', equivalent, 4)
+      : nativeStart('42', undefined, 4, 'shell_started', equivalent)
+    const result = snapshot([
+      ...launched('42'),
+      started('stop', 'stop_bash', { shellId: '42' }, 2),
+      completed('stop', stopAcknowledgement('42'), 3),
+      refreshed,
+    ])
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks[0]).toMatchObject({ status: 'cancelled', completedAt: '2026-09-01T08:00:03.000Z' })
+  })
+
+  it.each([
+    { refreshedStart: 'opaque-start', running: 0 },
+    { refreshedStart: 'different-opaque-start', running: 1 },
+  ])('uses only exact fallback identity for unparseable timestamps ($refreshedStart)', ({ refreshedStart, running }) => {
+    const result = snapshot([
+      reportedShell('42', 'opaque-start', 0),
+      started('stop', 'stop_bash', { shellId: '42' }, 2),
+      reportedShell('42', refreshedStart, 3),
+      completed('stop', stopAcknowledgement('42'), 4),
+    ])
+    expect(result.runningCount).toBe(running)
+  })
+
   it.each(['running', 'queued'])('does not revive a stopped shell from late %s metadata', (status) => {
     const events = launched('42')
     const acknowledgement = completed('stop', stopAcknowledgement('42'), 3)

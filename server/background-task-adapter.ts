@@ -886,6 +886,12 @@ function isOlderExecution(startedAt: string, current: BackgroundTask): boolean {
   return Date.parse(startedAt) < Date.parse(current.startedAt)
 }
 
+function sameExecutionStart(left: string, right: string): boolean {
+  if (left === right) return true
+  const instant = Date.parse(left)
+  return Number.isFinite(instant) && instant === Date.parse(right)
+}
+
 /**
  * Fold a fresh inventory row into the shell it refreshes.
  *
@@ -1248,7 +1254,7 @@ export function backgroundTasksFromEvents(
       const sameExecution =
         previous?.type === 'shell' &&
         reported.type === 'shell' &&
-        previous.startedAt === reported.startedAt
+        sameExecutionStart(previous.startedAt, reported.startedAt)
       let current = reported
       if (sameExecution && previous) {
         // Refreshing the same runtime record is not a new execution, so its
@@ -1354,7 +1360,7 @@ export function backgroundTasksFromEvents(
             const sameExecution =
               !startedBy && destination?.type === 'shell' &&
               reportedStartedAt !== undefined &&
-              destination.startedAt === reportedStartedAt
+              sameExecutionStart(destination.startedAt, reportedStartedAt)
             if (sameExecution && destination) {
               destination.executionMode = 'background'
               if (attachmentMode === 'detached') destination.attachmentMode = 'detached'

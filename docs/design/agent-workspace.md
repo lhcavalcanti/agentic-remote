@@ -71,6 +71,8 @@ An accepted binding can introduce a folder created by another client after
 this tab loaded its catalog. Older catalog responses cannot replace newer
 entries or revive a removed folder or pairing. Unavailable root snapshots
 remain recognizable but never become browsable catalog entries.
+Fresh, explicit folder additions are validated against pairing and removal
+lifetimes separately from delayed binding observations.
 
 Once clear succeeds, its replacement session is returned even if carrying
 Knowledge or notification metadata fails. The failure is logged and shown

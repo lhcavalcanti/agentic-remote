@@ -625,6 +625,40 @@ describe('App', () => {
     })).not.toBeInTheDocument()
   })
 
+  it('rejects an explicit root add overtaken by that root being removed', async () => {
+    const added = { ...knowledgeRoot, id: 'added-root', name: 'Removed during add', path: session.cwd }
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    let finishAdding!: (root: KnowledgeRoot) => void
+    vi.mocked(addKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishAdding = resolve }))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('tree')
+    fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+    const add = within(dialog).getByRole('button', { name: 'Add this folder' })
+    await waitFor(() => expect(add).toBeEnabled())
+    fireEvent.click(add)
+    await waitFor(() => expect(addKnowledgeRoot).toHaveBeenCalledOnce())
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id,
+          binding: {
+            computerId: computer.id, sessionId: session.id, rootId: added.id,
+            root: added, revision: 2, available: false,
+          },
+        }),
+      } as MessageEvent)
+      finishAdding(added)
+    })
+    expect(within(dialog).getByText(
+      'This Knowledge folder was removed while it was being added. Choose the folder again.',
+    )).toBeVisible()
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])('does not import an unpaired root from a late available binding (paired again: %s)', async (repaired) => {
     const remoteRoot = { ...knowledgeRoot, computerId: secondComputer.id, computerName: secondComputer.name }
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])

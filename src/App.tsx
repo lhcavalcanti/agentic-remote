@@ -6922,7 +6922,11 @@ function App() {
   // on its way can be discarded rather than restoring what was removed.
   const forgottenComputers = useRef(new Set<string>())
   const knowledgeComputerLifetimes = useRef(new Map<string, number>())
-  const removedKnowledgeRoots = useRef(new Set<string>())
+  const removedKnowledgeRoots = useRef(new Map<string, number>())
+  const knowledgeRootRemovalSequence = useRef(0)
+  const markKnowledgeRootRemoved = useCallback((rootId: string) => {
+    removedKnowledgeRoots.current.set(rootId, ++knowledgeRootRemovalSequence.current)
+  }, [])
   const knowledgeCatalogRequest = useRef(0)
   useEffect(() => {
     activeRootIdRef.current = activeRootId
@@ -7539,7 +7543,7 @@ function App() {
   const acceptKnowledgeRoot = useCallback((binding: SessionKnowledgeBinding) => {
     if (!binding.rootId) return
     if (!binding.available) {
-      removedKnowledgeRoots.current.add(binding.rootId)
+      markKnowledgeRootRemoved(binding.rootId)
       setRoots((current) => current.some((root) => root.id === binding.rootId)
         ? current.filter((root) => root.id !== binding.rootId) : current)
       return
@@ -7553,7 +7557,7 @@ function App() {
     ) return
     setRoots((current) => current.some((entry) => entry.id === root.id)
       ? current : [structuredClone(root), ...current])
-  }, [setRoots])
+  }, [markKnowledgeRootRemoved, setRoots])
   const sessionKnowledgeRoot = useSessionKnowledgeRoot(selected, knowledgeMode !== 'hidden', acceptKnowledgeRoot)
   const sessionKnowledgeRootRef = useRef(sessionKnowledgeRoot)
   sessionKnowledgeRootRef.current = sessionKnowledgeRoot
@@ -8532,7 +8536,7 @@ function App() {
     const changedIds = new Set(changed.map((root) => root.id))
     const liveIds = new Set(live.map((root) => root.id))
     for (const id of before.keys()) {
-      if (!liveIds.has(id) && !changedIds.has(id)) removedKnowledgeRoots.current.add(id)
+      if (!liveIds.has(id) && !changedIds.has(id)) markKnowledgeRootRemoved(id)
     }
     const reconciled = [...changed, ...live.filter((root) => !changedIds.has(root.id))]
     setRoots(reconciled)
@@ -8542,7 +8546,7 @@ function App() {
       setActiveRootId(root?.id)
     }
     knowledgeHydrated.current = true
-  }, [setRoots])
+  }, [markKnowledgeRootRemoved, setRoots])
 
   useEffect(() => {
     void loadKnowledgeRoots().catch((caught: unknown) =>
@@ -11076,7 +11080,7 @@ function App() {
 
   async function removeRoot(rootId: string) {
     await deleteKnowledgeRoot(rootId)
-    removedKnowledgeRoots.current.add(rootId)
+    markKnowledgeRootRemoved(rootId)
     setRoots((current) => current.filter((root) => root.id !== rootId))
     sessionKnowledgeRoot.refresh()
     if (rootId === activeRootId) {
@@ -11102,6 +11106,7 @@ function App() {
       throw new Error('Wait for this session\'s saved root to load before adding a folder.')
     }
     const lifetime = knowledgeComputerLifetimes.current.get(computerId) || 0
+    const removalSequence = knowledgeRootRemovalSequence.current
     const root = await addKnowledgeRoot({ computerId, path })
     // Adding a root is a round trip, and the computer can be unpaired while
     // it is in flight. The hub drops the root in that case, so accepting this
@@ -11112,9 +11117,12 @@ function App() {
     ) {
       throw new Error('The computer pairing changed while adding this folder. Choose the computer again.')
     }
-    if (removedKnowledgeRoots.current.has(root.id)) {
+    if ((removedKnowledgeRoots.current.get(root.id) || 0) > removalSequence) {
       throw new Error('This Knowledge folder was removed while it was being added. Choose the folder again.')
     }
+    // An explicit add has revalidated the folder in this pairing. Earlier
+    // removals block stale observations, not a new deliberate add.
+    removedKnowledgeRoots.current.delete(root.id)
     setRoots((current) =>
       current.some((entry) => entry.id === root.id)
         ? current
@@ -11197,7 +11205,7 @@ function App() {
         .filter((root) => root.computerId === computerId)
         .map((root) => root.id),
     )
-    for (const id of orphaned) removedKnowledgeRoots.current.add(id)
+    for (const id of orphaned) markKnowledgeRootRemoved(id)
     setRoots((current) =>
       current.filter((root) => root.computerId !== computerId),
     )

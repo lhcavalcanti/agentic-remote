@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "62e2c7ce2558f6fe0372226deb03f0f96cb719f8",
+  "built_at_commit": "4d21df0f5127b1c756b40af644ca68358b2ccea1",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -67864,7 +67864,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7191",
+      "source_location": "L7195",
       "target": "src_accent_icon_accenticonurl",
       "weight": 1.0
     },
@@ -67876,7 +67876,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8680",
+      "source_location": "L8684",
       "target": "src_accent_icon_applyaccenticon",
       "weight": 1.0
     },
@@ -67888,7 +67888,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11105",
+      "source_location": "L11110",
       "target": "src_api_addknowledgeroot",
       "weight": 1.0
     },
@@ -67900,7 +67900,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11246",
+      "source_location": "L11254",
       "target": "src_api_cancelbackgroundtask",
       "weight": 1.0
     },
@@ -67912,7 +67912,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12830",
+      "source_location": "L12838",
       "target": "src_api_cancelsession",
       "weight": 1.0
     },
@@ -67924,7 +67924,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12414",
+      "source_location": "L12422",
       "target": "src_api_clearconversation",
       "weight": 1.0
     },
@@ -67936,7 +67936,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11078",
+      "source_location": "L11082",
       "target": "src_api_deleteknowledgeroot",
       "weight": 1.0
     },
@@ -67948,7 +67948,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12853",
+      "source_location": "L12861",
       "target": "src_api_deletesession",
       "weight": 1.0
     },
@@ -67960,7 +67960,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12229",
+      "source_location": "L12237",
       "target": "src_api_dispatchqueuedprompt",
       "weight": 1.0
     },
@@ -67972,7 +67972,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10514",
+      "source_location": "L10518",
       "target": "src_api_executecommand",
       "weight": 1.0
     },
@@ -67984,7 +67984,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7923",
+      "source_location": "L7927",
       "target": "src_api_getpushsettings",
       "weight": 1.0
     },
@@ -67996,7 +67996,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9024",
+      "source_location": "L9028",
       "target": "src_api_getsession",
       "weight": 1.0
     },
@@ -68008,7 +68008,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7838",
+      "source_location": "L7842",
       "target": "src_api_listbackgroundtasks",
       "weight": 1.0
     },
@@ -68020,7 +68020,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9105",
+      "source_location": "L9109",
       "target": "src_api_listcommands",
       "weight": 1.0
     },
@@ -68032,7 +68032,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8857",
+      "source_location": "L8861",
       "target": "src_api_listcomputers",
       "weight": 1.0
     },
@@ -68044,7 +68044,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10771",
+      "source_location": "L10775",
       "target": "src_api_listknowledgeentries",
       "weight": 1.0
     },
@@ -68056,7 +68056,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8518",
+      "source_location": "L8522",
       "target": "src_api_listknowledgeroots",
       "weight": 1.0
     },
@@ -68068,7 +68068,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8857",
+      "source_location": "L8861",
       "target": "src_api_listsessionlisting",
       "weight": 1.0
     },
@@ -68080,7 +68080,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12555",
+      "source_location": "L12563",
       "target": "src_api_movesessiontotmux",
       "weight": 1.0
     },
@@ -68092,7 +68092,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10742",
+      "source_location": "L10746",
       "target": "src_api_readknowledgefile",
       "weight": 1.0
     },
@@ -68104,7 +68104,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12371",
+      "source_location": "L12379",
       "target": "src_api_removequeuedprompt",
       "weight": 1.0
     },
@@ -68116,7 +68116,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12316",
+      "source_location": "L12324",
       "target": "src_api_reorderqueuedprompts",
       "weight": 1.0
     },
@@ -68128,7 +68128,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12788",
+      "source_location": "L12796",
       "target": "src_api_replypermission",
       "weight": 1.0
     },
@@ -68140,7 +68140,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12809",
+      "source_location": "L12817",
       "target": "src_api_replyuserinput",
       "weight": 1.0
     },
@@ -68152,7 +68152,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12528",
+      "source_location": "L12536",
       "target": "src_api_restartsession",
       "weight": 1.0
     },
@@ -68164,7 +68164,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12497",
+      "source_location": "L12505",
       "target": "src_api_resumesession",
       "weight": 1.0
     },
@@ -68176,7 +68176,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11472",
+      "source_location": "L11480",
       "target": "src_api_sendmessage",
       "weight": 1.0
     },
@@ -68188,7 +68188,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12901",
+      "source_location": "L12909",
       "target": "src_api_setsessionnotificationsmuted",
       "weight": 1.0
     },
@@ -68200,7 +68200,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12498",
+      "source_location": "L12506",
       "target": "src_api_suspendsession",
       "weight": 1.0
     },
@@ -68212,7 +68212,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11569",
+      "source_location": "L11577",
       "target": "src_api_transcribeaudio",
       "weight": 1.0
     },
@@ -68224,7 +68224,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12112",
+      "source_location": "L12120",
       "target": "src_api_updatequeuedprompt",
       "weight": 1.0
     },
@@ -68236,7 +68236,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11704",
+      "source_location": "L11712",
       "target": "src_api_uploadsessionfile",
       "weight": 1.0
     },
@@ -68248,7 +68248,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10494",
+      "source_location": "L10498",
       "target": "src_api_validatesessiondirectory",
       "weight": 1.0
     },
@@ -68260,7 +68260,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12802",
+      "source_location": "L12810",
       "target": "src_app_app_answeruserinput",
       "weight": 1.0
     },
@@ -68271,7 +68271,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10210",
+      "source_location": "L10214",
       "target": "src_app_app_appendcomposerforkey",
       "weight": 1.0
     },
@@ -68282,7 +68282,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12750",
+      "source_location": "L12758",
       "target": "src_app_app_appkeydown",
       "weight": 1.0
     },
@@ -68294,7 +68294,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11135",
+      "source_location": "L11143",
       "target": "src_app_app_applycomputersnapshot",
       "weight": 1.0
     },
@@ -68306,7 +68306,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12880",
+      "source_location": "L12888",
       "target": "src_app_app_applypwaupdate",
       "weight": 1.0
     },
@@ -68318,7 +68318,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10678",
+      "source_location": "L10682",
       "target": "src_app_app_applyrootchoice",
       "weight": 1.0
     },
@@ -68329,7 +68329,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11979",
+      "source_location": "L11987",
       "target": "src_app_app_applysession",
       "weight": 1.0
     },
@@ -68340,7 +68340,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11786",
+      "source_location": "L11794",
       "target": "src_app_app_askaboutknowledgefile",
       "weight": 1.0
     },
@@ -68351,7 +68351,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11730",
+      "source_location": "L11738",
       "target": "src_app_app_attachedfiles",
       "weight": 1.0
     },
@@ -68362,7 +68362,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11750",
+      "source_location": "L11758",
       "target": "src_app_app_audiodropped",
       "weight": 1.0
     },
@@ -68373,7 +68373,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11743",
+      "source_location": "L11751",
       "target": "src_app_app_audiofilechanged",
       "weight": 1.0
     },
@@ -68385,7 +68385,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10670",
+      "source_location": "L10674",
       "target": "src_app_app_beginrootcreation",
       "weight": 1.0
     },
@@ -68396,7 +68396,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10898",
+      "source_location": "L10902",
       "target": "src_app_app_cancelknowledgerestore",
       "weight": 1.0
     },
@@ -68407,7 +68407,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11892",
+      "source_location": "L11900",
       "target": "src_app_app_cancelqueuedpromptedit",
       "weight": 1.0
     },
@@ -68419,7 +68419,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11237",
+      "source_location": "L11245",
       "target": "src_app_app_cancelselectedbackgroundtask",
       "weight": 1.0
     },
@@ -68430,7 +68430,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12967",
+      "source_location": "L12975",
       "target": "src_app_app_changesessionsort",
       "weight": 1.0
     },
@@ -68442,7 +68442,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12397",
+      "source_location": "L12405",
       "target": "src_app_app_clearselectedconversation",
       "weight": 1.0
     },
@@ -68453,7 +68453,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10663",
+      "source_location": "L10667",
       "target": "src_app_app_closerootpicker",
       "weight": 1.0
     },
@@ -68465,7 +68465,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12840",
+      "source_location": "L12848",
       "target": "src_app_app_closeselectedsession",
       "weight": 1.0
     },
@@ -68477,7 +68477,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10584",
+      "source_location": "L10588",
       "target": "src_app_app_closetopmostlayer",
       "weight": 1.0
     },
@@ -68488,7 +68488,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10912",
+      "source_location": "L10916",
       "target": "src_app_app_collapseknowledgetree",
       "weight": 1.0
     },
@@ -68500,7 +68500,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7428",
+      "source_location": "L7432",
       "target": "src_app_app_commitsidebarwidth",
       "weight": 1.0
     },
@@ -68511,7 +68511,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9767",
+      "source_location": "L9771",
       "target": "src_app_app_composerbeforeinput",
       "weight": 1.0
     },
@@ -68523,7 +68523,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9774",
+      "source_location": "L9778",
       "target": "src_app_app_composerchanged",
       "weight": 1.0
     },
@@ -68534,7 +68534,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12640",
+      "source_location": "L12648",
       "target": "src_app_app_composerkeydown",
       "weight": 1.0
     },
@@ -68545,7 +68545,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12572",
+      "source_location": "L12580",
       "target": "src_app_app_composerpasted",
       "weight": 1.0
     },
@@ -68556,7 +68556,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11308",
+      "source_location": "L11316",
       "target": "src_app_app_created",
       "weight": 1.0
     },
@@ -68567,7 +68567,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11092",
+      "source_location": "L11096",
       "target": "src_app_app_createroot",
       "weight": 1.0
     },
@@ -68578,7 +68578,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10560",
+      "source_location": "L10564",
       "target": "src_app_app_drawerisoverlay",
       "weight": 1.0
     },
@@ -68590,7 +68590,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8683",
+      "source_location": "L8687",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -68602,7 +68602,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11849",
+      "source_location": "L11857",
       "target": "src_app_app_editqueuedprompt",
       "weight": 1.0
     },
@@ -68613,7 +68613,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9822",
+      "source_location": "L9826",
       "target": "src_app_app_failurestampfor",
       "weight": 1.0
     },
@@ -68624,7 +68624,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10403",
+      "source_location": "L10407",
       "target": "src_app_app_focuscomposer",
       "weight": 1.0
     },
@@ -68635,7 +68635,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9691",
+      "source_location": "L9695",
       "target": "src_app_app_followlatest",
       "weight": 1.0
     },
@@ -68647,7 +68647,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11182",
+      "source_location": "L11190",
       "target": "src_app_app_forgetcomputerknowledge",
       "weight": 1.0
     },
@@ -68658,7 +68658,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10280",
+      "source_location": "L10284",
       "target": "src_app_app_forgetknowledgesession",
       "weight": 1.0
     },
@@ -68669,7 +68669,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11840",
+      "source_location": "L11848",
       "target": "src_app_app_forgetqueuededit",
       "weight": 1.0
     },
@@ -68681,7 +68681,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10008",
+      "source_location": "L10012",
       "target": "src_app_app_forgetrestoreddraft",
       "weight": 1.0
     },
@@ -68693,7 +68693,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12915",
+      "source_location": "L12923",
       "target": "src_app_app_handledragend",
       "weight": 1.0
     },
@@ -68704,7 +68704,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12627",
+      "source_location": "L12635",
       "target": "src_app_app_insertcomposernewline",
       "weight": 1.0
     },
@@ -68716,7 +68716,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11760",
+      "source_location": "L11768",
       "target": "src_app_app_insertworkspacefile",
       "weight": 1.0
     },
@@ -68727,7 +68727,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12002",
+      "source_location": "L12010",
       "target": "src_app_app_iswebonlycommand",
       "weight": 1.0
     },
@@ -68738,7 +68738,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10927",
+      "source_location": "L10931",
       "target": "src_app_app_knowledgetreekeydown",
       "weight": 1.0
     },
@@ -68749,7 +68749,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12015",
+      "source_location": "L12023",
       "target": "src_app_app_knowncommand",
       "weight": 1.0
     },
@@ -68760,7 +68760,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10814",
+      "source_location": "L10818",
       "target": "src_app_app_loadknowledgechain",
       "weight": 1.0
     },
@@ -68772,7 +68772,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10746",
+      "source_location": "L10750",
       "target": "src_app_app_loadknowledgefolder",
       "weight": 1.0
     },
@@ -68784,7 +68784,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12358",
+      "source_location": "L12366",
       "target": "src_app_app_managequeuedprompt",
       "weight": 1.0
     },
@@ -68795,7 +68795,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10373",
+      "source_location": "L10377",
       "target": "src_app_app_migratesessionstate",
       "weight": 1.0
     },
@@ -68806,7 +68806,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10239",
+      "source_location": "L10243",
       "target": "src_app_app_movecomposerdraft",
       "weight": 1.0
     },
@@ -68817,7 +68817,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10307",
+      "source_location": "L10311",
       "target": "src_app_app_moveknowledgeposition",
       "weight": 1.0
     },
@@ -68828,7 +68828,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10033",
+      "source_location": "L10037",
       "target": "src_app_app_moverestoreddraft",
       "weight": 1.0
     },
@@ -68840,7 +68840,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12537",
+      "source_location": "L12545",
       "target": "src_app_app_moveselectedsessiontotmux",
       "weight": 1.0
     },
@@ -68852,7 +68852,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10477",
+      "source_location": "L10481",
       "target": "src_app_app_movesessiontobrowsedfolder",
       "weight": 1.0
     },
@@ -68863,7 +68863,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10136",
+      "source_location": "L10140",
       "target": "src_app_app_navigatemessagehistory",
       "weight": 1.0
     },
@@ -68875,7 +68875,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11220",
+      "source_location": "L11228",
       "target": "src_app_app_openbackgroundtasks",
       "weight": 1.0
     },
@@ -68887,7 +68887,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10989",
+      "source_location": "L10993",
       "target": "src_app_app_openknowledgefile",
       "weight": 1.0
     },
@@ -68899,7 +68899,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10863",
+      "source_location": "L10867",
       "target": "src_app_app_openknowledgefolder",
       "weight": 1.0
     },
@@ -68910,7 +68910,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10644",
+      "source_location": "L10648",
       "target": "src_app_app_openrootpicker",
       "weight": 1.0
     },
@@ -68922,7 +68922,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10639",
+      "source_location": "L10643",
       "target": "src_app_app_opensidebar",
       "weight": 1.0
     },
@@ -68933,7 +68933,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11231",
+      "source_location": "L11239",
       "target": "src_app_app_opentasksforsession",
       "weight": 1.0
     },
@@ -68944,7 +68944,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8690",
+      "source_location": "L8694",
       "target": "src_app_app_persistcomposerdrafts",
       "weight": 1.0
     },
@@ -68955,7 +68955,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10020",
+      "source_location": "L10024",
       "target": "src_app_app_persistcomposerrecoveryidentity",
       "weight": 1.0
     },
@@ -68966,7 +68966,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12025",
+      "source_location": "L12033",
       "target": "src_app_app_queuededitsubmission",
       "weight": 1.0
     },
@@ -68978,7 +68978,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12265",
+      "source_location": "L12273",
       "target": "src_app_app_queuedragended",
       "weight": 1.0
     },
@@ -68990,7 +68990,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10918",
+      "source_location": "L10922",
       "target": "src_app_app_refreshknowledgefolder",
       "weight": 1.0
     },
@@ -69001,7 +69001,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11587",
+      "source_location": "L11595",
       "target": "src_app_app_releaserecording",
       "weight": 1.0
     },
@@ -69012,7 +69012,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9750",
+      "source_location": "L9754",
       "target": "src_app_app_remembercomposeredit",
       "weight": 1.0
     },
@@ -69023,7 +69023,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9996",
+      "source_location": "L10000",
       "target": "src_app_app_rememberrestoreddraft",
       "weight": 1.0
     },
@@ -69035,7 +69035,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11077",
+      "source_location": "L11081",
       "target": "src_app_app_removeroot",
       "weight": 1.0
     },
@@ -69047,7 +69047,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9895",
+      "source_location": "L9899",
       "target": "src_app_app_removeuntouchedrecovery",
       "weight": 1.0
     },
@@ -69058,7 +69058,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9827",
+      "source_location": "L9831",
       "target": "src_app_app_reofferfailedprompt",
       "weight": 1.0
     },
@@ -69069,7 +69069,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9726",
+      "source_location": "L9730",
       "target": "src_app_app_replacecomposer",
       "weight": 1.0
     },
@@ -69081,7 +69081,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12780",
+      "source_location": "L12788",
       "target": "src_app_app_replytopermission",
       "weight": 1.0
     },
@@ -69092,7 +69092,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8819",
+      "source_location": "L8823",
       "target": "src_app_app_reportcomposerstoragefailure",
       "weight": 1.0
     },
@@ -69103,7 +69103,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10132",
+      "source_location": "L10136",
       "target": "src_app_app_resetcomposerhistory",
       "weight": 1.0
     },
@@ -69115,7 +69115,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12520",
+      "source_location": "L12528",
       "target": "src_app_app_restartselectedsession",
       "weight": 1.0
     },
@@ -69126,7 +69126,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10191",
+      "source_location": "L10195",
       "target": "src_app_app_restorecomposersubmission",
       "weight": 1.0
     },
@@ -69137,7 +69137,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9842",
+      "source_location": "L9846",
       "target": "src_app_app_restorefailedprompt",
       "weight": 1.0
     },
@@ -69149,7 +69149,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10720",
+      "source_location": "L10724",
       "target": "src_app_app_retrysessionknowledge",
       "weight": 1.0
     },
@@ -69161,7 +69161,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12103",
+      "source_location": "L12111",
       "target": "src_app_app_savequeuedpromptedit",
       "weight": 1.0
     },
@@ -69173,7 +69173,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12567",
+      "source_location": "L12575",
       "target": "src_app_app_selectcommand",
       "weight": 1.0
     },
@@ -69185,7 +69185,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11035",
+      "source_location": "L11039",
       "target": "src_app_app_selectroot",
       "weight": 1.0
     },
@@ -69196,7 +69196,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11213",
+      "source_location": "L11221",
       "target": "src_app_app_selectsession",
       "weight": 1.0
     },
@@ -69207,7 +69207,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12188",
+      "source_location": "L12196",
       "target": "src_app_app_sendqueuedpromptedit",
       "weight": 1.0
     },
@@ -69218,7 +69218,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9736",
+      "source_location": "L9740",
       "target": "src_app_app_setcomposer",
       "weight": 1.0
     },
@@ -69229,7 +69229,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10113",
+      "source_location": "L10117",
       "target": "src_app_app_setcomposerforkey",
       "weight": 1.0
     },
@@ -69241,7 +69241,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9683",
+      "source_location": "L9687",
       "target": "src_app_app_setfollowslatest",
       "weight": 1.0
     },
@@ -69253,7 +69253,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10525",
+      "source_location": "L10529",
       "target": "src_app_app_setknowledgemode",
       "weight": 1.0
     },
@@ -69265,7 +69265,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10569",
+      "source_location": "L10573",
       "target": "src_app_app_shortcutkeys",
       "weight": 1.0
     },
@@ -69276,7 +69276,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7463",
+      "source_location": "L7467",
       "target": "src_app_app_sidebarresizeend",
       "weight": 1.0
     },
@@ -69287,7 +69287,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7476",
+      "source_location": "L7480",
       "target": "src_app_app_sidebarresizekeydown",
       "weight": 1.0
     },
@@ -69298,7 +69298,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7448",
+      "source_location": "L7452",
       "target": "src_app_app_sidebarresizemove",
       "weight": 1.0
     },
@@ -69309,7 +69309,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7434",
+      "source_location": "L7438",
       "target": "src_app_app_sidebarresizestart",
       "weight": 1.0
     },
@@ -69320,7 +69320,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11289",
+      "source_location": "L11297",
       "target": "src_app_app_sidebartouchend",
       "weight": 1.0
     },
@@ -69331,7 +69331,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11261",
+      "source_location": "L11269",
       "target": "src_app_app_sidebartouchstart",
       "weight": 1.0
     },
@@ -69343,7 +69343,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11601",
+      "source_location": "L11609",
       "target": "src_app_app_startrecording",
       "weight": 1.0
     },
@@ -69355,7 +69355,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10732",
+      "source_location": "L10736",
       "target": "src_app_app_stepsession",
       "weight": 1.0
     },
@@ -69366,7 +69366,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11988",
+      "source_location": "L11996",
       "target": "src_app_app_stilllisted",
       "weight": 1.0
     },
@@ -69378,7 +69378,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11686",
+      "source_location": "L11694",
       "target": "src_app_app_stoprecording",
       "weight": 1.0
     },
@@ -69390,7 +69390,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12823",
+      "source_location": "L12831",
       "target": "src_app_app_stopselectedsession",
       "weight": 1.0
     },
@@ -69402,7 +69402,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11316",
+      "source_location": "L11324",
       "target": "src_app_app_submitmessage",
       "weight": 1.0
     },
@@ -69413,7 +69413,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9667",
+      "source_location": "L9671",
       "target": "src_app_app_timelinescrolled",
       "weight": 1.0
     },
@@ -69425,7 +69425,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10633",
+      "source_location": "L10637",
       "target": "src_app_app_toggleknowledgeexpanded",
       "weight": 1.0
     },
@@ -69437,7 +69437,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10835",
+      "source_location": "L10839",
       "target": "src_app_app_toggleknowledgefolder",
       "weight": 1.0
     },
@@ -69449,7 +69449,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10629",
+      "source_location": "L10633",
       "target": "src_app_app_toggleknowledgepanel",
       "weight": 1.0
     },
@@ -69461,7 +69461,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12894",
+      "source_location": "L12902",
       "target": "src_app_app_toggleselectedsessionmute",
       "weight": 1.0
     },
@@ -69473,7 +69473,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12483",
+      "source_location": "L12491",
       "target": "src_app_app_toggleselectedsessionsuspended",
       "weight": 1.0
     },
@@ -69484,7 +69484,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11558",
+      "source_location": "L11566",
       "target": "src_app_app_transcribefile",
       "weight": 1.0
     },
@@ -69496,7 +69496,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10063",
+      "source_location": "L10067",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -69507,7 +69507,7 @@
       "relation": "contains",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11696",
+      "source_location": "L11704",
       "target": "src_app_app_uploadfile",
       "weight": 1.0
     },
@@ -69519,7 +69519,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8082",
+      "source_location": "L8086",
       "target": "src_app_bindingmatches",
       "weight": 1.0
     },
@@ -69531,7 +69531,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8486",
+      "source_location": "L8490",
       "target": "src_app_clearstored",
       "weight": 1.0
     },
@@ -69543,7 +69543,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L14052",
+      "source_location": "L14060",
       "target": "src_app_compacttokens",
       "weight": 1.0
     },
@@ -69555,7 +69555,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7744",
+      "source_location": "L7748",
       "target": "src_app_computerproviders",
       "weight": 1.0
     },
@@ -69567,7 +69567,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7686",
+      "source_location": "L7690",
       "target": "src_app_hascomposeracceptancereceipt",
       "weight": 1.0
     },
@@ -69579,7 +69579,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8075",
+      "source_location": "L8079",
       "target": "src_app_iseditabletarget",
       "weight": 1.0
     },
@@ -69591,7 +69591,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8192",
+      "source_location": "L8196",
       "target": "src_app_knowledgetreevisible",
       "weight": 1.0
     },
@@ -69603,7 +69603,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L13763",
+      "source_location": "L13771",
       "target": "src_app_phoneentercreatesnewline",
       "weight": 1.0
     },
@@ -69627,7 +69627,7 @@
       "relation": "indirect_call",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7173",
+      "source_location": "L7177",
       "target": "src_app_readaccenttheme",
       "weight": 1.0
     },
@@ -69663,7 +69663,7 @@
       "relation": "indirect_call",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7168",
+      "source_location": "L7172",
       "target": "src_app_readdefaultruntimesettings",
       "weight": 1.0
     },
@@ -69675,7 +69675,7 @@
       "relation": "indirect_call",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7171",
+      "source_location": "L7175",
       "target": "src_app_readdefaultsessionfolders",
       "weight": 1.0
     },
@@ -69687,7 +69687,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7045",
+      "source_location": "L7049",
       "target": "src_app_readselectionfromlocation",
       "weight": 1.0
     },
@@ -69711,7 +69711,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7149",
+      "source_location": "L7153",
       "target": "src_app_readstoredshortcuts",
       "weight": 1.0
     },
@@ -69723,7 +69723,7 @@
       "relation": "indirect_call",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7124",
+      "source_location": "L7128",
       "target": "src_app_readstoredsidebarwidth",
       "weight": 1.0
     },
@@ -69735,7 +69735,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L13914",
+      "source_location": "L13922",
       "target": "src_app_recordingduration",
       "weight": 1.0
     },
@@ -69747,7 +69747,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7764",
+      "source_location": "L7768",
       "target": "src_app_slashshortcut",
       "weight": 1.0
     },
@@ -69759,7 +69759,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8911",
+      "source_location": "L8915",
       "target": "src_app_sortsessions",
       "weight": 1.0
     },
@@ -69771,7 +69771,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7749",
+      "source_location": "L7753",
       "target": "src_app_supportsbackgroundtasks",
       "weight": 1.0
     },
@@ -69783,7 +69783,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9526",
+      "source_location": "L9530",
       "target": "src_app_upsertcomputer",
       "weight": 1.0
     },
@@ -69795,7 +69795,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8893",
+      "source_location": "L8897",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -69807,7 +69807,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11969",
+      "source_location": "L11977",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -69819,7 +69819,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7947",
+      "source_location": "L7951",
       "target": "src_app_writestored",
       "weight": 1.0
     },
@@ -69831,7 +69831,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7175",
+      "source_location": "L7179",
       "target": "src_appearance_appearancefrom",
       "weight": 1.0
     },
@@ -69843,7 +69843,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9705",
+      "source_location": "L9709",
       "target": "src_composer_sizing_composermaximumheight",
       "weight": 1.0
     },
@@ -69855,7 +69855,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L8361",
+      "source_location": "L8365",
       "target": "src_knowledge_restore_knowledgerestoreaction",
       "weight": 1.0
     },
@@ -69867,7 +69867,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10846",
+      "source_location": "L10850",
       "target": "src_knowledge_tree_collapseknowledgefolder",
       "weight": 1.0
     },
@@ -69879,7 +69879,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10856",
+      "source_location": "L10860",
       "target": "src_knowledge_tree_expandknowledgefolder",
       "weight": 1.0
     },
@@ -69891,7 +69891,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L13138",
+      "source_location": "L13146",
       "target": "src_knowledge_tree_knowledgecrumbs",
       "weight": 1.0
     },
@@ -69903,7 +69903,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10820",
+      "source_location": "L10824",
       "target": "src_knowledge_tree_knowledgepathchain",
       "weight": 1.0
     },
@@ -69915,7 +69915,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7091",
+      "source_location": "L7095",
       "target": "src_knowledge_tree_knowledgetreerows",
       "weight": 1.0
     },
@@ -69927,7 +69927,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12887",
+      "source_location": "L12895",
       "target": "src_pwa_activatepwaupdate",
       "weight": 1.0
     },
@@ -69939,7 +69939,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9053",
+      "source_location": "L9057",
       "target": "src_pwa_clearsessionpushnotifications",
       "weight": 1.0
     },
@@ -69951,7 +69951,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L11275",
+      "source_location": "L11283",
       "target": "src_pwa_installedasapp",
       "weight": 1.0
     },
@@ -69963,7 +69963,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9051",
+      "source_location": "L9055",
       "target": "src_pwa_sessionnotificationtags",
       "weight": 1.0
     },
@@ -69975,7 +69975,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7529",
+      "source_location": "L7533",
       "target": "src_session_navigation_view_sessionnavigationview",
       "weight": 1.0
     },
@@ -69987,7 +69987,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L10733",
+      "source_location": "L10737",
       "target": "src_session_navigation_view_stepvisiblesession",
       "weight": 1.0
     },
@@ -69999,7 +69999,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L13635",
+      "source_location": "L13643",
       "target": "src_session_presentation_computertone",
       "weight": 1.0
     },
@@ -70011,7 +70011,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L13383",
+      "source_location": "L13391",
       "target": "src_session_presentation_executionmodename",
       "weight": 1.0
     },
@@ -70023,7 +70023,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L12844",
+      "source_location": "L12852",
       "target": "src_session_presentation_providername",
       "weight": 1.0
     },
@@ -70035,7 +70035,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7306",
+      "source_location": "L7310",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -70047,7 +70047,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7204",
+      "source_location": "L7208",
       "target": "src_session_presentation_sessionsortfrom",
       "weight": 1.0
     },
@@ -70059,7 +70059,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L13401",
+      "source_location": "L13409",
       "target": "src_session_presentation_shortpath",
       "weight": 1.0
     },
@@ -70071,7 +70071,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7517",
+      "source_location": "L7521",
       "target": "src_session_presentation_sortsessionview",
       "weight": 1.0
     },
@@ -70083,7 +70083,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7677",
+      "source_location": "L7681",
       "target": "src_session_presentation_tasksnapshot",
       "weight": 1.0
     },
@@ -70095,7 +70095,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7632",
+      "source_location": "L7636",
       "target": "src_shell_attentioncount",
       "weight": 1.0
     },
@@ -70107,7 +70107,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7641",
+      "source_location": "L7645",
       "target": "src_shell_nativeshell",
       "weight": 1.0
     },
@@ -70119,7 +70119,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7645",
+      "source_location": "L7649",
       "target": "src_shell_notifications_notificationstate",
       "weight": 1.0
     },
@@ -70131,7 +70131,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7646",
+      "source_location": "L7650",
       "target": "src_shell_notifications_shellnotifications",
       "weight": 1.0
     },
@@ -70143,7 +70143,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7662",
+      "source_location": "L7666",
       "target": "src_shell_onshelldeeplink",
       "weight": 1.0
     },
@@ -70155,7 +70155,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7655",
+      "source_location": "L7659",
       "target": "src_shell_sendshellnotification",
       "weight": 1.0
     },
@@ -70167,7 +70167,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7632",
+      "source_location": "L7636",
       "target": "src_shell_setshellbadge",
       "weight": 1.0
     },
@@ -70179,7 +70179,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L9050",
+      "source_location": "L9054",
       "target": "src_shell_withdrawshellnotifications",
       "weight": 1.0
     },
@@ -70191,7 +70191,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7562",
+      "source_location": "L7566",
       "target": "src_use_session_knowledge_root_knowledgepositionforbinding",
       "weight": 1.0
     },
@@ -70203,7 +70203,7 @@
       "relation": "calls",
       "source": "src_app_app",
       "source_file": "src/App.tsx",
-      "source_location": "L7557",
+      "source_location": "L7561",
       "target": "src_use_session_knowledge_root_usesessionknowledgeroot",
       "weight": 1.0
     },
@@ -70215,7 +70215,7 @@
       "relation": "calls",
       "source": "src_app_app_answeruserinput",
       "source_file": "src/App.tsx",
-      "source_location": "L12809",
+      "source_location": "L12817",
       "target": "src_api_replyuserinput",
       "weight": 1.0
     },
@@ -70227,7 +70227,7 @@
       "relation": "calls",
       "source": "src_app_app_answeruserinput",
       "source_file": "src/App.tsx",
-      "source_location": "L12815",
+      "source_location": "L12823",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -70239,7 +70239,7 @@
       "relation": "calls",
       "source": "src_app_app_appendcomposerforkey",
       "source_file": "src/App.tsx",
-      "source_location": "L10223",
+      "source_location": "L10227",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -70251,7 +70251,7 @@
       "relation": "calls",
       "source": "src_app_app_appendcomposerforkey",
       "source_file": "src/App.tsx",
-      "source_location": "L10222",
+      "source_location": "L10226",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -70263,7 +70263,7 @@
       "relation": "calls",
       "source": "src_app_app_appendcomposerforkey",
       "source_file": "src/App.tsx",
-      "source_location": "L10232",
+      "source_location": "L10236",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -70275,7 +70275,7 @@
       "relation": "calls",
       "source": "src_app_app_appkeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L12774",
+      "source_location": "L12782",
       "target": "src_app_app_navigatemessagehistory",
       "weight": 1.0
     },
@@ -70287,7 +70287,7 @@
       "relation": "calls",
       "source": "src_app_app_appkeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L12760",
+      "source_location": "L12768",
       "target": "src_app_iseditabletarget",
       "weight": 1.0
     },
@@ -70299,7 +70299,7 @@
       "relation": "calls",
       "source": "src_app_app_applycomputersnapshot",
       "source_file": "src/App.tsx",
-      "source_location": "L11160",
+      "source_location": "L11168",
       "target": "src_app_app_forgetcomputerknowledge",
       "weight": 1.0
     },
@@ -70311,7 +70311,7 @@
       "relation": "calls",
       "source": "src_app_app_applycomputersnapshot",
       "source_file": "src/App.tsx",
-      "source_location": "L11166",
+      "source_location": "L11174",
       "target": "src_app_upsertcomputer",
       "weight": 1.0
     },
@@ -70323,7 +70323,7 @@
       "relation": "calls",
       "source": "src_app_app_applypwaupdate",
       "source_file": "src/App.tsx",
-      "source_location": "L12887",
+      "source_location": "L12895",
       "target": "src_pwa_activatepwaupdate",
       "weight": 1.0
     },
@@ -70335,7 +70335,7 @@
       "relation": "calls",
       "source": "src_app_app_applyrootchoice",
       "source_file": "src/App.tsx",
-      "source_location": "L10696",
+      "source_location": "L10700",
       "target": "src_app_app_createroot",
       "weight": 1.0
     },
@@ -70347,7 +70347,7 @@
       "relation": "calls",
       "source": "src_app_app_applyrootchoice",
       "source_file": "src/App.tsx",
-      "source_location": "L10700",
+      "source_location": "L10704",
       "target": "src_app_app_selectroot",
       "weight": 1.0
     },
@@ -70359,7 +70359,7 @@
       "relation": "calls",
       "source": "src_app_app_applysession",
       "source_file": "src/App.tsx",
-      "source_location": "L11980",
+      "source_location": "L11988",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -70371,7 +70371,7 @@
       "relation": "calls",
       "source": "src_app_app_askaboutknowledgefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11805",
+      "source_location": "L11813",
       "target": "src_app_app_appendcomposerforkey",
       "weight": 1.0
     },
@@ -70383,7 +70383,7 @@
       "relation": "calls",
       "source": "src_app_app_askaboutknowledgefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11809",
+      "source_location": "L11817",
       "target": "src_app_app_drawerisoverlay",
       "weight": 1.0
     },
@@ -70395,7 +70395,7 @@
       "relation": "calls",
       "source": "src_app_app_askaboutknowledgefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11811",
+      "source_location": "L11819",
       "target": "src_app_app_focuscomposer",
       "weight": 1.0
     },
@@ -70407,7 +70407,7 @@
       "relation": "calls",
       "source": "src_app_app_askaboutknowledgefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11809",
+      "source_location": "L11817",
       "target": "src_app_app_setknowledgemode",
       "weight": 1.0
     },
@@ -70419,7 +70419,7 @@
       "relation": "calls",
       "source": "src_app_app_askaboutknowledgefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11807",
+      "source_location": "L11815",
       "target": "src_app_workspacefileprompt",
       "weight": 1.0
     },
@@ -70431,7 +70431,7 @@
       "relation": "calls",
       "source": "src_app_app_askaboutknowledgefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11796",
+      "source_location": "L11804",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -70443,7 +70443,7 @@
       "relation": "calls",
       "source": "src_app_app_attachedfiles",
       "source_file": "src/App.tsx",
-      "source_location": "L11736",
+      "source_location": "L11744",
       "target": "src_app_app_transcribefile",
       "weight": 1.0
     },
@@ -70455,7 +70455,7 @@
       "relation": "calls",
       "source": "src_app_app_attachedfiles",
       "source_file": "src/App.tsx",
-      "source_location": "L11738",
+      "source_location": "L11746",
       "target": "src_app_app_uploadfile",
       "weight": 1.0
     },
@@ -70467,7 +70467,7 @@
       "relation": "calls",
       "source": "src_app_app_attachedfiles",
       "source_file": "src/App.tsx",
-      "source_location": "L11735",
+      "source_location": "L11743",
       "target": "src_app_isaudiofile",
       "weight": 1.0
     },
@@ -70479,7 +70479,7 @@
       "relation": "calls",
       "source": "src_app_app_audiodropped",
       "source_file": "src/App.tsx",
-      "source_location": "L11756",
+      "source_location": "L11764",
       "target": "src_app_app_attachedfiles",
       "weight": 1.0
     },
@@ -70491,7 +70491,7 @@
       "relation": "calls",
       "source": "src_app_app_audiofilechanged",
       "source_file": "src/App.tsx",
-      "source_location": "L11746",
+      "source_location": "L11754",
       "target": "src_app_app_attachedfiles",
       "weight": 1.0
     },
@@ -70503,7 +70503,7 @@
       "relation": "calls",
       "source": "src_app_app_cancelqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L11907",
+      "source_location": "L11915",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -70515,7 +70515,7 @@
       "relation": "calls",
       "source": "src_app_app_cancelselectedbackgroundtask",
       "source_file": "src/App.tsx",
-      "source_location": "L11246",
+      "source_location": "L11254",
       "target": "src_api_cancelbackgroundtask",
       "weight": 1.0
     },
@@ -70527,7 +70527,7 @@
       "relation": "calls",
       "source": "src_app_app_clearselectedconversation",
       "source_file": "src/App.tsx",
-      "source_location": "L12414",
+      "source_location": "L12422",
       "target": "src_api_clearconversation",
       "weight": 1.0
     },
@@ -70539,7 +70539,7 @@
       "relation": "calls",
       "source": "src_app_app_clearselectedconversation",
       "source_file": "src/App.tsx",
-      "source_location": "L12432",
+      "source_location": "L12440",
       "target": "src_app_app_migratesessionstate",
       "weight": 1.0
     },
@@ -70551,7 +70551,7 @@
       "relation": "calls",
       "source": "src_app_app_clearselectedconversation",
       "source_file": "src/App.tsx",
-      "source_location": "L12468",
+      "source_location": "L12476",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -70563,7 +70563,7 @@
       "relation": "calls",
       "source": "src_app_app_clearselectedconversation",
       "source_file": "src/App.tsx",
-      "source_location": "L12448",
+      "source_location": "L12456",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -70575,7 +70575,7 @@
       "relation": "calls",
       "source": "src_app_app_clearselectedconversation",
       "source_file": "src/App.tsx",
-      "source_location": "L12409",
+      "source_location": "L12417",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -70587,7 +70587,7 @@
       "relation": "calls",
       "source": "src_app_app_closeselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12853",
+      "source_location": "L12861",
       "target": "src_api_deletesession",
       "weight": 1.0
     },
@@ -70599,7 +70599,7 @@
       "relation": "calls",
       "source": "src_app_app_closeselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12866",
+      "source_location": "L12874",
       "target": "src_app_app_forgetknowledgesession",
       "weight": 1.0
     },
@@ -70611,7 +70611,7 @@
       "relation": "calls",
       "source": "src_app_app_closeselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12860",
+      "source_location": "L12868",
       "target": "src_app_app_forgetrestoreddraft",
       "weight": 1.0
     },
@@ -70623,7 +70623,7 @@
       "relation": "calls",
       "source": "src_app_app_closeselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12856",
+      "source_location": "L12864",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -70635,7 +70635,7 @@
       "relation": "calls",
       "source": "src_app_app_closeselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12844",
+      "source_location": "L12852",
       "target": "src_session_presentation_providername",
       "weight": 1.0
     },
@@ -70647,7 +70647,7 @@
       "relation": "calls",
       "source": "src_app_app_closeselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12854",
+      "source_location": "L12862",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -70659,7 +70659,7 @@
       "relation": "calls",
       "source": "src_app_app_closetopmostlayer",
       "source_file": "src/App.tsx",
-      "source_location": "L10595",
+      "source_location": "L10599",
       "target": "src_app_app_closerootpicker",
       "weight": 1.0
     },
@@ -70671,7 +70671,7 @@
       "relation": "calls",
       "source": "src_app_app_closetopmostlayer",
       "source_file": "src/App.tsx",
-      "source_location": "L10618",
+      "source_location": "L10622",
       "target": "src_app_app_drawerisoverlay",
       "weight": 1.0
     },
@@ -70683,7 +70683,7 @@
       "relation": "calls",
       "source": "src_app_app_closetopmostlayer",
       "source_file": "src/App.tsx",
-      "source_location": "L10623",
+      "source_location": "L10627",
       "target": "src_app_app_setknowledgemode",
       "weight": 1.0
     },
@@ -70695,7 +70695,7 @@
       "relation": "calls",
       "source": "src_app_app_collapseknowledgetree",
       "source_file": "src/App.tsx",
-      "source_location": "L10913",
+      "source_location": "L10917",
       "target": "src_app_app_cancelknowledgerestore",
       "weight": 1.0
     },
@@ -70707,7 +70707,7 @@
       "relation": "calls",
       "source": "src_app_app_commitsidebarwidth",
       "source_file": "src/App.tsx",
-      "source_location": "L7429",
+      "source_location": "L7433",
       "target": "src_app_clampsidebarwidth",
       "weight": 1.0
     },
@@ -70719,7 +70719,7 @@
       "relation": "calls",
       "source": "src_app_app_commitsidebarwidth",
       "source_file": "src/App.tsx",
-      "source_location": "L7431",
+      "source_location": "L7435",
       "target": "src_app_writestored",
       "weight": 1.0
     },
@@ -70731,7 +70731,7 @@
       "relation": "calls",
       "source": "src_app_app_composerbeforeinput",
       "source_file": "src/App.tsx",
-      "source_location": "L9768",
+      "source_location": "L9772",
       "target": "src_app_app_remembercomposeredit",
       "weight": 1.0
     },
@@ -70743,7 +70743,7 @@
       "relation": "calls",
       "source": "src_app_app_composerchanged",
       "source_file": "src/App.tsx",
-      "source_location": "L9781",
+      "source_location": "L9785",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -70755,7 +70755,7 @@
       "relation": "calls",
       "source": "src_app_app_composerchanged",
       "source_file": "src/App.tsx",
-      "source_location": "L9805",
+      "source_location": "L9809",
       "target": "src_app_composerpastesafterrangeedit",
       "weight": 1.0
     },
@@ -70767,7 +70767,7 @@
       "relation": "calls",
       "source": "src_app_app_composerchanged",
       "source_file": "src/App.tsx",
-      "source_location": "L9817",
+      "source_location": "L9821",
       "target": "src_app_reconcilecomposerpastes",
       "weight": 1.0
     },
@@ -70779,7 +70779,7 @@
       "relation": "calls",
       "source": "src_app_app_composerchanged",
       "source_file": "src/App.tsx",
-      "source_location": "L9784",
+      "source_location": "L9788",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -70791,7 +70791,7 @@
       "relation": "calls",
       "source": "src_app_app_composerkeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L12657",
+      "source_location": "L12665",
       "target": "src_app_app_cancelqueuedpromptedit",
       "weight": 1.0
     },
@@ -70803,7 +70803,7 @@
       "relation": "calls",
       "source": "src_app_app_composerkeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L12741",
+      "source_location": "L12749",
       "target": "src_app_app_insertcomposernewline",
       "weight": 1.0
     },
@@ -70815,7 +70815,7 @@
       "relation": "calls",
       "source": "src_app_app_composerkeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L12698",
+      "source_location": "L12706",
       "target": "src_app_app_navigatemessagehistory",
       "weight": 1.0
     },
@@ -70827,7 +70827,7 @@
       "relation": "calls",
       "source": "src_app_app_composerkeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L12668",
+      "source_location": "L12676",
       "target": "src_app_app_remembercomposeredit",
       "weight": 1.0
     },
@@ -70839,20 +70839,8 @@
       "relation": "calls",
       "source": "src_app_app_composerkeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L12662",
+      "source_location": "L12670",
       "target": "src_app_app_savequeuedpromptedit",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_composerkeydown",
-      "source_file": "src/App.tsx",
-      "source_location": "L12728",
-      "target": "src_app_app_selectcommand",
       "weight": 1.0
     },
     {
@@ -70864,6 +70852,18 @@
       "source": "src_app_app_composerkeydown",
       "source_file": "src/App.tsx",
       "source_location": "L12736",
+      "target": "src_app_app_selectcommand",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_composerkeydown",
+      "source_file": "src/App.tsx",
+      "source_location": "L12744",
       "target": "src_app_app_submitmessage",
       "weight": 1.0
     },
@@ -70875,7 +70875,7 @@
       "relation": "calls",
       "source": "src_app_app_composerkeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L12660",
+      "source_location": "L12668",
       "target": "src_app_phoneentercreatesnewline",
       "weight": 1.0
     },
@@ -70887,7 +70887,7 @@
       "relation": "calls",
       "source": "src_app_app_composerpasted",
       "source_file": "src/App.tsx",
-      "source_location": "L12605",
+      "source_location": "L12613",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -70899,7 +70899,7 @@
       "relation": "calls",
       "source": "src_app_app_composerpasted",
       "source_file": "src/App.tsx",
-      "source_location": "L12604",
+      "source_location": "L12612",
       "target": "src_app_collapsedpastelabel",
       "weight": 1.0
     },
@@ -70911,7 +70911,7 @@
       "relation": "calls",
       "source": "src_app_app_composerpasted",
       "source_file": "src/App.tsx",
-      "source_location": "L12607",
+      "source_location": "L12615",
       "target": "src_app_composerpastesafterrangeedit",
       "weight": 1.0
     },
@@ -70923,7 +70923,7 @@
       "relation": "calls",
       "source": "src_app_app_composerpasted",
       "source_file": "src/App.tsx",
-      "source_location": "L12597",
+      "source_location": "L12605",
       "target": "src_app_newcollapsedpastekey",
       "weight": 1.0
     },
@@ -70935,7 +70935,7 @@
       "relation": "calls",
       "source": "src_app_app_composerpasted",
       "source_file": "src/App.tsx",
-      "source_location": "L12580",
+      "source_location": "L12588",
       "target": "src_app_pastedlinecount",
       "weight": 1.0
     },
@@ -70947,7 +70947,7 @@
       "relation": "calls",
       "source": "src_app_app_composerpasted",
       "source_file": "src/App.tsx",
-      "source_location": "L12613",
+      "source_location": "L12621",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -70959,7 +70959,7 @@
       "relation": "calls",
       "source": "src_app_app_created",
       "source_file": "src/App.tsx",
-      "source_location": "L11309",
+      "source_location": "L11317",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -70971,7 +70971,7 @@
       "relation": "calls",
       "source": "src_app_app_created",
       "source_file": "src/App.tsx",
-      "source_location": "L11311",
+      "source_location": "L11319",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -70983,7 +70983,7 @@
       "relation": "calls",
       "source": "src_app_app_createroot",
       "source_file": "src/App.tsx",
-      "source_location": "L11105",
+      "source_location": "L11110",
       "target": "src_api_addknowledgeroot",
       "weight": 1.0
     },
@@ -70995,7 +70995,7 @@
       "relation": "calls",
       "source": "src_app_app_createroot",
       "source_file": "src/App.tsx",
-      "source_location": "L11127",
+      "source_location": "L11135",
       "target": "src_app_app_selectroot",
       "weight": 1.0
     },
@@ -71007,7 +71007,7 @@
       "relation": "calls",
       "source": "src_app_app_editqueuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L11888",
+      "source_location": "L11896",
       "target": "src_app_app_focuscomposer",
       "weight": 1.0
     },
@@ -71019,7 +71019,7 @@
       "relation": "calls",
       "source": "src_app_app_editqueuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L11884",
+      "source_location": "L11892",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -71031,7 +71031,7 @@
       "relation": "calls",
       "source": "src_app_app_editqueuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L11883",
+      "source_location": "L11891",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71043,7 +71043,7 @@
       "relation": "calls",
       "source": "src_app_app_failurestampfor",
       "source_file": "src/App.tsx",
-      "source_location": "L9823",
+      "source_location": "L9827",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71055,7 +71055,7 @@
       "relation": "calls",
       "source": "src_app_app_focuscomposer",
       "source_file": "src/App.tsx",
-      "source_location": "L10409",
+      "source_location": "L10413",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71067,7 +71067,7 @@
       "relation": "calls",
       "source": "src_app_app_followlatest",
       "source_file": "src/App.tsx",
-      "source_location": "L9692",
+      "source_location": "L9696",
       "target": "src_app_app_setfollowslatest",
       "weight": 1.0
     },
@@ -71079,7 +71079,7 @@
       "relation": "calls",
       "source": "src_app_app_forgetqueuededit",
       "source_file": "src/App.tsx",
-      "source_location": "L11841",
+      "source_location": "L11849",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -71091,7 +71091,7 @@
       "relation": "calls",
       "source": "src_app_app_forgetqueuededit",
       "source_file": "src/App.tsx",
-      "source_location": "L11845",
+      "source_location": "L11853",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -71103,7 +71103,7 @@
       "relation": "calls",
       "source": "src_app_app_forgetrestoreddraft",
       "source_file": "src/App.tsx",
-      "source_location": "L10017",
+      "source_location": "L10021",
       "target": "src_app_app_persistcomposerrecoveryidentity",
       "weight": 1.0
     },
@@ -71115,7 +71115,7 @@
       "relation": "calls",
       "source": "src_app_app_handledragend",
       "source_file": "src/App.tsx",
-      "source_location": "L12941",
+      "source_location": "L12949",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71127,7 +71127,7 @@
       "relation": "calls",
       "source": "src_app_app_insertcomposernewline",
       "source_file": "src/App.tsx",
-      "source_location": "L12631",
+      "source_location": "L12639",
       "target": "src_app_app_setcomposer",
       "weight": 1.0
     },
@@ -71139,7 +71139,7 @@
       "relation": "calls",
       "source": "src_app_app_insertworkspacefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11776",
+      "source_location": "L11784",
       "target": "src_app_app_appendcomposerforkey",
       "weight": 1.0
     },
@@ -71151,7 +71151,7 @@
       "relation": "calls",
       "source": "src_app_app_insertworkspacefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11783",
+      "source_location": "L11791",
       "target": "src_app_app_focuscomposer",
       "weight": 1.0
     },
@@ -71163,7 +71163,7 @@
       "relation": "calls",
       "source": "src_app_app_insertworkspacefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11778",
+      "source_location": "L11786",
       "target": "src_app_workspacefileprompt",
       "weight": 1.0
     },
@@ -71175,7 +71175,7 @@
       "relation": "calls",
       "source": "src_app_app_insertworkspacefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11762",
+      "source_location": "L11770",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71187,7 +71187,7 @@
       "relation": "calls",
       "source": "src_app_app_knowledgetreekeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L10973",
+      "source_location": "L10977",
       "target": "src_app_app_toggleknowledgefolder",
       "weight": 1.0
     },
@@ -71199,7 +71199,7 @@
       "relation": "calls",
       "source": "src_app_app_knowledgetreekeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L10983",
+      "source_location": "L10987",
       "target": "src_knowledge_tree_knowledgepathchain",
       "weight": 1.0
     },
@@ -71211,8 +71211,20 @@
       "relation": "calls",
       "source": "src_app_app_knowncommand",
       "source_file": "src/App.tsx",
-      "source_location": "L12020",
+      "source_location": "L12028",
       "target": "src_app_slashshortcut",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_loadknowledgechain",
+      "source_file": "src/App.tsx",
+      "source_location": "L10828",
+      "target": "src_app_app_loadknowledgefolder",
       "weight": 1.0
     },
     {
@@ -71224,18 +71236,6 @@
       "source": "src_app_app_loadknowledgechain",
       "source_file": "src/App.tsx",
       "source_location": "L10824",
-      "target": "src_app_app_loadknowledgefolder",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_loadknowledgechain",
-      "source_file": "src/App.tsx",
-      "source_location": "L10820",
       "target": "src_knowledge_tree_knowledgepathchain",
       "weight": 1.0
     },
@@ -71247,7 +71247,7 @@
       "relation": "calls",
       "source": "src_app_app_loadknowledgefolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10771",
+      "source_location": "L10775",
       "target": "src_api_listknowledgeentries",
       "weight": 1.0
     },
@@ -71259,7 +71259,7 @@
       "relation": "calls",
       "source": "src_app_app_managequeuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L12371",
+      "source_location": "L12379",
       "target": "src_api_removequeuedprompt",
       "weight": 1.0
     },
@@ -71271,7 +71271,7 @@
       "relation": "calls",
       "source": "src_app_app_managequeuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L12385",
+      "source_location": "L12393",
       "target": "src_app_app_forgetqueuededit",
       "weight": 1.0
     },
@@ -71283,7 +71283,7 @@
       "relation": "calls",
       "source": "src_app_app_managequeuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L12387",
+      "source_location": "L12395",
       "target": "src_app_app_replacecomposer",
       "weight": 1.0
     },
@@ -71295,7 +71295,7 @@
       "relation": "calls",
       "source": "src_app_app_managequeuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L12377",
+      "source_location": "L12385",
       "target": "src_app_app_stilllisted",
       "weight": 1.0
     },
@@ -71307,7 +71307,7 @@
       "relation": "calls",
       "source": "src_app_app_managequeuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L12378",
+      "source_location": "L12386",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -71319,7 +71319,7 @@
       "relation": "calls",
       "source": "src_app_app_managequeuedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L12384",
+      "source_location": "L12392",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71331,7 +71331,7 @@
       "relation": "calls",
       "source": "src_app_app_migratesessionstate",
       "source_file": "src/App.tsx",
-      "source_location": "L10377",
+      "source_location": "L10381",
       "target": "src_app_app_movecomposerdraft",
       "weight": 1.0
     },
@@ -71343,7 +71343,7 @@
       "relation": "calls",
       "source": "src_app_app_migratesessionstate",
       "source_file": "src/App.tsx",
-      "source_location": "L10383",
+      "source_location": "L10387",
       "target": "src_app_app_moveknowledgeposition",
       "weight": 1.0
     },
@@ -71355,7 +71355,7 @@
       "relation": "calls",
       "source": "src_app_app_migratesessionstate",
       "source_file": "src/App.tsx",
-      "source_location": "L10382",
+      "source_location": "L10386",
       "target": "src_app_app_moverestoreddraft",
       "weight": 1.0
     },
@@ -71367,7 +71367,7 @@
       "relation": "calls",
       "source": "src_app_app_movecomposerdraft",
       "source_file": "src/App.tsx",
-      "source_location": "L10248",
+      "source_location": "L10252",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -71379,7 +71379,7 @@
       "relation": "calls",
       "source": "src_app_app_movecomposerdraft",
       "source_file": "src/App.tsx",
-      "source_location": "L10246",
+      "source_location": "L10250",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -71391,7 +71391,7 @@
       "relation": "calls",
       "source": "src_app_app_movecomposerdraft",
       "source_file": "src/App.tsx",
-      "source_location": "L10264",
+      "source_location": "L10268",
       "target": "src_app_prependcomposercontent",
       "weight": 1.0
     },
@@ -71403,7 +71403,7 @@
       "relation": "calls",
       "source": "src_app_app_moverestoreddraft",
       "source_file": "src/App.tsx",
-      "source_location": "L10037",
+      "source_location": "L10041",
       "target": "src_app_app_forgetrestoreddraft",
       "weight": 1.0
     },
@@ -71415,7 +71415,7 @@
       "relation": "calls",
       "source": "src_app_app_moverestoreddraft",
       "source_file": "src/App.tsx",
-      "source_location": "L10039",
+      "source_location": "L10043",
       "target": "src_app_app_rememberrestoreddraft",
       "weight": 1.0
     },
@@ -71427,7 +71427,7 @@
       "relation": "calls",
       "source": "src_app_app_moveselectedsessiontotmux",
       "source_file": "src/App.tsx",
-      "source_location": "L12555",
+      "source_location": "L12563",
       "target": "src_api_movesessiontotmux",
       "weight": 1.0
     },
@@ -71439,7 +71439,7 @@
       "relation": "calls",
       "source": "src_app_app_moveselectedsessiontotmux",
       "source_file": "src/App.tsx",
-      "source_location": "L12559",
+      "source_location": "L12567",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -71451,7 +71451,7 @@
       "relation": "calls",
       "source": "src_app_app_movesessiontobrowsedfolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10514",
+      "source_location": "L10518",
       "target": "src_api_executecommand",
       "weight": 1.0
     },
@@ -71463,7 +71463,7 @@
       "relation": "calls",
       "source": "src_app_app_movesessiontobrowsedfolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10494",
+      "source_location": "L10498",
       "target": "src_api_validatesessiondirectory",
       "weight": 1.0
     },
@@ -71475,7 +71475,7 @@
       "relation": "calls",
       "source": "src_app_app_movesessiontobrowsedfolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10517",
+      "source_location": "L10521",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -71487,7 +71487,7 @@
       "relation": "calls",
       "source": "src_app_app_movesessiontobrowsedfolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10509",
+      "source_location": "L10513",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71499,7 +71499,7 @@
       "relation": "calls",
       "source": "src_app_app_navigatemessagehistory",
       "source_file": "src/App.tsx",
-      "source_location": "L10172",
+      "source_location": "L10176",
       "target": "src_app_app_setcomposerforkey",
       "weight": 1.0
     },
@@ -71511,7 +71511,7 @@
       "relation": "calls",
       "source": "src_app_app_navigatemessagehistory",
       "source_file": "src/App.tsx",
-      "source_location": "L10181",
+      "source_location": "L10185",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71523,7 +71523,7 @@
       "relation": "calls",
       "source": "src_app_app_openknowledgefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11011",
+      "source_location": "L11015",
       "target": "src_api_readknowledgefile",
       "weight": 1.0
     },
@@ -71535,32 +71535,8 @@
       "relation": "calls",
       "source": "src_app_app_openknowledgefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11001",
+      "source_location": "L11005",
       "target": "src_app_app_cancelknowledgerestore",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_openknowledgefolder",
-      "source_file": "src/App.tsx",
-      "source_location": "L10877",
-      "target": "src_app_app_cancelknowledgerestore",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_openknowledgefolder",
-      "source_file": "src/App.tsx",
-      "source_location": "L10884",
-      "target": "src_app_app_loadknowledgechain",
       "weight": 1.0
     },
     {
@@ -71572,6 +71548,30 @@
       "source": "src_app_app_openknowledgefolder",
       "source_file": "src/App.tsx",
       "source_location": "L10881",
+      "target": "src_app_app_cancelknowledgerestore",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_openknowledgefolder",
+      "source_file": "src/App.tsx",
+      "source_location": "L10888",
+      "target": "src_app_app_loadknowledgechain",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_openknowledgefolder",
+      "source_file": "src/App.tsx",
+      "source_location": "L10885",
       "target": "src_knowledge_tree_expandknowledgefolder",
       "weight": 1.0
     },
@@ -71583,7 +71583,7 @@
       "relation": "calls",
       "source": "src_app_app_opentasksforsession",
       "source_file": "src/App.tsx",
-      "source_location": "L11232",
+      "source_location": "L11240",
       "target": "src_app_app_selectsession",
       "weight": 1.0
     },
@@ -71595,7 +71595,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8765",
+      "source_location": "L8769",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -71607,7 +71607,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8775",
+      "source_location": "L8779",
       "target": "src_app_expandcomposerpastes",
       "weight": 1.0
     },
@@ -71619,7 +71619,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8706",
+      "source_location": "L8710",
       "target": "src_app_hascomposeracceptancereceipt",
       "weight": 1.0
     },
@@ -71631,7 +71631,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8787",
+      "source_location": "L8791",
       "target": "src_app_queuededitowners",
       "weight": 1.0
     },
@@ -71643,7 +71643,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8696",
+      "source_location": "L8700",
       "target": "src_app_readcomposeracceptancereceipts",
       "weight": 1.0
     },
@@ -71655,7 +71655,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8786",
+      "source_location": "L8790",
       "target": "src_app_readqueuededitowners",
       "weight": 1.0
     },
@@ -71667,7 +71667,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8761",
+      "source_location": "L8765",
       "target": "src_app_reconcileacceptedcomposerdrafts",
       "weight": 1.0
     },
@@ -71679,7 +71679,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8774",
+      "source_location": "L8778",
       "target": "src_app_recoverpendingcomposerdraft",
       "weight": 1.0
     },
@@ -71691,7 +71691,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L8785",
+      "source_location": "L8789",
       "target": "src_app_writequeuededitowners",
       "weight": 1.0
     },
@@ -71703,7 +71703,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerrecoveryidentity",
       "source_file": "src/App.tsx",
-      "source_location": "L10024",
+      "source_location": "L10028",
       "target": "src_app_app_persistcomposerdrafts",
       "weight": 1.0
     },
@@ -71715,7 +71715,7 @@
       "relation": "calls",
       "source": "src_app_app_persistcomposerrecoveryidentity",
       "source_file": "src/App.tsx",
-      "source_location": "L10028",
+      "source_location": "L10032",
       "target": "src_app_app_reportcomposerstoragefailure",
       "weight": 1.0
     },
@@ -71727,7 +71727,7 @@
       "relation": "calls",
       "source": "src_app_app_queuededitsubmission",
       "source_file": "src/App.tsx",
-      "source_location": "L12044",
+      "source_location": "L12052",
       "target": "src_app_activecomposerpastes",
       "weight": 1.0
     },
@@ -71739,7 +71739,7 @@
       "relation": "calls",
       "source": "src_app_app_queuededitsubmission",
       "source_file": "src/App.tsx",
-      "source_location": "L12066",
+      "source_location": "L12074",
       "target": "src_app_app_iswebonlycommand",
       "weight": 1.0
     },
@@ -71751,7 +71751,7 @@
       "relation": "calls",
       "source": "src_app_app_queuededitsubmission",
       "source_file": "src/App.tsx",
-      "source_location": "L12082",
+      "source_location": "L12090",
       "target": "src_app_app_knowncommand",
       "weight": 1.0
     },
@@ -71763,7 +71763,7 @@
       "relation": "calls",
       "source": "src_app_app_queuededitsubmission",
       "source_file": "src/App.tsx",
-      "source_location": "L12046",
+      "source_location": "L12054",
       "target": "src_app_expandcomposerpastes",
       "weight": 1.0
     },
@@ -71775,7 +71775,7 @@
       "relation": "calls",
       "source": "src_app_app_queuededitsubmission",
       "source_file": "src/App.tsx",
-      "source_location": "L12031",
+      "source_location": "L12039",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71787,7 +71787,7 @@
       "relation": "calls",
       "source": "src_app_app_queuedragended",
       "source_file": "src/App.tsx",
-      "source_location": "L12331",
+      "source_location": "L12339",
       "target": "src_api_getsession",
       "weight": 1.0
     },
@@ -71799,7 +71799,7 @@
       "relation": "calls",
       "source": "src_app_app_queuedragended",
       "source_file": "src/App.tsx",
-      "source_location": "L12316",
+      "source_location": "L12324",
       "target": "src_api_reorderqueuedprompts",
       "weight": 1.0
     },
@@ -71811,7 +71811,7 @@
       "relation": "calls",
       "source": "src_app_app_queuedragended",
       "source_file": "src/App.tsx",
-      "source_location": "L12313",
+      "source_location": "L12321",
       "target": "src_app_app_applysession",
       "weight": 1.0
     },
@@ -71823,7 +71823,7 @@
       "relation": "calls",
       "source": "src_app_app_queuedragended",
       "source_file": "src/App.tsx",
-      "source_location": "L12321",
+      "source_location": "L12329",
       "target": "src_app_app_stilllisted",
       "weight": 1.0
     },
@@ -71835,7 +71835,7 @@
       "relation": "calls",
       "source": "src_app_app_queuedragended",
       "source_file": "src/App.tsx",
-      "source_location": "L12280",
+      "source_location": "L12288",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71847,7 +71847,7 @@
       "relation": "calls",
       "source": "src_app_app_refreshknowledgefolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10923",
+      "source_location": "L10927",
       "target": "src_app_app_cancelknowledgerestore",
       "weight": 1.0
     },
@@ -71859,7 +71859,7 @@
       "relation": "calls",
       "source": "src_app_app_refreshknowledgefolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10924",
+      "source_location": "L10928",
       "target": "src_app_app_loadknowledgefolder",
       "weight": 1.0
     },
@@ -71871,7 +71871,7 @@
       "relation": "calls",
       "source": "src_app_app_rememberrestoreddraft",
       "source_file": "src/App.tsx",
-      "source_location": "L10005",
+      "source_location": "L10009",
       "target": "src_app_app_persistcomposerrecoveryidentity",
       "weight": 1.0
     },
@@ -71883,7 +71883,7 @@
       "relation": "calls",
       "source": "src_app_app_removeroot",
       "source_file": "src/App.tsx",
-      "source_location": "L11078",
+      "source_location": "L11082",
       "target": "src_api_deleteknowledgeroot",
       "weight": 1.0
     },
@@ -71895,7 +71895,7 @@
       "relation": "calls",
       "source": "src_app_app_removeuntouchedrecovery",
       "source_file": "src/App.tsx",
-      "source_location": "L9900",
+      "source_location": "L9904",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -71907,7 +71907,7 @@
       "relation": "calls",
       "source": "src_app_app_removeuntouchedrecovery",
       "source_file": "src/App.tsx",
-      "source_location": "L9911",
+      "source_location": "L9915",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -71919,7 +71919,7 @@
       "relation": "calls",
       "source": "src_app_app_removeuntouchedrecovery",
       "source_file": "src/App.tsx",
-      "source_location": "L9912",
+      "source_location": "L9916",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -71931,7 +71931,7 @@
       "relation": "calls",
       "source": "src_app_app_reofferfailedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L9839",
+      "source_location": "L9843",
       "target": "src_app_app_restorefailedprompt",
       "weight": 1.0
     },
@@ -71943,7 +71943,7 @@
       "relation": "calls",
       "source": "src_app_app_reofferfailedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L9829",
+      "source_location": "L9833",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -71955,7 +71955,7 @@
       "relation": "calls",
       "source": "src_app_app_replacecomposer",
       "source_file": "src/App.tsx",
-      "source_location": "L9731",
+      "source_location": "L9735",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -71967,7 +71967,7 @@
       "relation": "calls",
       "source": "src_app_app_replacecomposer",
       "source_file": "src/App.tsx",
-      "source_location": "L9732",
+      "source_location": "L9736",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -71979,7 +71979,7 @@
       "relation": "calls",
       "source": "src_app_app_replytopermission",
       "source_file": "src/App.tsx",
-      "source_location": "L12788",
+      "source_location": "L12796",
       "target": "src_api_replypermission",
       "weight": 1.0
     },
@@ -71991,7 +71991,7 @@
       "relation": "calls",
       "source": "src_app_app_replytopermission",
       "source_file": "src/App.tsx",
-      "source_location": "L12794",
+      "source_location": "L12802",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -72003,7 +72003,7 @@
       "relation": "calls",
       "source": "src_app_app_restartselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12528",
+      "source_location": "L12536",
       "target": "src_api_restartsession",
       "weight": 1.0
     },
@@ -72015,7 +72015,7 @@
       "relation": "calls",
       "source": "src_app_app_restartselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12529",
+      "source_location": "L12537",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -72027,7 +72027,7 @@
       "relation": "calls",
       "source": "src_app_app_restorecomposersubmission",
       "source_file": "src/App.tsx",
-      "source_location": "L10204",
+      "source_location": "L10208",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -72039,7 +72039,7 @@
       "relation": "calls",
       "source": "src_app_app_restorecomposersubmission",
       "source_file": "src/App.tsx",
-      "source_location": "L10196",
+      "source_location": "L10200",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -72051,7 +72051,7 @@
       "relation": "calls",
       "source": "src_app_app_restorecomposersubmission",
       "source_file": "src/App.tsx",
-      "source_location": "L10203",
+      "source_location": "L10207",
       "target": "src_app_recoverpendingcomposerdraft",
       "weight": 1.0
     },
@@ -72063,7 +72063,7 @@
       "relation": "calls",
       "source": "src_app_app_restorefailedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L9865",
+      "source_location": "L9869",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -72075,7 +72075,7 @@
       "relation": "calls",
       "source": "src_app_app_restorefailedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L9889",
+      "source_location": "L9893",
       "target": "src_app_app_rememberrestoreddraft",
       "weight": 1.0
     },
@@ -72087,7 +72087,7 @@
       "relation": "calls",
       "source": "src_app_app_restorefailedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L9874",
+      "source_location": "L9878",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -72099,7 +72099,7 @@
       "relation": "calls",
       "source": "src_app_app_restorefailedprompt",
       "source_file": "src/App.tsx",
-      "source_location": "L9875",
+      "source_location": "L9879",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -72111,7 +72111,7 @@
       "relation": "calls",
       "source": "src_app_app_savequeuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12168",
+      "source_location": "L12176",
       "target": "src_api_getsession",
       "weight": 1.0
     },
@@ -72123,7 +72123,7 @@
       "relation": "calls",
       "source": "src_app_app_savequeuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12112",
+      "source_location": "L12120",
       "target": "src_api_updatequeuedprompt",
       "weight": 1.0
     },
@@ -72135,7 +72135,7 @@
       "relation": "calls",
       "source": "src_app_app_savequeuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12119",
+      "source_location": "L12127",
       "target": "src_app_app_applysession",
       "weight": 1.0
     },
@@ -72147,7 +72147,7 @@
       "relation": "calls",
       "source": "src_app_app_savequeuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12142",
+      "source_location": "L12150",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -72159,7 +72159,7 @@
       "relation": "calls",
       "source": "src_app_app_savequeuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12104",
+      "source_location": "L12112",
       "target": "src_app_app_queuededitsubmission",
       "weight": 1.0
     },
@@ -72171,7 +72171,7 @@
       "relation": "calls",
       "source": "src_app_app_savequeuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12149",
+      "source_location": "L12157",
       "target": "src_app_app_resetcomposerhistory",
       "weight": 1.0
     },
@@ -72183,7 +72183,7 @@
       "relation": "calls",
       "source": "src_app_app_savequeuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12118",
+      "source_location": "L12126",
       "target": "src_app_app_stilllisted",
       "weight": 1.0
     },
@@ -72195,7 +72195,7 @@
       "relation": "calls",
       "source": "src_app_app_savequeuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12107",
+      "source_location": "L12115",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -72207,7 +72207,7 @@
       "relation": "calls",
       "source": "src_app_app_selectcommand",
       "source_file": "src/App.tsx",
-      "source_location": "L12568",
+      "source_location": "L12576",
       "target": "src_app_app_setcomposer",
       "weight": 1.0
     },
@@ -72219,7 +72219,7 @@
       "relation": "calls",
       "source": "src_app_app_selectroot",
       "source_file": "src/App.tsx",
-      "source_location": "L11043",
+      "source_location": "L11047",
       "target": "src_app_app_cancelknowledgerestore",
       "weight": 1.0
     },
@@ -72231,7 +72231,7 @@
       "relation": "calls",
       "source": "src_app_app_selectroot",
       "source_file": "src/App.tsx",
-      "source_location": "L11059",
+      "source_location": "L11063",
       "target": "src_app_app_loadknowledgefolder",
       "weight": 1.0
     },
@@ -72243,7 +72243,7 @@
       "relation": "calls",
       "source": "src_app_app_selectsession",
       "source_file": "src/App.tsx",
-      "source_location": "L11215",
+      "source_location": "L11223",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -72255,7 +72255,7 @@
       "relation": "calls",
       "source": "src_app_app_sendqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12229",
+      "source_location": "L12237",
       "target": "src_api_dispatchqueuedprompt",
       "weight": 1.0
     },
@@ -72267,7 +72267,7 @@
       "relation": "calls",
       "source": "src_app_app_sendqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12231",
+      "source_location": "L12239",
       "target": "src_app_app_applysession",
       "weight": 1.0
     },
@@ -72279,7 +72279,7 @@
       "relation": "calls",
       "source": "src_app_app_sendqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12221",
+      "source_location": "L12229",
       "target": "src_app_app_durablecomposerdraft",
       "weight": 1.0
     },
@@ -72291,7 +72291,7 @@
       "relation": "calls",
       "source": "src_app_app_sendqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12189",
+      "source_location": "L12197",
       "target": "src_app_app_queuededitsubmission",
       "weight": 1.0
     },
@@ -72303,7 +72303,7 @@
       "relation": "calls",
       "source": "src_app_app_sendqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12231",
+      "source_location": "L12239",
       "target": "src_app_app_stilllisted",
       "weight": 1.0
     },
@@ -72315,7 +72315,7 @@
       "relation": "calls",
       "source": "src_app_app_sendqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12201",
+      "source_location": "L12209",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -72327,7 +72327,7 @@
       "relation": "calls",
       "source": "src_app_app_sendqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12197",
+      "source_location": "L12205",
       "target": "src_app_newcollapsedpastekey",
       "weight": 1.0
     },
@@ -72339,7 +72339,7 @@
       "relation": "calls",
       "source": "src_app_app_sendqueuedpromptedit",
       "source_file": "src/App.tsx",
-      "source_location": "L12221",
+      "source_location": "L12229",
       "target": "src_app_recoverpendingcomposerdraft",
       "weight": 1.0
     },
@@ -72351,7 +72351,7 @@
       "relation": "calls",
       "source": "src_app_app_setcomposer",
       "source_file": "src/App.tsx",
-      "source_location": "L9741",
+      "source_location": "L9745",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -72363,7 +72363,7 @@
       "relation": "calls",
       "source": "src_app_app_setcomposer",
       "source_file": "src/App.tsx",
-      "source_location": "L9745",
+      "source_location": "L9749",
       "target": "src_app_reconcilecomposerpastes",
       "weight": 1.0
     },
@@ -72375,7 +72375,7 @@
       "relation": "calls",
       "source": "src_app_app_setcomposer",
       "source_file": "src/App.tsx",
-      "source_location": "L9743",
+      "source_location": "L9747",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -72387,7 +72387,7 @@
       "relation": "calls",
       "source": "src_app_app_setcomposerforkey",
       "source_file": "src/App.tsx",
-      "source_location": "L10123",
+      "source_location": "L10127",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -72399,7 +72399,7 @@
       "relation": "calls",
       "source": "src_app_app_setcomposerforkey",
       "source_file": "src/App.tsx",
-      "source_location": "L10125",
+      "source_location": "L10129",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -72411,7 +72411,7 @@
       "relation": "calls",
       "source": "src_app_app_shortcutkeys",
       "source_file": "src/App.tsx",
-      "source_location": "L10571",
+      "source_location": "L10575",
       "target": "src_app_bindinglabel",
       "weight": 1.0
     },
@@ -72423,7 +72423,7 @@
       "relation": "calls",
       "source": "src_app_app_sidebarresizeend",
       "source_file": "src/App.tsx",
-      "source_location": "L7473",
+      "source_location": "L7477",
       "target": "src_app_app_commitsidebarwidth",
       "weight": 1.0
     },
@@ -72435,7 +72435,7 @@
       "relation": "calls",
       "source": "src_app_app_sidebarresizekeydown",
       "source_file": "src/App.tsx",
-      "source_location": "L7480",
+      "source_location": "L7484",
       "target": "src_app_app_commitsidebarwidth",
       "weight": 1.0
     },
@@ -72447,7 +72447,7 @@
       "relation": "calls",
       "source": "src_app_app_sidebarresizemove",
       "source_file": "src/App.tsx",
-      "source_location": "L7456",
+      "source_location": "L7460",
       "target": "src_app_clampsidebarwidth",
       "weight": 1.0
     },
@@ -72459,7 +72459,7 @@
       "relation": "calls",
       "source": "src_app_app_sidebartouchend",
       "source_file": "src/App.tsx",
-      "source_location": "L11302",
+      "source_location": "L11310",
       "target": "src_app_app_opensidebar",
       "weight": 1.0
     },
@@ -72471,7 +72471,7 @@
       "relation": "calls",
       "source": "src_app_app_sidebartouchstart",
       "source_file": "src/App.tsx",
-      "source_location": "L11275",
+      "source_location": "L11283",
       "target": "src_pwa_installedasapp",
       "weight": 1.0
     },
@@ -72483,7 +72483,7 @@
       "relation": "calls",
       "source": "src_app_app_startrecording",
       "source_file": "src/App.tsx",
-      "source_location": "L11645",
+      "source_location": "L11653",
       "target": "src_app_app_releaserecording",
       "weight": 1.0
     },
@@ -72495,7 +72495,7 @@
       "relation": "calls",
       "source": "src_app_app_startrecording",
       "source_file": "src/App.tsx",
-      "source_location": "L11655",
+      "source_location": "L11663",
       "target": "src_app_app_transcribefile",
       "weight": 1.0
     },
@@ -72507,7 +72507,7 @@
       "relation": "calls",
       "source": "src_app_app_stepsession",
       "source_file": "src/App.tsx",
-      "source_location": "L10735",
+      "source_location": "L10739",
       "target": "src_app_app_selectsession",
       "weight": 1.0
     },
@@ -72519,7 +72519,7 @@
       "relation": "calls",
       "source": "src_app_app_stepsession",
       "source_file": "src/App.tsx",
-      "source_location": "L10733",
+      "source_location": "L10737",
       "target": "src_session_navigation_view_stepvisiblesession",
       "weight": 1.0
     },
@@ -72531,7 +72531,7 @@
       "relation": "calls",
       "source": "src_app_app_stilllisted",
       "source_file": "src/App.tsx",
-      "source_location": "L11989",
+      "source_location": "L11997",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -72543,7 +72543,7 @@
       "relation": "calls",
       "source": "src_app_app_stoprecording",
       "source_file": "src/App.tsx",
-      "source_location": "L11689",
+      "source_location": "L11697",
       "target": "src_app_app_releaserecording",
       "weight": 1.0
     },
@@ -72555,7 +72555,7 @@
       "relation": "calls",
       "source": "src_app_app_stopselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12830",
+      "source_location": "L12838",
       "target": "src_api_cancelsession",
       "weight": 1.0
     },
@@ -72567,7 +72567,7 @@
       "relation": "calls",
       "source": "src_app_app_stopselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12831",
+      "source_location": "L12839",
       "target": "src_api_getsession",
       "weight": 1.0
     },
@@ -72579,7 +72579,7 @@
       "relation": "calls",
       "source": "src_app_app_stopselectedsession",
       "source_file": "src/App.tsx",
-      "source_location": "L12832",
+      "source_location": "L12840",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -72591,7 +72591,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11465",
+      "source_location": "L11473",
       "target": "src_api_executecommand",
       "weight": 1.0
     },
@@ -72603,7 +72603,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11472",
+      "source_location": "L11480",
       "target": "src_api_sendmessage",
       "weight": 1.0
     },
@@ -72615,7 +72615,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11345",
+      "source_location": "L11353",
       "target": "src_app_activecomposerpastes",
       "weight": 1.0
     },
@@ -72627,7 +72627,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11406",
+      "source_location": "L11414",
       "target": "src_app_app_clearselectedconversation",
       "weight": 1.0
     },
@@ -72639,7 +72639,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11549",
+      "source_location": "L11557",
       "target": "src_app_app_failurestampfor",
       "weight": 1.0
     },
@@ -72651,92 +72651,8 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11407",
+      "source_location": "L11415",
       "target": "src_app_app_focuscomposer",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_submitmessage",
-      "source_file": "src/App.tsx",
-      "source_location": "L11326",
-      "target": "src_app_app_followlatest",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_submitmessage",
-      "source_file": "src/App.tsx",
-      "source_location": "L11502",
-      "target": "src_app_app_forgetrestoreddraft",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_submitmessage",
-      "source_file": "src/App.tsx",
-      "source_location": "L11397",
-      "target": "src_app_app_reofferfailedprompt",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_submitmessage",
-      "source_file": "src/App.tsx",
-      "source_location": "L11414",
-      "target": "src_app_app_restartselectedsession",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_submitmessage",
-      "source_file": "src/App.tsx",
-      "source_location": "L11526",
-      "target": "src_app_app_restorecomposersubmission",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_submitmessage",
-      "source_file": "src/App.tsx",
-      "source_location": "L11352",
-      "target": "src_app_app_savequeuedpromptedit",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "src_app_app_submitmessage",
-      "source_file": "src/App.tsx",
-      "source_location": "L11354",
-      "target": "src_app_app_sendqueuedpromptedit",
       "weight": 1.0
     },
     {
@@ -72748,6 +72664,90 @@
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
       "source_location": "L11334",
+      "target": "src_app_app_followlatest",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_submitmessage",
+      "source_file": "src/App.tsx",
+      "source_location": "L11510",
+      "target": "src_app_app_forgetrestoreddraft",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_submitmessage",
+      "source_file": "src/App.tsx",
+      "source_location": "L11405",
+      "target": "src_app_app_reofferfailedprompt",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_submitmessage",
+      "source_file": "src/App.tsx",
+      "source_location": "L11422",
+      "target": "src_app_app_restartselectedsession",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_submitmessage",
+      "source_file": "src/App.tsx",
+      "source_location": "L11534",
+      "target": "src_app_app_restorecomposersubmission",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_submitmessage",
+      "source_file": "src/App.tsx",
+      "source_location": "L11360",
+      "target": "src_app_app_savequeuedpromptedit",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_submitmessage",
+      "source_file": "src/App.tsx",
+      "source_location": "L11362",
+      "target": "src_app_app_sendqueuedpromptedit",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "src_app_app_submitmessage",
+      "source_file": "src/App.tsx",
+      "source_location": "L11342",
       "target": "src_app_app_setcomposer",
       "weight": 1.0
     },
@@ -72759,7 +72759,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11338",
+      "source_location": "L11346",
       "target": "src_app_app_updatecomposerdrafts",
       "weight": 1.0
     },
@@ -72771,7 +72771,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11349",
+      "source_location": "L11357",
       "target": "src_app_expandcomposerpastes",
       "weight": 1.0
     },
@@ -72783,7 +72783,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11437",
+      "source_location": "L11445",
       "target": "src_app_newcollapsedpastekey",
       "weight": 1.0
     },
@@ -72795,7 +72795,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11380",
+      "source_location": "L11388",
       "target": "src_app_slashshortcut",
       "weight": 1.0
     },
@@ -72807,7 +72807,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11518",
+      "source_location": "L11526",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -72819,7 +72819,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11339",
+      "source_location": "L11347",
       "target": "src_app_writecomposercontent",
       "weight": 1.0
     },
@@ -72831,7 +72831,7 @@
       "relation": "calls",
       "source": "src_app_app_submitmessage",
       "source_file": "src/App.tsx",
-      "source_location": "L11327",
+      "source_location": "L11335",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -72843,7 +72843,7 @@
       "relation": "calls",
       "source": "src_app_app_timelinescrolled",
       "source_file": "src/App.tsx",
-      "source_location": "L9673",
+      "source_location": "L9677",
       "target": "src_app_app_setfollowslatest",
       "weight": 1.0
     },
@@ -72855,7 +72855,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleknowledgeexpanded",
       "source_file": "src/App.tsx",
-      "source_location": "L10636",
+      "source_location": "L10640",
       "target": "src_app_app_setknowledgemode",
       "weight": 1.0
     },
@@ -72867,7 +72867,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleknowledgefolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10844",
+      "source_location": "L10848",
       "target": "src_app_app_cancelknowledgerestore",
       "weight": 1.0
     },
@@ -72879,7 +72879,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleknowledgefolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10859",
+      "source_location": "L10863",
       "target": "src_app_app_loadknowledgefolder",
       "weight": 1.0
     },
@@ -72891,7 +72891,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleknowledgefolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10846",
+      "source_location": "L10850",
       "target": "src_knowledge_tree_collapseknowledgefolder",
       "weight": 1.0
     },
@@ -72903,7 +72903,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleknowledgefolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10856",
+      "source_location": "L10860",
       "target": "src_knowledge_tree_expandknowledgefolder",
       "weight": 1.0
     },
@@ -72915,7 +72915,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleknowledgefolder",
       "source_file": "src/App.tsx",
-      "source_location": "L10851",
+      "source_location": "L10855",
       "target": "src_knowledge_tree_knowledgepathchain",
       "weight": 1.0
     },
@@ -72927,7 +72927,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleknowledgepanel",
       "source_file": "src/App.tsx",
-      "source_location": "L10630",
+      "source_location": "L10634",
       "target": "src_app_app_setknowledgemode",
       "weight": 1.0
     },
@@ -72939,7 +72939,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleselectedsessionmute",
       "source_file": "src/App.tsx",
-      "source_location": "L12901",
+      "source_location": "L12909",
       "target": "src_api_setsessionnotificationsmuted",
       "weight": 1.0
     },
@@ -72951,7 +72951,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleselectedsessionmute",
       "source_file": "src/App.tsx",
-      "source_location": "L12906",
+      "source_location": "L12914",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -72963,7 +72963,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleselectedsessionsuspended",
       "source_file": "src/App.tsx",
-      "source_location": "L12497",
+      "source_location": "L12505",
       "target": "src_api_resumesession",
       "weight": 1.0
     },
@@ -72975,7 +72975,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleselectedsessionsuspended",
       "source_file": "src/App.tsx",
-      "source_location": "L12498",
+      "source_location": "L12506",
       "target": "src_api_suspendsession",
       "weight": 1.0
     },
@@ -72987,7 +72987,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleselectedsessionsuspended",
       "source_file": "src/App.tsx",
-      "source_location": "L12510",
+      "source_location": "L12518",
       "target": "src_app_app_selectsession",
       "weight": 1.0
     },
@@ -72999,7 +72999,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleselectedsessionsuspended",
       "source_file": "src/App.tsx",
-      "source_location": "L12499",
+      "source_location": "L12507",
       "target": "src_app_upsertsession",
       "weight": 1.0
     },
@@ -73011,7 +73011,7 @@
       "relation": "calls",
       "source": "src_app_app_toggleselectedsessionsuspended",
       "source_file": "src/App.tsx",
-      "source_location": "L12509",
+      "source_location": "L12517",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -73023,7 +73023,7 @@
       "relation": "calls",
       "source": "src_app_app_transcribefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11569",
+      "source_location": "L11577",
       "target": "src_api_transcribeaudio",
       "weight": 1.0
     },
@@ -73035,7 +73035,7 @@
       "relation": "calls",
       "source": "src_app_app_transcribefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11570",
+      "source_location": "L11578",
       "target": "src_app_app_appendcomposerforkey",
       "weight": 1.0
     },
@@ -73047,7 +73047,7 @@
       "relation": "calls",
       "source": "src_app_app_transcribefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11575",
+      "source_location": "L11583",
       "target": "src_app_app_focuscomposer",
       "weight": 1.0
     },
@@ -73059,7 +73059,7 @@
       "relation": "calls",
       "source": "src_app_app_transcribefile",
       "source_file": "src/App.tsx",
-      "source_location": "L11565",
+      "source_location": "L11573",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -73071,7 +73071,7 @@
       "relation": "calls",
       "source": "src_app_app_updatecomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L10082",
+      "source_location": "L10086",
       "target": "src_app_app_persistcomposerdrafts",
       "weight": 1.0
     },
@@ -73083,7 +73083,7 @@
       "relation": "calls",
       "source": "src_app_app_updatecomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L10093",
+      "source_location": "L10097",
       "target": "src_app_app_reportcomposerstoragefailure",
       "weight": 1.0
     },
@@ -73095,7 +73095,7 @@
       "relation": "calls",
       "source": "src_app_app_updatecomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L10080",
+      "source_location": "L10084",
       "target": "src_app_app_resetcomposerhistory",
       "weight": 1.0
     },
@@ -73107,7 +73107,7 @@
       "relation": "calls",
       "source": "src_app_app_updatecomposerdrafts",
       "source_file": "src/App.tsx",
-      "source_location": "L10098",
+      "source_location": "L10102",
       "target": "src_app_reconcileacceptedcomposerdrafts",
       "weight": 1.0
     },
@@ -73119,7 +73119,7 @@
       "relation": "calls",
       "source": "src_app_app_uploadfile",
       "source_file": "src/App.tsx",
-      "source_location": "L11704",
+      "source_location": "L11712",
       "target": "src_api_uploadsessionfile",
       "weight": 1.0
     },
@@ -73131,7 +73131,7 @@
       "relation": "calls",
       "source": "src_app_app_uploadfile",
       "source_file": "src/App.tsx",
-      "source_location": "L11709",
+      "source_location": "L11717",
       "target": "src_app_app_appendcomposerforkey",
       "weight": 1.0
     },
@@ -73143,7 +73143,7 @@
       "relation": "calls",
       "source": "src_app_app_uploadfile",
       "source_file": "src/App.tsx",
-      "source_location": "L11718",
+      "source_location": "L11726",
       "target": "src_app_app_focuscomposer",
       "weight": 1.0
     },
@@ -73155,7 +73155,7 @@
       "relation": "calls",
       "source": "src_app_app_uploadfile",
       "source_file": "src/App.tsx",
-      "source_location": "L11700",
+      "source_location": "L11708",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -75714,7 +75714,7 @@
       "relation": "contains",
       "source": "src_app_test",
       "source_file": "src/App.test.tsx",
-      "source_location": "L9784",
+      "source_location": "L9818",
       "target": "src_app_test_get",
       "weight": 1.0
     },
@@ -75780,7 +75780,7 @@
       "relation": "contains",
       "source": "src_app_test",
       "source_file": "src/App.test.tsx",
-      "source_location": "L5205",
+      "source_location": "L5239",
       "target": "src_app_test_mockmediarecorder",
       "weight": 1.0
     },
@@ -75802,7 +75802,7 @@
       "relation": "contains",
       "source": "src_app_test",
       "source_file": "src/App.test.tsx",
-      "source_location": "L9865",
+      "source_location": "L9899",
       "target": "src_app_test_opennote",
       "weight": 1.0
     },
@@ -75824,7 +75824,7 @@
       "relation": "contains",
       "source": "src_app_test",
       "source_file": "src/App.test.tsx",
-      "source_location": "L6425",
+      "source_location": "L6459",
       "target": "src_app_test_opentargetedqueueeditor",
       "weight": 1.0
     },
@@ -75879,7 +75879,7 @@
       "relation": "contains",
       "source": "src_app_test",
       "source_file": "src/App.test.tsx",
-      "source_location": "L9787",
+      "source_location": "L9821",
       "target": "src_app_test_set",
       "weight": 1.0
     },
@@ -76021,7 +76021,7 @@
       "relation": "method",
       "source": "src_app_test_mockmediarecorder",
       "source_file": "src/App.test.tsx",
-      "source_location": "L5206",
+      "source_location": "L5240",
       "target": "src_app_test_mockmediarecorder_istypesupported",
       "weight": 1.0
     },
@@ -76032,7 +76032,7 @@
       "relation": "method",
       "source": "src_app_test_mockmediarecorder",
       "source_file": "src/App.test.tsx",
-      "source_location": "L5210",
+      "source_location": "L5244",
       "target": "src_app_test_mockmediarecorder_start",
       "weight": 1.0
     },
@@ -76043,7 +76043,7 @@
       "relation": "method",
       "source": "src_app_test_mockmediarecorder",
       "source_file": "src/App.test.tsx",
-      "source_location": "L5214",
+      "source_location": "L5248",
       "target": "src_app_test_mockmediarecorder_stop",
       "weight": 1.0
     },
@@ -76077,7 +76077,7 @@
       "relation": "indirect_call",
       "source": "src_app_test_opentargetedqueueeditor",
       "source_file": "src/App.test.tsx",
-      "source_location": "L6439",
+      "source_location": "L6473",
       "target": "src_api_getsession",
       "weight": 1.0
     },
@@ -76089,7 +76089,7 @@
       "relation": "indirect_call",
       "source": "src_app_test_opentargetedqueueeditor",
       "source_file": "src/App.test.tsx",
-      "source_location": "L6432",
+      "source_location": "L6466",
       "target": "src_api_listcomputers",
       "weight": 1.0
     },
@@ -76101,7 +76101,7 @@
       "relation": "indirect_call",
       "source": "src_app_test_opentargetedqueueeditor",
       "source_file": "src/App.test.tsx",
-      "source_location": "L6438",
+      "source_location": "L6472",
       "target": "src_api_listsessions",
       "weight": 1.0
     },
@@ -107941,7 +107941,7 @@
       "label": "answerUserInput()",
       "norm_label": "answeruserinput()",
       "source_file": "src/App.tsx",
-      "source_location": "L12802"
+      "source_location": "L12810"
     },
     {
       "_callable": true,
@@ -107953,7 +107953,7 @@
       "label": "appendComposerForKey()",
       "norm_label": "appendcomposerforkey()",
       "source_file": "src/App.tsx",
-      "source_location": "L10210"
+      "source_location": "L10214"
     },
     {
       "_callable": true,
@@ -107965,7 +107965,7 @@
       "label": "appKeyDown()",
       "norm_label": "appkeydown()",
       "source_file": "src/App.tsx",
-      "source_location": "L12750"
+      "source_location": "L12758"
     },
     {
       "_callable": true,
@@ -107977,7 +107977,7 @@
       "label": "applyComputerSnapshot()",
       "norm_label": "applycomputersnapshot()",
       "source_file": "src/App.tsx",
-      "source_location": "L11135"
+      "source_location": "L11143"
     },
     {
       "_callable": true,
@@ -107989,7 +107989,7 @@
       "label": "applyPwaUpdate()",
       "norm_label": "applypwaupdate()",
       "source_file": "src/App.tsx",
-      "source_location": "L12880"
+      "source_location": "L12888"
     },
     {
       "_callable": true,
@@ -108001,7 +108001,7 @@
       "label": "applyRootChoice()",
       "norm_label": "applyrootchoice()",
       "source_file": "src/App.tsx",
-      "source_location": "L10678"
+      "source_location": "L10682"
     },
     {
       "_callable": true,
@@ -108013,7 +108013,7 @@
       "label": "applySession()",
       "norm_label": "applysession()",
       "source_file": "src/App.tsx",
-      "source_location": "L11979"
+      "source_location": "L11987"
     },
     {
       "_callable": true,
@@ -108025,7 +108025,7 @@
       "label": "askAboutKnowledgeFile()",
       "norm_label": "askaboutknowledgefile()",
       "source_file": "src/App.tsx",
-      "source_location": "L11786"
+      "source_location": "L11794"
     },
     {
       "_callable": true,
@@ -108037,7 +108037,7 @@
       "label": "attachedFiles()",
       "norm_label": "attachedfiles()",
       "source_file": "src/App.tsx",
-      "source_location": "L11730"
+      "source_location": "L11738"
     },
     {
       "_callable": true,
@@ -108049,7 +108049,7 @@
       "label": "audioDropped()",
       "norm_label": "audiodropped()",
       "source_file": "src/App.tsx",
-      "source_location": "L11750"
+      "source_location": "L11758"
     },
     {
       "_callable": true,
@@ -108061,7 +108061,7 @@
       "label": "audioFileChanged()",
       "norm_label": "audiofilechanged()",
       "source_file": "src/App.tsx",
-      "source_location": "L11743"
+      "source_location": "L11751"
     },
     {
       "_callable": true,
@@ -108073,7 +108073,7 @@
       "label": "beginRootCreation()",
       "norm_label": "beginrootcreation()",
       "source_file": "src/App.tsx",
-      "source_location": "L10670"
+      "source_location": "L10674"
     },
     {
       "_callable": true,
@@ -108085,7 +108085,7 @@
       "label": "cancelKnowledgeRestore()",
       "norm_label": "cancelknowledgerestore()",
       "source_file": "src/App.tsx",
-      "source_location": "L10898"
+      "source_location": "L10902"
     },
     {
       "_callable": true,
@@ -108097,7 +108097,7 @@
       "label": "cancelQueuedPromptEdit()",
       "norm_label": "cancelqueuedpromptedit()",
       "source_file": "src/App.tsx",
-      "source_location": "L11892"
+      "source_location": "L11900"
     },
     {
       "_callable": true,
@@ -108109,7 +108109,7 @@
       "label": "cancelSelectedBackgroundTask()",
       "norm_label": "cancelselectedbackgroundtask()",
       "source_file": "src/App.tsx",
-      "source_location": "L11237"
+      "source_location": "L11245"
     },
     {
       "_callable": true,
@@ -108121,7 +108121,7 @@
       "label": "changeSessionSort()",
       "norm_label": "changesessionsort()",
       "source_file": "src/App.tsx",
-      "source_location": "L12967"
+      "source_location": "L12975"
     },
     {
       "_callable": true,
@@ -108133,7 +108133,7 @@
       "label": "clearSelectedConversation()",
       "norm_label": "clearselectedconversation()",
       "source_file": "src/App.tsx",
-      "source_location": "L12397"
+      "source_location": "L12405"
     },
     {
       "_callable": true,
@@ -108145,7 +108145,7 @@
       "label": "closeRootPicker()",
       "norm_label": "closerootpicker()",
       "source_file": "src/App.tsx",
-      "source_location": "L10663"
+      "source_location": "L10667"
     },
     {
       "_callable": true,
@@ -108157,7 +108157,7 @@
       "label": "closeSelectedSession()",
       "norm_label": "closeselectedsession()",
       "source_file": "src/App.tsx",
-      "source_location": "L12840"
+      "source_location": "L12848"
     },
     {
       "_callable": true,
@@ -108169,7 +108169,7 @@
       "label": "closeTopmostLayer()",
       "norm_label": "closetopmostlayer()",
       "source_file": "src/App.tsx",
-      "source_location": "L10584"
+      "source_location": "L10588"
     },
     {
       "_callable": true,
@@ -108181,7 +108181,7 @@
       "label": "collapseKnowledgeTree()",
       "norm_label": "collapseknowledgetree()",
       "source_file": "src/App.tsx",
-      "source_location": "L10912"
+      "source_location": "L10916"
     },
     {
       "_callable": true,
@@ -108193,7 +108193,7 @@
       "label": "commitSidebarWidth()",
       "norm_label": "commitsidebarwidth()",
       "source_file": "src/App.tsx",
-      "source_location": "L7428"
+      "source_location": "L7432"
     },
     {
       "_callable": true,
@@ -108205,7 +108205,7 @@
       "label": "composerBeforeInput()",
       "norm_label": "composerbeforeinput()",
       "source_file": "src/App.tsx",
-      "source_location": "L9767"
+      "source_location": "L9771"
     },
     {
       "_callable": true,
@@ -108217,7 +108217,7 @@
       "label": "composerChanged()",
       "norm_label": "composerchanged()",
       "source_file": "src/App.tsx",
-      "source_location": "L9774"
+      "source_location": "L9778"
     },
     {
       "_callable": true,
@@ -108229,7 +108229,7 @@
       "label": "composerKeyDown()",
       "norm_label": "composerkeydown()",
       "source_file": "src/App.tsx",
-      "source_location": "L12640"
+      "source_location": "L12648"
     },
     {
       "_callable": true,
@@ -108241,7 +108241,7 @@
       "label": "composerPasted()",
       "norm_label": "composerpasted()",
       "source_file": "src/App.tsx",
-      "source_location": "L12572"
+      "source_location": "L12580"
     },
     {
       "_callable": true,
@@ -108253,7 +108253,7 @@
       "label": "created()",
       "norm_label": "created()",
       "source_file": "src/App.tsx",
-      "source_location": "L11308"
+      "source_location": "L11316"
     },
     {
       "_callable": true,
@@ -108265,7 +108265,7 @@
       "label": "createRoot()",
       "norm_label": "createroot()",
       "source_file": "src/App.tsx",
-      "source_location": "L11092"
+      "source_location": "L11096"
     },
     {
       "_callable": true,
@@ -108277,7 +108277,7 @@
       "label": "drawerIsOverlay()",
       "norm_label": "drawerisoverlay()",
       "source_file": "src/App.tsx",
-      "source_location": "L10560"
+      "source_location": "L10564"
     },
     {
       "_callable": true,
@@ -108289,7 +108289,7 @@
       "label": "durableComposerDraft()",
       "norm_label": "durablecomposerdraft()",
       "source_file": "src/App.tsx",
-      "source_location": "L8683"
+      "source_location": "L8687"
     },
     {
       "_callable": true,
@@ -108301,7 +108301,7 @@
       "label": "editQueuedPrompt()",
       "norm_label": "editqueuedprompt()",
       "source_file": "src/App.tsx",
-      "source_location": "L11849"
+      "source_location": "L11857"
     },
     {
       "_callable": true,
@@ -108313,7 +108313,7 @@
       "label": "failureStampFor()",
       "norm_label": "failurestampfor()",
       "source_file": "src/App.tsx",
-      "source_location": "L9822"
+      "source_location": "L9826"
     },
     {
       "_callable": true,
@@ -108325,7 +108325,7 @@
       "label": "focusComposer()",
       "norm_label": "focuscomposer()",
       "source_file": "src/App.tsx",
-      "source_location": "L10403"
+      "source_location": "L10407"
     },
     {
       "_callable": true,
@@ -108337,7 +108337,7 @@
       "label": "followLatest()",
       "norm_label": "followlatest()",
       "source_file": "src/App.tsx",
-      "source_location": "L9691"
+      "source_location": "L9695"
     },
     {
       "_callable": true,
@@ -108349,7 +108349,7 @@
       "label": "forgetComputerKnowledge()",
       "norm_label": "forgetcomputerknowledge()",
       "source_file": "src/App.tsx",
-      "source_location": "L11182"
+      "source_location": "L11190"
     },
     {
       "_callable": true,
@@ -108361,7 +108361,7 @@
       "label": "forgetKnowledgeSession()",
       "norm_label": "forgetknowledgesession()",
       "source_file": "src/App.tsx",
-      "source_location": "L10280"
+      "source_location": "L10284"
     },
     {
       "_callable": true,
@@ -108373,7 +108373,7 @@
       "label": "forgetQueuedEdit()",
       "norm_label": "forgetqueuededit()",
       "source_file": "src/App.tsx",
-      "source_location": "L11840"
+      "source_location": "L11848"
     },
     {
       "_callable": true,
@@ -108385,7 +108385,7 @@
       "label": "forgetRestoredDraft()",
       "norm_label": "forgetrestoreddraft()",
       "source_file": "src/App.tsx",
-      "source_location": "L10008"
+      "source_location": "L10012"
     },
     {
       "_callable": true,
@@ -108397,7 +108397,7 @@
       "label": "handleDragEnd()",
       "norm_label": "handledragend()",
       "source_file": "src/App.tsx",
-      "source_location": "L12915"
+      "source_location": "L12923"
     },
     {
       "_callable": true,
@@ -108409,7 +108409,7 @@
       "label": "insertComposerNewline()",
       "norm_label": "insertcomposernewline()",
       "source_file": "src/App.tsx",
-      "source_location": "L12627"
+      "source_location": "L12635"
     },
     {
       "_callable": true,
@@ -108421,7 +108421,7 @@
       "label": "insertWorkspaceFile()",
       "norm_label": "insertworkspacefile()",
       "source_file": "src/App.tsx",
-      "source_location": "L11760"
+      "source_location": "L11768"
     },
     {
       "_callable": true,
@@ -108433,7 +108433,7 @@
       "label": "isWebOnlyCommand()",
       "norm_label": "iswebonlycommand()",
       "source_file": "src/App.tsx",
-      "source_location": "L12002"
+      "source_location": "L12010"
     },
     {
       "_callable": true,
@@ -108445,7 +108445,7 @@
       "label": "knowledgeTreeKeyDown()",
       "norm_label": "knowledgetreekeydown()",
       "source_file": "src/App.tsx",
-      "source_location": "L10927"
+      "source_location": "L10931"
     },
     {
       "_callable": true,
@@ -108457,7 +108457,7 @@
       "label": "knownCommand()",
       "norm_label": "knowncommand()",
       "source_file": "src/App.tsx",
-      "source_location": "L12015"
+      "source_location": "L12023"
     },
     {
       "_callable": true,
@@ -108469,7 +108469,7 @@
       "label": "loadKnowledgeChain()",
       "norm_label": "loadknowledgechain()",
       "source_file": "src/App.tsx",
-      "source_location": "L10814"
+      "source_location": "L10818"
     },
     {
       "_callable": true,
@@ -108481,7 +108481,7 @@
       "label": "loadKnowledgeFolder()",
       "norm_label": "loadknowledgefolder()",
       "source_file": "src/App.tsx",
-      "source_location": "L10746"
+      "source_location": "L10750"
     },
     {
       "_callable": true,
@@ -108493,7 +108493,7 @@
       "label": "manageQueuedPrompt()",
       "norm_label": "managequeuedprompt()",
       "source_file": "src/App.tsx",
-      "source_location": "L12358"
+      "source_location": "L12366"
     },
     {
       "_callable": true,
@@ -108505,7 +108505,7 @@
       "label": "migrateSessionState()",
       "norm_label": "migratesessionstate()",
       "source_file": "src/App.tsx",
-      "source_location": "L10373"
+      "source_location": "L10377"
     },
     {
       "_callable": true,
@@ -108517,7 +108517,7 @@
       "label": "moveComposerDraft()",
       "norm_label": "movecomposerdraft()",
       "source_file": "src/App.tsx",
-      "source_location": "L10239"
+      "source_location": "L10243"
     },
     {
       "_callable": true,
@@ -108529,7 +108529,7 @@
       "label": "moveKnowledgePosition()",
       "norm_label": "moveknowledgeposition()",
       "source_file": "src/App.tsx",
-      "source_location": "L10307"
+      "source_location": "L10311"
     },
     {
       "_callable": true,
@@ -108541,7 +108541,7 @@
       "label": "moveRestoredDraft()",
       "norm_label": "moverestoreddraft()",
       "source_file": "src/App.tsx",
-      "source_location": "L10033"
+      "source_location": "L10037"
     },
     {
       "_callable": true,
@@ -108553,7 +108553,7 @@
       "label": "moveSelectedSessionToTmux()",
       "norm_label": "moveselectedsessiontotmux()",
       "source_file": "src/App.tsx",
-      "source_location": "L12537"
+      "source_location": "L12545"
     },
     {
       "_callable": true,
@@ -108565,7 +108565,7 @@
       "label": "moveSessionToBrowsedFolder()",
       "norm_label": "movesessiontobrowsedfolder()",
       "source_file": "src/App.tsx",
-      "source_location": "L10477"
+      "source_location": "L10481"
     },
     {
       "_callable": true,
@@ -108577,7 +108577,7 @@
       "label": "navigateMessageHistory()",
       "norm_label": "navigatemessagehistory()",
       "source_file": "src/App.tsx",
-      "source_location": "L10136"
+      "source_location": "L10140"
     },
     {
       "_callable": true,
@@ -108589,7 +108589,7 @@
       "label": "openBackgroundTasks()",
       "norm_label": "openbackgroundtasks()",
       "source_file": "src/App.tsx",
-      "source_location": "L11220"
+      "source_location": "L11228"
     },
     {
       "_callable": true,
@@ -108601,7 +108601,7 @@
       "label": "openKnowledgeFile()",
       "norm_label": "openknowledgefile()",
       "source_file": "src/App.tsx",
-      "source_location": "L10989"
+      "source_location": "L10993"
     },
     {
       "_callable": true,
@@ -108613,7 +108613,7 @@
       "label": "openKnowledgeFolder()",
       "norm_label": "openknowledgefolder()",
       "source_file": "src/App.tsx",
-      "source_location": "L10863"
+      "source_location": "L10867"
     },
     {
       "_callable": true,
@@ -108625,7 +108625,7 @@
       "label": "openRootPicker()",
       "norm_label": "openrootpicker()",
       "source_file": "src/App.tsx",
-      "source_location": "L10644"
+      "source_location": "L10648"
     },
     {
       "_callable": true,
@@ -108637,7 +108637,7 @@
       "label": "openSidebar()",
       "norm_label": "opensidebar()",
       "source_file": "src/App.tsx",
-      "source_location": "L10639"
+      "source_location": "L10643"
     },
     {
       "_callable": true,
@@ -108649,7 +108649,7 @@
       "label": "openTasksForSession()",
       "norm_label": "opentasksforsession()",
       "source_file": "src/App.tsx",
-      "source_location": "L11231"
+      "source_location": "L11239"
     },
     {
       "_callable": true,
@@ -108661,7 +108661,7 @@
       "label": "persistComposerDrafts()",
       "norm_label": "persistcomposerdrafts()",
       "source_file": "src/App.tsx",
-      "source_location": "L8690"
+      "source_location": "L8694"
     },
     {
       "_callable": true,
@@ -108673,7 +108673,7 @@
       "label": "persistComposerRecoveryIdentity()",
       "norm_label": "persistcomposerrecoveryidentity()",
       "source_file": "src/App.tsx",
-      "source_location": "L10020"
+      "source_location": "L10024"
     },
     {
       "_callable": true,
@@ -108685,7 +108685,7 @@
       "label": "queuedEditSubmission()",
       "norm_label": "queuededitsubmission()",
       "source_file": "src/App.tsx",
-      "source_location": "L12025"
+      "source_location": "L12033"
     },
     {
       "_callable": true,
@@ -108697,7 +108697,7 @@
       "label": "queueDragEnded()",
       "norm_label": "queuedragended()",
       "source_file": "src/App.tsx",
-      "source_location": "L12265"
+      "source_location": "L12273"
     },
     {
       "_callable": true,
@@ -108709,7 +108709,7 @@
       "label": "refreshKnowledgeFolder()",
       "norm_label": "refreshknowledgefolder()",
       "source_file": "src/App.tsx",
-      "source_location": "L10918"
+      "source_location": "L10922"
     },
     {
       "_callable": true,
@@ -108721,7 +108721,7 @@
       "label": "releaseRecording()",
       "norm_label": "releaserecording()",
       "source_file": "src/App.tsx",
-      "source_location": "L11587"
+      "source_location": "L11595"
     },
     {
       "_callable": true,
@@ -108733,7 +108733,7 @@
       "label": "rememberComposerEdit()",
       "norm_label": "remembercomposeredit()",
       "source_file": "src/App.tsx",
-      "source_location": "L9750"
+      "source_location": "L9754"
     },
     {
       "_callable": true,
@@ -108745,7 +108745,7 @@
       "label": "rememberRestoredDraft()",
       "norm_label": "rememberrestoreddraft()",
       "source_file": "src/App.tsx",
-      "source_location": "L9996"
+      "source_location": "L10000"
     },
     {
       "_callable": true,
@@ -108757,7 +108757,7 @@
       "label": "removeRoot()",
       "norm_label": "removeroot()",
       "source_file": "src/App.tsx",
-      "source_location": "L11077"
+      "source_location": "L11081"
     },
     {
       "_callable": true,
@@ -108769,7 +108769,7 @@
       "label": "removeUntouchedRecovery()",
       "norm_label": "removeuntouchedrecovery()",
       "source_file": "src/App.tsx",
-      "source_location": "L9895"
+      "source_location": "L9899"
     },
     {
       "_callable": true,
@@ -108781,7 +108781,7 @@
       "label": "reofferFailedPrompt()",
       "norm_label": "reofferfailedprompt()",
       "source_file": "src/App.tsx",
-      "source_location": "L9827"
+      "source_location": "L9831"
     },
     {
       "_callable": true,
@@ -108793,7 +108793,7 @@
       "label": "replaceComposer()",
       "norm_label": "replacecomposer()",
       "source_file": "src/App.tsx",
-      "source_location": "L9726"
+      "source_location": "L9730"
     },
     {
       "_callable": true,
@@ -108805,7 +108805,7 @@
       "label": "replyToPermission()",
       "norm_label": "replytopermission()",
       "source_file": "src/App.tsx",
-      "source_location": "L12780"
+      "source_location": "L12788"
     },
     {
       "_callable": true,
@@ -108817,7 +108817,7 @@
       "label": "reportComposerStorageFailure()",
       "norm_label": "reportcomposerstoragefailure()",
       "source_file": "src/App.tsx",
-      "source_location": "L8819"
+      "source_location": "L8823"
     },
     {
       "_callable": true,
@@ -108829,7 +108829,7 @@
       "label": "resetComposerHistory()",
       "norm_label": "resetcomposerhistory()",
       "source_file": "src/App.tsx",
-      "source_location": "L10132"
+      "source_location": "L10136"
     },
     {
       "_callable": true,
@@ -108841,7 +108841,7 @@
       "label": "restartSelectedSession()",
       "norm_label": "restartselectedsession()",
       "source_file": "src/App.tsx",
-      "source_location": "L12520"
+      "source_location": "L12528"
     },
     {
       "_callable": true,
@@ -108853,7 +108853,7 @@
       "label": "restoreComposerSubmission()",
       "norm_label": "restorecomposersubmission()",
       "source_file": "src/App.tsx",
-      "source_location": "L10191"
+      "source_location": "L10195"
     },
     {
       "_callable": true,
@@ -108865,7 +108865,7 @@
       "label": "restoreFailedPrompt()",
       "norm_label": "restorefailedprompt()",
       "source_file": "src/App.tsx",
-      "source_location": "L9842"
+      "source_location": "L9846"
     },
     {
       "_callable": true,
@@ -108877,7 +108877,7 @@
       "label": "retrySessionKnowledge()",
       "norm_label": "retrysessionknowledge()",
       "source_file": "src/App.tsx",
-      "source_location": "L10720"
+      "source_location": "L10724"
     },
     {
       "_callable": true,
@@ -108889,7 +108889,7 @@
       "label": "saveQueuedPromptEdit()",
       "norm_label": "savequeuedpromptedit()",
       "source_file": "src/App.tsx",
-      "source_location": "L12103"
+      "source_location": "L12111"
     },
     {
       "_callable": true,
@@ -108901,7 +108901,7 @@
       "label": "selectCommand()",
       "norm_label": "selectcommand()",
       "source_file": "src/App.tsx",
-      "source_location": "L12567"
+      "source_location": "L12575"
     },
     {
       "_callable": true,
@@ -108913,7 +108913,7 @@
       "label": "selectRoot()",
       "norm_label": "selectroot()",
       "source_file": "src/App.tsx",
-      "source_location": "L11035"
+      "source_location": "L11039"
     },
     {
       "_callable": true,
@@ -108925,7 +108925,7 @@
       "label": "selectSession()",
       "norm_label": "selectsession()",
       "source_file": "src/App.tsx",
-      "source_location": "L11213"
+      "source_location": "L11221"
     },
     {
       "_callable": true,
@@ -108937,7 +108937,7 @@
       "label": "sendQueuedPromptEdit()",
       "norm_label": "sendqueuedpromptedit()",
       "source_file": "src/App.tsx",
-      "source_location": "L12188"
+      "source_location": "L12196"
     },
     {
       "_callable": true,
@@ -108949,7 +108949,7 @@
       "label": "setComposer()",
       "norm_label": "setcomposer()",
       "source_file": "src/App.tsx",
-      "source_location": "L9736"
+      "source_location": "L9740"
     },
     {
       "_callable": true,
@@ -108961,7 +108961,7 @@
       "label": "setComposerForKey()",
       "norm_label": "setcomposerforkey()",
       "source_file": "src/App.tsx",
-      "source_location": "L10113"
+      "source_location": "L10117"
     },
     {
       "_callable": true,
@@ -108973,7 +108973,7 @@
       "label": "setFollowsLatest()",
       "norm_label": "setfollowslatest()",
       "source_file": "src/App.tsx",
-      "source_location": "L9683"
+      "source_location": "L9687"
     },
     {
       "_callable": true,
@@ -108985,7 +108985,7 @@
       "label": "setKnowledgeMode()",
       "norm_label": "setknowledgemode()",
       "source_file": "src/App.tsx",
-      "source_location": "L10525"
+      "source_location": "L10529"
     },
     {
       "_callable": true,
@@ -108997,7 +108997,7 @@
       "label": "shortcutKeys()",
       "norm_label": "shortcutkeys()",
       "source_file": "src/App.tsx",
-      "source_location": "L10569"
+      "source_location": "L10573"
     },
     {
       "_callable": true,
@@ -109009,7 +109009,7 @@
       "label": "sidebarResizeEnd()",
       "norm_label": "sidebarresizeend()",
       "source_file": "src/App.tsx",
-      "source_location": "L7463"
+      "source_location": "L7467"
     },
     {
       "_callable": true,
@@ -109021,7 +109021,7 @@
       "label": "sidebarResizeKeyDown()",
       "norm_label": "sidebarresizekeydown()",
       "source_file": "src/App.tsx",
-      "source_location": "L7476"
+      "source_location": "L7480"
     },
     {
       "_callable": true,
@@ -109033,7 +109033,7 @@
       "label": "sidebarResizeMove()",
       "norm_label": "sidebarresizemove()",
       "source_file": "src/App.tsx",
-      "source_location": "L7448"
+      "source_location": "L7452"
     },
     {
       "_callable": true,
@@ -109045,7 +109045,7 @@
       "label": "sidebarResizeStart()",
       "norm_label": "sidebarresizestart()",
       "source_file": "src/App.tsx",
-      "source_location": "L7434"
+      "source_location": "L7438"
     },
     {
       "_callable": true,
@@ -109057,7 +109057,7 @@
       "label": "sidebarTouchEnd()",
       "norm_label": "sidebartouchend()",
       "source_file": "src/App.tsx",
-      "source_location": "L11289"
+      "source_location": "L11297"
     },
     {
       "_callable": true,
@@ -109069,7 +109069,7 @@
       "label": "sidebarTouchStart()",
       "norm_label": "sidebartouchstart()",
       "source_file": "src/App.tsx",
-      "source_location": "L11261"
+      "source_location": "L11269"
     },
     {
       "_callable": true,
@@ -109081,7 +109081,7 @@
       "label": "startRecording()",
       "norm_label": "startrecording()",
       "source_file": "src/App.tsx",
-      "source_location": "L11601"
+      "source_location": "L11609"
     },
     {
       "_callable": true,
@@ -109093,7 +109093,7 @@
       "label": "stepSession()",
       "norm_label": "stepsession()",
       "source_file": "src/App.tsx",
-      "source_location": "L10732"
+      "source_location": "L10736"
     },
     {
       "_callable": true,
@@ -109105,7 +109105,7 @@
       "label": "stillListed()",
       "norm_label": "stilllisted()",
       "source_file": "src/App.tsx",
-      "source_location": "L11988"
+      "source_location": "L11996"
     },
     {
       "_callable": true,
@@ -109117,7 +109117,7 @@
       "label": "stopRecording()",
       "norm_label": "stoprecording()",
       "source_file": "src/App.tsx",
-      "source_location": "L11686"
+      "source_location": "L11694"
     },
     {
       "_callable": true,
@@ -109129,7 +109129,7 @@
       "label": "stopSelectedSession()",
       "norm_label": "stopselectedsession()",
       "source_file": "src/App.tsx",
-      "source_location": "L12823"
+      "source_location": "L12831"
     },
     {
       "_callable": true,
@@ -109141,7 +109141,7 @@
       "label": "submitMessage()",
       "norm_label": "submitmessage()",
       "source_file": "src/App.tsx",
-      "source_location": "L11316"
+      "source_location": "L11324"
     },
     {
       "_callable": true,
@@ -109153,7 +109153,7 @@
       "label": "timelineScrolled()",
       "norm_label": "timelinescrolled()",
       "source_file": "src/App.tsx",
-      "source_location": "L9667"
+      "source_location": "L9671"
     },
     {
       "_callable": true,
@@ -109165,7 +109165,7 @@
       "label": "toggleKnowledgeExpanded()",
       "norm_label": "toggleknowledgeexpanded()",
       "source_file": "src/App.tsx",
-      "source_location": "L10633"
+      "source_location": "L10637"
     },
     {
       "_callable": true,
@@ -109177,7 +109177,7 @@
       "label": "toggleKnowledgeFolder()",
       "norm_label": "toggleknowledgefolder()",
       "source_file": "src/App.tsx",
-      "source_location": "L10835"
+      "source_location": "L10839"
     },
     {
       "_callable": true,
@@ -109189,7 +109189,7 @@
       "label": "toggleKnowledgePanel()",
       "norm_label": "toggleknowledgepanel()",
       "source_file": "src/App.tsx",
-      "source_location": "L10629"
+      "source_location": "L10633"
     },
     {
       "_callable": true,
@@ -109201,7 +109201,7 @@
       "label": "toggleSelectedSessionMute()",
       "norm_label": "toggleselectedsessionmute()",
       "source_file": "src/App.tsx",
-      "source_location": "L12894"
+      "source_location": "L12902"
     },
     {
       "_callable": true,
@@ -109213,7 +109213,7 @@
       "label": "toggleSelectedSessionSuspended()",
       "norm_label": "toggleselectedsessionsuspended()",
       "source_file": "src/App.tsx",
-      "source_location": "L12483"
+      "source_location": "L12491"
     },
     {
       "_callable": true,
@@ -109225,7 +109225,7 @@
       "label": "transcribeFile()",
       "norm_label": "transcribefile()",
       "source_file": "src/App.tsx",
-      "source_location": "L11558"
+      "source_location": "L11566"
     },
     {
       "_callable": true,
@@ -109237,7 +109237,7 @@
       "label": "updateComposerDrafts()",
       "norm_label": "updatecomposerdrafts()",
       "source_file": "src/App.tsx",
-      "source_location": "L10063"
+      "source_location": "L10067"
     },
     {
       "_callable": true,
@@ -109249,7 +109249,7 @@
       "label": "uploadFile()",
       "norm_label": "uploadfile()",
       "source_file": "src/App.tsx",
-      "source_location": "L11696"
+      "source_location": "L11704"
     },
     {
       "_callable": true,
@@ -110912,7 +110912,7 @@
       "label": "get()",
       "norm_label": "get()",
       "source_file": "src/App.test.tsx",
-      "source_location": "L9784"
+      "source_location": "L9818"
     },
     {
       "_origin": "ast",
@@ -110983,7 +110983,7 @@
       "label": "MockMediaRecorder",
       "norm_label": "mockmediarecorder",
       "source_file": "src/App.test.tsx",
-      "source_location": "L5137"
+      "source_location": "L5171"
     },
     {
       "_callable": true,
@@ -110995,7 +110995,7 @@
       "label": ".isTypeSupported()",
       "norm_label": ".istypesupported()",
       "source_file": "src/App.test.tsx",
-      "source_location": "L5206"
+      "source_location": "L5240"
     },
     {
       "_callable": true,
@@ -111007,7 +111007,7 @@
       "label": ".start()",
       "norm_label": ".start()",
       "source_file": "src/App.test.tsx",
-      "source_location": "L5142"
+      "source_location": "L5176"
     },
     {
       "_callable": true,
@@ -111019,7 +111019,7 @@
       "label": ".stop()",
       "norm_label": ".stop()",
       "source_file": "src/App.test.tsx",
-      "source_location": "L5146"
+      "source_location": "L5180"
     },
     {
       "_callable": true,
@@ -111068,7 +111068,7 @@
       "label": "openNote()",
       "norm_label": "opennote()",
       "source_file": "src/App.test.tsx",
-      "source_location": "L9865"
+      "source_location": "L9899"
     },
     {
       "_callable": true,
@@ -111092,7 +111092,7 @@
       "label": "openTargetedQueueEditor()",
       "norm_label": "opentargetedqueueeditor()",
       "source_file": "src/App.test.tsx",
-      "source_location": "L6425"
+      "source_location": "L6459"
     },
     {
       "_origin": "ast",
@@ -111149,7 +111149,7 @@
       "label": "set()",
       "norm_label": "set()",
       "source_file": "src/App.test.tsx",
-      "source_location": "L9787"
+      "source_location": "L9821"
     },
     {
       "_origin": "ast",

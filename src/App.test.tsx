@@ -857,6 +857,71 @@ describe('App', () => {
     },
   )
 
+  it.each(['New knowledge root', 'Add a Knowledge folder', 'New Knowledge folder', 'empty catalog', 'late empty catalog'])(
+    'captures the starting binding revision for the %s creation flow',
+    async (entry) => {
+      const empty = entry.includes('empty catalog')
+      const initialRevision = empty ? 0 : 1
+      const key = `${computer.id}:${session.id}`
+      const initial: SessionKnowledgeBinding = {
+        computerId: computer.id, sessionId: session.id,
+        rootId: empty ? null : knowledgeRoot.id,
+        root: empty ? undefined : knowledgeRoot, revision: initialRevision, available: !empty,
+      }
+      fixtureKnowledgeBindings.set(key, initial)
+      mockKnowledgeRoots(empty ? [] : [knowledgeRoot])
+      const added = { ...knowledgeRoot, id: 'direct-added-root', name: 'Direct folder', path: '/home/tester/direct' }
+      mockAddedKnowledgeRoot(added)
+      vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+      vi.mocked(listDirectories).mockResolvedValue({ path: added.path, directories: [] })
+      let finishLookup: ((binding: SessionKnowledgeBinding) => void) | undefined
+      if (entry === 'late empty catalog') {
+        vi.mocked(getSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishLookup = resolve }))
+      }
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+      if (finishLookup) {
+        await waitFor(() => expect(getSessionKnowledgeRoot).toHaveBeenCalled())
+        await act(async () => finishLookup?.(initial))
+      }
+      if (!empty) {
+        await screen.findByText('Saved for this session')
+        if (entry === 'New Knowledge folder') {
+          fireEvent.click(screen.getByRole('button', { name: 'Show files' }))
+        }
+        fireEvent.click(screen.getAllByRole('button', { name: entry })[0])
+      }
+      const folder = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+      const confirm = within(folder).getByRole('button', { name: 'Add this folder' })
+      await waitFor(() => expect(confirm).toBeEnabled())
+      const newer: SessionKnowledgeBinding = {
+        ...initial, rootId: knowledgeRoot.id, root: knowledgeRoot,
+        revision: initialRevision + 1, available: true,
+      }
+      if (empty) fixtureKnowledgeRoots.push(knowledgeRoot)
+      fixtureKnowledgeBindings.set(key, newer)
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: newer,
+        }),
+      } as MessageEvent))
+      fireEvent.click(confirm)
+      await within(folder).findByText('Root changed in another client')
+      expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+        rootId: added.id, expectedRevision: initialRevision,
+      })
+      expect(fixtureKnowledgeBindings.get(key)).toEqual(newer)
+      await waitFor(() => expect(confirm).toBeEnabled())
+      fireEvent.click(confirm)
+      await waitFor(() => expect(folder).not.toBeInTheDocument())
+      expect(updateSessionKnowledgeRoot).toHaveBeenLastCalledWith(computer.id, session.id, {
+        rootId: added.id, expectedRevision: newer.revision,
+      })
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+    },
+  )
+
   afterEach(() => {
     restoreScrollTop?.()
     restoreScrollTop = undefined

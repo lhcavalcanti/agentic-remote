@@ -326,8 +326,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "9484b929ce7c692ec56437bce4e1c68988e433ea6c65c4f6120093fe4176c33b",
-    "src/App.tsx": "bc83a46ce696f5db162138ac4bdb3e7ce56f0b1d8c2048a5da9d30d38d6f7285",
+    "src/App.test.tsx": "ff82eb9f5d6132b12c667a01bc77a9707ee3f0f35268ebe91062835b999d49f7",
+    "src/App.tsx": "8600c0a3b7519d097146a515446b8ff693eb50b28718e0db1c5d8aa05d115d83",
     "src/DocumentViewControls.test.tsx": "3688110dc748a313bb0568e1ed693377e4effdbeecfa91864d5fd3abdf063b7b",
     "src/DocumentViewControls.tsx": "ce73b7ea6f5cb6b93b74bbe6d3a2ed3f490520ec19cf7649c997d191946bdefd",
     "src/KnowledgeRootChoices.test.tsx": "885ba0e9b94d09726a5e314359dc9a63d9eeea0c82731290f7b45681c196f310",
@@ -439,17 +439,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b8eee5dd636011638416c616a4ca7a8904cc5d35f3e0f2ac52096b9eed684401",
+    "GRAPH_REPORT.md": "059378ff308da15a3c5012f409103268dae3e2c691027a977b50e896619ac24d",
     "communities.json": "69d9ad45ff9cd1e9bd70cd5e110c1412238436e2bc331124b713482638cdc170",
-    "graph.html": "86498ff95298f4b2534214c3af3b987eb1f6e0947c5eff09c2c6fb451c3565ed",
-    "graph.json": "60a4992a074ba17967647e0b38289176179abe34134d644057c407bd47cd3527"
+    "graph.html": "a551e72c5e87f0206915a4e89d003a7c3d068d7a4672f6bf818e3de9d56e7db3",
+    "graph.json": "4155dcaf95c7426043f2df720ba6a7ef5f0152223bf949351e4bb274a79c217a"
   },
   "schema_version": 1,
-  "source_commit": "3e1fce32951ec8d424c7afeefbcca0a842db7c34",
-  "source_fingerprint": "a9258678cf9094e37df862cb8e3e84d160e3449998d3441d52c528f9fa2758b0",
+  "source_commit": "c6b9ef9109fcfbf3598721b02e5ba2fe59e75d30",
+  "source_fingerprint": "14bac474320e7db666340393b0a3342af9569a351661252e87dc86f3caa5847c",
   "working_tree_changes": [
     "src/App.test.tsx",
-    "src/use-session-knowledge-root.test.tsx",
-    "src/use-session-knowledge-root.ts"
+    "src/App.tsx"
   ]
 }

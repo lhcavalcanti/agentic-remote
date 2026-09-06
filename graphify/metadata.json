@@ -216,7 +216,7 @@
     "server/node-identity.ts": "5a997e31e6717b7f5ba8b8de3dd036120fb4695ee316a84d7a85027fcceef66e",
     "server/node-routes.ts": "412d0a2c0efce8d715deb1d33ca94117da4666f313ff207250b1aab70414077b",
     "server/paths.ts": "11789bf5288ae72e1ce71a17f75b02c1432912d9dc5c5b859f0d1855100b2c14",
-    "server/promotion-monitor.test.ts": "cd64354764e4515d5d9658b8ccdc0cd889e18b4f25eac729fbbebdf9020ab891",
+    "server/promotion-monitor.test.ts": "50e08cebc81e728b7501fce79961444faf8a8af0ba326a95baa4488121e17d42",
     "server/promotion-setup.test.ts": "bdd915949a2483d85c8b26fd4754bd36edc1584de3eb9cc782797796857f7549",
     "server/provider-session-service.ts": "137e9cb078512b821b41a1b7023680258e7d1691cc713e5eafca254750d8944b",
     "server/push-notification-service.test.ts": "1948607fbd453c8ef07cc4b366bc2fcd6bd473d33a985c0b8601024af517959f",
@@ -355,19 +355,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d9cee5e6001dec01ee4cc80675ac23e1424b051d30b0c8077854142687b348a1",
+    "GRAPH_REPORT.md": "d498cc1e78cc27435caf6ae1468c8e648ed781cfbdc24dc9031b2338541d911a",
     "communities.json": "396938192aa0d3dda119d1fdefc634aa8c6f6010267814eb3768a876dca2dab8",
-    "graph.html": "182e751e7ab6eb77dc5709d367726e44ff7afd7f62803ed038a431c8d8d88ba3",
-    "graph.json": "4f2d76a9631a5ebe4c9dc27a3ff41e94a9ecb5da2f431b3ee58c7b4677ca0b0c"
+    "graph.html": "de6b84cffa8619b6545cade8c693d51cc06e108741f69ba4e0d89e59b79015d4",
+    "graph.json": "c2c637efeee5fb3c0d8f025d1b0a94a47f9dc010e183d11c6a8fe3ab39b12abe"
   },
   "schema_version": 1,
-  "source_commit": "6691304001885444f3816dacdefc06b0ee7ebd15",
-  "source_fingerprint": "abeeaa16b8a357ff2ffacf27719d5ee4846e0ca0491028dc607009b009c8d7b9",
+  "source_commit": "3737ee671006dce7e8d6aeb8fe5b64cf22195b51",
+  "source_fingerprint": "57de9595f0294d7a193afe1013852c255d97fde1fd9c2687a59a3c5a4c5e67ee",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "server/agent-service.ts",
-    "server/recovery-resend-durability.test.ts",
-    "server/session-store.ts"
+    "server/promotion-monitor.test.ts"
   ]
 }

@@ -272,6 +272,11 @@ Questions and permissions are the highest-priority UI state.
   reconciliation, except for the matching recovery claim. An immediate message
   serialized behind a startup dispatch MUST NOT trust its still-visible old
   composer as permission to submit a second message.
+- The startup dispatch hold MUST also cover command/message interleavings.
+  Turn-starting commands and commands whose feedback cannot be observed MUST
+  retain that hold for serialized followers. A stable non-turn command response
+  MAY release only its own hold. Explicit Queue requests MUST remain queued
+  rather than becoming immediate sends after stale-idle reconciliation.
 - Form identity MUST preserve word boundaries. Terminal form reads MUST use
   tmux's joined soft-wrap capture instead of guessing whether a line break
   separated words or split an identifier.

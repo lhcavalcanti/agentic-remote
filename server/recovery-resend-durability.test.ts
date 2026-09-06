@@ -986,6 +986,81 @@ describe('Recovery and admission integration', () => {
     expect(context.pastes).toEqual(['First startup send'])
   })
 
+  it.each([
+    ['message', 'command', false],
+    ['command-turn', 'message', false],
+    ['command-turn', 'command', false],
+    ['command-unobserved', 'message', false],
+    ['command-text', 'message', false],
+    ['command-text', 'command', false],
+    ['message', 'command', true],
+    ['command-turn', 'message', true],
+    ['command-turn', 'command', true],
+  ] as const)(
+    'keeps startup admission across %s → %s interleaving (enqueue=%s)',
+    async (firstKind, nextKind, enqueue) => {
+      const context = await fixture()
+      await context.service.store.clearFailedPrompt(sessionId, originalToken)
+      let ownsStartup = true
+      let observedWorking = false
+      let unreadableFeedback = 0
+      const ready = '╻▄▄▄▄\n┃ \n╹▀▀▀▀\n / commands'
+      Object.assign(context.terminal, {
+        ownsStartupPrompt: () => ownsStartup,
+        capture: async () => {
+          if (firstKind === 'command-unobserved' && context.pastes.length === 1 && unreadableFeedback < 20) {
+            unreadableFeedback += 1
+            return undefined
+          }
+          if (firstKind === 'command-turn' && context.pastes.length === 1 && !observedWorking) {
+            observedWorking = true
+            return `${ready}\nWorking - esc interrupt`
+          }
+          return firstKind === 'command-text' && context.pastes.length
+            ? `Command output ${context.pastes.length}\n${ready}`
+            : ready
+        },
+        inputReady: async () => true,
+        resolveStartupPrompt: async () => { ownsStartup = false; return true },
+      })
+      const held = gate()
+      context.terminal.send.mockImplementationOnce(async (_id, content) => {
+        context.pastes.push(content)
+        held.opened()
+        await held.pending
+        return true
+      })
+      const firstContent = firstKind === 'message' ? 'First startup send' : '/usage first'
+      const nextContent = nextKind === 'message' ? 'Following message' : '/usage following'
+      const first = firstKind === 'message'
+        ? context.service.sendMessage(sessionId, firstContent)
+        : context.service.executeCommand(sessionId, firstContent)
+      await held.started
+      const admission = context.service['terminalAdmissionOperations'].get(sessionId)
+      const next = nextKind === 'message'
+        ? context.service.sendMessage(sessionId, nextContent, enqueue)
+        : context.service.executeCommand(sessionId, nextContent, enqueue)
+      const results = Promise.allSettled([first, next])
+      await vi.waitFor(() => expect(context.service['terminalAdmissionOperations'].get(sessionId)).not.toBe(admission))
+      held.release()
+      const [initial, follower] = await results
+      expect(initial.status).toBe('fulfilled')
+      if (!enqueue && firstKind !== 'command-text') {
+        expect.soft(follower).toMatchObject({ status: 'rejected', reason: { statusCode: 409 } })
+        expect(context.pastes).toEqual([firstContent])
+      } else {
+        expect(follower.status).toBe('fulfilled')
+        expect(context.pastes).toEqual([firstContent, nextContent])
+        if (enqueue) {
+          expect(context.terminal.send).toHaveBeenNthCalledWith(
+            2, sessionId, nextContent, true,
+            ...(nextKind === 'command' ? [{ allowDuringAgentExecution: true }] : []),
+          )
+        }
+      }
+    },
+  )
+
   it('joins confirmed command feedback and acknowledgement before provider teardown', async () => {
     const context = await fixture('command')
     const held = gate()
@@ -1217,6 +1292,41 @@ describe('Recovery and admission integration', () => {
       content: context.submitted, failedAt: token, uncertain: true,
     })
   })
+
+  it.each(['acknowledgement', 'receipt'] as const)(
+    'does not regenerate an accepted command after restart with refused %s persistence',
+    async (phase) => {
+      const context = await sdkFixture('command')
+      if (phase === 'acknowledgement') context.refuseAcknowledgements()
+      else {
+        const deliver = context.sdk.sendAndWait.bind(context.sdk)
+        context.sdk.sendAndWait = vi.fn((content: string, timeout?: number) => {
+          context.refuseWrites()
+          return deliver(content, timeout)
+        })
+      }
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+      expect(context.calls).toEqual([context.generated])
+      const [shutdown] = await Promise.allSettled([context.service.stop()])
+      if (shutdown.status === 'rejected') expect(shutdown.reason).toBe(storageError)
+      context.refuseWrites(false)
+      context.refuseAcknowledgements(false)
+      const restarted = await context.load()
+      await expect(context.send(restarted)).rejects.toMatchObject({ statusCode: 409 })
+      await expect(context.send(restarted, token)).rejects.toMatchObject({ statusCode: 409 })
+      expect(context.calls).toEqual([context.generated])
+      expect(context.sdk.rpc.commands.invoke).toHaveBeenCalledOnce()
+      if (phase === 'receipt') {
+        expect(restarted.store.get(sessionId)?.failedPrompt).toMatchObject({
+          content: context.submitted, uncertain: true,
+        })
+        expect(restarted.store.get(sessionId)?.failedPrompt?.failedAt).not.toBe(token)
+      } else {
+        await vi.waitFor(() => expect(restarted.store.get(sessionId)?.failedPrompt).toBeUndefined())
+      }
+    },
+  )
 
   it.each(['message', 'command'] as const)(
     'wakes SDK FIFO once after a recovered %s acknowledgement outlives its provider turn',

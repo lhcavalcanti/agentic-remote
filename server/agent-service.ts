@@ -3756,11 +3756,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (current.suspended || this.suspendingSessions.has(sessionId) || this.deletingSessions.has(sessionId)) {
       throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409 })
     }
-    if (terminalBacked && !enqueue && this.terminalAdmissionDispatched.has(sessionId)) {
-      throw Object.assign(new Error(
-        'An earlier startup message was already dispatched. Wait for its turn or use Queue for this message.',
-      ), { statusCode: 409 })
-    }
+    if (terminalBacked) this.assertStartupDispatchSettled(sessionId, enqueue)
     // Startup and owner detection are awaited, so FIFO may have grown meanwhile.
     // Only the claimed failure holding that queue may be resent ahead of it.
     if (
@@ -3942,6 +3938,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       enqueue &&
       (status === 'running' ||
         status === 'waiting' ||
+        this.terminalAdmissionDispatched.has(sessionId) ||
         this.drainingSessions.has(sessionId))
     )
   }
@@ -4395,6 +4392,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }`
     const stored = await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
+    if (!catalog.session) this.assertStartupDispatchSettled(sessionId, enqueue)
     const busy =
       this.activePrompts.has(sessionId) ||
       this.drainingSessions.has(sessionId) ||
@@ -4448,6 +4446,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.admissionClosed.has(sessionId) || this.deletingSessions.has(sessionId)) {
       throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409 })
     }
+    if (!catalog.session) this.assertStartupDispatchSettled(sessionId, enqueue)
     if (!nativeEnqueue && !enqueue && !commandInfo?.allowDuringAgentExecution) {
       if (
         this.activePrompts.has(sessionId) ||
@@ -4479,6 +4478,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           : []),
       )
     ) {
+      const ownsStartupDispatch = !nativeEnqueue &&
+        this.terminalAdmissionOperations.has(sessionId) &&
+        !this.terminalAdmissionDispatched.has(sessionId)
+      if (ownsStartupDispatch) this.terminalAdmissionDispatched.add(sessionId)
       await this.recordDelivery(sessionId, answers, delivery)
       const feedback = await this.terminalCommandFeedback(
         sessionId,
@@ -4493,6 +4496,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       this.publish(notice)
       if (!feedback.startedTurn) {
+        if (ownsStartupDispatch && feedback.responseObserved && !feedback.overlayOpen) {
+          this.terminalAdmissionDispatched.delete(sessionId)
+        }
         return notice
       }
       // A command sent directly can start a turn just as a queued one can, and
@@ -4585,12 +4591,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     command: string,
     before: string | undefined,
     requireObservation = false,
-  ): Promise<{ notice: string; startedTurn: boolean; overlayOpen: boolean }> {
+  ): Promise<{ notice: string; startedTurn: boolean; overlayOpen: boolean; responseObserved: boolean }> {
     if (before === undefined || !this.terminalController.capture) {
       if (requireObservation) {
         throw new Error('Queued command feedback is unavailable; waiting for a readable terminal')
       }
-      return { notice: command, startedTurn: false, overlayOpen: false }
+      return { notice: command, startedTurn: false, overlayOpen: false, responseObserved: false }
     }
     let previous: string | undefined
     let consecutiveReadable = 0
@@ -4610,12 +4616,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           notice: `${command}\n\nOpened an interactive view in the terminal. Continue there; it cannot be shown here.`,
           startedTurn: false,
           overlayOpen: true,
+          responseObserved: false,
         }
       }
       // The command started a turn, so anything appearing now is the agent
       // writing rather than the command answering.
       if (isTerminalAgentWorking(after)) {
-        return { notice: command, startedTurn: true, overlayOpen: false }
+        return { notice: command, startedTurn: true, overlayOpen: false, responseObserved: false }
       }
       const output = terminalCommandOutput(before, after, command)
       // A response can be captured mid-paint, so report it only once it stops
@@ -4625,6 +4632,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           notice: `${command}\n\n${output}`,
           startedTurn: false,
           overlayOpen: false,
+          responseObserved: true,
         }
       }
       previous = output
@@ -4636,6 +4644,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       notice: previous ? `${command}\n\n${previous}` : command,
       startedTurn: false,
       overlayOpen: false,
+      responseObserved: false,
     }
   }
 
@@ -6859,6 +6868,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.terminalAdmissionOperations.delete(sessionId)
         this.terminalAdmissionDispatched.delete(sessionId)
       }
+    }
+  }
+
+  private assertStartupDispatchSettled(sessionId: string, enqueue: boolean): void {
+    if (!enqueue && this.terminalAdmissionDispatched.has(sessionId)) {
+      throw Object.assign(new Error(
+        'An earlier startup request was already dispatched. Wait for its turn or use Queue for this request.',
+      ), { statusCode: 409 })
     }
   }
 

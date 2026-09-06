@@ -46,7 +46,7 @@ import {
   validateSessionDirectory,
 } from './session-directory.js'
 import type { SessionService } from './session-service.js'
-import { SessionStore } from './session-store.js'
+import { SessionReplacementCleanupError, SessionStore } from './session-store.js'
 import {
   acceptanceReceipt,
   explicitlyRefused,
@@ -632,18 +632,27 @@ export class ClaudeAgentService
     }
     const replacementId = randomUUID()
     let cleared: SessionDetail
+    const cleanupErrors: unknown[] = []
     try {
       cleared = await this.store.replaceWithClearedSession(id, replacementId)
-    } finally {
-      // Upload cleanup can fail after the identity write already committed.
-      if (!this.store.get(id)) this.resourceObservations.delete(id)
+    } catch (error) {
+      if (!(error instanceof SessionReplacementCleanupError)) throw error
+      cleared = error.replacement
+      cleanupErrors.push(error)
     }
+    this.resourceObservations.delete(id)
     this.emit('event', {
       type: 'session.removed',
       sessionId: id,
       replacedBy: replacementId,
     })
     this.publish(cleared)
+    for (const error of cleanupErrors) {
+      this.emit('event', {
+        type: 'error', sessionId: replacementId,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
     return cleared
   }
 

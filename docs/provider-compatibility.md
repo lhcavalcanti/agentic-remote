@@ -67,7 +67,9 @@ history is not transferred between providers.
   initialization and command-change reports, not awaited anew by each view.
   Refreshing unchanged observations preserves their capture time. A refused
   clear keeps those observations; a committed replacement retires them even
-  if subsequent cleanup fails.
+  if subsequent cleanup fails. A post-commit upload-cleanup failure still
+  announces the accepted replacement to connected clients before reporting
+  its warning, so an old Skills/MCP view cannot remain attached to the retired ID.
 - Resource requests expire on the server after ten seconds, before the browser's
   fifteen-second fallback. Disconnects and shutdown propagate cancellation
   through the hub and node to the metadata request. They do not stop inference

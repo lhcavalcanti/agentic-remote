@@ -71,7 +71,7 @@ import {
   type CopilotTasksApi,
 } from './background-task-adapter.js'
 import { BackgroundTaskTracker } from './background-task-tracker.js'
-import { SessionStore, type DiscoveredSession } from './session-store.js'
+import { SessionReplacementCleanupError, SessionStore, type DiscoveredSession } from './session-store.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
@@ -2928,6 +2928,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let fresh: CopilotSessionLike | undefined
     let original: CopilotSessionLike | undefined
     let committed = false
+    const cleanupErrors: unknown[] = []
     const terminalBacked = this.externalSessionIds.has(id)
     try {
       if (terminalBacked) {
@@ -2998,10 +2999,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             )
         }
       }
-      const cleared = await this.store.replaceWithClearedSession(
-        id,
-        replacementId,
-      )
+      let cleared: SessionDetail
+      try {
+        cleared = await this.store.replaceWithClearedSession(id, replacementId)
+      } catch (error) {
+        if (!(error instanceof SessionReplacementCleanupError)) throw error
+        cleared = error.replacement
+        cleanupErrors.push(error)
+      }
       committed = true
       this.deletedSessionIds.delete(replacementId)
       for (const [requestId, permission] of this.permissions) {
@@ -3048,9 +3053,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           await this.disposeSdkIdentity(id, original)
           await removeCopilotSessionFiles(id)
         } catch (error) {
-          this.publishError(replacementId, error)
+          cleanupErrors.push(error)
         }
       }
+      for (const error of cleanupErrors) this.publishError(replacementId, error)
       return cleared
     } catch (error) {
       if (!committed && !terminalBacked) {

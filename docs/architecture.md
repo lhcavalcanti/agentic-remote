@@ -177,6 +177,12 @@ replacement commits, then retires it. Persisted replacement lineage prevents
 stale provider listings from rediscovering the original after restart. Cleanup
 failure after an accepted clear is reported without undoing the committed clear.
 
+`SessionReplacementCleanupError` carries the exact replacement accepted by the
+store when subsequent upload removal fails. Providers publish its removal and
+replacement events before reporting that cleanup warning. A pre-commit write
+failure remains a refusal and publishes no replacement identity. This
+distinction concerns post-commit upload cleanup, not provider-history rollback.
+
 Providers await mutations before publishing or acting on their results.
 `readAfterWrites()` queues a read behind admitted changes before runtime,
 dispatch, or lifecycle decisions; a read-only batch does not write or

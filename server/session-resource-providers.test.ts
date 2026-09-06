@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { CopilotClient, CopilotSession } from '@github/copilot-sdk'
 import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
@@ -375,19 +375,15 @@ describe('read-only Claude resource views', () => {
   })
 
   it('retires observations if replacement committed before post-commit cleanup failed', async () => {
-    const { service, store, begin, end } = await claudeFixture()
+    const { service, store, cwd, begin, end } = await claudeFixture()
     await begin()
     await end()
-    const replace = store.replaceWithClearedSession.bind(store)
-    vi.spyOn(store, 'replaceWithClearedSession').mockImplementationOnce(async (...args) => {
-      await replace(...args)
-      throw new Error('Post-commit cleanup failed')
-    })
-    await expect(service.clearConversation('session')).rejects.toThrow('Post-commit cleanup failed')
+    await writeFile(path.join(cwd, 'uploads'), 'Synthetic obstruction')
+    const replacement = await service.clearConversation('session')
     expect(store.get('session')).toBeUndefined()
     const observations = Reflect.get(service, 'resourceObservations') as Map<string, unknown>
     expect(observations.has('session')).toBe(false)
-    const replacement = store.list()[0]
+    expect(store.list()[0].id).toBe(replacement.id)
     expect(await service.listSkills(replacement.id)).toMatchObject({ scope: 'unavailable' })
   })
 

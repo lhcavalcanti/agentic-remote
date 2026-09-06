@@ -99,6 +99,84 @@ async function publicationFixture() {
 }
 
 describe('immutable build publication', () => {
+  it('syncs release contents and inventory before and after activating current', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    const trace = path.join(repository, 'sync-trace')
+    const hook = path.join(repository, 'trace-sync.cjs')
+    await writeFile(hook, `
+const fs = require('node:fs')
+const sync = fs.fsyncSync
+const rename = fs.renameSync
+const record = (event) => fs.appendFileSync(process.env.RELEASE_SYNC_TRACE, JSON.stringify(event) + '\\n')
+fs.fsyncSync = (fd) => {
+  record({ kind: 'sync', path: fs.readlinkSync('/proc/self/fd/' + fd), current: fs.existsSync(process.env.RELEASE_CURRENT) ? fs.realpathSync(process.env.RELEASE_CURRENT) : null })
+  return sync(fd)
+}
+fs.renameSync = (from, to) => { record({ kind: 'rename', from, to }); return rename(from, to) }
+`)
+    await build('durable')
+    await run('publish_release', {
+      NODE_OPTIONS: `--require=${hook}`, RELEASE_SYNC_TRACE: trace,
+      RELEASE_CURRENT: path.join(config, 'releases/current'),
+    }, ['candidate'])
+    const events = (await readFile(trace, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
+    const release = path.join(config, 'releases/candidate')
+    const renameIndex = events.findIndex((event) => event.kind === 'rename' && event.to === release)
+    expect(renameIndex).toBeGreaterThanOrEqual(0)
+    expect(events.slice(0, renameIndex)).toContainEqual(expect.objectContaining({
+      kind: 'sync', path: expect.stringMatching(/\.release-stage\.[^/]+\/dist\/index\.html$/),
+    }))
+    expect(events.slice(renameIndex + 1)).toContainEqual({
+      kind: 'sync', path: path.join(config, 'releases'), current: null,
+    })
+    expect(events.slice(renameIndex + 1)).toContainEqual({
+      kind: 'sync', path: path.join(config, 'releases'), current: release,
+    })
+  })
+
+  it.each(['staged tree', 'published inventory', 'active pointer'] as const)(
+    'surfaces a refused %s sync without deleting the healthy or active release',
+    async (phase) => {
+      const { repository, config, run, build } = await publicationFixture()
+      await build('healthy')
+      await run('publish_release', {}, ['healthy'])
+      const current = path.join(config, 'releases/current')
+      const healthy = await realpath(current)
+      const candidate = path.join(config, 'releases/candidate')
+      const hook = path.join(repository, 'refuse-sync.cjs')
+      await writeFile(hook, `
+const fs = require('node:fs')
+const sync = fs.fsyncSync
+fs.fsyncSync = (fd) => {
+  const entry = fs.readlinkSync('/proc/self/fd/' + fd)
+  const current = fs.realpathSync(process.env.RELEASE_CURRENT)
+  const candidate = process.env.RELEASE_CANDIDATE
+  const phase = process.env.REFUSE_SYNC_PHASE
+  if ((phase === 'staged tree' && entry.includes('/.release-stage.')) ||
+      (entry === require('node:path').dirname(candidate) && fs.existsSync(candidate) &&
+       ((phase === 'published inventory' && current !== candidate) ||
+        (phase === 'active pointer' && current === candidate)))) {
+    throw Object.assign(new Error('Synthetic release fsync refused: ' + phase), { code: 'EIO' })
+  }
+  return sync(fd)
+}
+`)
+      await build('candidate')
+      await expect(run('publish_release', {
+        NODE_OPTIONS: `--require=${hook}`, RELEASE_CURRENT: current,
+        RELEASE_CANDIDATE: candidate, REFUSE_SYNC_PHASE: phase,
+      }, ['candidate'])).rejects.toThrow('Synthetic release fsync refused')
+      expect(await readFile(path.join(healthy, 'dist/index.html'), 'utf8')).toBe('healthy')
+      if (phase === 'active pointer') {
+        expect(await realpath(current)).toBe(candidate)
+        expect(await readFile(path.join(candidate, 'dist/index.html'), 'utf8')).toBe('candidate')
+      } else {
+        expect(await realpath(current)).toBe(healthy)
+        expect(existsSync(candidate)).toBe(false)
+      }
+    },
+  )
+
   it.each(['publish_release', 'setup_service'] as const)(
     'rejects reserved current in %s before creating paths or running setup',
     async (command) => {
@@ -365,5 +443,16 @@ describe('immutable build publication', () => {
     await writeFile(path.join(dependencies, 'fixture.txt'), 'changed development dependency')
     expect(await readFile(path.join(published, 'node_modules', 'fixture.txt'), 'utf8'))
       .toBe('published dependency')
+  })
+
+  it('syncs publication when the configured directory is reached through a link', async () => {
+    const { config, run, build } = await publicationFixture()
+    const actual = `${config}-actual`
+    await mkdir(actual)
+    await symlink(actual, config)
+    await build('linked-profile')
+    await run('publish_release', {}, ['linked'])
+    expect(await realpath(path.join(config, 'releases/current'))).toBe(path.join(actual, 'releases/linked'))
+    expect(await readFile(path.join(actual, 'releases/linked/dist/index.html'), 'utf8')).toBe('linked-profile')
   })
 })

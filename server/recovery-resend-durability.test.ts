@@ -127,10 +127,10 @@ async function fixture(kind: SendKind = 'message') {
   await service.store.update(sessionId, (session) => {
     session.failedPrompt = { content: original, failedAt: originalToken, uncertain: true }
   })
-  const send = (target: AgentService, token = originalToken, enqueue = false) =>
+  const send = (target: AgentService, token = originalToken, enqueue = false, owner = sessionId) =>
     kind === 'message'
-      ? target.sendMessage(sessionId, submitted, enqueue, token)
-      : target.executeCommand(sessionId, submitted, enqueue, token)
+      ? target.sendMessage(owner, submitted, enqueue, token)
+      : target.executeCommand(owner, submitted, enqueue, token)
   let writesRefused = false
   let acknowledgementsRefused = false
   let acknowledgementAttempts = 0
@@ -162,6 +162,23 @@ function gate() {
   const pending = new Promise<void>((resolve) => { release = resolve })
   gates.push(release)
   return { started, pending, opened, release }
+}
+
+async function prepareDecision(
+  context: Awaited<ReturnType<typeof fixture>>,
+  service: AgentService,
+  token: string,
+  owner = sessionId,
+) {
+  const pastes = context.pastes.length
+  await expect(context.send(service, token, false, owner)).rejects.toMatchObject({
+    statusCode: 409, submission: { sessionId: owner, accepted: false },
+  })
+  const next = service.store.get(owner)!.failedPrompt!.failedAt!
+  expect(next).toMatch(/^resend:/)
+  expect(next).not.toBe(token)
+  expect(context.pastes).toHaveLength(pastes)
+  return next
 }
 
 async function sdkFixture(kind: SendKind = 'message') {
@@ -295,6 +312,32 @@ describe('Durable recovery resend ownership', () => {
       submission: { sessionId, failedAt: token, accepted },
     })
     expect(context.pastes).toEqual(accepted ? [context.submitted] : [])
+    if (!accepted) {
+      const prepared = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${computerId}/sessions/${sessionId}/${kind === 'message' ? 'messages' : 'commands'}`,
+        headers: { host: 'localhost' },
+        payload: {
+          [kind === 'message' ? 'content' : 'command']: context.submitted,
+          acknowledgesFailure: token,
+        },
+      })
+      expect(prepared.statusCode).toBe(409)
+      expect(prepared.json().submission).toMatchObject({ sessionId, accepted: false })
+      expect(prepared.json().submission.failedAt).not.toBe(token)
+      expect(context.pastes).toEqual([])
+      const decided = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${computerId}/sessions/${sessionId}/${kind === 'message' ? 'messages' : 'commands'}`,
+        headers: { host: 'localhost' },
+        payload: {
+          [kind === 'message' ? 'content' : 'command']: context.submitted,
+          acknowledgesFailure: prepared.json().submission.failedAt,
+        },
+      })
+      expect(decided.statusCode).toBe(kind === 'command' ? 200 : 202)
+      expect(context.pastes).toEqual([context.submitted])
+    }
   })
 
   it('names the replacement owner in a confirmed-delivery receipt after clear', async () => {
@@ -431,7 +474,8 @@ describe('Durable recovery resend ownership', () => {
     })
     expect(context.service.store.get(sessionId)?.failedPrompt?.failedAt).toBe(token)
     expect(context.pastes).toEqual([])
-    await context.send(context.service, token)
+    const decision = await prepareDecision(context, context.service, token)
+    await context.send(context.service, decision)
     expect(context.pastes).toEqual([context.submitted])
   })
 
@@ -502,7 +546,8 @@ describe('Durable recovery resend ownership', () => {
       expect.soft(durableAttempt).toMatchObject({ content: context.submitted, uncertain: true })
       expect(durableAttempt.failedAt).not.toBe(originalToken)
 
-      await context.send(reloaded, durableAttempt.failedAt)
+      const decision = await prepareDecision(context, reloaded, durableAttempt.failedAt)
+      await context.send(reloaded, decision)
       expect(context.pastes).toEqual([context.submitted, context.submitted])
       expect((await context.persisted()).sessions[sessionId].failedPrompt).toBeUndefined()
       await expect(context.send(reloaded, durableAttempt.failedAt)).rejects.toMatchObject({ statusCode: 409 })
@@ -590,7 +635,8 @@ describe('Durable recovery resend ownership', () => {
       await context.service.stop()
       const reloaded = await context.load()
       await expect(context.send(reloaded)).rejects.toMatchObject({ statusCode: 409 })
-      await context.send(reloaded, retry.failedAt)
+      const decision = await prepareDecision(context, reloaded, retry.failedAt!)
+      await context.send(reloaded, decision)
       expect(context.pastes).toEqual([context.submitted])
       expect((await context.persisted()).sessions[sessionId].failedPrompt).toBeUndefined()
     },
@@ -622,9 +668,9 @@ describe('Durable recovery resend ownership', () => {
         context.refuseAcknowledgements(false)
         const reloaded = await context.load()
         await expect(context.send(reloaded)).rejects.toMatchObject({ statusCode: 409 })
-        expect(reloaded.store.get(sessionId)?.failedPrompt).toEqual(pending)
-        await context.send(reloaded, pending.failedAt)
-        expect(context.pastes).toEqual([context.submitted, context.submitted])
+        await vi.waitFor(() => expect(reloaded.store.get(sessionId)?.failedPrompt).toBeUndefined())
+        await expect(context.send(reloaded, pending.failedAt)).rejects.toMatchObject({ statusCode: 409 })
+        expect(context.pastes).toEqual([context.submitted])
       } else {
         context.refuseAcknowledgements(false)
         await vi.waitFor(() => expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined())
@@ -705,9 +751,10 @@ describe('Durable recovery resend ownership', () => {
     const first = context.service.store.get(sessionId)!.failedPrompt!.failedAt
     await context.service.stop()
     const reloaded = await context.load()
-    await expect(context.send(reloaded, first)).rejects.toMatchObject({ cause: { message: 'No paste was attempted' } })
+    const decision = await prepareDecision(context, reloaded, first)
+    await expect(context.send(reloaded, decision)).rejects.toMatchObject({ cause: { message: 'No paste was attempted' } })
     const second = reloaded.store.get(sessionId)!.failedPrompt!.failedAt
-    expect(new Set([originalToken, first, second]).size).toBe(3)
+    expect(new Set([originalToken, first, decision, second]).size).toBe(4)
     await expect(context.send(reloaded)).rejects.toMatchObject({ statusCode: 409 })
     await expect(context.send(reloaded, first)).rejects.toMatchObject({ statusCode: 409 })
     expect(context.pastes).toEqual([])
@@ -728,7 +775,8 @@ describe('Durable recovery resend ownership', () => {
     await expect(reloaded.sendMessage('replacement', context.submitted, false, originalToken))
       .rejects.toMatchObject({ statusCode: 409 })
     expect(context.pastes).toEqual([])
-    await reloaded.sendMessage('replacement', context.submitted, false, retry.failedAt)
+    const decision = await prepareDecision(context, reloaded, retry.failedAt!, 'replacement')
+    await reloaded.sendMessage('replacement', context.submitted, false, decision)
     expect(context.pastes).toEqual([context.submitted])
     expect(reloaded.store.get('replacement')?.failedPrompt).toBeUndefined()
   })
@@ -754,6 +802,190 @@ describe('Durable recovery resend ownership', () => {
 })
 
 describe('Recovery and admission integration', () => {
+  it.each(['message', 'command'] as const)(
+    'Supervisor: resumes only acknowledgement for accepted %s recovery after restart',
+    async (kind) => {
+      const context = await fixture(kind)
+      context.refuseAcknowledgements()
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      const acceptedToken = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+      expect((await context.persisted()).sessions[sessionId].recoveryResend).toEqual({
+        failedAt: acceptedToken, content: context.submitted, accepted: true,
+      })
+      expect(context.service.getSession(sessionId)).not.toHaveProperty('recoveryResend')
+      const [shutdown] = await Promise.allSettled([context.service.stop()])
+      if (shutdown.status === 'rejected') expect(shutdown.reason).toBe(storageError)
+      context.refuseAcknowledgements(false)
+      const restarted = await context.load()
+      await expect(context.send(restarted, acceptedToken)).rejects.toMatchObject({ statusCode: 409 })
+      expect(context.pastes).toEqual([context.submitted])
+      await vi.waitFor(() => expect(restarted.store.get(sessionId)?.failedPrompt).toBeUndefined())
+      expect(context.pastes).toEqual([context.submitted])
+    },
+  )
+
+  it.each(['message', 'command'] as const)(
+    'keeps a consumed %s attempt non-delivering across restart even if receipt persistence also failed',
+    async (kind) => {
+      const context = await fixture(kind)
+      context.terminal.send.mockImplementationOnce(async (_id, content) => {
+        context.pastes.push(content)
+        context.refuseWrites()
+        return true
+      })
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      const attempt = (await context.persisted()).sessions[sessionId].recoveryResend
+      expect(attempt).toMatchObject({ content: context.submitted, accepted: false })
+      const [shutdown] = await Promise.allSettled([context.service.stop()])
+      if (shutdown.status === 'rejected') expect(shutdown.reason).toBe(storageError)
+      context.refuseWrites(false)
+      const restarted = await context.load()
+      const decision = await prepareDecision(context, restarted, attempt.failedAt)
+      await expect(context.send(restarted, attempt.failedAt)).rejects.toMatchObject({ statusCode: 409 })
+      expect(context.pastes).toEqual([context.submitted])
+      const next = kind === 'message' ? 'A separate, explicitly chosen message' : '/usage separate-decision'
+      await (kind === 'message'
+        ? restarted.sendMessage(sessionId, next, false, decision)
+        : restarted.executeCommand(sessionId, next, false, decision))
+      expect(context.pastes).toEqual([context.submitted, next])
+      expect(context.pastes.filter((text) => text === context.submitted)).toHaveLength(1)
+      expect((await context.persisted()).sessions[sessionId].recoveryResend).toBeUndefined()
+    },
+  )
+
+  it('keeps accepted acknowledgement ownership through repeated restarts during an outage', async () => {
+    const context = await fixture('command')
+    context.refuseAcknowledgements()
+    await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+    const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+    let service = context.service
+    for (let restart = 0; restart < 2; restart += 1) {
+      const [shutdown] = await Promise.allSettled([service.stop()])
+      if (shutdown.status === 'rejected') expect(shutdown.reason).toBe(storageError)
+      service = await context.load()
+      await expect(context.send(service, token)).rejects.toMatchObject({ statusCode: 409 })
+      expect(service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+      expect((await context.persisted()).sessions[sessionId].recoveryResend.accepted).toBe(true)
+      expect(context.pastes).toEqual([context.submitted])
+    }
+    context.refuseAcknowledgements(false)
+    await vi.waitFor(() => expect(service.store.get(sessionId)?.failedPrompt).toBeUndefined())
+    expect(context.pastes).toEqual([context.submitted])
+  })
+
+  it.each(['replacement', 'newer decision'] as const)(
+    'restores only the matching accepted acknowledgement after %s and restart',
+    async (change) => {
+      const context = await fixture('command')
+      context.refuseAcknowledgements()
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+      await context.service.store.replaceWithClearedSession(sessionId, 'replacement')
+      if (change === 'newer decision') {
+        await context.service.store.update('replacement', (session) => {
+          session.failedPrompt = { content: 'Newer work', failedAt: 'newer', uncertain: true }
+        })
+      }
+      const [shutdown] = await Promise.allSettled([context.service.stop()])
+      if (shutdown.status === 'rejected') expect(shutdown.reason).toBe(storageError)
+      context.refuseAcknowledgements(false)
+      const restarted = await context.load()
+      await expect(context.send(restarted, token, false, 'replacement')).rejects.toMatchObject({ statusCode: 409 })
+      if (change === 'replacement') {
+        await vi.waitFor(() => expect(restarted.store.get('replacement')?.failedPrompt).toBeUndefined())
+      } else {
+        expect(restarted.store.get('replacement')?.failedPrompt).toEqual({
+          content: 'Newer work', failedAt: 'newer', uncertain: true,
+        })
+      }
+      expect(restarted.store.get(sessionId)).toBeUndefined()
+      expect(context.pastes).toEqual([context.submitted])
+    },
+  )
+
+  it.each(['accepted', 'content', 'token'] as const)(
+    'refuses malformed persisted recovery receipt %s without dropping stored state',
+    async (field) => {
+      const context = await fixture()
+      await context.service.stop()
+      const saved = await context.persisted()
+      saved.sessions[sessionId].recoveryResend = {
+        failedAt: originalToken, content: context.original, accepted: false,
+        ...(field === 'accepted' ? { accepted: 'yes' } : field === 'content' ? { content: null } : { failedAt: '' }),
+      }
+      await disk.writeFile(context.statePath, JSON.stringify(saved))
+      await expect(context.load(false)).rejects.toThrow('Invalid recovery resend metadata')
+      await services.at(-1)!.stop()
+      expect(await context.persisted()).toEqual(saved)
+    },
+  )
+
+  it('Supervisor: rejects a direct command behind FIFO after startup restores idle status', async () => {
+    const context = await fixture('command')
+    await context.service.store.clearFailedPrompt(sessionId, originalToken)
+    await context.service.store.enqueuePrompt(sessionId, {
+      id: 'older', content: 'Older queued prompt', createdAt: originalToken,
+    })
+    await context.service.store.update(sessionId, (session) => { session.status = 'running' })
+    Object.assign(context.terminal, {
+      ownsStartupPrompt: () => true,
+      capture: async () => '╻▄▄▄▄\n┃ \n╹▀▀▀▀\n / commands',
+      inputReady: async () => true,
+      resolveStartupPrompt: async () => true,
+    })
+    await expect(context.service.executeCommand(sessionId, '/usage direct'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(context.pastes).toEqual([])
+    expect(context.service.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.id)).toEqual(['older'])
+  })
+
+  it('allows only the matching recovery command ahead of the FIFO it was holding', async () => {
+    const context = await fixture('command')
+    await context.service.store.enqueuePrompt(sessionId, {
+      id: 'older', content: 'Older queued prompt', createdAt: originalToken,
+    })
+    await context.service.store.update(sessionId, (session) => { session.status = 'running' })
+    const ready = '╻▄▄▄▄\n┃ \n╹▀▀▀▀\n / commands'
+    Object.assign(context.terminal, {
+      ownsStartupPrompt: () => true,
+      capture: async () => context.pastes.length ? `${ready}\nWorking - esc interrupt` : ready,
+      inputReady: async () => true,
+      resolveStartupPrompt: async () => true,
+    })
+    await context.send(context.service)
+    expect(context.pastes).toEqual([context.submitted])
+    expect(context.service.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.id)).toEqual(['older'])
+    expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined()
+  })
+
+  it('Supervisor: rejects an immediate startup follower while the old composer remains visible', async () => {
+    const context = await fixture()
+    await context.service.store.clearFailedPrompt(sessionId, originalToken)
+    let ownsStartup = true
+    Object.assign(context.terminal, {
+      ownsStartupPrompt: () => ownsStartup,
+      capture: async () => '╻▄▄▄▄\n┃ \n╹▀▀▀▀\n / commands',
+      inputReady: async () => true,
+      resolveStartupPrompt: async () => { ownsStartup = false; return true },
+    })
+    const held = gate()
+    context.terminal.send.mockImplementationOnce(async (_id, content) => {
+      context.pastes.push(content)
+      held.opened()
+      await held.pending
+      return true
+    })
+    const first = context.service.sendMessage(sessionId, 'First startup send')
+    await held.started
+    const second = context.service.sendMessage(sessionId, 'Immediate follower')
+    const results = Promise.allSettled([first, second])
+    held.release()
+    const [initial, follower] = await results
+    expect(initial.status).toBe('fulfilled')
+    expect(follower).toMatchObject({ status: 'rejected', reason: { statusCode: 409 } })
+    expect(context.pastes).toEqual(['First startup send'])
+  })
+
   it('joins confirmed command feedback and acknowledgement before provider teardown', async () => {
     const context = await fixture('command')
     const held = gate()

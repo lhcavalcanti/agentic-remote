@@ -168,7 +168,15 @@ installed and report incomplete recovery. Subsequent manual rollbacks then
 continue to exclude the rejected candidate, even after it becomes inactive.
 
 Publication stages complete bundles outside the rollback inventory and installs
-them with an atomic directory rename before switching `current`. The monitor
+them with an atomic directory rename before switching `current`. Before that
+rename, every staged regular file and directory is fsynced without following
+symlinks outside the bundle. After rename, both inventory parents are fsynced;
+after activating `current`, its parent is fsynced again. Publication must finish
+these boundaries before the monitor can record `local-verified` or `verified`.
+A refused pre-activation sync leaves the healthy pointer in place. A refused
+post-activation sync reports failure but retains the active complete candidate
+for journal-driven restoration; cleanup never deletes the active release.
+The monitor
 supplies a unique `--release-id`, then checks that both the source checkout and
 the active release match its candidate. A setup failure before pointer activation
 cannot hide an unverified candidate behind the previous healthy pointer. The

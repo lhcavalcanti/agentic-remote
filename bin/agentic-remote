@@ -232,14 +232,42 @@ publish_release() {
       "$REPO_ROOT/tsconfig.server.json" \
       "$staging_dir/"
     cp -a "$REPO_ROOT/node_modules/." "$staging_dir/node_modules/"
+    node -e '
+      const fs = require("node:fs");
+      const path = require("node:path");
+      function syncTree(entry) {
+        const stat = fs.lstatSync(entry);
+        if (stat.isSymbolicLink()) return;
+        if (stat.isDirectory()) {
+          for (const child of fs.readdirSync(entry)) syncTree(path.join(entry, child));
+        } else if (!stat.isFile()) {
+          throw new Error("Unsupported release entry: " + entry);
+        }
+        const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      }
+      syncTree(process.argv[1]);
+    ' "$staging_dir"
     node -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' \
       "$staging_dir" "$release_dir"
     published=1
+    node -e '
+      const fs = require("node:fs");
+      for (const directory of process.argv.slice(1)) {
+        const fd = fs.openSync(fs.realpathSync(directory), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      }
+    ' "$CONFIG_DIR" "$releases_dir"
     ln -s "$release_dir" "$temporary_link"
     mv -Tf "$temporary_link" "$releases_dir/current"
     [[ "$(readlink -f -- "$releases_dir/current")" == "$release_dir" ]] ||
       die "release activation did not install $release_id"
     activated=1
+    node -e '
+      const fs = require("node:fs");
+      const fd = fs.openSync(process.argv[1], fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    ' "$releases_dir"
   )
 
   # Always retain current, regardless of directory timestamps.

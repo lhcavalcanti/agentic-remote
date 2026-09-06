@@ -1805,6 +1805,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.discoverSessions()
     }
     if (this.stopped) return
+    for (const session of this.store.list()) {
+      const resend = this.store.recoveryResend(session.id)
+      if (resend?.accepted) this.restoreRecoveryAcknowledgement(session.id, resend.failedAt, resend.content)
+    }
 
     await this.reconcileUntrackedTerminalDispatches()
     await this.refreshTranscripts()
@@ -3366,6 +3370,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!isResend) {
       return undefined
     }
+    const priorAttempt = this.store.recoveryResend(sessionId)
+    if (priorAttempt) {
+      if (priorAttempt.accepted) {
+        this.restoreRecoveryAcknowledgement(sessionId, priorAttempt.failedAt, priorAttempt.content)
+        throw new SubmissionError(
+          'That recovery was already delivered. Only its saved acknowledgement will be retried; nothing was resent.',
+          409, { sessionId, failedAt: priorAttempt.failedAt, accepted: false },
+        )
+      }
+      // An attempted-delivery token is not another authorization. With no
+      // durable receipt, prepare a distinct decision without sending input.
+      const next = `resend:${randomUUID()}`
+      const prepared = await this.store.prepareRecoveryDecision(sessionId, priorAttempt.failedAt, next)
+      this.publish(prepared)
+      throw new SubmissionError(
+        'The earlier recovery attempt has an unresolved delivery receipt. Nothing was resent. A new decision is ready: check the conversation and terminal, then send again only if another attempt is needed.',
+        409, { sessionId, failedAt: next, accepted: false }, { uncertainDelivery: true },
+      )
+    }
     const key = `${sessionId}:${stored.failedAt ?? 'legacy'}`
     if (this.claimedFailures.has(key)) {
       throw Object.assign(
@@ -3411,6 +3434,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (this.store.get(current)) return current
     return this.store.list().find((session) => session.replacedSessionIds?.includes(sessionId))?.id ?? sessionId
+  }
+
+  private restoreRecoveryAcknowledgement(sessionId: string, failedAt: string, content: string): void {
+    if (this.recoveryClaims.has(failedAt)) return
+    const claim: RecoveryResendClaim = {
+      failedAt, accepted: true,
+      release: () => { this.recoveryClaims.delete(failedAt) },
+    }
+    this.recoveryClaims.set(failedAt, claim)
+    this.scheduleFailureAcknowledgement(sessionId, content, claim)
+  }
+
+  private async recordDelivery(
+    sessionId: string,
+    answers: string | undefined,
+    delivery: DeliveryBoundary | undefined,
+  ): Promise<void> {
+    if (delivery) delivery.accepted = true
+    if (answers) await this.store.acceptRecoveryResend(this.recoverySessionId(sessionId), answers)
   }
 
   private submissionFailure(
@@ -3460,9 +3502,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   /**
    * Keeps trying to clear a marker whose send has already been accepted.
    *
-   * The marker holds the queue, and is offered again after a reload and to
-   * every other reader, so leaving it behind invites the accepted prompt to be
-   * sent a second time.
+   * The durable accepted receipt keeps this token non-delivering across
+   * restarts. Only clearing its marker releases the queue; this path never
+   * enters dispatch.
    */
   private scheduleFailureAcknowledgement(
     sessionId: string,
@@ -3714,6 +3756,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (current.suspended || this.suspendingSessions.has(sessionId) || this.deletingSessions.has(sessionId)) {
       throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409 })
     }
+    if (terminalBacked && !enqueue && this.terminalAdmissionDispatched.has(sessionId)) {
+      throw Object.assign(new Error(
+        'An earlier startup message was already dispatched. Wait for its turn or use Queue for this message.',
+      ), { statusCode: 409 })
+    }
     // Startup and owner detection are awaited, so FIFO may have grown meanwhile.
     // Only the claimed failure holding that queue may be resent ahead of it.
     if (
@@ -3764,7 +3811,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
-      if (delivery) delivery.accepted = true
+      await this.recordDelivery(sessionId, answers, delivery)
       if (startupLocked && startupReady && !nativeEnqueue) {
         this.terminalAdmissionDispatched.add(sessionId)
       }
@@ -3995,6 +4042,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publishError(sessionId, error)
       },
     )
+    await this.recordDelivery(sessionId, answers, delivery)
     this.publish(updated)
     if (reservation) await this.settleQueueAdmission(sessionId)
     return updated
@@ -4118,6 +4166,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     // Only a durable acknowledgement can release the queue. Propagate a
     // rejected transaction rather than reporting the marker as cleared.
+    if (failed.failedAt) await this.store.acceptRecoveryResend(sessionId, failed.failedAt)
     const cleared = await this.store.clearFailedPrompt(sessionId, failed.failedAt)
     this.publish(cleared)
     // The marker was holding the queue shut. Nothing else will come back to
@@ -4414,6 +4463,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error(`/${name} must be queued while the agent is running`)
       }
     }
+    if (!catalog.session && !enqueue && now.queuedPrompts?.length &&
+        (answers === undefined || now.failedPrompt?.failedAt !== answers)) {
+      throw Object.assign(new Error(
+        'Older prompts are waiting in the queue. Wait for them to finish, or use Queue to add this command after them.',
+      ), { statusCode: 409 })
+    }
     if (
       await this.terminalController.send(
         sessionId,
@@ -4424,7 +4479,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           : []),
       )
     ) {
-      if (delivery) delivery.accepted = true
+      await this.recordDelivery(sessionId, answers, delivery)
       const feedback = await this.terminalCommandFeedback(
         sessionId,
         canonicalCommand,
@@ -4461,7 +4516,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!result.queued) {
         throw new Error('This session does not support command queueing')
       }
-      if (delivery) delivery.accepted = true
+      await this.recordDelivery(sessionId, answers, delivery)
     } else {
       const result = await session.rpc.commands.invoke({
         name: canonicalName,
@@ -4482,7 +4537,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           sessionId, result.prompt, busy, answers, false, false, delivery,
         )
       }
-      if (delivery) delivery.accepted = true
+      await this.recordDelivery(sessionId, answers, delivery)
       const content =
         result.kind === 'text'
           ? stripAnsi(result.text)

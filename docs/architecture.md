@@ -219,16 +219,21 @@ restoring the claim's obsolete running state.
 Recovery resends use the existing `failedPrompt` record as a durable claim.
 Before dispatch, a compare-and-set replaces the acknowledged `failedAt` token
 with a fresh `resend:<UUID>` token, the actual submitted text (including edits), and
-`uncertain: true`. A refused write or rename delivers nothing. The consumed
+`uncertain: true`. A private `recoveryResend` record commits the same token and
+content with `accepted: false` in that transaction. A refused write or rename
+delivers nothing. The consumed
 token no longer matches durable state, so another reader cannot replay it after
 a crash even if every post-delivery write failed. In-flight ownership also
 blocks use of the fresh token until that dispatch finishes.
 
-An unresolved send leaves the replacement marker available for an explicit new
-recovery decision after checking the native terminal and any queued copy; it is
-not automatically acknowledged. Even a pre-delivery refusal after the claim
-commits conservatively keeps that new decision. Successful sends acknowledge
-the replacement token; app-queued resends pass that token to the existing atomic
+An unresolved attempt's token never authorizes another delivery, even across a
+restart. Asking to resend it commits a distinct decision token and returns 409
+with that token, without sending input; the reader must check the conversation
+and terminal and explicitly submit the new decision. The existing HTTP receipt
+and composer-binding protocol preserves the edited draft across this boundary.
+Even a pre-delivery refusal after the claim commits conservatively takes this
+path. Successful sends acknowledge the attempted-delivery token; app-queued
+resends pass that token to the existing atomic
 answering-enqueue operation. Acknowledgement retries compare the token inside
 the store mutation, so a delayed retry cannot erase a newer decision. Failed
 acknowledgements report uncertainty instead of reporting a completed settlement.
@@ -236,7 +241,13 @@ Clear replacement carries the current marker, not the consumed token.
 
 Delivery acceptance is tracked per dispatch, not by a session-wide boolean.
 Terminal receipt, durable application queue admission, and handled command
-results cross that boundary before activity/feedback writes. A later failure
+results cross that boundary before activity/feedback writes. A confirmed external
+receipt sets the private record's `accepted` bit in its own awaited transaction
+before later bookkeeping. After restart, accepted records reconstruct only the
+token-scoped acknowledgement task and remain unavailable for resend. If even
+that receipt write fails, the persisted unconfirmed attempt still cannot deliver
+again without the separate explicit-decision exchange described above; the
+service does not invent certainty about an unsaved receipt. A later failure
 keeps the recovery claim reserved and retries only acknowledgement of its own
 token, following clear lineage when necessary. Public session reads do not offer
 a known-accepted marker while acknowledgement is pending. An anonymous copy of
@@ -269,12 +280,15 @@ session. If a response is lost or an older peer omits metadata, the original
 binding remains rather than permitting an anonymous resend. Accepted receipts
 do not restore submitted text. Unrelated writing remains untouched.
 
-This protocol adds no saved-state field or format version. Legacy unstamped
+The private `recoveryResend` field is additive within saved-state version 1.
+It is omitted from public session snapshots and validated on load; malformed
+receipt metadata fails startup rather than silently becoming retryable.
+Legacy unstamped
 recoveries remain readable and are claimed when their unchanged text is
 resubmitted. Older runtimes that check `acknowledgesFailure` still reject an
 already-consumed token because the saved token changed. They do not,
-however, durably claim the *next* recovery resend: rolling back to such a binary
-reintroduces the crash window for new recovery decisions. Development validation
+however, honor the private attempted-delivery and accepted-receipt record.
+Rolling back to such a binary can re-enable a consumed attempt. Development validation
 must exercise both write-refusal boundaries and restart before promotion; an
 old-binary rollback needs an operator decision to settle or pause recovery
 resends first. Do not rewrite stored recovery state merely to enable rollback.

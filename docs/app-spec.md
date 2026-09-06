@@ -249,6 +249,12 @@ Questions and permissions are the highest-priority UI state.
 - Successful delivery or durable queue admission MUST settle only its own
   recovery token. Failed acknowledgement writes after accepted delivery MUST be
   surfaced and retried without repeating delivery or clearing a newer recovery.
+- A confirmed recovery receipt MUST be saved before later bookkeeping, separately
+  from clearing its recovery marker. Restart MUST resume only acknowledgement for
+  a saved accepted receipt, never delivery. If even the receipt cannot be saved,
+  the attempted-delivery token MUST remain non-delivering: requesting it may
+  prepare and return a distinct recovery decision, but MUST send nothing until
+  the reader explicitly submits that new decision.
 - Confirmed delivery MUST remain accepted when later activity, command feedback,
   or persistence fails. Its recovery claim MUST remain reserved until token-scoped
   acknowledgement settles; a fresh-token or anonymous retry MUST NOT deliver it
@@ -262,6 +268,10 @@ Questions and permissions are the highest-priority UI state.
 - Automatic desktop-install decline MUST recapture the pane after awaited owner
   validation and confirm the same live prompt before sending `n`. Disappearance
   or replacement by a composer, draft, or another dialog MUST receive no input.
+- Direct terminal commands MUST respect older app FIFO entries after startup
+  reconciliation, except for the matching recovery claim. An immediate message
+  serialized behind a startup dispatch MUST NOT trust its still-visible old
+  composer as permission to submit a second message.
 - Form identity MUST preserve word boundaries. Terminal form reads MUST use
   tmux's joined soft-wrap capture instead of guessing whether a line break
   separated words or split an identifier.

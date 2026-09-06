@@ -4421,7 +4421,12 @@ describe('AgentService deletion', () => {
       expect(terminal.send).toHaveBeenCalledOnce()
       if (acknowledgement) expect(acknowledgement).not.toHaveBeenCalled()
       acknowledgement?.mockRestore()
-      await service.sendMessage(client.session.sessionId, 'Recovered prompt', false, recovery.failedAt)
+      await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, recovery.failedAt))
+        .rejects.toMatchObject({ statusCode: 409, submission: { accepted: false } })
+      expect(terminal.send).toHaveBeenCalledOnce()
+      const decision = service.store.get(client.session.sessionId)!.failedPrompt!.failedAt
+      expect(decision).not.toBe(recovery.failedAt)
+      await service.sendMessage(client.session.sessionId, 'Recovered prompt', false, decision)
       expect(terminal.send).toHaveBeenCalledTimes(2)
       expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
     } finally {

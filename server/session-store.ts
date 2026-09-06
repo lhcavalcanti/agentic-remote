@@ -30,6 +30,12 @@ export interface QueuedPromptReservation {
   prompt: QueuedPrompt
 }
 
+export interface RecoveryResend {
+  failedAt: string
+  content: string
+  accepted: boolean
+}
+
 export class StaleQueuedPromptReservationError extends Error {
   readonly statusCode = 409
 
@@ -73,6 +79,7 @@ interface StoredSession extends SessionDetail {
   terminalQueueDispatch?: TerminalQueueDispatch
   queuedPromptReservation?: { id: string; promptId: string }
   sdkQueueAdmission?: SdkQueueAdmission
+  recoveryResend?: RecoveryResend
 }
 
 interface PendingMutation {
@@ -125,6 +132,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     terminalQueueDispatch,
     queuedPromptReservation: _queuedPromptReservation,
     sdkQueueAdmission,
+    recoveryResend: _recoveryResend,
     contextCwd: _contextCwd,
     workspaceTitle: _workspaceTitle,
     executionMode: _executionMode,
@@ -211,6 +219,13 @@ export class SessionStore {
       session.queuedCount = session.queuedPrompts.length
       session.queuedPromptReservation = undefined
       session.pendingUserInput = undefined
+      const resend = session.recoveryResend
+      if (resend !== undefined && (
+        !resend || typeof resend !== 'object' || Array.isArray(resend) ||
+        typeof resend.failedAt !== 'string' || !resend.failedAt ||
+        typeof resend.content !== 'string' || !resend.content.trim() ||
+        typeof resend.accepted !== 'boolean'
+      )) throw new Error('Invalid recovery resend metadata')
       const admission = session.sdkQueueAdmission
       if (admission !== undefined) {
         if (
@@ -997,6 +1012,7 @@ export class SessionStore {
         (answers === undefined || session.failedPrompt.failedAt === answers)
       ) {
         session.failedPrompt = undefined
+        session.recoveryResend = undefined
       }
     })
   }
@@ -1024,6 +1040,36 @@ export class SessionStore {
       // unresolved attempt, including the edited text, even if no later write
       // can commit or the process exits before it can record the receipt.
       stored.failedPrompt = { content: submitted, failedAt: claimedAt, uncertain: true }
+      stored.recoveryResend = { content: submitted, failedAt: claimedAt, accepted: false }
+    })
+  }
+
+  recoveryResend(sessionId: string): RecoveryResend | undefined {
+    const session = this.state.sessions[sessionId]
+    const resend = session?.recoveryResend
+    return !this.isRetiredSession(sessionId) && resend?.failedAt === session?.failedPrompt?.failedAt
+      ? structuredClone(resend)
+      : undefined
+  }
+
+  async acceptRecoveryResend(sessionId: string, expected: string): Promise<SessionDetail> {
+    if (this.closed) throw new Error('Session store is closed')
+    if (this.recoveryResend(sessionId)?.accepted) return this.requireSession(sessionId)
+    return this.mutate(sessionId, (stored) => {
+      stored.recoveryResend!.accepted = true
+    }, (stored) => stored.failedPrompt?.failedAt === expected && stored.recoveryResend?.failedAt === expected)
+  }
+
+  async prepareRecoveryDecision(sessionId: string, expected: string, next: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (stored) => {
+      if (!next || next === expected || stored.failedPrompt?.failedAt !== expected ||
+          stored.recoveryResend?.failedAt !== expected || stored.recoveryResend.accepted ||
+          stored.sdkQueueAdmission || stored.terminalQueueDispatch) {
+        throw Object.assign(new Error('That recovery attempt no longer owns this decision'), { statusCode: 409 })
+      }
+      stored.failedPrompt.failedAt = next
+      stored.failedPrompt.uncertain = true
+      stored.recoveryResend = undefined
     })
   }
 
@@ -1033,6 +1079,7 @@ export class SessionStore {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }
       stored.failedPrompt = undefined
+      stored.recoveryResend = undefined
     }, expected === undefined ? undefined : (stored) => stored.failedPrompt?.failedAt === expected)
   }
 

@@ -97,6 +97,7 @@ function nativeStart(
   toolCallId: string | undefined,
   seconds = 4,
   kind = 'shell_started',
+  startedAt?: string,
 ): SessionEvent {
   // Persisted CLI notifications extend the SDK's event union.
   const record: unknown = {
@@ -104,7 +105,13 @@ function nativeStart(
     id: `native-${shellId}-${seconds}`,
     parentId: null,
     timestamp: new Date(Date.UTC(2026, 8, 1, 8, 0, seconds)).toISOString(),
-    data: { kind: { type: kind, shellId, ...(toolCallId ? { toolCallId } : {}) } },
+    data: {
+      kind: {
+        type: kind, shellId,
+        ...(toolCallId ? { toolCallId } : {}),
+        ...(startedAt ? { startedAt } : {}),
+      },
+    },
   }
   return record as SessionEvent
 }
@@ -481,6 +488,44 @@ describe('background shell stop reconciliation', () => {
     expect(result.tasks).toEqual([expect.objectContaining({
       id: '42', type: 'agent', status: 'running', description: 'Keep this agent',
     })])
+  })
+
+  it.each([
+    { callId: undefined, startedAt: '2026-09-01T08:00:03.000Z' },
+    { callId: 'new-launch', startedAt: '2026-09-01T08:00:03.000Z' },
+    { callId: 'new-launch', startedAt: '2026-09-01T08:00:00.000Z' },
+  ])('does not hide a new native execution while an old stop is pending ($callId, $startedAt)', ({ callId, startedAt }) => {
+    const result = snapshot([
+      ...launched('42'),
+      started('stop', 'stop_bash', { shellId: '42' }, 2),
+      nativeStart('42', callId, 3, 'shell_started', startedAt),
+      completed('stop', stopAcknowledgement('42'), 6),
+    ])
+    expect(result.runningCount).toBe(1)
+    expect(result.tasks[0]).toMatchObject({ id: '42', status: 'running', startedAt })
+    expect(result.tasks[0].completedAt).toBeUndefined()
+  })
+
+  it('recognizes a native refresh without a call ID by its explicit matching start time', () => {
+    const result = snapshot([
+      ...launched('42'),
+      started('stop', 'stop_bash', { shellId: '42' }, 2),
+      nativeStart('42', undefined, 3, 'shell_detached_started', '2026-09-01T08:00:00.000Z'),
+      completed('stop', stopAcknowledgement('42'), 6),
+    ])
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks[0]).toMatchObject({ status: 'cancelled', attachmentMode: 'detached' })
+  })
+
+  it('does not revive a stopped execution from a matching native refresh without a call ID', () => {
+    const result = snapshot([
+      ...launched('42'),
+      started('stop', 'stop_bash', { shellId: '42' }, 2),
+      completed('stop', stopAcknowledgement('42'), 3),
+      nativeStart('42', undefined, 5, 'shell_started', '2026-09-01T08:00:00.000Z'),
+    ])
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks[0]).toMatchObject({ status: 'cancelled', completedAt: '2026-09-01T08:00:03.000Z' })
   })
 
   it('retains launch identity when a promoted sync shell receives its native detached handoff', () => {

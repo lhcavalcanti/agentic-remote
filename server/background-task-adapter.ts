@@ -1330,16 +1330,28 @@ export function backgroundTasksFromEvents(
               }
             }
           } else {
-            // A genuine native launch with no tracked originating call. It only
-            // claims the reported id when no other live shell already holds it,
-            // so a confused report can never displace a running job.
             const destination = tasks.get(shellId)
-            const occupiedByLive =
-              destination !== undefined && isLiveTaskStatus(destination.status)
-            if (!occupiedByLive) {
+            const reportedStartedAt = eventString(kind, 'startedAt')
+            const sameExecution =
+              !startedBy && destination?.type === 'shell' &&
+              reportedStartedAt !== undefined &&
+              destination.startedAt === reportedStartedAt
+            if (sameExecution && destination) {
+              destination.executionMode = 'background'
+              if (attachmentMode === 'detached') destination.attachmentMode = 'detached'
+              if (!isTerminalTaskStatus(destination.status)) destination.status = reportedStatus
+              assumedBackground.delete(shellId)
+              assumedOwners.delete(shellId)
+            } else if (
+              !destination || destination.type === 'shell' ||
+              !isLiveTaskStatus(destination.status)
+            ) {
+              // A new native execution may reuse an id before the prior stop
+              // reply arrives. Give it a new identity so that old reply cannot
+              // close it. Never replace an unrelated live task kind.
               const current = shellTask(
                 shellId,
-                eventString(kind, 'startedAt') || event.timestamp,
+                reportedStartedAt || event.timestamp,
                 kind,
                 {
                   executionMode: 'background',
@@ -1349,17 +1361,7 @@ export function backgroundTasksFromEvents(
               )
               current.status = reportedStatus
               shellIdentityOf(current)
-              // The call that started this shell may already have a task of its
-              // own, projected before any shell id was known. Left alone it
-              // stays beside the reported one, so the same command is counted
-              // twice and the older half never finishes.
               if (startedBy) {
-                const existing = taskIdAlias(aliases, startedBy)
-                if (existing !== shellId && tasks.has(existing)) {
-                  tasks.delete(existing)
-                  assumedBackground.delete(existing)
-                  assumedOwners.delete(existing)
-                }
                 aliases.set(startedBy, shellId)
                 launchIdentity.set(startedBy, shellIdentityOf(current))
               }

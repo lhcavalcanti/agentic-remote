@@ -134,6 +134,50 @@ derived_origins() {
     "$derived_host" "$derived_port" "$derived_port" "$derived_port"
 }
 
+quarantine_inactive_rejected_releases() {
+  local releases_dir current_release failed_release quarantine_root target
+  releases_dir="$CONFIG_DIR/releases"
+  [[ -d "$releases_dir" ]] || return 0
+  releases_dir="$(readlink -f -- "$releases_dir")" || return 1
+  [[ -r "$releases_dir" && -x "$releases_dir" ]] || return 1
+  if [[ ! -e "$releases_dir/current" && ! -L "$releases_dir/current" ]]; then
+    return 0
+  fi
+  current_release="$(readlink -f -- "$releases_dir/current")" || return 1
+  [[ -d "$current_release" && -r "$current_release" && -x "$current_release" ]] || return 1
+  [[ ! -e "$current_release/.promotion-failed" ]] || return 0
+  quarantine_root="$releases_dir.rejected"
+  for failed_release in "$releases_dir"/* "$releases_dir"/.[!.]* "$releases_dir"/..?*; do
+    [[ -d "$failed_release" && ! -L "$failed_release" ]] || continue
+    [[ -r "$failed_release" && -x "$failed_release" ]] || return 1
+    [[ -e "$failed_release/.promotion-failed" ]] || continue
+    [[ "$failed_release" != "$current_release" &&
+      "$(readlink -f -- "$failed_release")" == "$failed_release" &&
+      "$(readlink -f -- "$releases_dir/current")" == "$current_release" &&
+      ! -e "$current_release/.promotion-failed" ]] || return 1
+    [[ ! -L "$quarantine_root" ]] || return 1
+    mkdir -p -- "$quarantine_root" || return 1
+    target="$quarantine_root/$(basename -- "$failed_release")"
+    [[ ! -e "$target" && ! -L "$target" ]] || return 1
+    node -e '
+      const fs = require("node:fs");
+      const fd = fs.openSync(process.argv[1], fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      fs.renameSync(process.argv[1], process.argv[2]);
+    ' \
+      "$failed_release" "$target" || return 1
+    printf 'Quarantined rejected release at %s\n' "$target"
+  done
+  node -e '
+    const fs = require("node:fs");
+    for (const directory of process.argv.slice(1)) {
+      if (!fs.existsSync(directory)) continue;
+      const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    }
+  ' "$releases_dir" "$quarantine_root"
+}
+
 publish_release() {
   local releases_dir release_id release_dir temporary_link staging_dir
   [[ -s "$REPO_ROOT/dist/build-info.json" ]] ||
@@ -144,6 +188,8 @@ publish_release() {
   releases_dir="$CONFIG_DIR/releases"
   mkdir -p "$releases_dir"
   releases_dir="$(readlink -f -- "$releases_dir")"
+  quarantine_inactive_rejected_releases ||
+    die "could not quarantine inactive rejected releases before publication"
   release_dir="$releases_dir/$release_id"
   temporary_link="$releases_dir/.current-$release_id"
   [[ ! -e "$release_dir" && ! -L "$release_dir" ]] ||
@@ -337,6 +383,8 @@ setup_service() {
   systemctl --user enable "$SERVICE_NAME"
   systemctl --user restart "$SERVICE_NAME"
   enable_linger
+  quarantine_inactive_rejected_releases ||
+    die "the new release was started, but inactive rejected releases could not be quarantined"
 
   if [[ "$role" == "hub" ]]; then
     printf 'Agentic Remote hub is running at http://%s:%s/\n' "$host" "$port"
@@ -376,6 +424,8 @@ rollback_service() {
   local releases_dir current_release previous_release temporary_link
   releases_dir="$CONFIG_DIR/releases"
   [[ -d "$releases_dir" ]] || die "no previous release is available"
+  quarantine_inactive_rejected_releases ||
+    die "could not quarantine inactive rejected releases; the current release was not changed"
   current_release="$(readlink -f "$releases_dir/current" 2>/dev/null || true)"
   previous_release="$(
     find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\0' |
@@ -395,6 +445,8 @@ rollback_service() {
   ln -s "$previous_release" "$temporary_link"
   mv -Tf "$temporary_link" "$releases_dir/current"
   systemctl --user restart "$SERVICE_NAME"
+  quarantine_inactive_rejected_releases ||
+    die "the previous release was activated, but inactive rejected releases could not be quarantined"
   printf 'Rolled back to %s\n' "$(basename "$previous_release")"
 }
 

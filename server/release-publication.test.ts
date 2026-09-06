@@ -39,7 +39,11 @@ async function publicationFixture() {
   }
   await writeFile(path.join(repository, 'dist', 'sw.js'), '// unchanged worker')
   const script = await readFile(new URL('../bin/agentic-remote', import.meta.url), 'utf8')
-  const functions = ['publish_release', 'rollback_service'].map((name) => {
+  const functions = [
+    'config_value', 'validate_host', 'validate_port', 'validate_role', 'validate_name',
+    'derived_origins', 'quarantine_inactive_rejected_releases', 'publish_release',
+    'setup_service', 'rollback_service',
+  ].map((name) => {
     const match = script.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))
     if (!match) {
       throw new Error(`Missing ${name} function`)
@@ -47,16 +51,27 @@ async function publicationFixture() {
     return match[0]
   }).join('\n')
   const run = (
-    command: 'publish_release' | 'rollback_service',
+    command: 'publish_release' | 'rollback_service' | 'setup_service',
     environment: Record<string, string> = {},
   ) => exec(
     'bash',
     ['-euc', `
       die() { printf '%s\\n' "$*" >&2; exit 1; }
+      require_command() { :; }
+      pnpm() { :; }
+      write_service() { :; }
+      enable_linger() { :; }
       systemctl() { printf '%s\\n' "$*" > "$CONFIG_DIR/service-call"; }
-      mv() { if [[ "\${FAIL_ACTIVATION:-0}" == 1 ]]; then return 9; fi; command mv "$@"; }
+      mv() {
+        if [[ "\${FAIL_ACTIVATION:-0}" == 1 ]]; then return 9; fi
+        command mv "$@"
+      }
+      node() {
+        if [[ "\${FAIL_QUARANTINE:-0}" == 1 && "\${@: -1}" == *releases.rejected/* ]]; then return 9; fi
+        command node "$@"
+      }
       ${functions}
-      ${command}
+      ${command}${command === 'setup_service' ? ' --name fixture' : ''}
     `],
     {
       cwd: directory,
@@ -64,6 +79,9 @@ async function publicationFixture() {
         ...process.env,
         REPO_ROOT: repository,
         CONFIG_DIR: config,
+        ENV_FILE: path.join(config, 'environment'),
+        SYSTEMD_DIR: path.join(config, 'systemd'),
+        COMMAND_LINK: path.join(config, 'agentic-remote'),
         SERVICE_NAME: 'fixture.service',
         ...environment,
       },
@@ -139,7 +157,140 @@ describe('immutable build publication', () => {
     expect(await readFile(path.join(previous, 'dist', 'index.html'), 'utf8')).toBe('previous-healthy')
     await run('rollback_service')
     expect(await realpath(current)).toBe(previous)
-    expect(await readFile(path.join(rejected, '.promotion-failed'), 'utf8')).toBe('failed candidate')
+    expect(await readFile(path.join(`${releases}.rejected`, 'rejected', '.promotion-failed'), 'utf8')).toBe('failed candidate')
+  })
+
+  it('quarantines a formerly active rejection after manual rollback and keeps healthy artifacts', async () => {
+    const { config, run, build } = await publicationFixture()
+    const releases = path.join(config, 'releases')
+    const current = path.join(releases, 'current')
+    await build('older')
+    await run('publish_release')
+    const older = await realpath(current)
+    await utimes(older, 1, 1)
+    await build('previous')
+    await run('publish_release')
+    const previous = await realpath(current)
+    await utimes(previous, 2, 2)
+    await build('rejected')
+    await run('publish_release')
+    const rejected = await realpath(current)
+    await writeFile(path.join(rejected, '.promotion-failed'), 'rejected candidate')
+
+    await run('rollback_service')
+    expect(await realpath(current)).toBe(previous)
+    const quarantined = path.join(`${releases}.rejected`, path.basename(rejected))
+    expect(await readFile(path.join(quarantined, '.promotion-failed'), 'utf8')).toBe('rejected candidate')
+    expect(await readFile(path.join(quarantined, 'dist', 'index.html'), 'utf8')).toBe('rejected')
+    expect((await readdir(releases)).includes(path.basename(rejected))).toBe(false)
+    await run('rollback_service')
+    expect(await realpath(current)).toBe(older)
+    expect(await readFile(path.join(previous, 'dist', 'index.html'), 'utf8')).toBe('previous')
+  })
+
+  it('retains an active rejection when no healthy rollback exists', async () => {
+    const { config, run, build } = await publicationFixture()
+    await build('only-release')
+    await run('publish_release')
+    const current = path.join(config, 'releases', 'current')
+    const active = await realpath(current)
+    await writeFile(path.join(active, '.promotion-failed'), 'rejected')
+    await expect(run('rollback_service')).rejects.toThrow('no previous release is available')
+    expect(await realpath(current)).toBe(active)
+    expect(await readFile(path.join(active, 'dist', 'index.html'), 'utf8')).toBe('only-release')
+    expect(await readFile(path.join(active, '.promotion-failed'), 'utf8')).toBe('rejected')
+  })
+
+  it('leaves a recovered healthy current active when quarantine fails and retries cleanup before another rollback', async () => {
+    const { config, run, build } = await publicationFixture()
+    const releases = path.join(config, 'releases')
+    const current = path.join(releases, 'current')
+    await build('older')
+    await run('publish_release')
+    const older = await realpath(current)
+    await utimes(older, 1, 1)
+    await build('previous')
+    await run('publish_release')
+    const previous = await realpath(current)
+    await utimes(previous, 2, 2)
+    await build('rejected')
+    await run('publish_release')
+    const rejected = await realpath(current)
+    await writeFile(path.join(rejected, '.promotion-failed'), 'rejected candidate')
+    await expect(run('rollback_service', { FAIL_QUARANTINE: '1' }))
+      .rejects.toThrow('previous release was activated')
+    expect(await realpath(current)).toBe(previous)
+    await expect(run('rollback_service', { FAIL_QUARANTINE: '1' }))
+      .rejects.toThrow('current release was not changed')
+    expect(await realpath(current)).toBe(previous)
+    expect(await readFile(path.join(rejected, '.promotion-failed'), 'utf8')).toBe('rejected candidate')
+    await run('rollback_service')
+    expect(await realpath(current)).toBe(older)
+    expect(await readFile(path.join(previous, 'dist', 'index.html'), 'utf8')).toBe('previous')
+    expect(await readFile(path.join(`${releases}.rejected`, path.basename(rejected), '.promotion-failed'), 'utf8'))
+      .toBe('rejected candidate')
+  })
+
+  it('refuses publication before activation if an inactive rejection cannot be quarantined', async () => {
+    const { config, run, build } = await publicationFixture()
+    const releases = path.join(config, 'releases')
+    const current = path.join(releases, 'current')
+    await build('healthy')
+    await run('publish_release')
+    const healthy = await realpath(current)
+    const rejected = path.join(releases, 'rejected')
+    await mkdir(rejected)
+    await writeFile(path.join(rejected, '.promotion-failed'), 'rejected candidate')
+    await build('next')
+    await expect(run('publish_release', { FAIL_QUARANTINE: '1' }))
+      .rejects.toThrow('could not quarantine inactive rejected releases before publication')
+    expect(await realpath(current)).toBe(healthy)
+    expect(await readFile(path.join(healthy, 'dist', 'index.html'), 'utf8')).toBe('healthy')
+    expect((await readdir(releases, { withFileTypes: true })).filter((entry) => entry.isDirectory()))
+      .toHaveLength(2)
+  })
+
+  it.each(['symlink', 'occupied target'])('does not overwrite an unrelated quarantine %s', async (kind) => {
+    const { config, run, build } = await publicationFixture()
+    const releases = path.join(config, 'releases')
+    const current = path.join(releases, 'current')
+    await build('healthy')
+    await run('publish_release')
+    const healthy = await realpath(current)
+    const rejected = path.join(releases, 'rejected')
+    await mkdir(rejected)
+    await writeFile(path.join(rejected, '.promotion-failed'), 'rejected candidate')
+    const unrelated = path.join(config, 'unrelated')
+    await mkdir(unrelated)
+    await writeFile(path.join(unrelated, 'keep.txt'), 'unrelated state')
+    if (kind === 'symlink') {
+      await symlink(unrelated, `${releases}.rejected`)
+    } else {
+      await mkdir(`${releases}.rejected`)
+      await rename(unrelated, path.join(`${releases}.rejected`, 'rejected'))
+    }
+    await expect(run('rollback_service')).rejects.toThrow('could not quarantine')
+    expect(await realpath(current)).toBe(healthy)
+    expect(await readFile(path.join(rejected, '.promotion-failed'), 'utf8')).toBe('rejected candidate')
+    const preserved = kind === 'symlink' ? unrelated : path.join(`${releases}.rejected`, 'rejected')
+    expect(await readFile(path.join(preserved, 'keep.txt'), 'utf8')).toBe('unrelated state')
+  })
+
+  it('quarantines an active rejection only after setup has started its replacement', async () => {
+    const { config, run, build } = await publicationFixture()
+    const releases = path.join(config, 'releases')
+    const current = path.join(releases, 'current')
+    await build('rejected')
+    await run('publish_release')
+    const rejected = await realpath(current)
+    await writeFile(path.join(rejected, '.promotion-failed'), 'rejected candidate')
+    await build('replacement')
+    await run('setup_service')
+    expect(await realpath(current)).not.toBe(rejected)
+    expect(await readFile(path.join(current, 'dist', 'index.html'), 'utf8')).toBe('replacement')
+    expect(await readFile(path.join(config, 'service-call'), 'utf8')).toBe('--user restart fixture.service\n')
+    expect(await readFile(path.join(`${releases}.rejected`, path.basename(rejected), '.promotion-failed'), 'utf8'))
+      .toBe('rejected candidate')
   })
 
   it('does not expose a partially copied or unactivated release to rollback', async () => {

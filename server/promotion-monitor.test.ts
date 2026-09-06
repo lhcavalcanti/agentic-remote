@@ -96,6 +96,7 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       'ln -sfn "$release" "$RELEASE_ROOT/.tmp-$$"',
       'mv -Tf "$RELEASE_ROOT/.tmp-$$" "$RELEASE_ROOT/current"',
       'find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -exec test -e "{}/.promotion-failed" \\; -printf "%T@ %p\\n" | sort -nr | tail -n +4 | cut -d" " -f2- | while IFS= read -r old; do rm -rf -- "$old"; done',
+      'if [[ "${SETUP_KILL_AFTER_ACTIVATION:-0}" == 1 ]]; then kill -KILL "$PPID"; exit 137; fi',
     ].join('\n'),
   )
   await chmod(path.join(dev, 'bin', 'agentic-remote'), 0o755)
@@ -172,6 +173,10 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
     'mv',
     [
       'if [[ "${FAIL_POINTER_RESTORE:-0}" == 1 && "$*" == *".current-rollback-"* ]]; then exit 1; fi',
+      'if [[ -n "${FAIL_PENDING_PHASE:-}" && "$*" == *".pending-promotion-${FAIL_PENDING_PHASE}-"* ]]; then exit 1; fi',
+      'if [[ -n "${KILL_PENDING_PHASE:-}" && "$*" == *".pending-promotion-${KILL_PENDING_PHASE}-"* ]]; then kill -KILL "$PPID"; exit 137; fi',
+      'if [[ "${KILL_BEFORE_STATE_RECORD:-0}" == 1 && "${@: -1}" == */promotion-state ]]; then kill -KILL "$PPID"; exit 137; fi',
+      `if [[ "\${KILL_AFTER_STATE_RECORD:-0}" == 1 && "\${@: -1}" == */promotion-state ]]; then ${JSON.stringify(realMv)} "$@" || exit "$?"; kill -KILL "$PPID"; exit 137; fi`,
       `exec ${JSON.stringify(realMv)} "$@"`,
     ].join('\n'),
   )
@@ -301,11 +306,12 @@ async function healthyReleaseFixture(withLegacyCli = false): Promise<{
   if (withLegacyCli) {
     const source = path.join(context.dev, 'bin', 'agentic-remote')
     const setup = await readFile(source, 'utf8')
-    const current = (await readFile(AGENTIC_REMOTE, 'utf8'))
-      .match(/^rollback_service\(\) \{[\s\S]*?^\}/m)?.[0]
-    if (!current) {
-      throw new Error('Missing rollback_service function')
-    }
+    const cliSource = await readFile(AGENTIC_REMOTE, 'utf8')
+    const current = ['quarantine_inactive_rejected_releases', 'rollback_service'].map((name) => {
+      const body = cliSource.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0]
+      if (!body) throw new Error(`Missing ${name} function`)
+      return body
+    }).join('\n')
     const cli = (version: string, rollback: string, setup: string) => [
       '#!/usr/bin/env bash',
       'set -Eeuo pipefail',
@@ -982,6 +988,355 @@ describe('promotion monitor', () => {
     expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
   })
 
+  it('recovers the recorded known-good baseline after a crash following candidate activation', async () => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture(true)
+    const previousCommit = await git(context.runtime, 'rev-parse', 'HEAD')
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    const current = path.join(context.releases, 'current')
+    const pendingPath = path.join(context.root, 'state', 'pending-promotion')
+    const interrupted = await monitor(context, { SETUP_KILL_AFTER_ACTIVATION: '1' })
+    expect(interrupted.code).not.toBe(0)
+    const unverified = await realpath(current)
+    expect(unverified).not.toBe(previous)
+    expect(existsSync(path.join(unverified, 'fixture-candidate'))).toBe(true)
+    const pending = existsSync(pendingPath)
+      ? JSON.parse(await readFile(pendingPath, 'utf8'))
+      : undefined
+
+    const recovery = await monitor(context, { FAIL_CANDIDATE_HEALTH: '1' })
+    expect(recovery.code).not.toBe(0)
+    const restored = await realpath(current)
+    const restoredSource = await git(context.runtime, 'rev-parse', 'HEAD')
+    const installed = path.join(context.root, '.local', 'bin', 'agentic-remote')
+    const manual: string[] = []
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await run(installed, ['rollback'], { env: context.env })
+      manual.push(await realpath(current))
+    }
+
+    expect.soft(pending).toMatchObject({
+      phase: 'prepared',
+      candidate_commit: candidate,
+      candidate_release: unverified,
+      previous_commit: previousCommit,
+      previous_release: previous,
+    })
+    expect.soft(restored).toBe(previous)
+    expect.soft(restoredSource).toBe(previousCommit)
+    expect.soft(manual).toEqual([fallback, previous])
+    expect((await calls(context)).filter((line) => line.startsWith('agentic-remote setup'))).toHaveLength(1)
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
+    expect(existsSync(pendingPath)).toBe(false)
+  })
+
+  it('does not adopt an unrecorded runtime from an older monitor that left no journal', async () => {
+    const { context, previous, state, record } = await healthyReleaseFixture(true)
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    await git(context.runtime, 'switch', '--detach', candidate)
+    await run(path.join(context.runtime, 'bin', 'agentic-remote'), ['setup'], { env: context.env })
+    const unrecorded = await realpath(path.join(context.releases, 'current'))
+    expect(unrecorded).not.toBe(previous)
+    const result = await monitor(context, { FAIL_CANDIDATE_HEALTH: '1' })
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('unrecorded runtime source has no pending promotion')
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(unrecorded)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(candidate)
+    expect((await calls(context)).filter((line) => line.startsWith('agentic-remote setup'))).toHaveLength(1)
+    expect(existsSync(path.join(context.root, 'state', 'pending-promotion'))).toBe(false)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+  })
+
+  it.each([
+    ['refused', { FAIL_PENDING_PHASE: 'prepared' }],
+    ['interrupted', { KILL_PENDING_PHASE: 'prepared' }],
+  ])('does not activate before a %s initial journal commit', async (_reason, failure) => {
+    const { context, previous, state, record } = await healthyReleaseFixture(true)
+    const pending = path.join(context.root, 'state', 'pending-promotion')
+    const result = await monitor(context, failure)
+    expect(result.code).not.toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(state.trim())
+    expect(existsSync(pending)).toBe(false)
+    expect((await calls(context)).some((line) => line.startsWith('agentic-remote setup'))).toBe(false)
+    expect((await readdir(path.join(context.root, 'state')))
+      .filter((name) => name.startsWith('.pending-promotion-prepared-'))).toHaveLength(1)
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+
+    const retry = await monitor(context, { SETUP_EXIT: '1' })
+    expect(retry.code).not.toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(state.trim())
+    expect(existsSync(pending)).toBe(false)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+  })
+
+  it.each(['local-verified', 'verified'])(
+    'uses only the last durable phase after a refused %s checkpoint',
+    async (phase) => {
+      const { context, previous, state, record } = await healthyReleaseFixture(true)
+      const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+      const pending = path.join(context.root, 'state', 'pending-promotion')
+      const first = await monitor(context, { FAIL_PENDING_PHASE: phase })
+      expect(first.code).not.toBe(0)
+      const active = await realpath(path.join(context.releases, 'current'))
+      expect(active).not.toBe(previous)
+      expect(JSON.parse(await readFile(pending, 'utf8')).phase)
+        .toBe(phase === 'local-verified' ? 'prepared' : 'local-verified')
+      expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+      expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+      const recovered = await monitor(context)
+      expect(recovered.code === 0).toBe(phase === 'verified')
+      expect(await realpath(path.join(context.releases, 'current')))
+        .toBe(phase === 'verified' ? active : previous)
+      expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+      expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8'))
+        .toBe(phase === 'verified' ? `${candidate}\n` : state)
+      expect((await calls(context)).filter((line) => line.startsWith('agentic-remote setup'))).toHaveLength(1)
+      expect(existsSync(pending)).toBe(false)
+    },
+  )
+
+  it('resumes a locally verified downstream promotion without republishing the healthy local release', async () => {
+    const { context, previous, state, record } = await healthyReleaseFixture(true)
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    await addDownstream(context, context.remote)
+    const remoteHome = path.join(context.root, 'downstream-home')
+    const remoteReleases = path.join(remoteHome, '.config', 'agentic-remote', 'releases')
+    await mkdir(remoteReleases, { recursive: true })
+    await stub(path.join(context.root, 'bin'), 'ssh', [
+      'shift',
+      'command="$*"',
+      'command="${command/bash -lc /bash -c }"',
+      `export HOME=${JSON.stringify(remoteHome)}`,
+      `export RELEASE_ROOT=${JSON.stringify(remoteReleases)}`,
+      'export SETUP_EXIT="${REMOTE_SETUP_EXIT:-0}"',
+      'exec bash -c "$command"',
+    ].join('\n'))
+    const pending = path.join(context.root, 'state', 'pending-promotion')
+    const first = await monitor(context, { REMOTE_SETUP_EXIT: '1' })
+    expect(first.code).not.toBe(0)
+    expect(first.output).toContain('downstream promotion failed')
+    const healthy = await realpath(path.join(context.releases, 'current'))
+    expect(healthy).not.toBe(previous)
+    expect(JSON.parse(await readFile(pending, 'utf8')).phase).toBe('local-verified')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+    const resumed = await monitor(context)
+    expect(resumed.code).toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(healthy)
+    expect(existsSync(path.join(healthy, '.promotion-failed'))).toBe(false)
+    expect(await git(context.remote, 'rev-parse', 'HEAD')).toBe(candidate)
+    expect((await calls(context)).filter((line) => line.startsWith('agentic-remote setup --release-id'))).toHaveLength(1)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8'))
+      .toContain(`promoted_release=${healthy}\n`)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(existsSync(pending)).toBe(false)
+  })
+
+  it.each([
+    ['before the state record', false, { KILL_BEFORE_STATE_RECORD: '1' }],
+    ['after the state record', false, { KILL_AFTER_STATE_RECORD: '1' }],
+    ['before the state record', true, { KILL_BEFORE_STATE_RECORD: '1' }],
+    ['after the state record', true, { KILL_AFTER_STATE_RECORD: '1' }],
+  ] as const)('finishes a verified promotion interrupted %s (manual rollback=%s)', async (_stage, manuallyRolledBack, failure) => {
+    const { context, previous, state, record } = await healthyReleaseFixture(true)
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    const pending = path.join(context.root, 'state', 'pending-promotion')
+    const first = await monitor(context, failure)
+    expect(first.code).not.toBe(0)
+    const published = await realpath(path.join(context.releases, 'current'))
+    expect(published).not.toBe(previous)
+    expect(JSON.parse(await readFile(pending, 'utf8')).phase).toBe('verified')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    const interruptedRecord = await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')
+    if ('KILL_BEFORE_STATE_RECORD' in failure) expect(interruptedRecord).toBe(record)
+    else expect(interruptedRecord).toContain(`promoted_commit=${candidate}\n`)
+    if (manuallyRolledBack) {
+      await run(path.join(context.root, '.local', 'bin', 'agentic-remote'), ['rollback'], { env: context.env })
+    }
+    const restartCount = (await calls(context)).filter((line) => line === 'systemctl --user restart fixture.service').length
+    const recovered = await monitor(context)
+    expect(recovered.code).toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(manuallyRolledBack ? previous : published)
+    expect(existsSync(path.join(published, '.promotion-failed'))).toBe(false)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(`${candidate}\n`)
+    if ('KILL_AFTER_STATE_RECORD' in failure) {
+      expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(interruptedRecord)
+    }
+    expect((await calls(context)).filter((line) => line.startsWith('agentic-remote setup'))).toHaveLength(1)
+    expect((await calls(context)).filter((line) => line === 'systemctl --user restart fixture.service')).toHaveLength(restartCount)
+    expect(existsSync(pending)).toBe(false)
+  })
+
+  it('keeps the same journal and marker-aware source through repeated recovery failures', async () => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture(true)
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    const pending = path.join(context.root, 'state', 'pending-promotion')
+    expect((await monitor(context, { SETUP_KILL_AFTER_ACTIVATION: '1' })).code).not.toBe(0)
+    const journal = await readFile(pending, 'utf8')
+    const failed = await realpath(path.join(context.releases, 'current'))
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await monitor(context, { FAIL_POINTER_RESTORE: '1' })
+      expect(result.code).not.toBe(0)
+      expect(await realpath(path.join(context.releases, 'current'))).toBe(failed)
+      expect(await readFile(pending, 'utf8')).toBe(journal)
+      expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(candidate)
+      expect(await readFile(path.join(failed, '.promotion-failed'), 'utf8')).toBe(`${candidate}\n`)
+    }
+    const unrelated = path.join(context.root, 'operator-state')
+    await mkdir(unrelated)
+    await writeFile(path.join(unrelated, 'keep.txt'), 'do not remove')
+    await symlink(unrelated, `${context.releases}.rejected`)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect((await monitor(context)).code).not.toBe(0)
+      expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+      expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(candidate)
+      expect(await readFile(pending, 'utf8')).toBe(journal)
+    }
+    await rm(`${context.releases}.rejected`)
+    expect((await monitor(context)).code).not.toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(state.trim())
+    expect(existsSync(failed)).toBe(false)
+    expect(existsSync(path.join(`${context.releases}.rejected`, path.basename(failed), '.promotion-failed'))).toBe(true)
+    expect(existsSync(pending)).toBe(false)
+    expect(await readFile(path.join(unrelated, 'keep.txt'), 'utf8')).toBe('do not remove')
+    expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+    expect((await calls(context)).filter((line) => line.startsWith('agentic-remote setup'))).toHaveLength(1)
+  }, 15000)
+
+  it('reconciles an unverified promotion after manual rollback already restored the known-good pointer', async () => {
+    const { context, previous, state, record } = await healthyReleaseFixture(true)
+    expect((await monitor(context, { SETUP_KILL_AFTER_ACTIVATION: '1' })).code).not.toBe(0)
+    const failed = await realpath(path.join(context.releases, 'current'))
+    await run(path.join(context.root, '.local', 'bin', 'agentic-remote'), ['rollback'], { env: context.env })
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    expect((await monitor(context)).code).not.toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(state.trim())
+    expect(existsSync(failed)).toBe(false)
+    expect(existsSync(path.join(`${context.releases}.rejected`, path.basename(failed), '.promotion-failed'))).toBe(true)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+  })
+
+  it.each(['truncated', 'foreign-runtime', 'self-baseline'] as const)(
+    'refuses a %s committed journal without changing release or source',
+    async (kind) => {
+      const { context, previous, state, record } = await healthyReleaseFixture(true)
+      const pending = path.join(context.root, 'state', 'pending-promotion')
+      const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+      const release = path.join(context.releases, 'pending-candidate')
+      const contents = kind === 'truncated' ? '{"version":1,' : JSON.stringify({
+        version: 1, phase: 'prepared',
+        candidate_commit: candidate, previous_commit: state.trim(),
+        candidate_release: release,
+        previous_release: kind === 'self-baseline' ? release : previous,
+        runtime_root: kind === 'foreign-runtime' ? context.dev : context.runtime,
+        release_root: context.releases,
+      })
+      await writeFile(pending, contents)
+      const result = await monitor(context)
+      expect(result.code).not.toBe(0)
+      expect(result.output).toContain('could not read the pending promotion')
+      expect(await readFile(pending, 'utf8')).toBe(contents)
+      expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+      expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(state.trim())
+      expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+      expect(await calls(context)).toEqual([])
+    },
+  )
+
+  it('preserves a healthy current release selected outside the pending operation', async () => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture(true)
+    expect((await monitor(context, { SETUP_KILL_AFTER_ACTIVATION: '1' })).code).not.toBe(0)
+    const failed = await realpath(path.join(context.releases, 'current'))
+    const pending = path.join(context.root, 'state', 'pending-promotion')
+    const journal = await readFile(pending, 'utf8')
+    await rm(path.join(context.releases, 'current'))
+    await symlink(fallback, path.join(context.releases, 'current'))
+    const result = await monitor(context)
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('current release changed outside the pending promotion')
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(fallback)
+    expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(existsSync(failed)).toBe(false)
+    expect(await readFile(pending, 'utf8')).toBe(journal)
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+  })
+
+  it('preserves an unrelated clean source commit while a promotion is pending', async () => {
+    const { context, state } = await healthyReleaseFixture(true)
+    expect((await monitor(context, { SETUP_KILL_AFTER_ACTIVATION: '1' })).code).not.toBe(0)
+    const active = await realpath(path.join(context.releases, 'current'))
+    const pending = path.join(context.root, 'state', 'pending-promotion')
+    const journal = await readFile(pending, 'utf8')
+    await writeFile(path.join(context.runtime, 'operator.txt'), 'unrelated operator work')
+    await git(context.runtime, 'add', 'operator.txt')
+    await git(context.runtime, 'commit', '-m', 'operator work')
+    const operatorCommit = await git(context.runtime, 'rev-parse', 'HEAD')
+    const result = await monitor(context)
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('runtime source changed outside the pending promotion')
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(operatorCommit)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(active)
+    expect(await readFile(path.join(context.runtime, 'operator.txt'), 'utf8')).toBe('unrelated operator work')
+    expect(await readFile(pending, 'utf8')).toBe(journal)
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+  })
+
+  it('does not follow a rejected-marker symlink while recovering a pending candidate', async () => {
+    const { context, previous, state } = await healthyReleaseFixture(true)
+    expect((await monitor(context, { SETUP_KILL_AFTER_ACTIVATION: '1' })).code).not.toBe(0)
+    const candidate = await realpath(path.join(context.releases, 'current'))
+    const pending = path.join(context.root, 'state', 'pending-promotion')
+    const journal = await readFile(pending, 'utf8')
+    const unrelated = path.join(context.root, 'operator-state.txt')
+    await writeFile(unrelated, 'unrelated state')
+    await symlink(unrelated, path.join(candidate, '.promotion-failed'))
+    const result = await monitor(context)
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('could not mark the pending candidate')
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(candidate)
+    expect(await readFile(unrelated, 'utf8')).toBe('unrelated state')
+    expect(await readFile(pending, 'utf8')).toBe(journal)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+  })
+
+  it('quarantines a rejected candidate after manual rollback restores a healthy current release', async () => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture(true)
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    const result = await monitor(context, { FAIL_CANDIDATE_HEALTH: '1', FAIL_POINTER_RESTORE: '1' })
+    expect(result.code).not.toBe(0)
+    const current = path.join(context.releases, 'current')
+    const failed = await realpath(current)
+    expect(await readFile(path.join(failed, '.promotion-failed'), 'utf8')).toBe(`${candidate}\n`)
+    const installed = path.join(context.root, '.local', 'bin', 'agentic-remote')
+    await run(installed, ['rollback'], { env: context.env })
+    expect(await realpath(current)).toBe(previous)
+    expect(existsSync(failed)).toBe(false)
+    expect(await readFile(path.join(`${context.releases}.rejected`, path.basename(failed), '.promotion-failed'), 'utf8'))
+      .toBe(`${candidate}\n`)
+    await git(context.runtime, 'switch', '--detach', state.trim())
+    await run(installed, ['rollback'], { env: context.env })
+    expect(await realpath(current)).toBe(fallback)
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+  })
+
   it('keeps the installed marker-aware CLI when pointer restoration fails before repeated manual rollback', async () => {
     const { context, previous, fallback, state, record } = await healthyReleaseFixture(true)
     const candidate = await git(context.dev, 'rev-parse', 'HEAD')
@@ -1008,7 +1363,9 @@ describe('promotion monitor', () => {
       .toEqual(Array(4).fill('cli-version marker-aware'))
     expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
     expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
-    expect(await readFile(path.join(failed, '.promotion-failed'), 'utf8')).toBe(`${candidate}\n`)
+    expect(existsSync(failed)).toBe(false)
+    expect(await readFile(path.join(`${context.releases}.rejected`, path.basename(failed), '.promotion-failed'), 'utf8'))
+      .toBe(`${candidate}\n`)
     expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
     expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
   })
@@ -1043,12 +1400,12 @@ describe('promotion monitor', () => {
     const installed = path.join(context.root, '.local', 'bin', 'agentic-remote')
     const activations: string[] = []
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      await run(installed, ['rollback'], { env: context.env })
+      await expect(run(installed, ['rollback'], { env: context.env })).rejects.toThrow('could not quarantine')
       activations.push(await realpath(current))
     }
 
     expect.soft(sourceAfterFailure).toBe(candidate)
-    expect.soft(activations).toEqual([fallback, previous, fallback])
+    expect.soft(activations).toEqual([previous, previous, previous])
     expect(await realpath(`${context.releases}.rejected`)).toBe(unrelated)
     expect(await readFile(path.join(unrelated, 'keep.txt'), 'utf8')).toBe('unrelated user state')
     expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
@@ -1090,7 +1447,9 @@ describe('promotion monitor', () => {
       await run(installed, ['rollback'], { env: context.env })
     }
     expect(await realpath(path.join(context.releases, 'current'))).toBe(fallback)
-    expect(existsSync(failed!)).toBe(true)
+    expect(existsSync('FAIL_POINTER_RESTORE' in failure
+      ? path.join(`${context.releases}.rejected`, path.basename(failed!))
+      : failed!)).toBe(true)
   })
 
   it.each([

@@ -87,6 +87,43 @@ configured URL and refuses to arm the timer until it answers.
 
 ### Graduation is transactional
 
+Before changing the runtime source or activating a candidate, the monitor
+commits `state_dir/pending-promotion`. This versioned JSON journal binds the
+operation to its runtime and release roots and records the validated candidate
+commit/release and the previous known-good source commit/release. It is written
+through an exclusive `0600` temporary file, flushed, atomically renamed, and its
+directory flushed. A refused or interrupted journal commit cannot activate a
+candidate. Uncommitted `.pending-promotion-*` files are not recovery records.
+
+The next run reconciles a committed journal **before pulling, validating, or
+publishing anything else**. It must not infer a rollback baseline from the
+possibly unverified `current` pointer:
+
+- `prepared`: activation or verification may have been interrupted. Restore
+  the recorded known-good release, quarantine the interrupted candidate, and
+  leave both success records unchanged. A successfully recovered interruption
+  still exits as a failed graduation; a later run may validate and retry.
+- `local-verified`: setup, source identity, local health, and external checks
+  passed and were recorded. Recheck that exact active release and resume the
+  downstream phase without rebuilding it or choosing a new rollback baseline.
+- `verified`: all configured phases passed. Finish the success records without
+  reactivating the candidate, including when an operator has already manually
+  selected a healthy rollback. An already committed canonical record is not
+  rewritten merely to repair the legacy marker.
+
+The canonical success record and legacy marker are also flushed before the
+journal is removed. Incomplete recovery keeps the same journal for the next
+attempt; it cannot overwrite the recorded baseline with the failed candidate.
+Malformed journals, changed runtime roots, or unrelated source commits fail
+closed. If `current` was moved to neither recorded endpoint, preserve that
+selection, quarantine only the inactive pending candidate when safe, and leave
+the journal for an operator to reconcile. Never remove the journal or downgrade
+the installed monitor simply to bypass this decision: older monitors do not
+understand this recovery boundary.
+If an older monitor left no journal and the runtime source differs from the
+recorded successful commit, refuse a fresh promotion rather than adopting that
+unrecorded runtime as known-good. An operator must reconcile that legacy state.
+
 The release pointer and the managed service are replaced before the health and
 external checks run, and the release directory keeps only the current release
 plus two rollbacks. A failure that simply exits would therefore leave the failed
@@ -109,6 +146,19 @@ restored health cannot be established, so older rollback commands cannot select
 them merely because they are newest. An active candidate is never moved or
 deleted when pointer restoration fails. Retained marked directories do not
 consume the two healthy rollback slots.
+
+The application CLI also retries quarantine: before publication or another
+rollback when `current` names an unmarked release, after a successful rollback
+restart, and after setup starts a replacement. This moves inactive marked
+directories to the sibling `release_root.rejected` inventory rather than
+retaining them forever. An active marked directory is never moved. If the
+quarantine root is a symlink, the destination is occupied, or the move fails,
+report failure and preserve the healthy current release and all rejected data.
+Quarantine uses an atomic directory rename, not a cross-filesystem copy/delete
+fallback; incompatible filesystem layouts fail without partially moving a release.
+Rejection markers and inventory directory changes are flushed before the monitor
+downgrades the installed CLI or removes its recovery journal.
+Do not roll back to the failed candidate to undo an incomplete cleanup.
 
 The installed CLI is a symlink into the production source checkout, not the
 active release. Restoring that checkout too soon can reinstall an older
@@ -188,10 +238,13 @@ development checkout. Omit `--enable` when the machine should remain opt-out.
 A local-only monitor may run this sequence on an opt-in machine:
 
 1. Acquire a lock so only one run can change the runtime.
-2. Require the development checkout to be a clean `main` worktree.
-3. Fetch and fast-forward `main`; never merge or rewrite local development
+2. Reconcile any pending promotion before treating the current release as a
+   baseline. Finish recovery or completion and return; do not start a different
+   promotion in the same run.
+3. Require the development checkout to be a clean `main` worktree.
+4. Fetch and fast-forward `main`; never merge or rewrite local development
    changes.
-4. Prepare a validation worktree under `state_dir`, pinned to the candidate
+5. Prepare a validation worktree under `state_dir`, pinned to the candidate
    commit, and install dependencies and run the configured validation there.
    Validating in the development checkout ties the result to a workspace: it
    can sit on a filesystem chosen for working rather than for running a suite,
@@ -201,14 +254,17 @@ A local-only monitor may run this sequence on an opt-in machine:
    `state_dir` therefore decides which filesystem validation runs on.
    Nothing runs the suite remotely, so this is the only gate a commit passes
    before production and it has to include the tests.
-5. Remove the validation worktree afterwards, refusing to delete anything that
+6. Remove the validation worktree afterwards, refusing to delete anything that
    turns out to be a checkout this repository cannot account for.
-6. Verify the production runtime worktree is clean and intentionally detached.
-7. Promote the exact validated commit, publish an immutable release, and
+7. Verify the production runtime worktree is clean, intentionally detached, and
+   has not changed during validation.
+8. Durably record the pending promotion and known-good baseline, then promote
+   the exact validated commit, publish an immutable release, and
    restart the managed service.
-8. Wait for the service, local health endpoint, external access check, paired
+9. Wait for the service, local health endpoint, external access check, paired
    computers, and relevant sessions to recover.
-9. Record the candidate, tested, promoted, and previous release identifiers.
+10. Record completed verification and the candidate, tested, promoted, and
+    previous release identifiers, then clear the pending journal.
 
 If validation or promotion fails, do not advance the success marker and do not
 discard the previous known-good release. The next run must be able to retry or
@@ -338,9 +394,11 @@ any host already promoted earlier in the same run, so the fleet is not left
 split across two commits. The success marker is not advanced, so the next run
 retries the same commit.
 
-The local runtime stays graduated, because it validated the commit and is
-healthy. A retry therefore rebuilds and restarts the local runtime again before
-reaching the downstream phase.
+The local runtime stays active because its validation and health are durably
+recorded as `local-verified`. A retry rechecks that same local commit/release and
+resumes the downstream phase without rebuilding or restarting the healthy local
+runtime. If that recheck fails, recovery still uses the original journaled
+known-good baseline, never the uncompleted candidate.
 
 ### Choosing which machine serves the UI
 

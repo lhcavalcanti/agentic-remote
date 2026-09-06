@@ -182,8 +182,8 @@
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "e98adc8f9c5e58e398a6b2e04105967c5d9f8300ee042b77fae9329823b9de72",
     "server/background-task-adapter.test.ts": "95a73c1c7a1f3ddb127816d8d52dd9af5a8e91d9fb89f4594c0085c1d08454e0",
-    "server/background-task-adapter.ts": "bdf6b9ec8528907b705d4397bafcc3a1bca02fe77c6f460d3daa6a555313fe58",
-    "server/background-task-stop.test.ts": "066dc09d013860fcce0f675855f5e3cc5eaa4afbfd1452d655bcb46df94ff6b3",
+    "server/background-task-adapter.ts": "adf3cba00c8ed3a74ac863119c4c72bf745d11b8c39daa1476b8fa8602cc00df",
+    "server/background-task-stop.test.ts": "166ac480fb6d494a17017185e99660d962a6289cae7549703af57f92128bf929",
     "server/background-task-tracker.test.ts": "50154bcfeb4996dd6a4129fc16c10696da63ff73b439249f28d6aa1864c63137",
     "server/background-task-tracker.ts": "47f0fd9ebf4164c3347376c09aaca797738caeab49eb09312fda5b6ff1d5fdc0",
     "server/claude-agent-service.test.ts": "812d6dc4269d5bd004e6bd61348f198c107495905579b83e03cd49f9f0798bce",
@@ -339,14 +339,14 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b797bf6823168242fc132348d94748614ff14ad532cb3d93e394c47f82757e93",
+    "GRAPH_REPORT.md": "0fa5b466eba956bbaba94ad22790fb0e9ed0e63497e6ed59db45bae813aa5693",
     "communities.json": "801a734f6575bf3ce50b0b5c6915f658478292a4e8f1cb2ca51f8d4e03d22d39",
-    "graph.html": "805b4ded5bf601b8abef4039af60ba9960da7b78a28785f591fa75de9ff46602",
-    "graph.json": "a54097520028ee5dfdc1447865779ba0ade39627eef3a85813d9436b1eb654be"
+    "graph.html": "d1a9cb649d66f9114bafa327ea96d22fe7759dad43bb9aaa372f03d2ef50af97",
+    "graph.json": "badf1704d20d2da5000cf25248876bb53c1f1724aeb879710639ad778067d7a8"
   },
   "schema_version": 1,
-  "source_commit": "17fceac377f95d28f1f08c2e400901bf990afb1d",
-  "source_fingerprint": "ef4f13a414fbe99ff6f0c857787a65e3856708c94a5ace9035b31bc2840d855a",
+  "source_commit": "b704484ae74f4aceb0840b808be57f4faac9ed90",
+  "source_fingerprint": "ca13b4b0dece4b25267e6de5be2867c7be538c7ff2367235e3ece07e2c9edb4a",
   "working_tree_changes": [
     "server/background-task-adapter.ts",
     "server/background-task-stop.test.ts"

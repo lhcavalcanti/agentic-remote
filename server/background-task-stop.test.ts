@@ -213,6 +213,20 @@ describe('background shell stop reconciliation', () => {
     expect(result.tasks[0].completedAt).toBeUndefined()
   })
 
+  it.each(['stop_bash', 'stop_shell'])('does not accept a failed %s control result as process-exit evidence', (tool) => {
+    const events = [
+      ...launched('42'),
+      started('stop', tool, { shellId: '42' }, 5),
+    ]
+    expect(snapshot([
+      ...events,
+      completed('stop', {
+        success: false, error: { message: 'Stop refused' },
+        result: { content: '<shellId: 42 completed with exit code 7>' },
+      }, 6),
+    ])).toEqual(snapshot(events))
+  })
+
   it.each(['active', 'unknown'])('does not override structured %s status with a stopped-looking footer', (status) => {
     const result = snapshot([
       ...launched('preview-server'),
@@ -838,6 +852,283 @@ describe('background shell stop reconciliation', () => {
             result: { content: `<command started in detached background with shellId: ${shellId}>` },
           }, seconds)
     }
+
+    it.each(['inventory-running', 'inventory-completed', 'shell_started', 'shell_detached_started'])(
+      'rejects older unbound %s before the current owner has a row',
+      (report) => {
+        const launch = started('sync-launch', 'bash', {
+          shellId: '42', mode: 'sync', command: 'node replacement.js',
+        }, 4)
+        const olderStart = '2026-09-01T08:00:00.000Z'
+        const stale = report.startsWith('inventory')
+          ? reportedShell('42', olderStart, 6, {
+              status: report === 'inventory-completed' ? 'completed' : 'running',
+              result: 'Old inventory result',
+            })
+          : nativeStart('42', undefined, 6, report, olderStart)
+        expect(snapshot([launch, stale])).toEqual(snapshot([launch]))
+        const result = snapshot([launch, stale, handoff('42')])
+        expect(result.runningCount).toBe(1)
+        expect(result.tasks).toEqual([expect.objectContaining({
+          id: '42', status: 'running', startedAt: launch.timestamp,
+          command: 'node replacement.js', attachmentMode: 'detached',
+        })])
+      },
+    )
+
+    it.each(['inventory', 'native'])(
+      'does not collapse tied explicit launch identities through unbound %s',
+      (report) => {
+        const events = [
+          ...launched('42', 'async', false, 'old-launch'),
+          started('sync-launch', 'bash', {
+            shellId: '42', mode: 'sync', command: 'node replacement.js',
+          }),
+        ]
+        const tiedStart = '2026-09-01T09:00:00.000+01:00'
+        const ambiguous = report === 'inventory'
+          ? reportedShell('42', tiedStart, 6, { status: 'failed', error: 'Old failure' })
+          : nativeStart('42', undefined, 6, 'shell_detached_started', tiedStart)
+        expect(snapshot([...events, ambiguous])).toEqual(snapshot(events))
+        const result = snapshot([...events, ambiguous, handoff('42')])
+        expect(result.runningCount).toBe(1)
+        expect(result.tasks).toEqual([expect.objectContaining({
+          id: '42', status: 'running', command: 'node replacement.js',
+        })])
+        expect(result.tasks[0].error).toBeUndefined()
+      },
+    )
+
+    it.each(['inventory', 'native'])('admits a genuinely newer unbound %s owner', (report) => {
+      const newerStart = '2026-09-01T08:00:06.000Z'
+      const newer = report === 'inventory'
+        ? reportedShell('42', newerStart, 7)
+        : nativeStart('42', undefined, 7, 'shell_detached_started', newerStart)
+      const events = [
+        started('sync-launch', 'bash', {
+          shellId: '42', mode: 'sync', command: 'node original.js',
+        }, 4),
+        newer,
+      ]
+      const before = snapshot(events)
+      expect(before.runningCount).toBe(1)
+      expect(before.tasks[0].startedAt).toBe(newerStart)
+      expect(snapshot([...events, handoff('42')])).toEqual(before)
+    })
+
+    it.each(['old-read', 'old-launch'])(
+      'applies bound %s metadata without reclaiming a newer unmaterialized alias',
+      (callId) => {
+        const metadata = reportedShell('caller-name', '2026-09-01T08:00:00.000Z', 6, {
+          status: 'failed', completedAt: '2026-09-01T08:00:05.000Z',
+          error: 'Original failure', result: 'Original final result',
+        })
+        const result = snapshot([
+          ...launched('caller-name', 'async', false, 'old-launch'),
+          started('old-read', 'read_bash', { shellId: 'caller-name' }, 2),
+          nativeStart('42', 'old-launch', 3),
+          started('sync-launch', 'bash', {
+            shellId: 'caller-name', mode: 'sync', command: 'node replacement.js',
+          }, 4),
+          { ...metadata, data: { ...metadata.data, toolCallId: callId } },
+          handoff('caller-name'),
+        ])
+        expect(result.runningCount).toBe(1)
+        expect(result.tasks.find((task) => task.id === '42')).toMatchObject({
+          status: 'failed', completedAt: '2026-09-01T08:00:05.000Z',
+          error: 'Original failure', result: 'Original final result',
+        })
+        expect(result.tasks.find((task) => task.id === 'caller-name')).toMatchObject({
+          status: 'running', startedAt: '2026-09-01T08:00:04.000Z',
+          command: 'node replacement.js',
+        })
+      },
+    )
+
+    it.each([
+      { tool: 'stop_bash', telemetry: true, reportedId: '42' },
+      { tool: 'stop_bash', telemetry: false, reportedId: '99' },
+      { tool: 'stop_shell', telemetry: true, reportedId: '99' },
+      { tool: 'stop_shell', telemetry: false, reportedId: '42' },
+    ])('retains an early $tool acknowledgement (telemetry=$telemetry, handoff=$reportedId)', ({
+      tool, telemetry, reportedId,
+    }) => {
+      const output = 'Final stop output\n<command with id: 42 stopped>'
+      const acknowledgement = completed('stop', {
+        ...stopAcknowledgement('42', telemetry),
+        result: { content: output },
+      }, 2)
+      const events = [
+        started('sync-launch', 'bash', {
+          shellId: '42', mode: 'sync', command: 'node fixture-server.js',
+        }),
+        started('stop', tool, { shellId: '42' }, 1),
+        acknowledgement,
+      ]
+      const before = snapshot(events)
+      expect(before.runningCount).toBe(0)
+      expect(before.tasks).toEqual([expect.objectContaining({
+        id: '42', status: 'cancelled', executionMode: 'sync',
+        completedAt: acknowledgement.timestamp,
+        progress: { type: 'shell', recentOutput: output },
+      })])
+      const result = snapshot([...events, handoff(reportedId), sessionShutdown(9)])
+      expect(result.runningCount).toBe(0)
+      expect(result.tasks).toEqual([expect.objectContaining({
+        id: reportedId, status: 'cancelled', executionMode: 'background',
+        completedAt: acknowledgement.timestamp, attachmentMode: 'detached',
+        command: 'node fixture-server.js', progress: { type: 'shell', recentOutput: output },
+      })])
+    })
+
+    it.each([
+      { tool: 'read_bash', success: true, exitCode: 0 },
+      { tool: 'read_bash', success: false, exitCode: 7 },
+      { tool: 'read_shell', success: true, exitCode: 7 },
+      { tool: 'read_shell', success: false, exitCode: 0 },
+      { tool: 'stop_bash', success: true, exitCode: 0 },
+      { tool: 'stop_shell', success: true, exitCode: 7 },
+    ])('retains an early $tool exit (success=$success, exit=$exitCode)', ({
+      tool, success, exitCode,
+    }) => {
+      const output = `Final process output\n<shellId: 42 completed with exit code ${exitCode}>`
+      const exit = completed('observer', { success, result: { content: output } }, 2)
+      const events = [
+        started('sync-launch', 'bash', {
+          shellId: '42', mode: 'sync', command: 'node fixture-server.js',
+        }),
+        started('observer', tool, { shellId: '42' }, 1),
+        exit,
+      ]
+      const terminal = {
+        status: exitCode === 0 ? 'completed' : 'failed',
+        completedAt: exit.timestamp,
+        error: exitCode === 0 ? undefined : `Shell exited with status ${exitCode}`,
+        progress: { type: 'shell', recentOutput: output },
+      }
+      expect(snapshot(events).runningCount).toBe(0)
+      expect(snapshot(events).tasks[0]).toMatchObject({ ...terminal, executionMode: 'sync' })
+      const result = snapshot([
+        ...events, handoff('99'),
+        reportedShell('99', events[0].timestamp, 9, {
+          status: 'running', result: 'Stale result', error: 'Stale error',
+        }),
+        completed('sync-launch', { result: { content: 'Delayed launch result' } }, 10),
+      ])
+      expect(result.runningCount).toBe(0)
+      expect(result.tasks).toEqual([expect.objectContaining({
+        ...terminal, id: '99', attachmentMode: 'detached', executionMode: 'background',
+      })])
+      expect(result.tasks[0].result).toBeUndefined()
+    })
+
+    it.each([
+      { tool: 'read_bash', result: { content: 'Current process progress' } },
+      { tool: 'read_shell', result: { content: 'Current process progress' } },
+      { tool: 'read_bash', result: { content: '', recentOutput: 'Current process progress' } },
+      { tool: 'read_shell', result: { content: '', recentOutput: 'Current process progress' } },
+    ])('keeps early $tool progress synchronous until a handoff ($result)', ({ tool, result: readResult }) => {
+      const events = [
+        started('sync-launch', 'bash', {
+          shellId: '42', mode: 'sync', command: 'node fixture-server.js',
+        }),
+        started('read', tool, { shellId: '42' }, 1),
+        completed('read', { result: readResult }, 2),
+      ]
+      const before = snapshot(events)
+      expect(before.runningCount).toBe(0)
+      expect(before.tasks).toEqual([expect.objectContaining({
+        id: '42', status: 'running', executionMode: 'sync',
+        progress: { type: 'shell', recentOutput: 'Current process progress' },
+      })])
+      const result = snapshot([...events, handoff('99'), sessionShutdown(9)])
+      expect(result.runningCount).toBe(1)
+      expect(result.tasks).toEqual([expect.objectContaining({
+        id: '99', status: 'running', executionMode: 'background', attachmentMode: 'detached',
+        progress: { type: 'shell', recentOutput: 'Current process progress' },
+      })])
+    })
+
+    it.each([
+      { tool: 'stop_bash', success: false, content: '<command with id: 42 stopped>' },
+      { tool: 'stop_bash', success: false, content: '<shellId: 42 completed with exit code 0>' },
+      { tool: 'stop_shell', success: false, content: '<shellId: 42 completed with exit code 7>' },
+      { tool: 'stop_shell', success: true, content: 'Stop request is pending' },
+      { tool: 'stop_bash', success: true, content: '<command with id: 99 stopped>' },
+      { tool: 'read_bash', success: false, content: 'Read unavailable' },
+      { tool: 'read_shell', success: true, content: '<shellId: 99 completed with exit code 0>' },
+    ])('does not materialize an unconfirmed or unrelated $tool outcome ($success, $content)', ({
+      tool, success, content,
+    }) => {
+      const launch = started('sync-launch', 'bash', {
+        shellId: '42', mode: 'sync', command: 'node fixture-server.js',
+      })
+      const events = [
+        launch,
+        started('observer', tool, { shellId: '42' }, 1),
+        completed('observer', { success, result: { content } }, 2),
+      ]
+      expect(snapshot(events).tasks).toEqual([])
+      expect(snapshot([...events, handoff('42')])).toEqual(snapshot([launch, handoff('42')]))
+    })
+
+    it.each(['stop_bash', 'read_bash', 'read_shell'])(
+      'does not retarget an early %s outcome to a newer unmaterialized owner',
+      (tool) => {
+        const result = snapshot([
+          started('old-launch', 'bash', { shellId: '42', mode: 'sync', command: 'node old.js' }),
+          started('observer', tool, { shellId: '42' }, 1),
+          started('sync-launch', 'bash', {
+            shellId: '42', mode: 'sync', command: 'node replacement.js',
+          }, 4),
+          completed('observer', tool === 'stop_bash'
+            ? stopAcknowledgement('42')
+            : { result: { content: '<shellId: 42 completed with exit code 7>' } }, 6),
+          handoff('42'),
+        ])
+        expect(result.runningCount).toBe(1)
+        expect(result.tasks).toEqual([expect.objectContaining({
+          id: '42', status: 'running', command: 'node replacement.js',
+          startedAt: '2026-09-01T08:00:04.000Z',
+        })])
+        expect(result.tasks[0].error).toBeUndefined()
+      },
+    )
+
+    it('keeps an observed synchronous completion foreground when no handoff arrives', () => {
+      const result = snapshot([
+        started('sync-launch', 'bash', {
+          shellId: '42', mode: 'sync', command: 'printf fixture',
+        }),
+        started('read', 'read_bash', { shellId: '42' }, 1),
+        completed('read', { result: { content: 'Current process progress' } }, 2),
+        completed('sync-launch', { result: { content: 'Final foreground output' } }, 3),
+      ])
+      expect(result.runningCount).toBe(0)
+      expect(result.tasks).toEqual([expect.objectContaining({
+        id: '42', status: 'completed', executionMode: 'sync',
+        completedAt: '2026-09-01T08:00:03.000Z',
+        progress: { type: 'shell', recentOutput: 'Final foreground output' },
+      })])
+    })
+
+    it.each(['stop_bash', 'read_bash', 'read_shell'])(
+      'does not bind an unknown %s target when a synchronous launch appears later',
+      (tool) => {
+        const launch = started('sync-launch', 'bash', {
+          shellId: '42', mode: 'sync', command: 'node fixture-server.js',
+        }, 4)
+        const events = [
+          started('observer', tool, { shellId: '42' }, 1),
+          launch,
+          completed('observer', tool === 'stop_bash'
+            ? stopAcknowledgement('42')
+            : { result: { content: '<shellId: 42 completed with exit code 7>' } }, 6),
+        ]
+        expect(snapshot(events).tasks).toEqual([])
+        expect(snapshot([...events, handoff('42')])).toEqual(snapshot([launch, handoff('42')]))
+      },
+    )
 
     it.each(['running', 'completed', 'failed', 'cancelled'])(
       'does not overwrite a newer %s destination before materialization',

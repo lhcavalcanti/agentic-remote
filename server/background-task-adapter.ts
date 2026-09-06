@@ -1161,6 +1161,17 @@ export function backgroundTasksFromEvents(
   const shellIdentityAt = (id: string): ShellIdentity | undefined =>
     shellIdentitiesById.get(id) ||
     shellIdentitiesById.get(taskIdAlias(aliases, id))
+  const isStaleUnboundShellStart = (
+    id: string,
+    startedAt: string,
+    distinctCall = false,
+  ): boolean => {
+    const owner = shellIdentitiesById.get(id)
+    // An explicit sync launch owns its id before it has a task row. Unbound
+    // reports must respect that owner, and tied starts need call provenance.
+    return Boolean(owner && Date.parse(startedAt) < Date.parse(owner.startedAt)) ||
+      (!distinctCall && shellIdentitiesByStart.get(id)?.get(startKey(startedAt)) === null)
+  }
   const rekeyShellTask = (
     current: BackgroundTask,
     to: string,
@@ -1322,6 +1333,11 @@ export function backgroundTasksFromEvents(
         // Bound metadata refreshes the captured execution at its current id,
         // not a replacement now occupying the requested alias.
         reported.id = previous.id
+      } else if (
+        reported.type === 'shell' &&
+        isStaleUnboundShellStart(reported.id, reported.startedAt)
+      ) {
+        continue
       }
       if (
         previous?.type === 'shell' && reported.type === 'shell' &&
@@ -1392,11 +1408,16 @@ export function backgroundTasksFromEvents(
           const startedBy =
             eventString(kind, 'toolCallId') || eventString(data, 'toolCallId')
           const reportedStartedAt = eventString(kind, 'startedAt')
+          const byCall = startedBy ? launchIdentity.get(startedBy) : undefined
+          if (
+            !byCall &&
+            isStaleUnboundShellStart(shellId, reportedStartedAt || event.timestamp, Boolean(startedBy))
+          ) continue
           const pending = shellIdentitiesById.get(shellId)
           const matchesPending = pending?.start && !pending.materialized &&
             reportedStartedAt && sameExecutionStart(pending.startedAt, reportedStartedAt)
           const knownIdentity = startedBy
-            ? launchIdentity.get(startedBy)
+            ? byCall
             : matchesPending ? pending : undefined
           const known = knownIdentity
             ? shellByIdentity(knownIdentity) ||
@@ -1740,6 +1761,23 @@ export function backgroundTasksFromEvents(
       let current = ownedIdentity ? shellByIdentity(ownedIdentity) : tasks.get(id)
       if (ownedIdentity?.materialized && !current) continue
       const target = shellObserverTargets.get(toolCallId)
+      if (isShellStopTool(toolName) && data.success !== true) continue
+      if (target?.identity?.start && !target.identity.materialized) {
+        const start = target.identity.start
+        const matchesTarget = !namedShellId ||
+          namedShellId === target.requestedId || namedShellId === start.id
+        const hasOutcome = shellExit || (isShellStopTool(toolName)
+          ? shellStopAcknowledged(data, target.requestedId, start.id)
+          : data.success === true)
+        if (matchesTarget && hasOutcome) {
+          // An observer can finish or read a sync execution before its launch
+          // result arrives. Keep that evidence on the captured execution, but
+          // do not count it as background until a real handoff says so.
+          materializeShell(target.identity, start.id, start.mode || {
+            executionMode: 'sync', attachmentMode: 'attached', assumed: false,
+          })
+        }
+      }
       if (isShellStopTool(toolName)) {
         // A stop answers for the execution it addressed, wherever that
         // execution now lives, and never for a later shell that reused the
@@ -1761,6 +1799,7 @@ export function backgroundTasksFromEvents(
             current.completedAt = event.timestamp
             current.error = undefined
             current.canCancel = false
+            shellTaskOutput(current, data.result)
           }
           continue
         }
@@ -1833,6 +1872,7 @@ export function backgroundTasksFromEvents(
             rekeyShellTask(current, handoffShellId) || current
           if (isShellTool(toolName)) aliases.set(toolCallId, current.id)
         }
+        if (isTerminalTaskStatus(current.status)) continue
         if (shellExit) {
           current.status = shellExit.exitCode === 0 ? 'completed' : 'failed'
           current.completedAt = event.timestamp
@@ -1864,7 +1904,7 @@ export function backgroundTasksFromEvents(
           current.completedAt = event.timestamp
           current.canCancel = false
         }
-        if (!shellExit) {
+        if (!shellExit && (!handoffMode || !current.progress?.recentOutput)) {
           shellTaskOutput(current, data.result)
         }
         continue

@@ -116,6 +116,17 @@ function nativeStart(
   return record as SessionEvent
 }
 
+function sessionShutdown(seconds = 5): SessionEvent {
+  const record: unknown = {
+    type: 'session.shutdown',
+    id: 'session-shutdown',
+    parentId: null,
+    timestamp: new Date(Date.UTC(2026, 8, 1, 8, 0, seconds)).toISOString(),
+    data: {},
+  }
+  return record as SessionEvent
+}
+
 describe('background shell stop reconciliation', () => {
   it.each([
     { shellId: 'preview-server', mode: 'async', detached: false, telemetry: true },
@@ -286,6 +297,22 @@ describe('background shell stop reconciliation', () => {
     expect(result.tasks[0].status).toBe(exitCode === 0 ? 'completed' : 'failed')
   })
 
+  it.each([0, 7])('accepts an identity-bound stop exit after its requested alias is reused (exit=%s)', (exitCode) => {
+    const result = snapshot([
+      ...launched('caller-name', 'async', false, 'old-launch'),
+      started('stop', 'stop_bash', { shellId: 'caller-name' }, 2),
+      nativeStart('42', 'old-launch', 3),
+      ...launched('caller-name', 'async', false, 'new-launch', 4),
+      completed('stop', {
+        result: { content: `<shellId: caller-name completed with exit code ${exitCode}>` },
+      }, 6),
+    ])
+    expect(result.runningCount).toBe(1)
+    expect(result.tasks.find((task) => task.id === '42')?.status)
+      .toBe(exitCode === 0 ? 'completed' : 'failed')
+    expect(result.tasks.find((task) => task.id === 'caller-name')?.status).toBe('running')
+  })
+
   it('keeps a stop associated with the same shell through a metadata refresh', () => {
     const events = launched('42')
     const result = snapshot([
@@ -354,6 +381,29 @@ describe('background shell stop reconciliation', () => {
       progress: { type: 'shell', recentOutput: output },
       command: 'node fixture-server.js',
     })
+  })
+
+  it.each(['running', 'queued'])('retains known detachment when %s metadata omits it', (status) => {
+    const events = launched('42', 'async', true)
+    const result = snapshot([
+      ...events,
+      reportedShell('42', events[0].timestamp, 3, { status }),
+      sessionShutdown(),
+    ])
+    expect(result.runningCount).toBe(status === 'running' ? 1 : 0)
+    expect(result.tasks[0]).toMatchObject({ status, attachmentMode: 'detached' })
+    expect(result.tasks[0].completedAt).toBeUndefined()
+  })
+
+  it('does not invent detachment when a known attached shell is refreshed', () => {
+    const events = launched('42')
+    const result = snapshot([
+      ...events,
+      reportedShell('42', events[0].timestamp, 3),
+      sessionShutdown(),
+    ])
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks[0]).toMatchObject({ status: 'failed', attachmentMode: 'attached' })
   })
 
   it('fills missing final diagnostics without changing a confirmed terminal outcome', () => {

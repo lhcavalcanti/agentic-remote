@@ -916,6 +916,7 @@ function mergeShellRefresh(
   if (!reported.progress && previous.progress) {
     reported.progress = previous.progress
   }
+  reported.attachmentMode ??= previous.attachmentMode
   return reported
 }
 
@@ -1645,7 +1646,10 @@ export function backgroundTasksFromEvents(
           }
           continue
         }
-        if (taskIdAlias(aliases, shellExit.shellId) !== current.id) continue
+        if (
+          shellExit.shellId !== target.requestedId &&
+          shellExit.shellId !== current.id
+        ) continue
       }
       if (!current && !ownsShellStart && observesShells && namedShellId) {
         current = tasks.get(taskIdAlias(aliases, namedShellId))

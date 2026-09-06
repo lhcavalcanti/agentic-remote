@@ -290,7 +290,7 @@ async function advanceMain(context: Fixture): Promise<string> {
   return git(context.dev, 'rev-parse', 'HEAD')
 }
 
-async function healthyReleaseFixture(): Promise<{
+async function healthyReleaseFixture(withLegacyCli = false): Promise<{
   context: Fixture
   previous: string
   fallback: string
@@ -298,6 +298,62 @@ async function healthyReleaseFixture(): Promise<{
   record: string
 }> {
   const context = await fixture({ AGENTIC_REMOTE_MONITOR_READY_INTERVAL: '0' })
+  if (withLegacyCli) {
+    const source = path.join(context.dev, 'bin', 'agentic-remote')
+    const setup = await readFile(source, 'utf8')
+    const current = (await readFile(AGENTIC_REMOTE, 'utf8'))
+      .match(/^rollback_service\(\) \{[\s\S]*?^\}/m)?.[0]
+    if (!current) {
+      throw new Error('Missing rollback_service function')
+    }
+    const cli = (version: string, rollback: string, setup: string) => [
+      '#!/usr/bin/env bash',
+      'set -Eeuo pipefail',
+      'CONFIG_DIR="$HOME/.config/agentic-remote"',
+      'SERVICE_NAME=fixture.service',
+      'die() { printf "%s\\n" "$*" >&2; exit 1; }',
+      `printf 'cli-version ${version}\\n' >>"$CALL_LOG"`,
+      rollback,
+      'if [[ "${1:-}" == rollback ]]; then rollback_service; exit; fi',
+      setup,
+    ].join('\n')
+    // The actual rollback implementation before failed-release markers existed.
+    // Keep it independent of today's function so a source checkout really does
+    // change what the installed command understands.
+    const legacy = String.raw`rollback_service() {
+  local releases_dir current_release previous_release temporary_link
+  releases_dir="$CONFIG_DIR/releases"
+  [[ -d "$releases_dir" ]] || die "no previous release is available"
+  current_release="$(readlink -f "$releases_dir/current" 2>/dev/null || true)"
+  previous_release="$(
+    find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
+      sort -nr |
+      cut -d' ' -f2- |
+      while IFS= read -r release; do
+        release="$(readlink -f "$release")"
+        if [[ "$release" != "$current_release" ]]; then
+          printf '%s\n' "$release"
+          break
+        fi
+      done
+  )"
+  [[ -n "$previous_release" ]] || die "no previous release is available"
+  temporary_link="$releases_dir/.current-$$"
+  ln -s "$previous_release" "$temporary_link"
+  mv -Tf "$temporary_link" "$releases_dir/current"
+  systemctl --user restart "$SERVICE_NAME"
+  printf 'Rolled back to %s\n' "$(basename "$previous_release")"
+}`
+    await writeFile(source, cli('legacy', legacy, 'die "legacy setup is not used by this fixture"'))
+    await git(context.dev, 'add', 'bin/agentic-remote')
+    await git(context.dev, 'commit', '-m', 'legacy rollback CLI')
+    await git(context.runtime, 'switch', '--detach', await git(context.dev, 'rev-parse', 'HEAD'))
+    const installed = path.join(context.root, '.local', 'bin', 'agentic-remote')
+    await mkdir(path.dirname(installed), { recursive: true })
+    await symlink(path.join(context.runtime, 'bin', 'agentic-remote'), installed)
+    expect(await readFile(installed, 'utf8')).not.toContain('.promotion-failed')
+    await writeFile(source, cli('marker-aware', current, setup))
+  }
   const previous = path.join(context.releases, 'previous-healthy')
   const fallback = path.join(context.releases, 'older-healthy')
   await mkdir(previous)
@@ -926,12 +982,87 @@ describe('promotion monitor', () => {
     expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
   })
 
+  it('keeps the installed marker-aware CLI when pointer restoration fails before repeated manual rollback', async () => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture(true)
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    const installed = path.join(context.root, '.local', 'bin', 'agentic-remote')
+    const current = path.join(context.releases, 'current')
+    const result = await monitor(context, { FAIL_CANDIDATE_HEALTH: '1', FAIL_POINTER_RESTORE: '1' })
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain('could not restore the previous release pointer')
+    expect(result.output).toContain('could not fully restore the previous runtime')
+    const failed = await realpath(current)
+    expect(await readFile(path.join(failed, '.promotion-failed'), 'utf8')).toBe(`${candidate}\n`)
+    expect(await readFile(path.join(failed, 'fixture-candidate'), 'utf8')).toBe('candidate')
+    const sourceAfterFailure = await git(context.runtime, 'rev-parse', 'HEAD')
+    const activations: string[] = []
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await run(installed, ['rollback'], { env: context.env })
+      activations.push(await realpath(current))
+    }
+
+    expect.soft(sourceAfterFailure).toBe(candidate)
+    expect.soft(activations).toEqual([previous, fallback, previous])
+    expect((await calls(context)).filter((line) => line.startsWith('cli-version ')))
+      .toEqual(Array(4).fill('cli-version marker-aware'))
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
+    expect(await readFile(path.join(failed, '.promotion-failed'), 'utf8')).toBe(`${candidate}\n`)
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+  })
+
+  it.each([
+    ['restored health fails', { CURL_EXIT: '7' }],
+    ['candidate removal fails', { FAIL_CANDIDATE_HEALTH: '1' }],
+  ])('keeps the installed marker-aware CLI when %s and inactive quarantine is unsafe', async (_reason, failure) => {
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture(true)
+    const candidate = await git(context.dev, 'rev-parse', 'HEAD')
+    const unrelated = path.join(context.root, 'unrelated')
+    await mkdir(unrelated)
+    await writeFile(path.join(unrelated, 'keep.txt'), 'unrelated user state')
+    await symlink(unrelated, `${context.releases}.rejected`)
+    const realRm = (await run('sh', ['-c', 'command -v rm'])).stdout.trim()
+    await stub(path.join(context.root, 'bin'), 'rm', [
+      'if [[ -f "${@: -1}/.promotion-failed" ]]; then exit 1; fi',
+      `exec ${JSON.stringify(realRm)} "$@"`,
+    ].join('\n'))
+
+    const result = await monitor(context, failure)
+    expect(result.code).not.toBe(0)
+    const current = path.join(context.releases, 'current')
+    expect(await realpath(current)).toBe(previous)
+    const inventory = (await readdir(context.releases, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(context.releases, entry.name))
+    const failed = inventory.find((release) => release !== previous && release !== fallback)
+    expect(failed).toBeDefined()
+    expect(await readFile(path.join(failed!, '.promotion-failed'), 'utf8')).toBe(`${candidate}\n`)
+    const sourceAfterFailure = await git(context.runtime, 'rev-parse', 'HEAD')
+    const installed = path.join(context.root, '.local', 'bin', 'agentic-remote')
+    const activations: string[] = []
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await run(installed, ['rollback'], { env: context.env })
+      activations.push(await realpath(current))
+    }
+
+    expect.soft(sourceAfterFailure).toBe(candidate)
+    expect.soft(activations).toEqual([fallback, previous, fallback])
+    expect(await realpath(`${context.releases}.rejected`)).toBe(unrelated)
+    expect(await readFile(path.join(unrelated, 'keep.txt'), 'utf8')).toBe('unrelated user state')
+    expect(await readFile(path.join(previous, 'identity'), 'utf8')).toBe('previous healthy release')
+    expect(await readFile(path.join(fallback, 'identity'), 'utf8')).toBe('older healthy release')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+    expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
+  })
+
   it.each([
     ['pointer restoration fails', { FAIL_CANDIDATE_HEALTH: '1', FAIL_POINTER_RESTORE: '1' }],
     ['restored health cannot be verified', { CURL_EXIT: '7' }],
     ['the restored service cannot restart', { FAIL_CANDIDATE_HEALTH: '1', SERVICE_RESTART_EXIT: '1' }],
   ])('retains and excludes the failed candidate when %s', async (_reason, failure) => {
-    const { context, previous, fallback, state, record } = await healthyReleaseFixture()
+    const { context, previous, fallback, state, record } = await healthyReleaseFixture(true)
     const result = await monitor(context, failure)
     expect(result.code).not.toBe(0)
     const inventory = (await readdir(context.releases, { withFileTypes: true }))
@@ -952,10 +1083,11 @@ describe('promotion monitor', () => {
     expect(result.output).toContain('could not fully restore the previous runtime')
     expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
     expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
-    await run(AGENTIC_REMOTE, ['rollback'], { env: context.env })
+    const installed = path.join(context.root, '.local', 'bin', 'agentic-remote')
+    await run(installed, ['rollback'], { env: context.env })
     if ('FAIL_POINTER_RESTORE' in failure) {
       expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
-      await run(AGENTIC_REMOTE, ['rollback'], { env: context.env })
+      await run(installed, ['rollback'], { env: context.env })
     }
     expect(await realpath(path.join(context.releases, 'current'))).toBe(fallback)
     expect(existsSync(failed!)).toBe(true)
@@ -997,13 +1129,14 @@ describe('promotion monitor', () => {
 
     // Precedence matters for secrecy: a value can be supplied per run instead
     // of being written to a file.
+    const missing = path.join(context.root, 'not-a-repository')
     const result = await monitor(context, {
-      AGENTIC_REMOTE_MONITOR_DEV_ROOT: '/tmp/not-a-repository-fixture',
+      AGENTIC_REMOTE_MONITOR_DEV_ROOT: missing,
     })
 
     expect(result.code).not.toBe(0)
     expect(result.output).toContain(
-      'not a Git repository: /tmp/not-a-repository-fixture',
+      `not a Git repository: ${missing}`,
     )
   })
 

@@ -11,6 +11,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...fs,
     writeFile: vi.fn(fs.writeFile),
     rename: vi.fn(fs.rename),
+    rm: vi.fn(fs.rm),
   }
 })
 
@@ -83,6 +84,7 @@ function holdWrite() {
 beforeEach(() => {
   vi.mocked(writeFile).mockReset().mockImplementation(disk.writeFile)
   vi.mocked(rename).mockReset().mockImplementation(disk.rename)
+  vi.mocked(rm).mockReset().mockImplementation(disk.rm)
 })
 
 afterEach(async () => {
@@ -96,6 +98,101 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
+describe('Durable terminal queue claims', () => {
+  async function ready() {
+    const setup = await fixture()
+    await setup.store.clearFailedPrompt('session')
+    return setup
+  }
+
+  it('keeps an unstamped legacy recovery visible', async () => {
+    const { store, directory, contents } = await fixture()
+    const state = JSON.parse(await contents())
+    delete state.sessions.session.failedPrompt.failedAt
+    await disk.writeFile(path.join(directory, 'state.json'), JSON.stringify(state))
+    await store.initialize()
+    expect(store.get('session')?.failedPrompt?.content).toBe('Earlier failure')
+  })
+
+  it('holds the exact head privately until the claim commits', async () => {
+    const { store, contents } = await ready()
+    const before = store.get('session')
+    const gate = holdWrite()
+    const claiming = store.claimTerminalQueuedPrompt('session', prompt('first'), () => true)
+    await gate.started
+    expect(store.get('session')).toEqual(before)
+    expect(store.terminalQueueDispatch('session')).toBeUndefined()
+    gate.finish()
+    const { session: claimed, dispatch } = await claiming
+    expect(claimed).not.toHaveProperty('terminalQueueDispatch')
+    expect(claimed.failedPrompt).toBeUndefined()
+    expect(claimed).toMatchObject({ status: 'running', queuedPrompts: [prompt('second')], queuedCount: 1 })
+    expect(store.terminalQueueDispatch('session')).toEqual(dispatch)
+    expect(JSON.parse(await contents()).sessions.session).toMatchObject({
+      terminalQueueDispatch: dispatch,
+      failedPrompt: { content: 'first', failedAt: dispatch.startedAt, uncertain: true },
+    })
+  })
+
+  it.each(['identity', 'content', 'command', 'time', 'owner'] as const)(
+    'does not claim a stale queue %s',
+    async (changed) => {
+      const { store } = await ready()
+      const expected = {
+        ...prompt('first'),
+        ...(changed === 'identity' ? { id: 'second' } : {}),
+        ...(changed === 'content' ? { content: 'Changed' } : {}),
+        ...(changed === 'command' ? { command: true } : {}),
+        ...(changed === 'time' ? { createdAt: '2026-09-05T00:00:00.000Z' } : {}),
+      }
+      await expect(store.claimTerminalQueuedPrompt('session', expected, () => changed !== 'owner'))
+        .rejects.toThrow('nothing was sent')
+      expect(store.get('session')?.queuedCount).toBe(2)
+    },
+  )
+
+  it('prevents generic recovery operations from consuming an active claim', async () => {
+    const { store } = await ready()
+    const { dispatch } = await store.claimTerminalQueuedPrompt('session', prompt('first'), () => true)
+    await expect(store.clearFailedPrompt('session')).rejects.toMatchObject({ statusCode: 409 })
+    await expect(store.enqueueAnsweringPrompt('session', prompt('retry'), dispatch.startedAt))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(store.setFailedPrompt('session', 'second', 'Overwrite')).rejects.toMatchObject({ statusCode: 409 })
+    expect(store.terminalQueueDispatch('session')).toEqual(dispatch)
+    expect(store.get('session')?.queuedPrompts).toEqual([prompt('second')])
+  })
+
+  it('keeps newer native permission state when settling a delivered turn', async () => {
+    const { store } = await ready()
+    const { dispatch } = await store.claimTerminalQueuedPrompt('session', prompt('first'), () => true)
+    await store.update('session', (session) => {
+      session.status = 'waiting'
+      session.pendingPermission = {
+        requestId: 'permission', title: 'Native permission', kind: 'shell', options: [],
+      }
+      session.activity = 'Native permission'
+    })
+    const settled = await store.settleTerminalQueuedPrompt('session', dispatch.id, { kind: 'accepted', startedTurn: true })
+    expect(settled).toMatchObject({
+      status: 'waiting', activity: 'Native permission', pendingPermission: { requestId: 'permission' },
+    })
+    expect(settled.failedPrompt).toBeUndefined()
+  })
+
+  it('does not resurrect recovery settled by an older runtime', async () => {
+    const { store, directory, contents } = await ready()
+    await store.claimTerminalQueuedPrompt('session', prompt('first'), () => true)
+    const state = JSON.parse(await contents())
+    delete state.sessions.session.failedPrompt
+    await disk.writeFile(path.join(directory, 'state.json'), JSON.stringify(state))
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.terminalQueueDispatch('session')).toBeUndefined()
+    expect(reloaded.get('session')?.failedPrompt).toBeUndefined()
+    expect(reloaded.get('session')?.queuedPrompts).toEqual([prompt('second')])
+  })
+})
+
 describe('SessionStore durability', () => {
   const changes: [string, (store: SessionStore) => Promise<unknown>][] = [
     ['reorder', (store) => store.update('session', (stored) => {
@@ -106,6 +203,7 @@ describe('SessionStore durability', () => {
     ['queue shift', (store) => store.shiftQueuedPrompt('session')],
     ['session removal', (store) => store.remove('session')],
     ['creation', (store) => store.create(session('new'))],
+    ['lineage creation', (store) => store.create({ ...session('replacement'), replacedSessionIds: ['session'] })],
     ['replacement', (store) => store.replaceWithClearedSession('session', 'new')],
     ['discovery', (store) => store.syncDiscovered([
       { id: 'session', cwd: '/new', title: 'Discovered', updatedAt: timestamp },
@@ -136,6 +234,7 @@ describe('SessionStore durability', () => {
       expect(store.list()).toEqual(before)
       expect(store.get('session')).toEqual(before[0])
       expect(store.get('new')).toBeUndefined()
+      expect(store.isRetiredSession('session')).toBe(false)
       expect(store.backend('session')).toBe('sdk')
       expect(store.terminalRecoverySessions()).toEqual([])
       expect(await contents()).toBe(onDisk)
@@ -144,10 +243,101 @@ describe('SessionStore durability', () => {
       await rejected
     }
     expect(store.list()).toEqual(before)
+    expect(store.isRetiredSession('session')).toBe(false)
     expect(await contents()).toBe(onDisk)
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
     expect(reloaded.list()).toEqual(before)
+    expect(reloaded.isRetiredSession('session')).toBe(false)
+  })
+
+  it('persists retirement independently of the last descendant and rejects stale admission', async () => {
+    const { store, contents } = await fixture()
+    await store.replaceWithClearedSession('session', 'replacement')
+    await store.remove('replacement')
+    expect(JSON.parse(await contents()).retiredSessionIds).toEqual(['session', 'replacement'])
+    await store.syncDiscovered(['session', 'replacement', 'new'].map((id) => ({
+      id, cwd: '/project', title: id, updatedAt: timestamp,
+    })))
+    expect(store.list().map(({ id }) => id)).toEqual(['new'])
+    await expect(store.create(session())).rejects.toThrow('identity has been retired')
+    await expect(store.replaceWithClearedSession('new', 'session'))
+      .rejects.toThrow('Replacement session identity is not available')
+    expect(store.get('new')).toBeDefined()
+    await store.remove('unknown')
+    expect(store.isRetiredSession('unknown')).toBe(false)
+    await expect(store.create(session('unknown'))).resolves.toMatchObject({ id: 'unknown' })
+  })
+
+  it('indexes legacy lineage without rewriting the file and retains it after deletion', async () => {
+    const { directory } = await fixture()
+    const filename = path.join(directory, 'state.json')
+    const legacy = JSON.stringify({
+      version: 1,
+      sessions: { descendant: { ...session('descendant'), replacedSessionIds: ['ancestor'] } },
+    })
+    await disk.writeFile(filename, legacy)
+    const loaded = new SessionStore(directory)
+    await loaded.initialize()
+    expect(await readFile(filename, 'utf8')).toBe(legacy)
+    expect(loaded.isRetiredSession('ancestor')).toBe(true)
+    await loaded.remove('descendant')
+    const restarted = new SessionStore(directory)
+    await restarted.initialize()
+    expect(restarted.isRetiredSession('ancestor')).toBe(true)
+    expect(restarted.isRetiredSession('descendant')).toBe(true)
+    await restarted.syncDiscovered(['ancestor', 'descendant'].map((id) => ({
+      id, cwd: '/project', title: id, updatedAt: timestamp,
+    })))
+    expect(restarted.list()).toEqual([])
+  })
+
+  it('does not expose or recover a cached row whose identity is already retired', async () => {
+    const { directory } = await fixture()
+    await disk.writeFile(path.join(directory, 'state.json'), JSON.stringify({
+      version: 1,
+      retiredSessionIds: ['retired'],
+      sessions: {
+        retired: { ...session('retired'), backend: 'terminal', managedOpen: true },
+        active: session('active'),
+      },
+    }))
+    const loaded = new SessionStore(directory)
+    await loaded.initialize()
+    expect(loaded.get('retired')).toBeUndefined()
+    expect(loaded.backend('retired')).toBeUndefined()
+    expect(loaded.list().map(({ id }) => id)).toEqual(['active'])
+    expect(loaded.terminalRecoverySessions()).toEqual([])
+    await expect(loaded.readAfterWrites('retired')).rejects.toThrow('does not exist')
+    await expect(loaded.renameSession('retired', 'Must not return')).rejects.toThrow('does not exist')
+    await expect(loaded.updateIf('retired', () => true)).rejects.toThrow('does not exist')
+    expect(() => loaded.streamMessage('retired', 'assistant', 'Must not return')).toThrow('does not exist')
+  })
+
+  it.each([
+    { retiredSessionIds: null },
+    { retiredSessionIds: 'retired' },
+    { retiredSessionIds: [''] },
+  ])('refuses malformed retirement metadata: $retiredSessionIds', async ({ retiredSessionIds }) => {
+    const { directory } = await fixture()
+    await disk.writeFile(path.join(directory, 'state.json'), JSON.stringify({
+      version: 1, sessions: {}, retiredSessionIds,
+    }))
+    await expect(new SessionStore(directory).initialize()).rejects.toThrow('Unsupported Agentic Remote state format')
+  })
+
+  it('separates a lineage creation from writes whose identity it retires', async () => {
+    const { store } = await fixture()
+    const gate = holdWrite()
+    const first = store.renameSession('session', 'Before retirement')
+    await gate.started
+    const creating = store.create({ ...session('replacement'), replacedSessionIds: ['session'] })
+    const later = expect(store.renameSession('session', 'After retirement')).rejects.toThrow('does not exist')
+    gate.finish()
+    await expect(first).resolves.toMatchObject({ id: 'session', title: 'Before retirement' })
+    await expect(creating).resolves.toMatchObject({ id: 'replacement' })
+    await later
+    expect(store.list().map(({ id }) => id)).toEqual(['replacement'])
   })
 
   it('closes across queued destructive boundaries without stranding admitted callers', async () => {
@@ -559,6 +749,21 @@ describe('SessionStore durability', () => {
     expect(await readFile(uploaded.path, 'utf8')).toBe('Keep me')
     expect(store.get('session')).toBeDefined()
     expect(store.get('new')).toBeUndefined()
+  })
+
+  it('distinguishes upload cleanup failure from a rejected replacement write', async () => {
+    const { store, contents } = await fixture()
+    const uploaded = await store.saveUpload('session', 'notes.txt', Buffer.from('Retained upload'))
+    const failure = new Error('Upload cleanup refused')
+    vi.mocked(rm).mockRejectedValueOnce(failure)
+    await expect(store.replaceWithClearedSession('session', 'replacement')).rejects.toMatchObject({
+      name: 'SessionReplacementCleanupError',
+      replacement: { id: 'replacement', replacedSessionIds: ['session'] },
+      cause: failure,
+    })
+    expect(store.get('session')).toBeUndefined()
+    expect(JSON.parse(await contents()).sessions.replacement.id).toBe('replacement')
+    expect(await readFile(uploaded.path, 'utf8')).toBe('Retained upload')
   })
 
   it('selects each shifted head within its transaction', async () => {

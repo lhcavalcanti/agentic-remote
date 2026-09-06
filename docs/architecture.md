@@ -151,6 +151,15 @@ replacement commits, then retires it. Persisted replacement lineage prevents
 stale provider listings from rediscovering the original after restart. Cleanup
 failure after an accepted clear is reported without undoing the committed clear.
 
+An indeterminate terminal discovery at cold start is reported without replacing
+the last stored session view or preventing the HTTP runtime from starting.
+Recovery and terminal admission wait for a successful discovery rather than
+treating an unreadable or differently namespaced tmux server as absent. The
+existing discovery poll completes deferred recovery under per-session lifecycle
+ownership. Destructive operations retain their strict absence checks; state
+validation, persistence and SDK startup failures are not swallowed by this
+discovery-only exception.
+
 Providers await mutations before publishing or acting on their results.
 `readAfterWrites()` queues a read behind admitted changes before runtime,
 dispatch, or lifecycle decisions; a read-only batch does not write or
@@ -167,8 +176,42 @@ including removal/replacement boundaries. The final close checkpoints volatile
 streamed text; late durable mutations, live deltas, and uploads fail explicitly
 without changing memory or recreating the state directory.
 
-The on-disk version and atomic-rename durability boundary are unchanged; this
-requires no stored-state migration or history rewrite.
+The close protocol requires no stored-state migration or history rewrite.
+
+Terminal queue delivery first atomically claims the exact FIFO head, moving its
+content into the existing uncertain-recovery record before any keystrokes are
+sent. A private `terminalQueueDispatch` identity hides that provisional recovery
+from the public snapshot while delivery is in flight. Completion clears the
+claim and records command feedback together. If completion persistence fails,
+the service retries only that write, with bounded backoff on its existing poll;
+it never repeats the terminal action. New delivery cannot consume an unresolved
+claim or overlap an admitted direct dispatch. A refused pre-delivery claim is
+retried even when no new terminal event arrives. If a delivered command's pane
+cannot be read, observation is retried rather than assuming a turn started;
+overlay closure is observed before continuing the FIFO. On restart an orphan
+claim becomes visible uncertain recovery, not a
+retryable queue item. Older runtimes also retain the existing recovery record.
+Settlement preserves a newer native completion or permission state instead of
+restoring the claim's obsolete running state.
+
+### Durable identity retirement
+
+Version-1 state can include an identifier-only `retiredSessionIds` ledger.
+Clear and delete record retirement in the same atomic write as the identity
+change, independently of any surviving session. Deleting the last replacement
+therefore cannot make an ancestor discoverable again when external provider
+cleanup failed. Direct creation, provider discovery, reads, and terminal
+recovery all reject or exclude retired identities.
+
+Legacy `replacedSessionIds` are indexed in memory without an eager file rewrite
+and retained by subsequent successful writes. Retirement lookups are cached by
+immutable snapshot array, so reads and streamed tokens do not scan the ledger.
+Rejected candidate writes never expose their retirement entries.
+
+The on-disk version and atomic-rename boundary remain unchanged, but the ledger
+is additive persistent metadata. A runtime predating retirement support can
+ignore it; rollout and rollback of this stateful change require explicit review
+rather than assuming an older binary preserves retirement.
 
 ## Pairing flow
 

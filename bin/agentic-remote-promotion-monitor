@@ -98,12 +98,8 @@ assert_clean() {
 }
 
 rollback_runtime() {
-  local restore_commit="$1" restore_release="$2" link source_restored=0 attempt
+  local restore_commit="$1" restore_release="$2" link attempt
   log "rolling back the production runtime to $restore_commit"
-  if ! git -C "$PROD_ROOT" switch --detach "$restore_commit"; then
-    log "WARNING: could not restore $PROD_ROOT to $restore_commit"
-    source_restored=1
-  fi
   if [[ -n "$restore_release" && -d "$restore_release" &&
     ! -e "$restore_release/.promotion-failed" ]]; then
     link="$RELEASE_ROOT/.current-rollback-$$"
@@ -128,7 +124,7 @@ rollback_runtime() {
   for attempt in $(seq 1 "$READY_ATTEMPTS"); do
     if systemctl --user is-active --quiet "$SERVICE_NAME" &&
       curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
-      return "$source_restored"
+      return 0
     fi
     sleep "$READY_INTERVAL"
   done
@@ -800,19 +796,30 @@ run() {
       printf '%s\n' "$candidate_commit" >"$failed_release/.promotion-failed" ||
         log "WARNING: could not mark rejected release $failed_release"
     fi
+    local runtime_restored=0
     if rollback_runtime "$prod_commit" "$previous_release"; then
+      runtime_restored=1
       if [[ -n "$failed_release" ]] &&
         ! remove_failed_release "$failed_release" "$previous_release"; then
         if ! quarantine_failed_release "$failed_release" "$previous_release"; then
-          die "graduation failed; the previous runtime was restored but the rejected release was retained"
+          die "graduation failed; the previous release was restored but the rejected release was retained; the runtime source was not restored"
         fi
       fi
-      die "graduation failed and the previous runtime was restored"
-    fi
-    if [[ -n "$failed_release" ]] &&
+    elif [[ -n "$failed_release" ]] &&
       [[ "$(readlink -f -- "$RELEASE_ROOT/current")" == "$previous_release" ]]; then
       quarantine_failed_release "$failed_release" "$previous_release" ||
-        log "WARNING: could not quarantine the inactive rejected release"
+        die "graduation failed; could not quarantine the inactive rejected release; the runtime source was not restored"
+    fi
+    # The installed CLI is a symlink into PROD_ROOT. Restoring older source
+    # can replace marker-aware rollback with code that selects rejected builds.
+    # Keep it until the healthy pointer is restored and that inventory is safe.
+    if [[ -n "$previous_release" &&
+      "$(readlink -f -- "$RELEASE_ROOT/current")" == "$previous_release" ]]; then
+      git -C "$PROD_ROOT" switch --detach "$prod_commit" ||
+        die "graduation failed; could not restore the production runtime source to $prod_commit"
+      if [[ "$runtime_restored" == 1 ]]; then
+        die "graduation failed and the previous runtime was restored"
+      fi
     fi
     die "graduation failed; could not fully restore the previous runtime; the rejected release was retained"
   fi

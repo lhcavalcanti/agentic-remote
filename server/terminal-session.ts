@@ -61,7 +61,7 @@ export interface TerminalSessionController {
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
   /** Ends the window running a session without forgetting the session. */
@@ -297,36 +297,32 @@ export class TmuxTerminalSessionController
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      const resolvedCwd = await realpath(cwd)
+      if (!(await stat(resolvedCwd)).isDirectory()) {
+        throw new Error('Terminal working directory is not a folder')
+      }
       const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
       const originalCommand = await processCommand(owner.pid)
+      const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, replacementId, input)
       this.inputReadySessions.delete(sessionId)
       this.inputReadySessions.delete(replacementId)
       this.automaticStartupSessions.delete(sessionId)
       this.automaticStartupSessions.delete(replacementId)
-      await execFileAsync('tmux', [
-        'respawn-pane',
-        '-k',
-        '-t',
-        owner.target,
-        '/usr/bin/sleep',
-        '300',
-      ])
       try {
-        await clearState()
         await execFileAsync('tmux', [
           'respawn-pane',
           '-k',
           '-t',
           owner.target,
           '-c',
-          cwd,
+          resolvedCwd,
           ...command,
         ])
         const nextOwner = await this.waitForNewOwner(
@@ -334,11 +330,16 @@ export class TmuxTerminalSessionController
           owner.pid,
           owner.target,
         )
+        // The old provider history must still exist until this commit accepts
+        // the replacement; otherwise the original command cannot recover it.
+        await commitReplacement()
         this.automaticStartupSessions.set(replacementId, {
           pid: nextOwner.pid,
           target: nextOwner.target,
         })
       } catch (error) {
+        this.inputReadySessions.delete(replacementId)
+        this.automaticStartupSessions.delete(replacementId)
         try {
           await execFileAsync('tmux', [
             'respawn-pane',
@@ -346,7 +347,7 @@ export class TmuxTerminalSessionController
             '-t',
             owner.target,
             '-c',
-            cwd,
+            originalCwd,
             ...originalCommand,
           ])
           const restoredOwner = await this.waitForNewOwner(
@@ -361,7 +362,7 @@ export class TmuxTerminalSessionController
         } catch (rollbackError) {
           throw new AggregateError(
             [error, rollbackError],
-            'Conversation reset failed and the terminal session could not be restored',
+            'Conversation clear failed and the original terminal session could not be restored',
           )
         }
         throw error
@@ -717,8 +718,7 @@ export class TmuxTerminalSessionController
       owner !== undefined &&
       automaticOwner?.pid === owner.pid &&
       automaticOwner.target === owner.target &&
-      (isTerminalSessionInUsePrompt(pane) ||
-        isTerminalDesktopInstallPrompt(pane))
+      isTerminalDesktopInstallPrompt(pane)
     )
   }
 
@@ -1781,24 +1781,13 @@ async function clearAutomaticStartupPrompts(
     const pane = await capture()
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
-      (parseTerminalPermission(pane) && !isTerminalSessionInUsePrompt(pane)) ||
+      parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
       return
     }
-    if (isTerminalSessionInUsePrompt(pane)) {
-      // The terminal user can leave the cursor on "Go back". Normalize to the
-      // first row before accepting, rather than confirming whichever row they
-      // happened to leave selected.
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
-      await waitUntilClosed(isTerminalSessionInUsePrompt)
-    } else if (isTerminalDesktopInstallPrompt(pane)) {
+    if (isTerminalDesktopInstallPrompt(pane)) {
       // Agentic Remote already supplies the remote supervision UI. Opening a
       // browser to install a separate desktop app cannot help this headless
       // terminal and keeps the first real prompt from reaching the composer.
@@ -1822,16 +1811,13 @@ async function waitForTerminalStartup(
     const pane = await capturePane(target)
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
-      (parseTerminalPermission(pane) && !isTerminalSessionInUsePrompt(pane)) ||
+      parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
       return 'action-required'
     }
-    if (
-      isTerminalSessionInUsePrompt(pane) ||
-      isTerminalDesktopInstallPrompt(pane)
-    ) {
+    if (isTerminalDesktopInstallPrompt(pane)) {
       if (!handleAutomaticPrompts) {
         return 'action-required'
       }
@@ -1932,6 +1918,16 @@ function isTerminalChrome(line: string): boolean {
 // border of the composer marks where it begins.
 const COMPOSER_TOP = /^\s*[╻╭][\u2580-\u259f\u2500-\u257f]*\s*$/u
 
+function isTerminalContextFooter(line: string): boolean {
+  const parts = line.trim().split('·').map((part) => part.trim())
+  return (
+    parts.length >= 2 &&
+    parts.every(Boolean) &&
+    /^\d+(?:,\d{3})*(?:\.\d+)?[kKmMgG]?\s+context\s*\(\d+(?:\.\d+)?%\)$/u
+      .test(parts.at(-1) ?? '')
+  )
+}
+
 function hasLiveTerminalComposer(pane: string): boolean {
   const lines = pane.split('\n')
   const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
@@ -1963,6 +1959,7 @@ function hasLiveTerminalComposer(pane: string): boolean {
   return lines.slice(bottom + 1).every(
     (line) =>
       isTerminalChrome(line) ||
+      isTerminalContextFooter(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||
       (/\/update\b/u.test(line) && /\b\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),

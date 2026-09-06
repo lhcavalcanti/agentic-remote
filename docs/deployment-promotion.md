@@ -91,9 +91,10 @@ The release pointer and the managed service are replaced before the health and
 external checks run, and the release directory keeps only the current release
 plus two rollbacks. A failure that simply exits would therefore leave the failed
 candidate serving traffic, and repeated retries would evict the last known-good
-release. On any failure after the switch, restore the previous commit and
-release pointer, restart the service, and leave the success marker unchanged so
-the next run retries from a known state.
+release. On any failure after the switch, restore the previous release pointer,
+restart the service, and leave the success marker unchanged so the next run
+retries from a known state. Restore the previous source commit only after the
+pointer is back and the failed candidate is out of the rollback inventory.
 
 The failed candidate is marked `.promotion-failed` before restoration, so
 `agentic-remote rollback` will never select it. Remove only that new candidate
@@ -108,6 +109,13 @@ restored health cannot be established, so older rollback commands cannot select
 them merely because they are newest. An active candidate is never moved or
 deleted when pointer restoration fails. Retained marked directories do not
 consume the two healthy rollback slots.
+
+The installed CLI is a symlink into the production source checkout, not the
+active release. Restoring that checkout too soon can reinstall an older
+`rollback` implementation that ignores `.promotion-failed`. If pointer
+restoration or safe removal/quarantine fails, keep the marker-aware source
+installed and report incomplete recovery. Subsequent manual rollbacks then
+continue to exclude the rejected candidate, even after it becomes inactive.
 
 Publication stages complete bundles outside the rollback inventory and installs
 them with an atomic directory rename before switching `current`. The monitor

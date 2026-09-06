@@ -43,7 +43,7 @@ import {
   validateSessionDirectory,
 } from './session-directory.js'
 import type { SessionService } from './session-service.js'
-import { SessionStore } from './session-store.js'
+import { SessionReplacementCleanupError, SessionStore } from './session-store.js'
 import {
   listWorkspace,
   readWorkspaceFile,
@@ -562,21 +562,33 @@ export class ClaudeAgentService
       })
     }
     const session = this.requireIdle(id)
-    try {
-      await this.sdk.deleteSession(id, { dir: session.cwd })
-    } catch (error) {
-      if (!isMissingClaudeSessionError(error)) {
-        throw error
-      }
-    }
     const replacementId = randomUUID()
-    const cleared = await this.store.replaceWithClearedSession(id, replacementId)
+    let cleared: SessionDetail
+    const cleanupErrors: unknown[] = []
+    try {
+      cleared = await this.store.replaceWithClearedSession(id, replacementId)
+    } catch (error) {
+      if (!(error instanceof SessionReplacementCleanupError)) throw error
+      cleared = error.replacement
+      cleanupErrors.push(error)
+    }
     this.emit('event', {
       type: 'session.removed',
       sessionId: id,
       replacedBy: replacementId,
     })
     this.publish(cleared)
+    try {
+      await this.sdk.deleteSession(id, { dir: session.cwd })
+    } catch (error) {
+      if (!isMissingClaudeSessionError(error)) cleanupErrors.push(error)
+    }
+    for (const error of cleanupErrors) {
+      this.emit('event', {
+        type: 'error', sessionId: replacementId,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
     return cleared
   }
 

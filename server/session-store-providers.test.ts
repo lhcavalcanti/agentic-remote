@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { SessionEvent } from '@github/copilot-sdk'
@@ -14,7 +14,7 @@ import { SessionStore } from './session-store.js'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...fs, writeFile: vi.fn(fs.writeFile) }
+  return { ...fs, writeFile: vi.fn(fs.writeFile), rm: vi.fn(fs.rm) }
 })
 
 const disk = await vi.importActual<typeof import('node:fs/promises')>(
@@ -78,7 +78,11 @@ async function fixture() {
   }
 }
 
-function copilot(store: SessionStore, history?: SessionEvent[]) {
+function copilot(
+  store: SessionStore,
+  history?: SessionEvent[],
+  activeSessionReader: NonNullable<ConstructorParameters<typeof AgentService>[2]> = async () => [],
+) {
   const resumeSession = vi.fn(async () => {
     throw new Error('A provider must not run before a durable dequeue')
   })
@@ -95,7 +99,7 @@ function copilot(store: SessionStore, history?: SessionEvent[]) {
     },
   }
   const terminal = {
-    has: vi.fn(async () => true),
+    has: vi.fn(async (_sessionId: string) => true),
     send: vi.fn(async () => true),
     cancel: vi.fn(async () => true),
   }
@@ -108,7 +112,7 @@ function copilot(store: SessionStore, history?: SessionEvent[]) {
   const service = new AgentService(
     store,
     client,
-    async () => [],
+    activeSessionReader,
     async () => {},
     async () => history || [],
     async () => history ? 'events-v1' : undefined,
@@ -213,6 +217,7 @@ function claude(store: SessionStore) {
 beforeEach(() => {
   vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', tmpdir())
   vi.mocked(writeFile).mockReset().mockImplementation(disk.writeFile)
+  vi.mocked(rm).mockReset().mockImplementation(disk.rm)
 })
 
 afterEach(async () => {
@@ -440,6 +445,30 @@ describe('Copilot candidate event reductions', () => {
     expect(store.get('session')).toMatchObject({ cwd: '/elsewhere', title: 'Elsewhere' })
   })
 
+  it.each([false, true])('retains a timestamp-only workspace update (first write fails: %s)', async (failFirst) => {
+    const { store, directory } = await fixture()
+    const { service, workspaceReader, workspaceVersion } = copilot(store)
+    const before = store.get('session')!
+    const updatedAt = '2026-09-05T12:00:00.000Z'
+    workspaceVersion.mockResolvedValue('workspace-newer-time')
+    workspaceReader.mockResolvedValue({ cwd: before.cwd, title: before.title, updatedAt })
+    const refresh = () => (service as unknown as {
+      syncExternalWorkspace(id: string): Promise<void>
+    }).syncExternalWorkspace('session')
+    if (failFirst) {
+      vi.mocked(writeFile).mockRejectedValueOnce(new Error('timestamp write refused'))
+      await expect(refresh()).rejects.toThrow('timestamp write refused')
+      expect(store.get('session')?.updatedAt).toBe(before.updatedAt)
+    }
+    await refresh()
+    expect(store.get('session')?.updatedAt).toBe(updatedAt)
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.get('session')?.updatedAt).toBe(updatedAt)
+    await refresh()
+    expect(workspaceReader).toHaveBeenCalledTimes(failFirst ? 2 : 1)
+  })
+
   it('does not reconcile an idle event over a newly admitted question', async () => {
     const { store } = await fixture()
     await store.update('session', (stored) => { stored.status = 'running' })
@@ -550,6 +579,45 @@ describe('SDK metadata during clear', () => {
 })
 
 describe('Provider decisions after admitted writes', () => {
+  it.each(['before admission', 'during capture'] as const)(
+    'waits for a terminal status write %s before admitting a slash command',
+    async (timing) => {
+      const { store } = await fixture()
+      await store.setBackend('session', 'terminal')
+      const { service, client, terminal } = copilot(store)
+      client.createSession = vi.fn(async () => sdkSession('command-catalog'))
+      let gate: Awaited<ReturnType<typeof holdOtherWrite>> | undefined
+      let statusWrite: Promise<SessionDetail> | undefined
+      const blockStatus = async () => {
+        gate = await holdOtherWrite(store)
+        statusWrite = store.updateStatus('session', 'running')
+      }
+      Object.assign(terminal, {
+        capture: vi.fn(async () => {
+          if (timing === 'during capture' && !gate) await blockStatus()
+          return undefined
+        }),
+      })
+      if (timing === 'before admission') await blockStatus()
+      const result = service.executeCommand('session', '/unsafe')
+        .then((session) => ({ session }), (error: unknown) => ({ error }))
+      try {
+        if (timing === 'during capture') {
+          await vi.waitFor(() => expect(gate).toBeDefined())
+        }
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(terminal.send).not.toHaveBeenCalled()
+      } finally {
+        gate?.finish()
+        await Promise.all([gate?.writing, statusWrite])
+      }
+      expect(await result).toMatchObject({
+        error: expect.objectContaining({ message: expect.stringContaining('must be queued') }),
+      })
+      expect(terminal.send).not.toHaveBeenCalled()
+    },
+  )
+
   for (const [name, provider] of [['Copilot', copilot], ['Claude', claude]] as const) {
     it.each(['restartSession', 'clearConversation', 'suspendSession'] as const)(
       `${name} does not %s against a pending running transition`,
@@ -668,6 +736,349 @@ describe('Provider decisions after admitted writes', () => {
 })
 
 describe('Provider queue persistence boundaries', () => {
+  const drainTerminal = (service: AgentService) =>
+    (service as unknown as { drainTerminalQueue(id: string): Promise<void> }).drainTerminalQueue('session')
+
+  it('does not deliver a terminal queue item before its claim is durable', async () => {
+    const { store, block } = await fixture()
+    const { service, terminal } = copilot(store)
+    const before = store.get('session')
+    await block()
+    await (service as unknown as { drainTerminalQueue(id: string): Promise<void> })
+      .drainTerminalQueue('session')
+    expect(terminal.send).not.toHaveBeenCalled()
+    expect(store.get('session')).toEqual(before)
+  })
+
+  it('retries a refused claim after storage recovers with no new terminal events', async () => {
+    const { store, directory } = await fixture()
+    const { service, terminal } = copilot(store, [event('session.idle', {})], async () => [{
+      id: 'session', cwd: directory, title: 'Session', updatedAt: '2026-09-04T00:00:00.000Z',
+    }])
+    await service.refreshDiscovery()
+    const claim = store.claimTerminalQueuedPrompt.bind(store)
+    vi.spyOn(store, 'claimTerminalQueuedPrompt').mockImplementationOnce((...args) => {
+      vi.mocked(writeFile).mockRejectedValueOnce(new Error('claim write refused'))
+      return claim(...args)
+    })
+    await service.refreshTranscripts()
+    expect(terminal.send).not.toHaveBeenCalled()
+    expect(store.get('session')?.queuedCount).toBe(2)
+    await service.refreshTranscripts()
+    expect(terminal.send).not.toHaveBeenCalled()
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000)
+    await service.refreshTranscripts()
+    expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', 'first', false)
+    expect(store.get('session')?.queuedCount).toBe(1)
+  })
+
+  it('does not claim FIFO work while an immediate terminal send owns admission', async () => {
+    const { store } = await fixture()
+    const { service, terminal } = copilot(store, [])
+    let enter = () => {}
+    let finish = () => {}
+    const entered = new Promise<void>((resolve) => { enter = resolve })
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    releases.push(finish)
+    terminal.send.mockImplementationOnce(async () => {
+      enter()
+      await gate
+      return true
+    })
+    const sending = service.sendMessage('session', 'Immediate prompt')
+    await entered
+    await drainTerminal(service)
+    expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', 'Immediate prompt', false)
+    expect(store.terminalQueueDispatch('session')).toBeUndefined()
+    expect(store.get('session')?.queuedCount).toBe(2)
+    finish()
+    await sending
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000)
+    await service.refreshTranscripts()
+    expect(terminal.send).toHaveBeenCalledOnce()
+    const dispatchAt = store.queueDispatchAt('session')!
+    await store.clearQueueDispatch('session', dispatchAt)
+    await store.updateStatus('session', 'idle')
+    vi.mocked(Date.now).mockReturnValue(Date.now() + 1_000)
+    await service.refreshTranscripts()
+    expect(terminal.send.mock.calls).toEqual([
+      ['session', 'Immediate prompt', false], ['session', 'first', false],
+    ])
+    expect(store.get('session')?.queuedPrompts).toEqual([expect.objectContaining({ id: 'second' })])
+  })
+
+  it.each(['answered', 'overlay'] as const)(
+    'retries only queued command observation after a capture failure (%s)',
+    async (result) => {
+      const { store } = await fixture()
+      await store.update('session', (session) => {
+        session.queuedPrompts![0] = { ...session.queuedPrompts![0], command: true, content: '/usage' }
+      })
+      const { service, terminal } = copilot(store)
+      const composer = [
+        '\u257b\u2584\u2584\u2584\u2584',
+        '\u2503',
+        '\u2579\u2580\u2580\u2580\u2580',
+        ' \u2190 open sidebar \u00b7 / commands \u00b7 ? help',
+      ].join('\n')
+      const before = [' \u25cf Tip: /plugin', composer].join('\n')
+      const after = result === 'overlay'
+        ? 'Select a model\n > fixture-model\n esc close \u00b7 enter select'
+        : [' \u25cf Tip: /plugin', ' \u25cf Usage: 42 requests', composer].join('\n')
+      const capture = vi.fn(async () => after)
+        .mockResolvedValueOnce(before)
+        .mockRejectedValueOnce(new Error('Temporary pane read error'))
+      Object.assign(terminal, { capture })
+      await drainTerminal(service)
+      expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', '/usage', false)
+      expect(store.terminalQueueDispatch('session')).toBeDefined()
+      expect(store.get('session')?.messages).toEqual([])
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000)
+      await service.refreshTranscripts()
+      expect(store.terminalQueueDispatch('session')).toBeUndefined()
+      expect(store.get('session')?.messages).toEqual([
+        expect.objectContaining({
+          role: 'notice',
+          content: expect.stringContaining(result === 'overlay' ? 'interactive view' : '42 requests'),
+        }),
+      ])
+      if (result === 'overlay') {
+        expect(store.get('session')?.status).toBe('idle')
+        expect(terminal.send).toHaveBeenCalledOnce()
+        vi.mocked(Date.now).mockReturnValue(Date.now() + 1_000)
+        await service.refreshTranscripts()
+        expect(terminal.send).toHaveBeenCalledOnce()
+        capture.mockResolvedValue(before)
+        vi.mocked(Date.now).mockReturnValue(Date.now() + 1_000)
+        await service.refreshTranscripts()
+      }
+      expect(terminal.send.mock.calls).toEqual([
+        ['session', '/usage', false], ['session', 'second', false],
+      ])
+      expect(store.get('session')?.queuedCount).toBe(0)
+      expect(store.get('session')?.messages).toHaveLength(1)
+    },
+  )
+
+  it.each([false, true])('does not repeat delivered terminal work after its completion write fails (restart=%s)', async (restart) => {
+    const { store, directory } = await fixture()
+    const { service, terminal } = copilot(store)
+    const drain = (target: AgentService) =>
+      (target as unknown as { drainTerminalQueue(id: string): Promise<void> }).drainTerminalQueue('session')
+    terminal.send.mockImplementationOnce(async () => {
+      vi.mocked(writeFile).mockRejectedValueOnce(new Error('completion write refused'))
+      return true
+    })
+    await drain(service)
+    expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', 'first', false)
+    if (restart) {
+      const reloaded = new SessionStore(directory)
+      await reloaded.initialize()
+      const next = copilot(reloaded)
+      await drain(next.service)
+      expect(next.terminal.send).not.toHaveBeenCalled()
+      expect(reloaded.get('session')).toMatchObject({
+        failedPrompt: { content: 'first', uncertain: true },
+        queuedPrompts: [{ id: 'second' }],
+      })
+    } else {
+      await drain(service)
+      expect(terminal.send).toHaveBeenCalledOnce()
+    }
+  })
+
+  it.each(['accepted', 'refused', 'uncertain'] as const)(
+    'retries only settlement after a terminal %s outcome, even without an active discovery entry',
+    async (outcome) => {
+      const { store, directory } = await fixture()
+      const { service, terminal } = copilot(store)
+      const published: ServerEvent[] = []
+      service.on('event', (value) => published.push(value))
+      terminal.send.mockImplementationOnce(async () => {
+        const persisted = JSON.parse(await readFile(path.join(directory, 'state.json'), 'utf8'))
+        expect(persisted.sessions.session).toMatchObject({
+          failedPrompt: { content: 'first', uncertain: true },
+          queuedPrompts: [{ id: 'second' }],
+          terminalQueueDispatch: { id: expect.any(String) },
+        })
+        expect(store.get('session')?.failedPrompt).toBeUndefined()
+        vi.mocked(writeFile).mockRejectedValueOnce(new Error('settlement refused'))
+        if (outcome !== 'accepted') {
+          throw Object.assign(new Error('Terminal delivery failed'), outcome === 'uncertain' ? { uncertainDelivery: true } : {})
+        }
+        return true
+      })
+      await drainTerminal(service)
+      expect(store.terminalQueueDispatch('session')).toBeDefined()
+      expect(store.get('session')?.failedPrompt).toBeUndefined()
+      expect(published.filter((value) => value.type === 'error')).toEqual([
+        expect.objectContaining({ message: expect.stringContaining('held pending durable delivery confirmation') }),
+      ])
+      expect(published.some((value) => value.type === 'error' && value.failedPrompt)).toBe(false)
+      await service.refreshTranscripts()
+      expect(store.terminalQueueDispatch('session')).toBeDefined()
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000)
+      await service.refreshTranscripts()
+      expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', 'first', false)
+      expect(store.terminalQueueDispatch('session')).toBeUndefined()
+      const reloaded = new SessionStore(directory)
+      await reloaded.initialize()
+      if (outcome === 'accepted') {
+        expect(reloaded.get('session')?.failedPrompt).toBeUndefined()
+        expect(store.get('session')?.status).toBe('running')
+      } else {
+        expect(reloaded.get('session')?.failedPrompt).toMatchObject({
+          content: 'first',
+        })
+        expect(reloaded.get('session')?.failedPrompt?.uncertain)
+          .toBe(outcome === 'uncertain' ? true : undefined)
+        expect(published.filter((value) => value.type === 'error').at(-1)).toMatchObject({
+          failedPrompt: 'first',
+          failedPromptAt: reloaded.get('session')?.failedPrompt?.failedAt,
+          message: 'Terminal delivery failed',
+        })
+      }
+    },
+  )
+
+  it.each(['sendMessage', 'executeCommand', 'clearConversation', 'restartSession', 'suspendSession'] as const)(
+    'refuses %s while an idle native completion still has an unsettled queue claim',
+    async (method) => {
+      const { store } = await fixture()
+      const { service, terminal } = copilot(store)
+      await store.claimTerminalQueuedPrompt('session', store.get('session')!.queuedPrompts![0], () => true)
+      await store.updateStatus('session', 'idle')
+      const attempt = method === 'sendMessage'
+        ? service.sendMessage('session', 'first')
+        : method === 'executeCommand'
+          ? service.executeCommand('session', '/status')
+          : service[method]('session')
+      await expect(attempt).rejects.toThrow(/confirmation|idle/)
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(store.terminalQueueDispatch('session')).toBeDefined()
+    },
+  )
+
+  it('continues after a delayed native completion without restoring the previous dispatch clock', async () => {
+    const { store } = await fixture()
+    const { service, terminal } = copilot(store)
+    terminal.send.mockImplementationOnce(async () => {
+      vi.mocked(writeFile).mockRejectedValueOnce(new Error('settlement refused'))
+      return true
+    })
+    await drainTerminal(service)
+    const dispatchAt = store.queueDispatchAt('session')!
+    await store.clearQueueDispatch('session', dispatchAt)
+    await store.updateStatus('session', 'idle')
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000)
+    await service.refreshTranscripts()
+    expect(terminal.send.mock.calls).toEqual([
+      ['session', 'first', false], ['session', 'second', false],
+    ])
+    expect(store.get('session')).toMatchObject({ status: 'running', queuedCount: 0 })
+    expect(store.queueDispatchAt('session')).not.toBe(dispatchAt)
+    expect(store.terminalQueueDispatch('session')).toBeUndefined()
+  })
+
+  it('settles queued command feedback once before continuing after a write refusal', async () => {
+    const { store } = await fixture()
+    await store.update('session', (session) => {
+      session.queuedPrompts![0] = { ...session.queuedPrompts![0], command: true, content: '/usage' }
+    })
+    const { service, terminal } = copilot(store)
+    terminal.send.mockImplementationOnce(async () => {
+      vi.mocked(writeFile).mockRejectedValueOnce(new Error('command settlement refused'))
+      return true
+    })
+    await drainTerminal(service)
+    expect(store.get('session')?.messages).toEqual([])
+    expect(terminal.send).toHaveBeenCalledOnce()
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000)
+    await service.refreshTranscripts()
+    expect(terminal.send.mock.calls).toEqual([
+      ['session', '/usage', false], ['session', 'second', false],
+    ])
+    expect(store.get('session')?.messages).toEqual([
+      expect.objectContaining({ role: 'notice', content: '/usage' }),
+    ])
+    await service.refreshTranscripts()
+    expect(store.get('session')?.messages).toHaveLength(1)
+    expect(terminal.send).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not send or write again after stopping during terminal delivery', async () => {
+    const { store, directory } = await fixture()
+    const { service, terminal } = copilot(store)
+    let finish = () => {}
+    let enter = () => {}
+    const entered = new Promise<void>((resolve) => { enter = resolve })
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    releases.push(finish)
+    terminal.send.mockImplementationOnce(async () => {
+      enter()
+      await gate
+      return true
+    })
+    const draining = drainTerminal(service)
+    await entered
+    let stopped = false
+    const stopping = service.stop().then(() => { stopped = true })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(stopped).toBe(false)
+    finish()
+    await Promise.all([draining, stopping])
+    const writes = vi.mocked(writeFile).mock.calls.length
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000)
+    await service.refreshTranscripts()
+    await drainTerminal(service)
+    expect(terminal.send).toHaveBeenCalledOnce()
+    expect(writeFile).toHaveBeenCalledTimes(writes)
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.get('session')).toMatchObject({
+      failedPrompt: { content: 'first', uncertain: true },
+      queuedPrompts: [{ id: 'second' }],
+    })
+  })
+
+  it('keeps recovered terminal work held if discovery routes the queue through SDK recovery', async () => {
+    const { store, directory } = await fixture()
+    await store.claimTerminalQueuedPrompt('session', store.get('session')!.queuedPrompts![0], () => true)
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    const { service, resumeSession } = copilot(reloaded)
+    await (service as unknown as { drainSdkQueue(id: string): Promise<void> }).drainSdkQueue('session')
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(reloaded.get('session')).toMatchObject({
+      failedPrompt: { content: 'first', uncertain: true },
+      queuedPrompts: [{ id: 'second' }],
+    })
+  })
+
+  it('does not leave an unowned claim when suspension arrives during its write', async () => {
+    const { store } = await fixture()
+    const { service, terminal } = copilot(store)
+    let enter = () => {}
+    let finish = () => {}
+    const entered = new Promise<void>((resolve) => { enter = resolve })
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    releases.push(finish)
+    vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
+      enter()
+      await gate
+      return disk.writeFile(...args)
+    })
+    const draining = drainTerminal(service)
+    await entered
+    const suspension = expect(service.suspendSession('session')).rejects.toThrow(/confirmation|idle/)
+    finish()
+    await Promise.all([draining, suspension])
+    expect(terminal.send).not.toHaveBeenCalled()
+    expect(store.terminalQueueDispatch('session')).toBeUndefined()
+    expect(store.get('session')?.failedPrompt).toMatchObject({ content: 'first' })
+    expect(store.get('session')?.failedPrompt?.uncertain).toBeUndefined()
+  })
+
   it.each([
     ['Copilot', copilot],
     ['Claude', claude],
@@ -689,7 +1100,7 @@ describe('Provider queue persistence boundaries', () => {
     expect(events).toEqual([{ type: 'session.upserted', session: removed.session }])
   })
 
-  describe('SDK identity admission', () => {
+  describe('Provider identity admission', () => {
     function metadata(id: string, directory: string) {
       return {
         sessionId: id,
@@ -700,6 +1111,240 @@ describe('Provider queue persistence boundaries', () => {
         context: { workingDirectory: directory },
       }
     }
+
+    async function terminalClearFixture() {
+      const setup = await fixture()
+      const { store, directory } = setup
+      await store.remove('session')
+      let liveId = ''
+      let replacementId = ''
+      const { service, client, terminal } = copilot(store, undefined, async () =>
+        liveId ? [{
+          id: liveId, cwd: directory, title: 'Terminal history',
+          updatedAt: '2026-09-05T00:00:00.000Z',
+        }] : [],
+      )
+      const controller = Object.assign(terminal, {
+        create: vi.fn(async (id: string) => {
+          liveId = id
+          return { sessionName: 'fixture', windowId: '@1' }
+        }),
+        rename: vi.fn(async () => true),
+        reset: vi.fn(async (
+          oldId: string, newId: string, _cwd: string, _runtime: unknown,
+          commitReplacement: () => Promise<void>,
+        ) => {
+          replacementId = newId
+          liveId = newId
+          try {
+            await commitReplacement()
+          } catch (error) {
+            liveId = oldId
+            throw error
+          }
+          return true
+        }),
+      })
+      terminal.has.mockImplementation(async (id) => id === liveId)
+      const created = await service.createSession(directory, true, false)
+      await store.update(created.id, (session) => {
+        session.title = 'Terminal history'
+        session.messages = [{
+          id: 'history', role: 'user', content: 'Keep the original conversation',
+          createdAt: session.updatedAt,
+        }]
+      })
+      client.deleteSession = vi.fn(async () => {})
+      const providerDirectory = path.join(directory, 'copilot', 'session-state', created.id)
+      await mkdir(providerDirectory, { recursive: true })
+      const historyPath = path.join(providerDirectory, 'events.jsonl')
+      await writeFile(historyPath, 'Original provider history\n')
+      return {
+        ...setup, service, client, terminal: controller, historyPath,
+        sessionId: created.id, owner: () => liveId, replacement: () => replacementId,
+      }
+    }
+
+    it('does not reconcile a predecessor-only discovery after a terminal clear commits', async () => {
+      const { store, service, sessionId } = await terminalClearFixture()
+      let enter = () => {}
+      let release = () => {}
+      const entered = new Promise<void>((resolve) => { enter = resolve })
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      releases.push(release)
+      const syncOpen = store.syncOpen.bind(store)
+      vi.spyOn(store, 'syncOpen').mockImplementationOnce(async (...args) => {
+        enter()
+        await gate
+        return syncOpen(...args)
+      })
+      const discovering = service.refreshDiscovery()
+      await entered
+      const replacement = await service.clearConversation(sessionId)
+      release()
+      await discovering
+      expect(store.get(sessionId)).toBeUndefined()
+      expect(store.get(replacement.id)).toMatchObject({ isOpen: true, executionMode: 'tmux' })
+      expect((await service.openSession(replacement.id)).id).toBe(replacement.id)
+    })
+
+    it('restores terminal ownership and provider history after a rejected clear write', async () => {
+      const setup = await terminalClearFixture()
+      const { store, directory, service, client, terminal, sessionId, historyPath, block, unblock } = setup
+      const uploaded = await store.saveUpload(sessionId, 'notes.txt', Buffer.from('Original upload'))
+      const before = store.get(sessionId)
+      const onDisk = await readFile(path.join(directory, 'state.json'), 'utf8')
+      const published: ServerEvent[] = []
+      service.on('event', (incoming) => published.push(incoming))
+      await block()
+      await expect(service.clearConversation(sessionId)).rejects.toThrow('EISDIR')
+      expect(setup.owner()).toBe(sessionId)
+      expect(store.get(sessionId)).toEqual(before)
+      expect(store.get(setup.replacement())).toBeUndefined()
+      expect(await readFile(path.join(directory, 'state.json'), 'utf8')).toBe(onDisk)
+      expect(await readFile(historyPath, 'utf8')).toBe('Original provider history\n')
+      expect(await readFile(uploaded.path, 'utf8')).toBe('Original upload')
+      expect(client.deleteSession).not.toHaveBeenCalledWith(sessionId)
+      expect(published).toEqual([])
+      await unblock()
+      client.listSessions = vi.fn(async () => [
+        metadata(sessionId, directory), metadata(setup.replacement(), directory),
+      ])
+      await service.refreshDiscovery()
+      expect(store.get(setup.replacement())).toBeUndefined()
+      expect((await service.openSession(sessionId)).id).toBe(sessionId)
+      await service.sendMessage(sessionId, 'Continue the original conversation')
+      expect(terminal.send).toHaveBeenCalledWith(sessionId, 'Continue the original conversation', false)
+      expect(client.resumeSession).not.toHaveBeenCalled()
+    })
+
+    it('retires terminal provider files only after the replacement is durable', async () => {
+      const { store, directory, service, client, sessionId, historyPath, owner } = await terminalClearFixture()
+      client.deleteSession = vi.fn(async (id) => {
+        if (id === sessionId) {
+          expect(store.get(sessionId)).toBeUndefined()
+          const persisted = JSON.parse(await readFile(path.join(directory, 'state.json'), 'utf8'))
+          expect(persisted.sessions[owner()].replacedSessionIds).toContain(sessionId)
+        }
+      })
+      const replacement = await service.clearConversation(sessionId)
+      expect(owner()).toBe(replacement.id)
+      expect(store.get(sessionId)).toBeUndefined()
+      expect(replacement).toMatchObject({
+        executionMode: 'tmux', title: 'Terminal history', messages: [],
+        cwd: directory, runtime: { allowAllPermissions: false },
+      })
+      expect(client.deleteSession).toHaveBeenCalledWith(sessionId)
+      await expect(readFile(historyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('keeps the old terminal recoverable when failed replacement cleanup also fails', async () => {
+      const setup = await terminalClearFixture()
+      const { service, client, sessionId, historyPath, block } = setup
+      client.deleteSession = vi.fn(async () => { throw new Error('Replacement cleanup refused') })
+      await block()
+      await expect(service.clearConversation(sessionId)).rejects.toMatchObject({
+        name: 'AggregateError',
+        errors: [
+          expect.objectContaining({ code: 'EISDIR' }),
+          expect.objectContaining({ message: expect.stringContaining('SDK cleanup is incomplete') }),
+        ],
+      })
+      expect(setup.owner()).toBe(sessionId)
+      expect(await readFile(historyPath, 'utf8')).toBe('Original provider history\n')
+      expect(client.deleteSession).not.toHaveBeenCalledWith(sessionId)
+    })
+
+    it.each(['sdk', 'terminal', 'claude'] as const)(
+      'does not roll back an accepted %s clear when upload cleanup fails',
+      async (provider) => {
+        let setup: {
+          store: SessionStore
+          directory: string
+          sessionId: string
+          service: AgentService | ClaudeAgentService
+          owner?: () => string
+        }
+        if (provider === 'terminal') {
+          setup = await terminalClearFixture()
+        } else if (provider === 'sdk') {
+          setup = { ...await clearFixture(), sessionId: 'session' }
+        } else {
+          const created = await fixture()
+          setup = { ...created, ...claude(created.store), sessionId: 'session' }
+        }
+        const { store, directory, sessionId, service } = setup
+        const upload = await store.saveUpload(sessionId, 'notes.txt', Buffer.from('Pending cleanup'))
+        vi.mocked(rm).mockImplementation(async (target, options) => {
+          if (target === path.join(directory, 'uploads', sessionId)) throw new Error('Cleanup refused')
+          return disk.rm(target, options)
+        })
+        const events: ServerEvent[] = []
+        service.on('event', (incoming) => events.push(incoming))
+        const replacement = await service.clearConversation(sessionId)
+        expect(store.get(sessionId)).toBeUndefined()
+        expect(store.get(replacement.id)).toBeDefined()
+        if (setup.owner) expect(setup.owner()).toBe(replacement.id)
+        expect(events).toEqual(expect.arrayContaining([
+          { type: 'session.removed', sessionId, replacedBy: replacement.id },
+          expect.objectContaining({ type: 'session.upserted', session: expect.objectContaining({ id: replacement.id }) }),
+          { type: 'error', sessionId: replacement.id, message: 'Conversation cleared, but previous uploads could not be removed.' },
+        ]))
+        expect(await readFile(upload.path, 'utf8')).toBe('Pending cleanup')
+        expect((await service.openSession(replacement.id)).id).toBe(replacement.id)
+      },
+    )
+
+    it('keeps an accepted terminal clear when renaming its window fails', async () => {
+      const { store, service, terminal, sessionId, historyPath, owner } = await terminalClearFixture()
+      terminal.rename.mockRejectedValueOnce(new Error('Window rename refused'))
+      const events: ServerEvent[] = []
+      service.on('event', (incoming) => events.push(incoming))
+      const replacement = await service.clearConversation(sessionId)
+      expect(owner()).toBe(replacement.id)
+      expect(store.get(sessionId)).toBeUndefined()
+      expect((await service.openSession(replacement.id)).id).toBe(replacement.id)
+      await expect(readFile(historyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(events).toContainEqual({
+        type: 'error', sessionId: replacement.id, message: 'Window rename refused',
+      })
+    })
+
+    it('keeps Claude provider history until a clear write commits', async () => {
+      const { store, directory, block, unblock } = await fixture()
+      const { service, deleteSession } = claude(store)
+      const before = store.get('session')
+      const events: ServerEvent[] = []
+      service.on('event', (incoming) => events.push(incoming))
+      await block()
+      await expect(service.clearConversation('session')).rejects.toThrow('EISDIR')
+      expect(deleteSession).not.toHaveBeenCalled()
+      expect(store.get('session')).toEqual(before)
+      expect(events).toEqual([])
+      await unblock()
+      vi.mocked(deleteSession).mockImplementation(async (id) => {
+        expect(store.get(id)).toBeUndefined()
+        expect(JSON.parse(await readFile(path.join(directory, 'state.json'), 'utf8')).sessions[id])
+          .toBeUndefined()
+      })
+      const replacement = await service.clearConversation('session')
+      expect(deleteSession).toHaveBeenCalledExactlyOnceWith('session', { dir: directory })
+      expect(store.get(replacement.id)).toBeDefined()
+    })
+
+    it('reports old Claude provider cleanup failure without rejecting an accepted clear', async () => {
+      const { store } = await fixture()
+      const { service, deleteSession } = claude(store)
+      vi.mocked(deleteSession).mockRejectedValueOnce(new Error('Claude cleanup refused'))
+      const events: ServerEvent[] = []
+      service.on('event', (incoming) => events.push(incoming))
+      const replacement = await service.clearConversation('session')
+      expect(store.get('session')).toBeUndefined()
+      expect(store.get(replacement.id)).toBeDefined()
+      expect(events).toContainEqual({
+        type: 'error', sessionId: replacement.id, message: 'Claude cleanup refused',
+      })
+    })
 
     it('disposes and excludes a rejected SDK creation from later discovery', async () => {
       const { store, directory, block, unblock } = await fixture()
@@ -827,6 +1472,38 @@ describe('Provider queue persistence boundaries', () => {
       })])
     })
 
+    it.each([false, true])(
+      'keeps cleared identities retired after deleting their last descendant (stale deleted replacement: %s)',
+      async (staleReplacement) => {
+        const { store, directory, service, client } = await clearFixture()
+        const providerIds = new Set(['session'])
+        client.deleteSession = vi.fn(async (id) => {
+          if (id === 'session') throw new Error('Original provider cleanup is unavailable')
+          if (!staleReplacement) providerIds.delete(id)
+        })
+        client.listSessions = vi.fn(async () =>
+          [...providerIds].map((id) => metadata(id, directory)),
+        )
+        const replacement = await service.clearConversation('session')
+        providerIds.add(replacement.id)
+        await store.flush()
+        expect(replacement.replacedSessionIds).toContain('session')
+        await service.deleteSession(replacement.id)
+        expect(store.list()).toEqual([])
+        expect(providerIds.has('session')).toBe(true)
+        await service.stop()
+
+        const reloaded = new SessionStore(directory)
+        await reloaded.initialize()
+        const restarted = copilot(reloaded)
+        restarted.client.listSessions = client.listSessions
+        await restarted.service.refreshDiscovery()
+        expect(reloaded.get('session')).toBeUndefined()
+        expect(reloaded.get(replacement.id)).toBeUndefined()
+        expect(reloaded.list()).toEqual([])
+      },
+    )
+
     it('settles in-flight creation before stopping the SDK', async () => {
       const { store, directory } = await fixture()
       const { service, client } = copilot(store)
@@ -947,13 +1624,14 @@ describe('Provider queue persistence boundaries', () => {
     expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', 'first', false)
     expect(service.getSession('session')?.queuedPrompts?.map(({ id }) => id))
       .toEqual(['second'])
-    expect(events).toEqual([expect.objectContaining({
+    expect(events).toEqual(['Dispatching queued prompt', 'Sent queued prompt'].map((activity) => expect.objectContaining({
       type: 'session.upserted',
       session: expect.objectContaining({
         status: 'running',
+        activity,
         queuedPrompts: [expect.objectContaining({ id: 'second' })],
       }),
-    })])
+    })))
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
     expect(reloaded.get('session')?.queuedPrompts).toEqual(

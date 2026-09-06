@@ -133,6 +133,17 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Clear MUST remove old conversation history permanently. Because populated
   deleted Copilot IDs cannot be safely reused, clear MUST create a replacement
   session ID while preserving folder, title, runtime, and draft continuity.
+- Clear MUST keep the reader on the live replacement unless they navigate
+  elsewhere, including gaps between removal, replacement, and response delivery.
+- A refused replacement write MUST preserve the original provider history and
+  uploads. A terminal clear MUST restore the original command and working
+  folder before reporting that refusal, or explicitly report restoration failure.
+- Cleanup failures after a replacement commits MUST be surfaced on the new
+  session; they MUST NOT roll back the accepted identity or destroy its runtime.
+- Cleared and deleted session identities MUST stay retired across restart,
+  including after their last replacement is deleted. Retirement metadata MUST
+  commit atomically with the identity change, and stale provider listings MUST
+  NOT recreate those identities.
 - Delete MUST close the owning provider process/session after confirmation and
   remove Agentic Remote state and session uploads.
 
@@ -186,9 +197,10 @@ Questions and permissions are the highest-priority UI state.
   path, an explicit one-session trust action, and Stop. The app MUST NOT
   silently trust folders or select persistent trust.
 - A CLI Session in use confirmation MUST expose Resume anyway and Go back in
-  a permission card, including its warning about concurrent clients. Sending
-  a message MUST NOT implicitly approve a takeover; an old confirmation in
-  scrollback MUST NOT block an active composer.
+  a permission card, including its warning about concurrent clients. Creating,
+  recovering, or restarting a terminal, sending a message, or running a command
+  MUST NOT implicitly approve a takeover. An old confirmation in scrollback
+  MUST NOT block an active composer.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
 - Question identity matching MUST tolerate terminal line wrapping, including
   breaks within words, while still requiring the complete question and field
@@ -219,9 +231,14 @@ Questions and permissions are the highest-priority UI state.
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject
   startup screens, dialogs, non-composer frames, and existing drafts.
+- A complete model, effort, and context footer MUST NOT make an otherwise live
+  composer appear unavailable. Unrelated output below the frame MUST still
+  prevent it from being treated as a live composer.
 - Losing a paste acknowledgement MUST report uncertain delivery rather than
   authorize an automatic retry. Readiness MUST be checked again after owner
   validation and before the paste.
+- A recovered prompt with an uncertain terminal receipt MUST retain its resend
+  claim. Failed acknowledgement writes MUST be retried without repeating delivery.
 - Form identity MUST preserve word boundaries. Terminal form reads MUST use
   tmux's joined soft-wrap capture instead of guessing whether a line break
   separated words or split an identifier.
@@ -254,6 +271,12 @@ keyboard Return inserts a newline.
 The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not
 required to be individually editable.
+
+An app-queued terminal prompt MUST be durably removed from automatic retry
+before delivery begins. A failed completion write MUST NOT resend the prompt;
+the service MUST retain the delivery outcome and retry only persistence. After
+restart, an unresolved delivery MUST expose its text as uncertain recovery and
+hold later queued work until the reader explicitly deals with it.
 
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.

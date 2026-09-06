@@ -167,9 +167,18 @@ restoration or safe removal/quarantine fails, keep the marker-aware source
 installed and report incomplete recovery. Subsequent manual rollbacks then
 continue to exclude the rejected candidate, even after it becomes inactive.
 
-Publication stages complete bundles outside the rollback inventory and installs
-them with an atomic directory rename before switching `current`. The monitor
-supplies a unique `--release-id`, then checks that both the source checkout and
+Publication stages complete bundles outside the rollback inventory, flushes
+every regular file and directory in child-before-parent order, then installs
+them with an atomic directory rename. Symlinks are not followed; their containing
+directories persist the link entries. Both the staging parent and release
+inventory are flushed before switching `current`, and the inventory is flushed
+again after the pointer switch and retention cleanup. Manual rollback also
+flushes its pointer switch before restarting the service. A flush error fails
+the operation instead of allowing the monitor to record `local-verified` or
+`verified`. If the active-pointer flush fails, the complete candidate is
+retained while the prepared promotion journal restores the known-good release;
+an indeterminate active target is never deleted during publication cleanup.
+The monitor supplies a unique `--release-id`, then checks that both the source checkout and
 the active release match its candidate. A setup failure before pointer activation
 cannot hide an unverified candidate behind the previous healthy pointer. The
 promotion record contains the promoted and previous release paths as well as

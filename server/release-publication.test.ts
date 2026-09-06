@@ -42,7 +42,7 @@ async function publicationFixture() {
   const script = await readFile(new URL('../bin/agentic-remote', import.meta.url), 'utf8')
   const functions = [
     'config_value', 'validate_host', 'validate_port', 'validate_role', 'validate_name', 'validate_release_id',
-    'derived_origins', 'quarantine_inactive_rejected_releases', 'publish_release',
+    'derived_origins', 'sync_release_paths', 'quarantine_inactive_rejected_releases', 'publish_release',
     'setup_service', 'rollback_service',
   ].map((name) => {
     const match = script.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))
@@ -98,7 +98,189 @@ async function publicationFixture() {
   return { repository, config, run, build }
 }
 
+type PublicationSyncEvent = {
+  current: string | null
+  restarted: boolean
+} & (
+  { operation: 'fsync'; path: string; directory: boolean } |
+  { operation: 'rename'; from: string; to: string }
+)
+
+async function publicationSyncTrace(config: string, candidate: string, failure = '') {
+  const trace = path.join(path.dirname(config), 'publication-sync.jsonl')
+  const preload = path.join(path.dirname(config), 'publication-sync.cjs')
+  await writeFile(preload, `
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const root = process.env.CONFIG_DIR
+    const releases = path.join(root, 'releases')
+    const current = path.join(releases, 'current')
+    const candidate = process.env.PUBLICATION_SYNC_CANDIDATE
+    const selected = () => fs.existsSync(current) ? fs.realpathSync(current) : null
+    const record = (event) => fs.appendFileSync(
+      process.env.PUBLICATION_SYNC_TRACE,
+      JSON.stringify({
+        ...event, current: selected(),
+        restarted: fs.existsSync(path.join(root, 'service-call')),
+      }) + '\\n',
+    )
+    const fsync = fs.fsyncSync
+    fs.fsyncSync = (fd) => {
+      const file = fs.readlinkSync('/proc/self/fd/' + fd)
+      const directory = fs.fstatSync(fd).isDirectory()
+      record({ operation: 'fsync', path: file, directory })
+      const staged = file.startsWith(path.join(root, '.release-stage.'))
+      const failure = process.env.PUBLICATION_SYNC_FAILURE
+      const refused =
+        (failure === 'file' && staged && !directory) ||
+        (failure === 'directory' && staged && directory) ||
+        (failure === 'inventory' && file === releases &&
+          fs.existsSync(candidate) && selected() !== candidate) ||
+        (failure === 'staging-parent' && file === root && fs.existsSync(candidate)) ||
+        (failure === 'activation' && file === releases && selected() === candidate)
+      if (refused) {
+        throw Object.assign(new Error('Injected release fsync failure: ' + failure), { code: 'EIO' })
+      }
+      return fsync(fd)
+    }
+    const rename = fs.renameSync
+    fs.renameSync = (from, to) => {
+      record({ operation: 'rename', from, to })
+      return rename(from, to)
+    }
+  `)
+  return {
+    environment: {
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require=${JSON.stringify(preload)}`,
+      PUBLICATION_SYNC_TRACE: trace,
+      PUBLICATION_SYNC_CANDIDATE: candidate,
+      PUBLICATION_SYNC_FAILURE: failure,
+    },
+    events: async (): Promise<PublicationSyncEvent[]> =>
+      (await readFile(trace, 'utf8')).trim().split('\n').map((line) => JSON.parse(line)),
+  }
+}
+
 describe('immutable build publication', () => {
+  it('flushes the complete staged tree and both rename parents before durably activating it', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    const releases = path.join(config, 'releases')
+    const candidate = path.join(releases, 'durable-release')
+    const nested = path.join(repository, 'node_modules', '.pnpm', 'fixture', 'node_modules', 'fixture')
+    await mkdir(nested, { recursive: true })
+    await writeFile(path.join(nested, 'index.js'), 'module.exports = true')
+    await writeFile(path.join(repository, 'server', 'entry.ts'), 'export {}')
+    const external = path.join(repository, 'outside-release.txt')
+    await writeFile(external, 'must not be followed')
+    await symlink(external, path.join(repository, 'shared', 'external'))
+    await symlink('missing', path.join(repository, 'shared', 'dangling'))
+    await symlink('.', path.join(repository, 'shared', 'cycle'))
+    await symlink('.pnpm/fixture/node_modules/fixture', path.join(repository, 'node_modules', 'fixture'))
+    await build('durable-build')
+    const trace = await publicationSyncTrace(config, candidate)
+
+    await run('publish_release', trace.environment, ['durable-release'])
+
+    const events = await trace.events()
+    const publication = events.findIndex((event) => event.operation === 'rename' && event.to === candidate)
+    expect(publication).toBeGreaterThanOrEqual(0)
+    const rename = events[publication]
+    if (rename?.operation !== 'rename') throw new Error('The staged release rename was not observed')
+    const staging = rename.from
+    const flushed = events.slice(0, publication).filter((event) => event.operation === 'fsync')
+    const paths = flushed.map((event) => path.relative(staging, event.path))
+    expect(paths).toEqual(expect.arrayContaining([
+      'dist/build-info.json', 'dist/index.html', 'dist/sw.js', 'dist',
+      'server/entry.ts', 'server', 'shared', 'package.json', 'tsconfig.json',
+      'tsconfig.server.json', 'node_modules/.pnpm/fixture/node_modules/fixture/index.js',
+      'node_modules/.pnpm/fixture/node_modules/fixture', 'node_modules/.pnpm/fixture/node_modules',
+      'node_modules/.pnpm/fixture', 'node_modules/.pnpm', 'node_modules', '',
+    ]))
+    for (const file of paths.filter(Boolean)) {
+      const parent = path.dirname(file) === '.' ? '' : path.dirname(file)
+      expect(paths.indexOf(file)).toBeLessThan(paths.indexOf(parent))
+    }
+    expect(events.some((event) => event.operation === 'fsync' && event.path === external)).toBe(false)
+    const activated = events.findIndex((event) =>
+      event.operation === 'fsync' && event.path === releases && event.current === candidate)
+    expect(activated).toBeGreaterThan(publication)
+    expect(events.slice(publication + 1, activated)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'fsync', path: releases, current: null }),
+      expect.objectContaining({ operation: 'fsync', path: config, current: null }),
+    ]))
+    expect(events[activated].restarted).toBe(false)
+    expect(await realpath(path.join(releases, 'current'))).toBe(candidate)
+  })
+
+  it.each(['file', 'directory', 'inventory', 'staging-parent', 'activation'])(
+    'reports a %s flush failure before setup can restart the service',
+    async (failure) => {
+      const { config, run, build } = await publicationFixture()
+      await build('known-good')
+      await run('publish_release')
+      const current = path.join(config, 'releases', 'current')
+      const previous = await realpath(current)
+      const candidate = path.join(config, 'releases', 'flush-refused')
+      await build('candidate')
+      const trace = await publicationSyncTrace(config, candidate, failure)
+
+      await expect(run('setup_service', trace.environment, ['--release-id', 'flush-refused']))
+        .rejects.toThrow(`Injected release fsync failure: ${failure}`)
+
+      expect(await readFile(path.join(previous, 'dist', 'index.html'), 'utf8')).toBe('known-good')
+      expect(existsSync(path.join(config, 'service-call'))).toBe(false)
+      expect((await readdir(config)).some((entry) => entry.startsWith('.release-stage.'))).toBe(false)
+      expect((await readdir(path.join(config, 'releases')))
+        .some((entry) => entry.startsWith('.current-'))).toBe(false)
+      if (failure === 'activation') {
+        // The monitor's prepared journal must restore this indeterminate switch;
+        // publication must retain its fully copied target rather than dangling current.
+        expect(await realpath(current)).toBe(candidate)
+        expect(await readFile(path.join(candidate, 'dist', 'index.html'), 'utf8')).toBe('candidate')
+      } else {
+        expect(await realpath(current)).toBe(previous)
+        expect(existsSync(candidate)).toBe(false)
+      }
+    },
+  )
+
+  it('flushes a rollback pointer before restarting the service', async () => {
+    const { config, run, build } = await publicationFixture()
+    await build('previous')
+    await run('publish_release')
+    const releases = path.join(config, 'releases')
+    const previous = await realpath(path.join(releases, 'current'))
+    await build('current')
+    await run('publish_release')
+    const trace = await publicationSyncTrace(config, previous)
+
+    await run('rollback_service', trace.environment)
+
+    expect(await trace.events()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        operation: 'fsync', path: releases, current: previous, restarted: false,
+      }),
+    ]))
+    expect(await readFile(path.join(config, 'service-call'), 'utf8'))
+      .toBe('--user restart fixture.service\n')
+  })
+
+  it('rejects special staged files without blocking or changing the active release', async () => {
+    const { repository, config, run, build } = await publicationFixture()
+    await build('known-good')
+    await run('publish_release')
+    const current = path.join(config, 'releases', 'current')
+    const previous = await realpath(current)
+    await exec('mkfifo', [path.join(repository, 'shared', 'unexpected-pipe')])
+    await build('candidate')
+
+    await expect(run('publish_release')).rejects.toThrow(/unsupported release entry/i)
+
+    expect(await realpath(current)).toBe(previous)
+    expect((await readdir(path.join(config, 'releases'), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())).toHaveLength(1)
+  })
+
   it.each(['publish_release', 'setup_service'] as const)(
     'rejects reserved current in %s before creating paths or running setup',
     async (command) => {

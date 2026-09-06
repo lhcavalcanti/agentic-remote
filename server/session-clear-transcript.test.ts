@@ -443,6 +443,79 @@ describe('Transcript and Clear admission serialization', () => {
     expect(store.isRetiredSession(id)).toBe(false)
   })
 
+  it.each([
+    { kind: 'message', outcome: 'uncertain' },
+    { kind: 'command', outcome: 'uncertain' },
+    { kind: 'message', outcome: 'definite refusal' },
+    { kind: 'command', outcome: 'definite refusal' },
+    { kind: 'message', outcome: 'preflight read failure' },
+    { kind: 'command', outcome: 'preflight read failure' },
+  ])('distinguishes $outcome from no-effect native $kind while Clear joins', async ({ kind, outcome }) => {
+    const { service, store, terminal, client, sdk, directory, persisted } = await fixture()
+    await service.start()
+    service['externalSessionIds'].add(id)
+    service['externalCommandCache'].set(directory, { commands: [], expiresAt: Date.now() + 60_000 })
+    await store.setBackend(id, 'terminal')
+    terminal.has.mockResolvedValue(true)
+    const before = await persisted()
+    const entered = gate()
+    const release = gate()
+    const content = kind === 'command' ? '/usage' : 'Possibly pasted native message'
+    let nativeInput = ''
+    const uncertain = outcome === 'uncertain'
+    const failure = Object.assign(new Error(
+      uncertain ? 'Paste accepted, but terminal confirmation failed'
+        : outcome === 'definite refusal' ? 'Preflight refused before paste'
+          : 'Preflight capture failed before paste',
+    ), uncertain ? { statusCode: 409, uncertainDelivery: true }
+      : outcome === 'definite refusal' ? { statusCode: 409 } : { code: 'EIO' })
+    terminal.send.mockImplementationOnce(async () => {
+      if (uncertain) nativeInput = content
+      entered.finish()
+      await release.promise
+      throw failure
+    })
+    terminal.reset.mockImplementation(async (
+      _sessionId: string, _replacementId: string, _cwd: string,
+      _runtime: unknown, commitReplacement: () => Promise<void>,
+    ) => {
+      nativeInput = ''
+      await commitReplacement()
+      return true
+    })
+    const sending = (kind === 'command'
+      ? service.executeCommand(id, content)
+      : service.sendMessage(id, content))
+      .then((value) => ({ value }), (error: unknown) => ({ error }))
+    await entered.promise
+    const clearing = service.clearConversation(id)
+      .then((value) => ({ value }), (error: unknown) => ({ error }))
+    await tick()
+    expect(terminal.reset).not.toHaveBeenCalled()
+    expect(store.get(id)?.status).toBe('idle')
+    release.finish()
+    const [send, clear] = await Promise.all([sending, clearing])
+    expect(send).toEqual({ error: failure })
+    expect(terminal.send).toHaveBeenCalledTimes(1)
+    expect(service['deliveredSends'].has(id)).toBe(false)
+    if (uncertain) {
+      expect(clear).toMatchObject({ error: { statusCode: 409 } })
+      expect(terminal.reset).not.toHaveBeenCalled()
+      expect(client.createSession).not.toHaveBeenCalled()
+      expect(client.deleteSession).not.toHaveBeenCalled()
+      expect(sdk.disconnect).not.toHaveBeenCalled()
+      expect(store.isRetiredSession(id)).toBe(false)
+      expect(nativeInput).toBe(content)
+      expect(await persisted()).toEqual(before)
+    } else {
+      expect(clear).toHaveProperty('value')
+      expect(terminal.reset).toHaveBeenCalledTimes(1)
+      expect(store.isRetiredSession(id)).toBe(true)
+      expect(nativeInput).toBe('')
+    }
+    expect(service['admissions'].canEnter(id)).toBe(true)
+  })
+
   it('preserves an admitted command result even if its provider does not start a turn', async () => {
     const { service, store, sdk, client } = await fixture()
     const entered = gate()

@@ -142,6 +142,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   response is published, even if the previous turn becomes idle meanwhile.
   A refused queue write MUST NOT count as a successful admission. Deferred
   eligible FIFO work MUST wake after the enqueue and Clear release their locks.
+  A native message or command with possible pane effects MUST protect joined
+  Clear even when delivery is uncertain. It MUST still reject with uncertainty,
+  not claim successful delivery. Definite preflight failures MUST NOT count as
+  native activity.
   Replacement MUST revalidate idleness and identity at its mutation boundary.
 - Cleared and deleted session identities MUST stay retired across restart,
   including after their last replacement is deleted. Retirement metadata MUST

@@ -914,21 +914,20 @@ export class TmuxTerminalSessionController
         '--',
         content,
       ])
-      await execFileAsync('tmux', [
-        'paste-buffer',
-        '-p',
-        '-d',
-        '-b',
-        buffer,
-        '-t',
-        target,
-      ])
-      // From here on tmux has the text. Anything that goes wrong afterwards --
-      // reading the pane, the tty, the terminal settings, or the Enter itself
-      // -- leaves a send that may well have arrived, so it is reported as
-      // uncertain rather than as a plain failure the reader should simply
-      // retry.
+      // The paste can reach the pane even if its acknowledgement is lost.
+      // Preflight and buffer preparation above have not changed native input.
+      let pasteAcknowledged = false
       try {
+        await execFileAsync('tmux', [
+          'paste-buffer',
+          '-p',
+          '-d',
+          '-b',
+          buffer,
+          '-t',
+          target,
+        ])
+        pasteAcknowledged = true
         return await this.finishSend(
           target,
           content,
@@ -938,6 +937,11 @@ export class TmuxTerminalSessionController
           idleOnly,
         )
       } catch (error) {
+        if (!pasteAcknowledged && error && typeof error === 'object' &&
+            'syscall' in error && typeof error.syscall === 'string' &&
+            /^spawn(?: |$)/.test(error.syscall)) {
+          throw error
+        }
         if (
           error &&
           typeof error === 'object' &&

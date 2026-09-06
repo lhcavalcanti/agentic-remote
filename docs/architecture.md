@@ -159,6 +159,11 @@ throw. Send/command finalizers wake that demand only after releasing their
 admission and queue locks; an exclusive Clear keeps it deferred until its own
 lease is released. SDK command queue rejection is not acceptance when the
 provider explicitly returns `queued: false`; a lost RPC result remains uncertain.
+Direct native messages and commands share an effect latch: success or explicit
+delivery uncertainty protects joined Clear before returning or throwing.
+Uncertainty does not become known delivery. The controller includes lost paste
+acknowledgements in its uncertainty boundary; pre-paste capture/buffer failures
+and a paste process that could not spawn remain definite, effect-free failures.
 
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then

@@ -3601,8 +3601,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const nativeEnqueue = this.shouldUseNativeTerminalQueue(sessionId, enqueue)
     const dispatchedAt = new Date().toISOString()
-    if (await this.terminalController.send(sessionId, content, nativeEnqueue)) {
-      this.admissions.markCommitted(sessionId)
+    if (await this.sendTerminalInput(sessionId, content, nativeEnqueue)) {
       // The terminal has it. Anything that fails from here leaves a send that
       // went out, however ordinary the failure.
       this.deliveredSends.add(sessionId)
@@ -3640,6 +3639,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     return this.startMessage(sessionId, content, false, undefined, answers)
+  }
+
+  private async sendTerminalInput(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+  ): Promise<boolean> {
+    try {
+      const sent = await this.terminalController.send(sessionId, content, enqueue)
+      if (sent) this.admissions.markCommitted(sessionId)
+      return sent
+    } catch (error) {
+      if (error && typeof error === 'object' &&
+          'uncertainDelivery' in error && error.uncertainDelivery === true) {
+        // The pane may have changed even though successful delivery is unknown.
+        this.admissions.markCommitted(sessionId)
+      }
+      throw error
+    }
   }
 
   async removeQueuedPrompt(
@@ -4191,13 +4209,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     if (
-      await this.terminalController.send(
+      await this.sendTerminalInput(
         sessionId,
         canonicalCommand,
         nativeEnqueue,
       )
     ) {
-      this.admissions.markCommitted(sessionId)
       const feedback = await this.terminalCommandFeedback(
         sessionId,
         canonicalCommand,

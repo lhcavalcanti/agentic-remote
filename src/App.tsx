@@ -6902,7 +6902,7 @@ function App() {
   const [rootPickerError, setRootPickerError] = useState<{ id: number; message: string }>()
   const [rootPickerSaving, setRootPickerSaving] = useState(false)
   const rootPickerSavingRef = useRef(false)
-  const rootCreationOwner = useRef<{ key?: string } | undefined>(undefined)
+  const rootCreationOwner = useRef<{ key?: string; revision?: number } | undefined>(undefined)
   const [rootRemovalTarget, setRootRemovalTarget] = useState<KnowledgeRoot>()
   const [removingRoot, setRemovingRoot] = useState(false)
   const [rootRemovalError, setRootRemovalError] = useState<string>()
@@ -10671,8 +10671,8 @@ function App() {
     setRootPicker(undefined)
   }
 
-  function beginRootCreation(location?: { computerId: string; path: string }) {
-    rootCreationOwner.current = { key: selectedKey }
+  function beginRootCreation(location?: { computerId: string; path: string }, revision?: number) {
+    rootCreationOwner.current = { key: selectedKey, revision }
     promptForEmptyKnowledgeRoot.current = false
     setRootPicker(undefined)
     setAddRootInitialLocation(location)
@@ -11094,14 +11094,14 @@ function App() {
   }
 
   async function createRoot(computerId: string, path: string, expectedRevision?: number) {
-    const owner = rootCreationOwner.current || { key: selectedKey }
+    const owner = rootCreationOwner.current || { key: selectedKey, revision: expectedRevision }
     rootCreationOwner.current = owner
     const ownerKey = owner.key
     if (ownerKey !== selectedKey) {
       throw new Error('The selected session changed. Reopen the folder picker before adding a root.')
     }
     const saveRoot = selected ? sessionKnowledgeRoot.saveRoot : undefined
-    const revision = expectedRevision ?? sessionKnowledgeRoot.binding?.revision
+    const revision = expectedRevision ?? owner.revision ?? sessionKnowledgeRoot.binding?.revision
     if (saveRoot && revision === undefined) {
       throw new Error('Wait for this session\'s saved root to load before adding a folder.')
     }
@@ -11131,8 +11131,21 @@ function App() {
     if (rootCreationOwner.current !== owner || ownerKey !== selectedKeyStateRef.current) {
       throw new Error('The folder was added to Knowledge, but its originating view changed before it could be linked.')
     }
-    if (saveRoot) await saveRoot(root.id, revision)
-    else await selectRoot(root.id)
+    if (saveRoot) {
+      try {
+        await saveRoot(root.id, revision)
+      } catch (caught) {
+        if (
+          caught instanceof SessionKnowledgeRequestError &&
+          caught.binding &&
+          rootCreationOwner.current === owner &&
+          `${caught.binding.computerId}:${caught.binding.sessionId}` === ownerKey
+        ) {
+          owner.revision = caught.binding.revision
+        }
+        throw caught
+      }
+    } else await selectRoot(root.id)
     if (rootCreationOwner.current === owner) {
       rootCreationOwner.current = undefined
       setAddRootOpen(false)
@@ -14272,7 +14285,7 @@ function App() {
             choice={rootChoice}
             disabled={rootPickerSaving || !rootPickerCurrent || (hasSelectedSession && !sessionRootReady)}
             onChoice={setRootChoice}
-            onBrowse={() => beginRootCreation()}
+            onBrowse={() => beginRootCreation(undefined, rootPicker.revision ?? sessionKnowledgeRoot.binding?.revision)}
             onRemove={(root) => {
               setRootRemovalError(undefined)
               setRootRemovalTarget(root)

@@ -326,8 +326,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "979ed5783b75f0a8fe0eba5a1c548013b67eed14a71e9d7dbd1debc5baa5782c",
-    "src/App.tsx": "ffa7975b9c35f9019ce63db37693e60c5160bb92e33b9402e591094b771e8b56",
+    "src/App.test.tsx": "b4dda2baadc9fe696562d702504a961829eabf73ac05ac52121446396d8369d6",
+    "src/App.tsx": "bc83a46ce696f5db162138ac4bdb3e7ce56f0b1d8c2048a5da9d30d38d6f7285",
     "src/DocumentViewControls.test.tsx": "3688110dc748a313bb0568e1ed693377e4effdbeecfa91864d5fd3abdf063b7b",
     "src/DocumentViewControls.tsx": "ce73b7ea6f5cb6b93b74bbe6d3a2ed3f490520ec19cf7649c997d191946bdefd",
     "src/KnowledgeRootChoices.test.tsx": "885ba0e9b94d09726a5e314359dc9a63d9eeea0c82731290f7b45681c196f310",
@@ -439,16 +439,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7f45e178fbc2c06792088bf932afd6c8c78ef508c0454d9d6e7d70e23ec49ed5",
+    "GRAPH_REPORT.md": "50878017ef7701091e3e3014605fcc07c190c7f43d3a2d12ec1c4e1837163157",
     "communities.json": "2a9696eb4a4d1571f2c3c62c806e401b88981a1252cdb1e1d79b488099d5412c",
-    "graph.html": "c314205d054f83b51175928369d952b102105d9ec34d61a277b733a83b2d6ade",
-    "graph.json": "7dfbc3fe2b3720e672c8ad47376b5f6a17c3c7911a33bd780f5c01bce372bc4f"
+    "graph.html": "96dc51b11d27209f04cfc8eb86b8b2de3b8ee1429a5d349b013872218a166856",
+    "graph.json": "c1a79394eae107dcc7b1cf2e1f8937dd6858a058a37a4eb6e88d57338e6ece3f"
   },
   "schema_version": 1,
-  "source_commit": "4d21df0f5127b1c756b40af644ca68358b2ccea1",
-  "source_fingerprint": "044416b8f45e3d0b6f180a44b8beabb5c08015011542f60fdcf1a8844b04eadf",
+  "source_commit": "a1e511edd3dc734545c2ddc21a68d5d1cbf8fec2",
+  "source_fingerprint": "47a7c50cf3ac182b6cc3d8b364d75d48982956699a27ba946dc4defd7323512a",
   "working_tree_changes": [
-    "docs/design/agent-workspace.md",
     "src/App.test.tsx",
     "src/App.tsx"
   ]

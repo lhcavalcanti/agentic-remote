@@ -766,6 +766,63 @@ describe('App', () => {
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
+  it.each(['before browsing', 'before creating', 'during creation'] as const)(
+    'keeps the reviewed revision when another client changes the root %s',
+    async (timing) => {
+      const added = { ...knowledgeRoot, id: 'browsed-root', name: 'Browsed files', path: '/home/tester/browsed' }
+      mockKnowledgeRoots([knowledgeRoot])
+      mockAddedKnowledgeRoot(added)
+      vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+      vi.mocked(listDirectories).mockResolvedValue({ path: added.path, directories: [] })
+      let finishAdding: ((root: KnowledgeRoot) => void) | undefined
+      if (timing === 'during creation') {
+        vi.mocked(addKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishAdding = resolve }))
+      }
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+      await screen.findByText('Saved for this session')
+      fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+      const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+      const key = `${computer.id}:${session.id}`
+      const changeBinding = () => {
+        const newer = { ...fixtureKnowledgeBinding(computer.id, session.id), revision: 2 }
+        fixtureKnowledgeBindings.set(key, newer)
+        act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: newer,
+          }),
+        } as MessageEvent))
+      }
+      if (timing === 'before browsing') changeBinding()
+      fireEvent.click(within(chooser).getByRole('button', { name: /Browse another folder/ }))
+      const folder = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+      const confirm = within(folder).getByRole('button', { name: 'Add this folder' })
+      await waitFor(() => expect(confirm).toBeEnabled())
+      if (timing === 'before creating') changeBinding()
+      fireEvent.click(confirm)
+      if (timing === 'during creation') {
+        await waitFor(() => expect(addKnowledgeRoot).toHaveBeenCalledOnce())
+        changeBinding()
+        fixtureKnowledgeRoots.push(added)
+        await act(async () => finishAdding?.(added))
+      }
+      await within(folder).findByText('Root changed in another client')
+      expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+        rootId: added.id, expectedRevision: 1,
+      })
+      expect(fixtureKnowledgeBindings.get(key)).toMatchObject({ rootId: knowledgeRoot.id, revision: 2 })
+      await waitFor(() => expect(confirm).toBeEnabled())
+      fireEvent.click(confirm)
+      await waitFor(() => expect(folder).not.toBeInTheDocument())
+      expect(updateSessionKnowledgeRoot).toHaveBeenLastCalledWith(computer.id, session.id, {
+        rootId: added.id, expectedRevision: 2,
+      })
+      expect(fixtureKnowledgeBindings.get(key)).toMatchObject({ rootId: added.id, revision: 3 })
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+    },
+  )
+
   afterEach(() => {
     restoreScrollTop?.()
     restoreScrollTop = undefined

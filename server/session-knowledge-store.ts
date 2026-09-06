@@ -326,13 +326,19 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
 
   private async persist(state: State, validate?: () => void): Promise<void> {
     const pending = `${this.statePath}.${randomUUID()}.pending`
+    const pendingRecovery = `${this.recoveryPath}.${randomUUID()}.pending`
     const contents = JSON.stringify(state)
     try {
       await mkdir(this.directory, { recursive: true, mode: 0o700 })
       await writeFile(pending, contents, { mode: 0o600, flag: 'wx' })
       validate?.()
-      this.recovery = { version: 1, previous: this.persisted }
-      await writeFile(this.recoveryPath, JSON.stringify(this.recovery), { mode: 0o600, flag: 'wx' })
+      const recovery: z.infer<typeof recoverySchema> = { version: 1, previous: this.persisted }
+      await writeFile(pendingRecovery, JSON.stringify(recovery), { mode: 0o600, flag: 'wx' })
+      validate?.()
+      // Startup only reads the published journal, never a partially written
+      // temporary file left by an interrupted process.
+      await rename(pendingRecovery, this.recoveryPath)
+      this.recovery = recovery
       validate?.()
       await rename(pending, this.statePath)
       // This is the guarded commit point. Keep both queue ownership and the
@@ -343,6 +349,7 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
       this.persisted = contents
     } catch (error) {
       await rm(pending, { force: true }).catch(() => undefined)
+      await rm(pendingRecovery, { force: true }).catch(() => undefined)
       if (this.recovery) {
         try {
           await this.restore()

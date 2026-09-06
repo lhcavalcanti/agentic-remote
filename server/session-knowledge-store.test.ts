@@ -146,18 +146,34 @@ describe('SessionKnowledgeStore', () => {
     gate.finish()
     await first
     await refused
-    expect(vi.mocked(writeFile).mock.calls.filter(([file]) => String(file).endsWith('.pending'))).toHaveLength(1)
+    expect(vi.mocked(writeFile).mock.calls.filter(([file]) => String(file).endsWith('.pending'))).toHaveLength(2)
     expect(store.get('computer', 'session').rootId).toBe('one')
   })
 
-  it.each(['write', 'rename'] as const)('does not publish a failed %s and can retry its revision', async (failure) => {
+  it.each(['candidate write', 'journal write', 'journal rename', 'candidate rename'])('does not publish a failed %s and can retry its revision', async (failure) => {
     const { store, statePath, directory, catalog } = await fixture()
     const before = await store.update('computer', 'session', { rootId: 'one', expectedRevision: 0 })
     const persisted = await readFile(statePath, 'utf8')
     const events: SessionKnowledgeBinding[] = []
     store.on('updated', (binding) => events.push(binding))
-    const failing = failure === 'write' ? vi.mocked(writeFile) : vi.mocked(rename)
-    failing.mockRejectedValueOnce(new Error('disk full'))
+    const journal = failure.startsWith('journal')
+    if (failure.endsWith('write')) {
+      vi.mocked(writeFile).mockImplementation(async (...args) => {
+        if (String(args[0]).startsWith(`${statePath}.recovery.`) === journal) {
+          vi.mocked(writeFile).mockImplementation(disk.writeFile)
+          throw new Error('disk full')
+        }
+        return disk.writeFile(...args)
+      })
+    } else {
+      vi.mocked(rename).mockImplementation(async (...args) => {
+        if (String(args[1]) === (journal ? `${statePath}.recovery` : statePath)) {
+          vi.mocked(rename).mockImplementation(disk.rename)
+          throw new Error('disk full')
+        }
+        return disk.rename(...args)
+      })
+    }
     await expect(store.update('computer', 'session', { rootId: 'two', expectedRevision: 1 }))
       .rejects.toMatchObject({ statusCode: 503, message: expect.stringContaining('Try again') })
     expect(store.get('computer', 'session')).toEqual(before)
@@ -232,10 +248,13 @@ describe('SessionKnowledgeStore', () => {
     const renamed = new Promise<void>((resolve) => { started = resolve })
     const gate = new Promise<void>((resolve) => { finish = resolve })
     releases.push(finish)
-    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+    vi.mocked(rename).mockImplementation(async (...args) => {
       await disk.rename(...args)
-      started()
-      await gate
+      if (String(args[1]) === statePath) {
+        vi.mocked(rename).mockImplementation(disk.rename)
+        started()
+        await gate
+      }
     })
     let valid = true
     const writing = store.update('computer', 'session', { rootId: 'two', expectedRevision: 1 }, () => {
@@ -273,6 +292,61 @@ describe('SessionKnowledgeStore', () => {
     await reloaded.initialize()
     expect(reloaded.get('computer', 'session')).toMatchObject({ rootId: null, revision: 0 })
     expect(await readdir(directory)).toEqual([])
+  })
+
+  it('loads the authoritative state after interruption during recovery-journal creation', async () => {
+    const { store, directory, statePath, catalog } = await fixture()
+    const before = await store.update('computer', 'session', { rootId: 'one', expectedRevision: 0 })
+    const persisted = await readFile(statePath, 'utf8')
+    let started!: () => void
+    let finish!: () => void
+    const partial = new Promise<void>((resolve) => { started = resolve })
+    const held = new Promise<void>((resolve) => { finish = resolve })
+    releases.push(finish)
+    vi.mocked(writeFile).mockImplementation(async (file, data, options) => {
+      if (String(file).startsWith(`${statePath}.recovery`)) {
+        await disk.writeFile(file, '{"version":', options)
+        started()
+        await held
+        throw new Error('Interrupted journal write')
+      }
+      return disk.writeFile(file, data, options)
+    })
+    const refused = expect(store.update('computer', 'session', { rootId: 'two', expectedRevision: 1 }))
+      .rejects.toMatchObject({ statusCode: 503 })
+    try {
+      await partial
+      expect(await readFile(statePath, 'utf8')).toBe(persisted)
+      const reloaded = new SessionKnowledgeStore(directory, catalog)
+      await reloaded.initialize()
+      expect(reloaded.get('computer', 'session')).toEqual(before)
+      await expect(access(`${statePath}.recovery`)).rejects.toMatchObject({ code: 'ENOENT' })
+      const journal = (await readdir(directory)).find((file) => file.startsWith('session-knowledge.json.recovery.'))
+      expect(journal).toBeDefined()
+      expect((await stat(path.join(directory, journal!))).mode & 0o777).toBe(0o600)
+    } finally {
+      finish()
+    }
+    await refused
+    expect(store.get('computer', 'session')).toEqual(before)
+    expect(await readFile(statePath, 'utf8')).toBe(persisted)
+    expect(await readdir(directory)).toEqual(['session-knowledge.json'])
+  })
+
+  it.each([
+    '{"version":',
+    JSON.stringify({ version: 1, previous: 'invalid state' }),
+  ])('still rejects a malformed published recovery journal without rewriting either file %#', async (contents) => {
+    const { store, directory, statePath, catalog } = await fixture()
+    await store.update('computer', 'session', { rootId: 'one', expectedRevision: 0 })
+    const persisted = await readFile(statePath, 'utf8')
+    await disk.writeFile(`${statePath}.recovery`, contents, { mode: 0o600 })
+    vi.mocked(writeFile).mockClear()
+    const reloaded = new SessionKnowledgeStore(directory, catalog)
+    await expect(reloaded.initialize()).rejects.toThrow('Cannot load session Knowledge recovery metadata')
+    expect(await readFile(`${statePath}.recovery`, 'utf8')).toBe(contents)
+    expect(await readFile(statePath, 'utf8')).toBe(persisted)
+    expect(writeFile).not.toHaveBeenCalled()
   })
 
   it('refuses a root that disappears while a binding write is queued', async () => {

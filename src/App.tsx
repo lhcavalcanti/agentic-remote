@@ -145,6 +145,7 @@ import type {
   HubEvent,
   ManagedSession,
   KnowledgeRoot,
+  SessionKnowledgeBinding,
   PendingPermission,
   PendingUserInput,
   QueuedPrompt,
@@ -6921,6 +6922,8 @@ function App() {
   // on its way can be discarded rather than restoring what was removed.
   const forgottenComputers = useRef(new Set<string>())
   const knowledgeComputerLifetimes = useRef(new Map<string, number>())
+  const removedKnowledgeRoots = useRef(new Set<string>())
+  const knowledgeCatalogRequest = useRef(0)
   useEffect(() => {
     activeRootIdRef.current = activeRootId
   }, [activeRootId])
@@ -7533,7 +7536,25 @@ function App() {
     [selectedKey, sessions],
   )
   const hasSelectedSession = Boolean(selected)
-  const sessionKnowledgeRoot = useSessionKnowledgeRoot(selected, knowledgeMode !== 'hidden')
+  const acceptKnowledgeRoot = useCallback((binding: SessionKnowledgeBinding) => {
+    if (!binding.rootId) return
+    if (!binding.available) {
+      removedKnowledgeRoots.current.add(binding.rootId)
+      setRoots((current) => current.some((root) => root.id === binding.rootId)
+        ? current.filter((root) => root.id !== binding.rootId) : current)
+      return
+    }
+    const root = binding.root
+    if (
+      !root || root.id !== binding.rootId ||
+      forgottenComputers.current.has(binding.computerId) ||
+      forgottenComputers.current.has(root.computerId) ||
+      removedKnowledgeRoots.current.has(root.id)
+    ) return
+    setRoots((current) => current.some((entry) => entry.id === root.id)
+      ? current : [structuredClone(root), ...current])
+  }, [setRoots])
+  const sessionKnowledgeRoot = useSessionKnowledgeRoot(selected, knowledgeMode !== 'hidden', acceptKnowledgeRoot)
   const sessionKnowledgeRootRef = useRef(sessionKnowledgeRoot)
   sessionKnowledgeRootRef.current = sessionKnowledgeRoot
   const rememberedKnowledgePosition = selectedKey ? knowledgePositions[selectedKey] : undefined
@@ -8488,34 +8509,46 @@ function App() {
     }))
   }, [selectedKey])
 
-  useEffect(() => {
+  const loadKnowledgeRoots = useCallback(async () => {
+    const request = ++knowledgeCatalogRequest.current
     const lifetimes = new Map(knowledgeComputerLifetimes.current)
-    void listKnowledgeRoots()
-      .then((loaded) => {
-        // This answer was asked for before any computer could be unpaired,
-        // and it names computers rather than being scoped to one. Installing
-        // it as it stands would put back the roots of a computer forgotten
-        // while it was on its way.
-        const live = loaded.filter(
-          (entry) =>
-            !forgottenComputers.current.has(entry.computerId) &&
-            (lifetimes.get(entry.computerId) || 0) ===
-              (knowledgeComputerLifetimes.current.get(entry.computerId) || 0),
-        )
-        setRoots(live)
-        setKnowledgeRootsLoaded(true)
-        // This is the sessionless library's starting point. Session reads wait
-        // for their binding and pass through the guarded restore below.
-        const remembered = restoredKnowledge.current
-        const root =
-          live.find((entry) => entry.id === remembered.rootId) || live[0]
-        setActiveRootId(root?.id)
-        knowledgeHydrated.current = true
-      })
-      .catch((caught: unknown) =>
-        setError(caught instanceof Error ? caught.message : String(caught)),
-      )
-  }, [])
+    const before = new Map(rootsRef.current.map((root) => [root.id, root]))
+    let loaded: KnowledgeRoot[]
+    try {
+      loaded = await listKnowledgeRoots()
+    } catch (caught) {
+      if (request !== knowledgeCatalogRequest.current) return
+      throw caught
+    }
+    if (request !== knowledgeCatalogRequest.current) return
+    const live = loaded.filter((root) =>
+      !forgottenComputers.current.has(root.computerId) &&
+      !removedKnowledgeRoots.current.has(root.id) &&
+      (lifetimes.get(root.computerId) || 0) ===
+        (knowledgeComputerLifetimes.current.get(root.computerId) || 0))
+    // Bindings and local additions can teach us a root while this snapshot is
+    // in flight. Keep those newer entries, but never revive a known removal.
+    const changed = rootsRef.current.filter((root) => before.get(root.id) !== root)
+    const changedIds = new Set(changed.map((root) => root.id))
+    const liveIds = new Set(live.map((root) => root.id))
+    for (const id of before.keys()) {
+      if (!liveIds.has(id) && !changedIds.has(id)) removedKnowledgeRoots.current.add(id)
+    }
+    const reconciled = [...changed, ...live.filter((root) => !changedIds.has(root.id))]
+    setRoots(reconciled)
+    setKnowledgeRootsLoaded(true)
+    if (!knowledgeHydrated.current && !selectedKeyStateRef.current) {
+      const root = reconciled.find((entry) => entry.id === restoredKnowledge.current.rootId) || reconciled[0]
+      setActiveRootId(root?.id)
+    }
+    knowledgeHydrated.current = true
+  }, [setRoots])
+
+  useEffect(() => {
+    void loadKnowledgeRoots().catch((caught: unknown) =>
+      setError(caught instanceof Error ? caught.message : String(caught)))
+    return () => { knowledgeCatalogRequest.current += 1 }
+  }, [loadKnowledgeRoots])
 
   useEffect(
     () => () => {
@@ -8596,17 +8629,21 @@ function App() {
   }, [computers, sessions])
 
   useEffect(() => {
-    writeStored(
-      'agentic-remote:computer-order',
-      JSON.stringify(computerOrder),
-    )
+    try {
+      localStorage.setItem('agentic-remote:computer-order', JSON.stringify(computerOrder))
+    } catch (caught) {
+      setSidebarOpen(false)
+      setError(`Could not save the computer order: ${caught instanceof Error ? caught.message : String(caught)}`)
+    }
   }, [computerOrder])
 
   useEffect(() => {
-    writeStored(
-      'agentic-remote:session-order',
-      JSON.stringify(sessionOrder),
-    )
+    try {
+      localStorage.setItem('agentic-remote:session-order', JSON.stringify(sessionOrder))
+    } catch (caught) {
+      setSidebarOpen(false)
+      setError(`Could not save the session order: ${caught instanceof Error ? caught.message : String(caught)}`)
+    }
   }, [sessionOrder])
 
   useEffect(() => {
@@ -10685,14 +10722,8 @@ function App() {
     knowledgeRestoredKey.current = undefined
     knowledgeRequest.current += 1
     sessionKnowledgeRoot.refresh()
-    const lifetimes = new Map(knowledgeComputerLifetimes.current)
     try {
-      const loaded = await listKnowledgeRoots()
-      setRoots(loaded.filter((root) =>
-        !forgottenComputers.current.has(root.computerId) &&
-        (lifetimes.get(root.computerId) || 0) ===
-          (knowledgeComputerLifetimes.current.get(root.computerId) || 0)))
-      setKnowledgeRootsLoaded(true)
+      await loadKnowledgeRoots()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -11045,6 +11076,7 @@ function App() {
 
   async function removeRoot(rootId: string) {
     await deleteKnowledgeRoot(rootId)
+    removedKnowledgeRoots.current.add(rootId)
     setRoots((current) => current.filter((root) => root.id !== rootId))
     sessionKnowledgeRoot.refresh()
     if (rootId === activeRootId) {
@@ -11079,6 +11111,9 @@ function App() {
       lifetime !== (knowledgeComputerLifetimes.current.get(computerId) || 0)
     ) {
       throw new Error('The computer pairing changed while adding this folder. Choose the computer again.')
+    }
+    if (removedKnowledgeRoots.current.has(root.id)) {
+      throw new Error('This Knowledge folder was removed while it was being added. Choose the folder again.')
     }
     setRoots((current) =>
       current.some((entry) => entry.id === root.id)
@@ -11162,6 +11197,7 @@ function App() {
         .filter((root) => root.computerId === computerId)
         .map((root) => root.id),
     )
+    for (const id of orphaned) removedKnowledgeRoots.current.add(id)
     setRoots((current) =>
       current.filter((root) => root.computerId !== computerId),
     )

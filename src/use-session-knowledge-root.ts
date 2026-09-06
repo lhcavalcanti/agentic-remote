@@ -24,6 +24,7 @@ export function knowledgePositionForBinding(
 export function useSessionKnowledgeRoot(
   session: SessionIdentity | undefined,
   enabled: boolean,
+  onAccepted?: (binding: SessionKnowledgeBinding) => void,
 ) {
   const key = session ? sessionKey(session) : undefined
   const computerId = session?.computerId
@@ -32,6 +33,8 @@ export function useSessionKnowledgeRoot(
   activeKey.current = key
   const [bindings, setBindings] = useState(new Map<string, SessionKnowledgeBinding>())
   const bindingsRef = useRef(bindings)
+  const onAcceptedRef = useRef(onAccepted)
+  onAcceptedRef.current = onAccepted
   const eventSequence = useRef(new Map<string, number>())
   const generation = useRef(0)
   const lifetime = useRef(0)
@@ -57,9 +60,13 @@ export function useSessionKnowledgeRoot(
     if (previous && previous.revision > incoming.revision) return
     if (previous && JSON.stringify(previous) === JSON.stringify(incoming)) return
     const next = new Map(bindingsRef.current)
-    next.set(incomingKey, structuredClone(incoming))
+    const accepted = structuredClone(incoming)
+    next.set(incomingKey, accepted)
     bindingsRef.current = next
-    if (mounted.current) setBindings(next)
+    if (mounted.current) {
+      onAcceptedRef.current?.(accepted)
+      setBindings(next)
+    }
   }, [])
 
   const applyUpdate = useCallback((incoming: SessionKnowledgeBinding) => {

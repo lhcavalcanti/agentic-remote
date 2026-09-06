@@ -86,8 +86,8 @@ vi.mock('@dnd-kit/core', async (importOriginal) => {
   return {
     ...actual,
     DndContext(props: DndProps) {
-      if (props.id && props.onDragEnd) {
-        dragHandlers.set(props.id, props.onDragEnd)
+      if (props.onDragEnd) {
+        dragHandlers.set(props.id || 'session-navigation', props.onDragEnd)
       }
       return <actual.DndContext {...props} />
     },
@@ -95,18 +95,18 @@ vi.mock('@dnd-kit/core', async (importOriginal) => {
 })
 
 
-function finishQueueReorder(from: string, to: string) {
-  const handler = dragHandlers.get('prompt-queue')
-  if (!handler) throw new Error('The queue drag handler is not mounted')
+function finishReorder(context: string, from: string, to: string) {
+  const handler = dragHandlers.get(context)
+  if (!handler) throw new Error(`The ${context} drag handler is not mounted`)
   const event: DragEndEvent = {
     activatorEvent: new Event('pointerup'),
     active: {
-      id: `queued:${from}`,
+      id: from,
       data: { current: {} },
       rect: { current: { initial: null, translated: null } },
     },
     over: {
-      id: `queued:${to}`,
+      id: to,
       data: { current: {} },
       rect: new DOMRect(0, 0, 10, 10),
       disabled: false,
@@ -115,6 +115,10 @@ function finishQueueReorder(from: string, to: string) {
     delta: { x: 0, y: 0 },
   }
   handler(event)
+}
+
+function finishQueueReorder(from: string, to: string) {
+  finishReorder('prompt-queue', `queued:${from}`, `queued:${to}`)
 }
 
 vi.mock('./api', async (importOriginal) => ({
@@ -454,6 +458,206 @@ describe('App', () => {
     expect(JSON.parse(localStorage.getItem('agentic-remote:knowledge-session-positions') || '{}')[key])
       .toEqual({ rootId: other.id, path: '.' })
     expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+  })
+
+  it.each(['live update', 'lookup', 'late catalog'])('learns a newly linked root missing from this client catalog (%s)', async (source) => {
+    const added = { ...knowledgeRoot, id: 'new-root', name: 'New notes', path: '/srv/new-notes' }
+    const key = `${computer.id}:${session.id}`
+    const binding: SessionKnowledgeBinding = {
+      computerId: computer.id, sessionId: session.id, rootId: added.id,
+      root: added, revision: 2, available: true,
+    }
+    mockKnowledgeRoots([knowledgeRoot])
+    let finishRoots: ((roots: KnowledgeRoot[]) => void) | undefined
+    if (source === 'late catalog') {
+      vi.mocked(listKnowledgeRoots).mockReturnValueOnce(new Promise((resolve) => { finishRoots = resolve }))
+    } else {
+      vi.mocked(listKnowledgeRoots).mockResolvedValueOnce([knowledgeRoot])
+    }
+    if (source === 'lookup') {
+      fixtureKnowledgeRoots.push(added)
+      fixtureKnowledgeBindings.set(key, binding)
+    }
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (id) => ({
+      path: '.',
+      entries: [{ name: id === added.id ? 'new.md' : 'previous.md', path: 'guide.md', kind: 'markdown' }],
+    }))
+    vi.mocked(readKnowledgeFile).mockImplementation(async (id) => ({
+      name: 'guide.md', path: 'guide.md', kind: 'markdown', mimeType: 'text/markdown',
+      size: 20, content: id === added.id ? '# New guide' : '# Previous guide',
+    }))
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep my draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    if (source !== 'lookup') {
+      await screen.findByText('Saved for this session')
+      if (source === 'live update') {
+        fireEvent.click(await screen.findByRole('treeitem', { name: 'previous.md' }))
+        await screen.findByRole('heading', { name: 'Previous guide' })
+      }
+      fixtureKnowledgeRoots.push(added)
+      fixtureKnowledgeBindings.set(key, binding)
+      await act(async () => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding,
+          }),
+        } as MessageEvent)
+        finishRoots?.([knowledgeRoot])
+      })
+    }
+    const newFile = await screen.findByRole('treeitem', { name: 'new.md' })
+    expect(screen.queryByText('Saved folder unavailable')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Previous guide' })).not.toBeInTheDocument()
+    fireEvent.click(newFile)
+    await screen.findByRole('heading', { name: 'New guide' })
+    expect(readKnowledgeFile).toHaveBeenLastCalledWith(added.id, 'guide.md')
+    expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('does not reintroduce a root from an unavailable binding, stale update, or delayed catalog', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    let finishRoots!: (roots: KnowledgeRoot[]) => void
+    vi.mocked(listKnowledgeRoots).mockReturnValueOnce(new Promise((resolve) => { finishRoots = resolve }))
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    const previous = fixtureKnowledgeBinding(computer.id, session.id)
+    const removed = { ...previous, revision: 2, available: false }
+    fixtureKnowledgeRoots = []
+    fixtureKnowledgeBindings.set(`${computer.id}:${session.id}`, removed)
+    vi.mocked(listKnowledgeEntries).mockClear()
+    await act(async () => {
+      for (const binding of [removed, previous]) {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding,
+          }),
+        } as MessageEvent)
+      }
+      finishRoots([knowledgeRoot])
+    })
+    await screen.findByText('Saved folder unavailable')
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
+    expect(listKnowledgeEntries).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    expect(screen.queryByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    })).not.toBeInTheDocument()
+  })
+
+  it('does not revive a locally removed root from a late binding or a stale retry catalog', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('tree')
+    const previous = fixtureKnowledgeBinding(computer.id, session.id)
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    fireEvent.click(screen.getByText('Manage shared folders'))
+    fireEvent.click(screen.getByRole('button', {
+      name: `Review removal of ${knowledgeRoot.name} on ${knowledgeRoot.computerName}`,
+    }))
+    const confirmation = await screen.findByRole('dialog', { name: 'Remove Knowledge folder?' })
+    let finishLookup!: (binding: SessionKnowledgeBinding) => void
+    vi.mocked(getSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishLookup = resolve }))
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Remove from Knowledge' }))
+    await waitFor(() => expect(confirmation).not.toBeInTheDocument())
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Choose a session root' }))
+      .getByRole('button', { name: 'Cancel' }))
+    await screen.findByText('Saved folder unavailable')
+    const late = { ...previous, revision: 2 }
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: late,
+        }),
+      } as MessageEvent)
+      finishLookup(late)
+    })
+    vi.mocked(listKnowledgeEntries).mockClear()
+    vi.mocked(listKnowledgeRoots).mockResolvedValueOnce([knowledgeRoot])
+    fireEvent.click(screen.getByRole('button', { name: 'Retry saved root' }))
+    await waitFor(() => expect(listKnowledgeRoots).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Saved folder unavailable')).toBeVisible()
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
+    expect(listKnowledgeEntries).not.toHaveBeenCalled()
+  })
+
+  it.each(['response', 'failure'])('keeps a newer catalog retry authoritative over an older startup %s', async (outcome) => {
+    const fresh = { ...knowledgeRoot, id: 'fresh-root', name: 'Current catalog folder' }
+    const stale = { ...knowledgeRoot, id: 'stale-root', name: 'Obsolete catalog folder' }
+    mockKnowledgeRoots([knowledgeRoot])
+    let finishRoots!: (roots: KnowledgeRoot[]) => void
+    let failRoots!: (error: Error) => void
+    vi.mocked(listKnowledgeRoots).mockReturnValueOnce(new Promise((resolve, reject) => {
+      finishRoots = resolve
+      failRoots = reject
+    }))
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    const removed = { ...fixtureKnowledgeBinding(computer.id, session.id), available: false }
+    fixtureKnowledgeRoots = [fresh]
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: removed,
+      }),
+    } as MessageEvent))
+    await screen.findByText('Saved folder unavailable')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry saved root' })))
+    expect(listKnowledgeRoots).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      if (outcome === 'response') finishRoots([stale])
+      else failRoots(new Error('Stale catalog failure'))
+    })
+    expect(screen.queryByText('Stale catalog failure')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    expect(screen.getByRole('radio', {
+      name: `${fresh.name} on ${fresh.computerName}: ${fresh.path}`,
+    })).toBeEnabled()
+    expect(screen.queryByRole('radio', {
+      name: `${stale.name} on ${stale.computerName}: ${stale.path}`,
+    })).not.toBeInTheDocument()
+  })
+
+  it.each([false, true])('does not import an unpaired root from a late available binding (paired again: %s)', async (repaired) => {
+    const remoteRoot = { ...knowledgeRoot, computerId: secondComputer.id, computerName: secondComputer.name }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    mockKnowledgeRoots([remoteRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('tree')
+    const previous = fixtureKnowledgeBinding(computer.id, session.id)
+    fixtureKnowledgeRoots = []
+    await act(async () => {
+      const socket = MockWebSocket.instances.at(-1)!
+      socket.onmessage?.({
+        data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+      } as MessageEvent)
+      if (repaired) {
+        socket.onmessage?.({
+          data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }),
+        } as MessageEvent)
+      }
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id,
+          binding: { ...previous, revision: 2 },
+        }),
+      } as MessageEvent)
+    })
+    await screen.findByText('Saved folder unavailable')
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    expect(screen.queryByRole('radio', {
+      name: `${remoteRoot.name} on ${remoteRoot.computerName}: ${remoteRoot.path}`,
+    })).not.toBeInTheDocument()
   })
 
   it('keeps a pending root choice after a conflict and retries the reviewed revision', async () => {
@@ -10624,6 +10828,37 @@ describe('App', () => {
     }
   })
 
+  it.each(['computer', 'session'])('reports a refused custom %s order without losing the draft', async (kind) => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep my draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    const key = `agentic-remote:${kind}-order`
+    const persisted = localStorage.getItem(key)
+    const original = Storage.prototype.setItem
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage, storageKey: string, value: string,
+    ) {
+      if (storageKey === key) throw new Error('Storage unavailable')
+      original.call(this, storageKey, value)
+    })
+    try {
+      act(() => finishReorder(
+        'session-navigation',
+        kind === 'computer' ? `computer:${computer.id}` : `session:${computer.id}:${session.id}`,
+        kind === 'computer' ? `computer:${secondComputer.id}` : `session:${computer.id}:${secondSession.id}`,
+      ))
+      expect(within(screen.getByRole('main'))
+        .getByText(`Could not save the ${kind} order: Storage unavailable`)).toBeVisible()
+      expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
+      expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')
+      expect(localStorage.getItem(key)).toBe(persisted)
+    } finally {
+      save.mockRestore()
+    }
+  })
+
   it('keeps search arrows from recalling a prompt or changing the selected session', async () => {
     render(<App />)
     const composer = await screen.findByLabelText('Message')
@@ -14752,7 +14987,7 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
-  it('carries the position across a clear even as the removal arrives', async () => {
+  it.each([false, true])('carries the position across a clear even as the removal arrives (metadata warning: %s)', async (metadataWarning) => {
     const replacement: ManagedSession = {
       ...session,
       id: 'session-1-cleared',
@@ -14776,6 +15011,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Project chat')
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Keep this draft across clear' } })
     fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(releaseClear).toBeDefined())
 
@@ -14790,6 +15026,14 @@ describe('App', () => {
           sessionId: 'session-1',
         }),
       } as MessageEvent)
+      if (metadataWarning) {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({
+            type: 'error', computerId: computer.id, sessionId: replacement.id,
+            message: 'Conversation cleared, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.',
+          }),
+        } as MessageEvent)
+      }
     })
     await act(async () => {
       releaseClear?.()
@@ -14805,6 +15049,13 @@ describe('App', () => {
         'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
       }),
     )
+    expect(clearConversation).toHaveBeenCalledOnce()
+    expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft across clear')
+    expect(window.location.search).toContain('session=session-1-cleared')
+    if (metadataWarning) {
+      expect(within(screen.getByRole('main'))
+        .getByText(/Conversation cleared, but its Knowledge folder metadata/)).toBeVisible()
+    }
     confirmSpy.mockRestore()
   })
 

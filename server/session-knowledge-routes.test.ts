@@ -176,12 +176,14 @@ async function fixture(options: {
       payload: { rootId, expectedRevision },
     })
   const updates: SessionKnowledgeBinding[] = []
+  const errors: Extract<HubEvent, { type: 'error' }>[] = []
   manager.on('event', (event) => {
     if (event.type === 'session.knowledge.updated') updates.push(event.binding)
+    if (event.type === 'error') errors.push(event)
   })
   return {
     directory, runtime, app: runtime.app, service, manager, knowledge, root,
-    secondRoot, store, initialize, route, get, put, updates,
+    secondRoot, store, initialize, route, get, put, updates, errors,
   }
 }
 
@@ -415,10 +417,13 @@ describe('session Knowledge routes', () => {
     const persisted = await readFile(statePath, 'utf8')
     updates.length = 0
     const held = gate()
-    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+    vi.mocked(rename).mockImplementation(async (...args) => {
       await disk.rename(...args)
-      held.start()
-      await held.wait
+      if (String(args[1]) === statePath) {
+        vi.mocked(rename).mockImplementation(disk.rename)
+        held.start()
+        await held.wait
+      }
     })
     const pending = put(root.id, 1).then((response) => response)
     await held.started
@@ -458,10 +463,13 @@ describe('session Knowledge routes', () => {
     const statePath = path.join(directory, 'session-knowledge.json')
     const persisted = await readFile(statePath, 'utf8')
     const held = gate()
-    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+    vi.mocked(rename).mockImplementation(async (...args) => {
       await disk.rename(...args)
-      held.start()
-      await held.wait
+      if (String(args[1]) === statePath) {
+        vi.mocked(rename).mockImplementation(disk.rename)
+        held.start()
+        await held.wait
+      }
     })
     updates.length = 0
     const pending = put(root.id, 1).then((response) => response)
@@ -477,11 +485,15 @@ describe('session Knowledge routes', () => {
   it('rolls a rejected choice back before clear transfers the prior binding to its replacement', async () => {
     const { app, manager, put, root, secondRoot, store, directory, get, updates } = await fixture()
     await put(root.id)
+    const statePath = path.join(directory, 'session-knowledge.json')
     const held = gate()
-    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+    vi.mocked(rename).mockImplementation(async (...args) => {
       await disk.rename(...args)
-      held.start()
-      await held.wait
+      if (String(args[1]) === statePath) {
+        vi.mocked(rename).mockImplementation(disk.rename)
+        held.start()
+        await held.wait
+      }
     })
     updates.length = 0
     const changing = put(secondRoot.id, 1).then((response) => response)
@@ -529,8 +541,11 @@ describe('session Knowledge routes', () => {
   })
 
   it('does not let an old clear response install lineage in a new registration', async () => {
-    const { app, manager, put, get, root, store } = await fixture()
+    const { app, runtime, manager, put, get, root, store, errors } = await fixture()
     await put(root.id, 0, 'worker', 'one')
+    vi.spyOn(runtime.pushService!, 'settings').mockReturnValue({ mutedSessions: ['worker:one'] })
+    const setSessionMuted = vi.fn()
+    Object.assign(runtime.pushService!, { setSessionMuted })
     const held = gate()
     manager.clearConversation.mockImplementationOnce(async () => {
       held.start()
@@ -548,6 +563,27 @@ describe('session Knowledge routes', () => {
     expect((await get('worker', 'one')).statusCode).toBe(200)
     expect((await get('worker', 'successor')).json().binding.revision).toBe(0)
     expect(store.get('worker', 'one').rootId).toBe(root.id)
+    expect(setSessionMuted).not.toHaveBeenCalled()
+    expect(errors).toEqual([])
+  })
+
+  it('rejects an obsolete clear result if pairing changes during ancillary persistence', async () => {
+    const { app, manager, put, get, root, store, errors } = await fixture()
+    await put(root.id, 0, 'worker', 'one')
+    manager.legacyClear = true
+    const held = holdWrite()
+    const clearing = app.inject({
+      method: 'POST', url: '/api/computers/worker/sessions/one/clear', headers: trusted,
+    }).then((response) => response)
+    await held.started
+    manager.rePair('worker')
+    manager.sessions = [session('worker', 'one'), session('worker', 'one-cleared')]
+    held.finish()
+    expect((await clearing).statusCode).toBe(409)
+    expect(manager.clearConversation).toHaveBeenCalledOnce()
+    expect(store.get('worker', 'one').rootId).toBe(root.id)
+    expect((await get('worker', 'one-cleared')).json().binding.revision).toBe(0)
+    expect(errors).toEqual([])
   })
 
   it('retains lineage across ordinary online/offline updates of the same registration', async () => {
@@ -725,17 +761,26 @@ describe('session Knowledge routes', () => {
   })
 
   it('preserves a source after failed legacy-clear persistence and retries from its known mapping', async () => {
-    const { app, manager, put, root, store, get } = await fixture()
+    const { app, manager, put, root, store, get, errors } = await fixture()
     await put(root.id)
     manager.legacyClear = true
+    const logged = vi.spyOn(app.log, 'error')
     vi.mocked(rename).mockRejectedValueOnce(new Error('disk full'))
     const response = await app.inject({
       method: 'POST', url: '/api/computers/hub/sessions/one/clear', headers: trusted,
     })
-    expect(response.statusCode).toBe(503)
+    expect(response.statusCode).toBe(200)
+    expect(response.json().session.id).toBe('one-cleared')
+    expect(manager.clearConversation).toHaveBeenCalledExactlyOnceWith('hub', 'one')
+    expect(logged).toHaveBeenCalled()
+    expect(errors).toEqual([expect.objectContaining({
+      computerId: 'hub', sessionId: 'one-cleared',
+      message: expect.stringMatching(/cleared.*Knowledge.*retry/i),
+    })])
     expect(store.get('hub', 'one').rootId).toBe(root.id)
     expect((await get('hub', 'one-cleared')).json().binding.rootId).toBe(root.id)
     expect(store.get('hub', 'one').revision).toBe(0)
+    expect(manager.clearConversation).toHaveBeenCalledOnce()
   })
 
   it('preserves clear mute handling even if carrying the Knowledge binding fails', async () => {
@@ -749,8 +794,51 @@ describe('session Knowledge routes', () => {
     const response = await app.inject({
       method: 'POST', url: '/api/computers/hub/sessions/one/clear', headers: trusted,
     })
-    expect(response.statusCode).toBe(503)
+    expect(response.statusCode).toBe(200)
+    expect(response.json().session.id).toBe('one-cleared')
     expect(setSessionMuted).toHaveBeenCalledExactlyOnceWith('hub', 'one-cleared', true)
+  })
+
+  it('returns the replacement and reports a failed mute transfer without repeating clear', async () => {
+    const { app, runtime, manager, put, root, get, errors } = await fixture()
+    await put(root.id)
+    manager.legacyClear = true
+    vi.spyOn(runtime.pushService!, 'settings').mockReturnValue({ mutedSessions: ['hub:one'] })
+    const setSessionMuted = vi.fn(async () => { throw new Error('Mute storage unavailable') })
+    Object.assign(runtime.pushService!, { setSessionMuted })
+    const logged = vi.spyOn(app.log, 'error')
+    const response = await app.inject({
+      method: 'POST', url: '/api/computers/hub/sessions/one/clear', headers: trusted,
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json().session.id).toBe('one-cleared')
+    expect(manager.clearConversation).toHaveBeenCalledOnce()
+    expect(setSessionMuted).toHaveBeenCalledExactlyOnceWith('hub', 'one-cleared', true)
+    expect((await get('hub', 'one-cleared')).json().binding.rootId).toBe(root.id)
+    expect(logged).toHaveBeenCalled()
+    expect(errors).toEqual([expect.objectContaining({
+      computerId: 'hub', sessionId: 'one-cleared',
+      message: expect.stringMatching(/cleared.*notification.*again/i),
+    })])
+  })
+
+  it('does not turn a primary clear failure into success or transfer its metadata', async () => {
+    const { app, runtime, manager, put, root, store, errors } = await fixture()
+    await put(root.id)
+    vi.spyOn(runtime.pushService!, 'settings').mockReturnValue({ mutedSessions: ['hub:one'] })
+    const setSessionMuted = vi.fn()
+    Object.assign(runtime.pushService!, { setSessionMuted })
+    manager.clearConversation.mockRejectedValueOnce(Object.assign(new Error('Clear refused'), { statusCode: 409 }))
+    const response = await app.inject({
+      method: 'POST', url: '/api/computers/hub/sessions/one/clear', headers: trusted,
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toMatchObject({ error: 'Clear refused' })
+    expect(response.json().session).toBeUndefined()
+    expect(store.get('hub', 'one').rootId).toBe(root.id)
+    expect(store.get('hub', 'one-cleared').revision).toBe(0)
+    expect(setSessionMuted).not.toHaveBeenCalled()
+    expect(errors).toEqual([])
   })
 
   it('cleans only the explicitly deleted session association', async () => {

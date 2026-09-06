@@ -67,9 +67,27 @@ having linked a root, so old browser state cannot relink it. A second client
 gets the same hub root; it restores only its own matching local document
 position, or starts at that root if it has none.
 
+An accepted binding can introduce a folder created by another client after
+this tab loaded its catalog. Older catalog responses cannot replace newer
+entries or revive a removed folder or pairing. Unavailable root snapshots
+remain recognizable but never become browsable catalog entries.
+
+Once clear succeeds, its replacement session is returned even if carrying
+Knowledge or notification metadata fails. The failure is logged and shown
+separately, so a legacy node's plain-removal event does not cost this client
+its draft or reading position. Opening the replacement's Knowledge panel or
+reloading the browser retries a pending root transfer within the same computer
+registration. Genuine clear failures and obsolete pairing responses still fail.
+
+Binding writes publish a complete private recovery journal by atomic rename
+before replacing the state file. An interrupted temporary journal does not
+prevent restart; a malformed published journal still fails closed.
+
 The session search/filter selector is also shared with next/previous
 shortcuts. Keyboard navigation cannot open a conversation hidden by the
-displayed filter, and changing views does not rewrite custom ordering.
+displayed filter, and changing views does not rewrite custom ordering. Failed
+custom-order saves, including drag-and-drop, show an error rather than silently
+losing the preference on reload.
 
 ## Professional workspace revision
 

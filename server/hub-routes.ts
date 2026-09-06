@@ -545,14 +545,42 @@ export async function registerHubRoutes(
       const silenced =
         mutes?.settings().mutedSessions.includes(`${computerId}:${sessionId}`) ??
         false
+      const registrationIsCurrent = manager.captureComputerRegistration(computerId)
+      const assertCurrent = () => {
+        if (!registrationIsCurrent()) {
+          throw Object.assign(new Error('Computer pairing changed while clearing. Reload sessions before continuing.'), {
+            statusCode: 409,
+          })
+        }
+      }
       const carryKnowledge = sessionKnowledgeLifecycle?.replacementCarrier(computerId)
       const session = await manager.clearConversation(computerId, sessionId)
+      assertCurrent()
+      // The replacement is already real. Auxiliary persistence must not hide
+      // its ID: older nodes supply that lineage only in this HTTP response.
+      const carryMetadata = async (carry: () => Promise<unknown> | undefined, message: string) => {
+        try {
+          await carry()
+        } catch (error) {
+          app.log.error({ err: error, computerId, sessionId: session.id }, message)
+          if (registrationIsCurrent()) {
+            manager.emit('event', { type: 'error', computerId, sessionId: session.id, message })
+          }
+        }
+      }
       await Promise.all([
-        carryKnowledge?.(sessionId, session),
-        silenced && session.id !== sessionId
-          ? mutes?.setSessionMuted(computerId, session.id, true)
-          : undefined,
+        carryMetadata(
+          () => carryKnowledge?.(sessionId, session),
+          'Conversation cleared, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.',
+        ),
+        carryMetadata(
+          () => silenced && session.id !== sessionId
+            ? mutes?.setSessionMuted(computerId, session.id, true)
+            : undefined,
+          'Conversation cleared, but notification silence could not be restored. Silence notifications again for this session.',
+        ),
       ])
+      assertCurrent()
       return { session }
     },
   )

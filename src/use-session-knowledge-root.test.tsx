@@ -76,14 +76,28 @@ describe('session Knowledge root controller', () => {
 
   it('keeps a newer event when an older response arrives, including availability-only changes', async () => {
     const pending = deferred<SessionKnowledgeBinding>()
+    const accepted = vi.fn()
     vi.mocked(getSessionKnowledgeRoot).mockReturnValueOnce(pending.promise)
-    const rendered = renderHook(() => useSessionKnowledgeRoot(first, true))
+    const rendered = renderHook(() => useSessionKnowledgeRoot(first, true, accepted))
     act(() => rendered.result.current.applyUpdate(binding(first, { available: false })))
     await act(async () => pending.resolve(binding()))
     expect(rendered.result.current.binding?.available).toBe(false)
+    expect(accepted).toHaveBeenCalledExactlyOnceWith(binding(first, { available: false }))
     act(() => rendered.result.current.applyUpdate(binding(first, { rootId: 'platform', revision: 3 })))
     act(() => rendered.result.current.applyUpdate(binding(first, { rootId: 'atlas', revision: 2 })))
     expect(rendered.result.current.binding?.rootId).toBe('platform')
+    expect(accepted).toHaveBeenCalledTimes(2)
+    expect(accepted).toHaveBeenLastCalledWith(binding(first, { rootId: 'platform', revision: 3 }))
+  })
+
+  it('does not teach the catalog from a lookup after its view unmounts', async () => {
+    const pending = deferred<SessionKnowledgeBinding>()
+    const accepted = vi.fn()
+    vi.mocked(getSessionKnowledgeRoot).mockReturnValueOnce(pending.promise)
+    const rendered = renderHook(() => useSessionKnowledgeRoot(first, true, accepted))
+    rendered.unmount()
+    await act(async () => pending.resolve(binding()))
+    expect(accepted).not.toHaveBeenCalled()
   })
 
   it('waits for persistence and uses the current revision without changing another session', async () => {

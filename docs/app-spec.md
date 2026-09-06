@@ -134,6 +134,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   folder before reporting that refusal, or explicitly report restoration failure.
 - Cleanup failures after a replacement commits MUST be surfaced on the new
   session; they MUST NOT roll back the accepted identity or destroy its runtime.
+- Clear MUST exclude new session admissions while joining earlier loading and
+  delivery handoffs. It MUST NOT cancel those handoffs merely to become idle.
+  Work admitted while Clear waits MUST cause refusal before the original
+  provider or history is replaced, even if that work completes quickly.
+  Replacement MUST revalidate idleness and identity at its mutation boundary.
 - Cleared and deleted session identities MUST stay retired across restart,
   including after their last replacement is deleted. Retirement metadata MUST
   commit atomically with the identity change, and stale provider listings MUST
@@ -551,6 +556,12 @@ directories, and questions arriving while an earlier reply is being recorded.
 Live streamed text MAY remain volatile until the next persisted mutation.
 Publishing a live delta MUST NOT expose unrelated, uncommitted session or queue
 changes.
+
+History fetched before a newer local admission MUST NOT overwrite that turn,
+its status, or its pending input when installed. Transcript ownership checks
+MUST run at mutation preparation, including the commit-to-registration gap.
+Rejecting stale history MUST preserve the polling version and live-watermark
+guards without disabling legitimate external/native history refresh.
 
 ## 14. Error handling
 

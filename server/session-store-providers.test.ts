@@ -500,7 +500,9 @@ describe('SDK metadata during clear', () => {
     const { service, store, directory, published, replacing } = await clearFixture()
     const cleared = await service.clearConversation('session')
     await store.flush()
-    expect(replacing).toHaveBeenCalledExactlyOnceWith('session', cleared.id)
+    expect(replacing).toHaveBeenCalledExactlyOnceWith('session', cleared.id, {
+      epoch: undefined, isCurrent: expect.any(Function),
+    })
     expect(published.filter((value) => value.type === 'error')).toEqual([])
     expect(published.slice(0, 2)).toEqual([
       { type: 'session.removed', sessionId: 'session', replacedBy: cleared.id },
@@ -539,7 +541,9 @@ describe('SDK metadata during clear', () => {
   it('preserves recovery when creation of the replacement SDK fails', async () => {
     const { service, store, published, replacing } = await clearFixture('create')
     const cleared = await service.clearConversation('session')
-    expect(replacing).toHaveBeenCalledExactlyOnceWith('session', cleared.id)
+    expect(replacing).toHaveBeenCalledExactlyOnceWith('session', cleared.id, {
+      epoch: undefined, isCurrent: expect.any(Function),
+    })
     expect(store.get('session')).toBeUndefined()
     expect(store.get(cleared.id)).toBeDefined()
     expect(published.filter((value) => value.type === 'error')).toEqual([

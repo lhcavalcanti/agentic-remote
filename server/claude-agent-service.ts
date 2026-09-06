@@ -45,7 +45,7 @@ import {
 import type { SessionService } from './session-service.js'
 import {
   SessionReplacementCleanupError, SessionStore, StaleQueuedPromptReservationError,
-  type QueuedPromptReservation,
+  type QueuedPromptReservation, type TranscriptObservation,
 } from './session-store.js'
 import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
 import {
@@ -612,10 +612,25 @@ export class ClaudeAgentService
     // In the lifecycle queue with the rest: clearing replaces the session with
     // a new id, and a suspension starting while it awaits the provider would
     // then be recorded against a session that no longer exists.
-    return this.serializeLifecycle(id, () => this.clearSerialized(id))
+    const observed = this.store.observeTranscript(id)
+    try {
+      return await this.admissions.exclusive(id, (ownership) =>
+        this.serializeLifecycle(id, async () => {
+          if (ownership.joinedActivity) {
+            throw Object.assign(new Error('A prompt was admitted while Clear waited; nothing was cleared'), { statusCode: 409 })
+          }
+          return this.clearSerialized(id, { ...observed, isCurrent: ownership.isCurrent })
+        }),
+      )
+    } finally {
+      if (!this.stopped && this.store.get(id) && this.drainRequested.has(id)) this.wakeQueue(id)
+    }
   }
 
-  private async clearSerialized(id: string): Promise<SessionDetail> {
+  private async clearSerialized(
+    id: string,
+    observed: TranscriptObservation,
+  ): Promise<SessionDetail> {
     await this.store.readAfterWrites(id)
     if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
       throw Object.assign(new Error('Resume the session before clearing it'), {
@@ -626,11 +641,14 @@ export class ClaudeAgentService
       })
     }
     const session = this.requireIdle(id)
+    if (!this.store.isCurrentTranscript(id, observed)) {
+      throw Object.assign(new Error('Conversation changed before clearing'), { statusCode: 409 })
+    }
     const replacementId = randomUUID()
     let cleared: SessionDetail
     const cleanupErrors: unknown[] = []
     try {
-      cleared = await this.store.replaceWithClearedSession(id, replacementId)
+      cleared = await this.store.replaceWithClearedSession(id, replacementId, observed)
     } catch (error) {
       if (!(error instanceof SessionReplacementCleanupError)) throw error
       cleared = error.replacement
@@ -918,6 +936,7 @@ export class ClaudeAgentService
         !this.startingQueries.has(sessionId) && (fromQueue || !this.admissionClosed.has(sessionId)),
       reservation,
     )
+    this.admissions.markCommitted(sessionId)
     if (reservation) {
       this.pendingQueueAdmissions.set(sessionId, { assistantId, started: false })
     }
@@ -1789,6 +1808,7 @@ export class ClaudeAgentService
   private wakeQueue(sessionId: string): void {
     if (this.stopped || this.deletingSessions.has(sessionId)) return
     this.drainRequested.add(sessionId)
+    if (!this.admissions.canEnter(sessionId)) return
     if (this.drainingSessions.has(sessionId) || this.queueWakeups.has(sessionId)) return
     const waking = Promise.resolve().then(async () => {
       if (!this.stopped) await this.drainQueue(sessionId)
@@ -1805,6 +1825,10 @@ export class ClaudeAgentService
     // marked the session running, and started concurrent turns: the queue lost
     // its order, and the second registration hid the first from cancellation.
     if (this.stopped || this.deletingSessions.has(sessionId)) return
+    if (!this.admissions.canEnter(sessionId)) {
+      this.drainRequested.add(sessionId)
+      return
+    }
     if (this.drainingSessions.has(sessionId)) {
       this.drainRequested.add(sessionId)
       return

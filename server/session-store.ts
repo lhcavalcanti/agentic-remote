@@ -30,6 +30,11 @@ export interface QueuedPromptReservation {
   prompt: QueuedPrompt
 }
 
+export interface TranscriptObservation {
+  epoch: string | undefined
+  isCurrent?: () => boolean
+}
+
 export class StaleQueuedPromptReservationError extends Error {
   readonly statusCode = 409
 
@@ -73,6 +78,7 @@ interface StoredSession extends SessionDetail {
   terminalQueueDispatch?: TerminalQueueDispatch
   queuedPromptReservation?: { id: string; promptId: string }
   sdkQueueAdmission?: SdkQueueAdmission
+  transcriptEpoch?: string
 }
 
 interface PendingMutation {
@@ -125,6 +131,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     terminalQueueDispatch,
     queuedPromptReservation: _queuedPromptReservation,
     sdkQueueAdmission,
+    transcriptEpoch: _transcriptEpoch,
     contextCwd: _contextCwd,
     workspaceTitle: _workspaceTitle,
     executionMode: _executionMode,
@@ -205,6 +212,10 @@ export class SessionStore {
         for (const id of session.replacedSessionIds) legacyRetirements.push(id)
       }
       session.revision ??= 0
+      if (session.transcriptEpoch !== undefined &&
+          (typeof session.transcriptEpoch !== 'string' || !session.transcriptEpoch)) {
+        throw new Error('Invalid transcript admission metadata')
+      }
       session.provider ??= 'copilot'
       session.isOpen = session.managedOpen === true
       session.queuedPrompts ??= []
@@ -397,9 +408,11 @@ export class SessionStore {
   async replaceMessages(
     sessionId: string,
     messages: ChatMessage[],
-  ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    observation = this.observeTranscript(sessionId),
+  ): Promise<SessionDetail | undefined> {
+    return this.installTranscript(sessionId, observation, (session) => {
       session.messages = messages
+      return true
     })
   }
 
@@ -413,8 +426,9 @@ export class SessionStore {
     contextCwd = false,
     pendingUserInput?: SessionProjection<PendingUserInput | null | undefined>,
     observedQueueDispatchAt?: string,
-  ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    observation = this.observeTranscript(sessionId),
+  ): Promise<SessionDetail | undefined> {
+    return this.installTranscript(sessionId, observation, (session) => {
       const nextMessages = typeof messages === 'function' ? messages(session) : messages
       const nextRuntime = typeof runtime === 'function' ? runtime(session) : runtime
       const nextCwd = typeof cwd === 'function' ? cwd(session) : cwd
@@ -445,6 +459,48 @@ export class SessionStore {
       }
       session.updatedAt =
         nextMessages.at(-1)?.createdAt || session.updatedAt
+      return true
+    })
+  }
+
+  observeTranscript(sessionId: string, isCurrent?: () => boolean): TranscriptObservation {
+    const session = this.state.sessions[sessionId]
+    if (!session || this.isRetiredSession(sessionId)) {
+      throw new Error(`Session ${sessionId} does not exist`)
+    }
+    return { epoch: session.transcriptEpoch, isCurrent }
+  }
+
+  isCurrentTranscript(sessionId: string, observation: TranscriptObservation): boolean {
+    const session = this.state.sessions[sessionId]
+    return Boolean(session && !this.isRetiredSession(sessionId) &&
+      session.transcriptEpoch === observation.epoch && (observation.isCurrent?.() ?? true))
+  }
+
+  async updateTranscriptIfCurrent(
+    sessionId: string,
+    observation: TranscriptObservation,
+    mutation: (session: SessionDetail) => boolean,
+  ): Promise<SessionDetail | undefined> {
+    return this.installTranscript(sessionId, observation, mutation)
+  }
+
+  private installTranscript(
+    sessionId: string,
+    observation: TranscriptObservation,
+    mutation: (session: StoredSession) => boolean,
+  ): Promise<SessionDetail | undefined> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId) ||
+          existing.transcriptEpoch !== observation.epoch || observation.isCurrent?.() === false) {
+        return () => undefined
+      }
+      const session = structuredClone(existing)
+      if (!mutation(session)) return () => undefined
+      session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
     })
   }
 
@@ -625,6 +681,7 @@ export class SessionStore {
 
   async clearConversation(sessionId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
+      session.transcriptEpoch = randomUUID()
       session.messages = []
       session.status = 'idle'
       session.isOpen = true
@@ -645,11 +702,19 @@ export class SessionStore {
   async replaceWithClearedSession(
     sessionId: string,
     replacementId: string,
+    observation = this.observeTranscript(sessionId),
   ): Promise<SessionDetail> {
     const replacement = await this.change((state) => {
       const existing = state.sessions[sessionId]
       if (!existing || this.retiredIds(state).has(sessionId)) {
         throw new Error(`Session ${sessionId} does not exist`)
+      }
+      if (existing.id !== sessionId || existing.transcriptEpoch !== observation.epoch ||
+          observation.isCurrent?.() === false ||
+          existing.status === 'running' || existing.status === 'waiting' ||
+          existing.pendingPermission || existing.pendingUserInput ||
+          existing.sdkQueueAdmission || existing.terminalQueueDispatch) {
+        throw Object.assign(new Error('Conversation changed before clearing; no replacement was committed'), { statusCode: 409 })
       }
       if (
         sessionId === replacementId ||
@@ -684,6 +749,7 @@ export class SessionStore {
         terminalQueueDispatch: undefined,
         queuedPromptReservation: undefined,
         sdkQueueAdmission: undefined,
+        transcriptEpoch: undefined,
         updatedAt: new Date().toISOString(),
         runtime: existing.runtime
           ? {
@@ -795,6 +861,7 @@ export class SessionStore {
         { id: userId, role: 'user', content, createdAt },
         { id: assistantId, role: 'assistant', content: '', createdAt, streaming: true },
       )
+      session.transcriptEpoch = assistantId
       session.updatedAt = createdAt
       session.status = 'running'
       session.activity = 'Thinking'

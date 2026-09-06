@@ -136,6 +136,24 @@ directory, and pending question. `updateIf()` can explicitly decline a change;
 it does not turn a write or validation error into a no-op. Reply completion
 clears only the matching request and preserves another request's waiting state.
 
+Transcript reads capture an O(1) admission epoch before fetching history.
+Installation rechecks that epoch and current SDK ownership against the actual
+mutation candidate, before cloning history or running its projections. A
+pending commit-to-registration handoff remains protected even before a live
+prompt owner is installed. Rejected observations do not advance event-log
+fingerprints or erase a newer live watermark. The same boundary protects SDK
+hydration and recovered question cards; native/external reconciliation remains
+available and retains its existing version and dispatch-watermark gates.
+
+Clear acquires an exclusive lease from `SessionAdmissions`, without admitting
+itself into the work it must join. Async-local permits allow already-admitted
+handoffs to finish their nested work, but cannot be reused after they finish.
+Clear refuses if any joined handoff committed work, then revalidates the
+admission epoch, inactive state, and identity again in the replacement
+transaction. No original provider/history is disposed on a busy refusal.
+Failed exclusive operations release their lease and reawaken only deferred
+queue demand. The existing post-commit replacement cleanup contract is unchanged.
+
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then
 replay it after publishing the created/replacement session. Failed identity

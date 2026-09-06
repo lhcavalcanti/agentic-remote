@@ -535,8 +535,9 @@ export class SessionStore {
     return this.mutate(sessionId, (session) => {
       session.cwd = cwd
       session.contextCwd = true
-      session.updatedAt = updatedAt
-    }, (session) => session.cwd !== cwd)
+      if (updatedAt > session.updatedAt) session.updatedAt = updatedAt
+    }, (session) =>
+      session.cwd !== cwd || !session.contextCwd || updatedAt > session.updatedAt)
   }
 
   async updateAutomaticTitle(
@@ -547,8 +548,10 @@ export class SessionStore {
     return this.mutate(sessionId, (session) => {
       session.title = title
       session.workspaceTitle = true
-      session.updatedAt = updatedAt
-    }, (session) => !session.customTitle && session.title !== title)
+      if (updatedAt > session.updatedAt) session.updatedAt = updatedAt
+    }, (session) =>
+      !session.customTitle &&
+      (session.title !== title || !session.workspaceTitle || updatedAt > session.updatedAt))
   }
 
   async syncWorkspaceMetadata(
@@ -568,8 +571,9 @@ export class SessionStore {
         session.updatedAt = metadata.updatedAt
       }
     }, (session) =>
-      metadata.cwd !== session.cwd ||
-      Boolean(metadata.title && metadata.title !== session.title) ||
+      Boolean(metadata.cwd && (metadata.cwd !== session.cwd || !session.contextCwd)) ||
+      Boolean(metadata.title && !session.customTitle &&
+        (metadata.title !== session.title || !session.workspaceTitle)) ||
       Boolean(metadata.updatedAt && metadata.updatedAt > session.updatedAt),
     )
   }

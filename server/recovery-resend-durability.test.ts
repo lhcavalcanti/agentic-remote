@@ -146,7 +146,7 @@ async function fixture(kind: SendKind = 'message') {
     return disk.writeFile(...args)
   })
   return {
-    service, terminal, pastes, original, submitted, load, send, statePath, directory, client,
+    service, terminal, pastes, original, submitted, load, send, statePath, directory, client, catalog,
     refuseWrites: (refused = true) => { writesRefused = refused },
     refuseAcknowledgements: (refused = true) => { acknowledgementsRefused = refused },
     acknowledgementAttempts: () => acknowledgementAttempts,
@@ -164,7 +164,68 @@ function gate() {
   return { started, pending, opened, release }
 }
 
+async function sdkFixture(kind: SendKind = 'message') {
+  const context = await fixture(kind)
+  context.terminal.has.mockResolvedValue(false)
+  context.terminal.send.mockResolvedValue(false)
+  context.service['externalSessionIds'].delete(sessionId)
+  await context.service.store.setBackend(sessionId, 'sdk')
+  const turn = gate()
+  const calls: string[] = []
+  const generated = 'Generated from the edited recovery command'
+  const sdk: CopilotSessionLike = {
+    ...context.catalog,
+    sessionId,
+    sendAndWait: vi.fn(async (content) => {
+      calls.push(content)
+      await turn.pending
+      return undefined
+    }),
+    disconnect: vi.fn(async () => { turn.release() }),
+    rpc: {
+      ...context.catalog.rpc,
+      commands: {
+        ...context.catalog.rpc.commands,
+        invoke: vi.fn(async () => ({
+          kind: 'agent-prompt' as const, prompt: generated, displayPrompt: context.submitted,
+        })),
+      },
+    },
+  }
+  context.client.resumeSession = vi.fn(async () => sdk)
+  context.client.stop = vi.fn(async () => { turn.release(); return [] })
+  return { ...context, sdk, calls, generated, finishTurn: turn.release }
+}
+
 describe('Durable recovery resend ownership', () => {
+  it('integration: joins confirmed delivery and token acknowledgement before provider teardown', async () => {
+    const context = await fixture()
+    const held = gate()
+    const phases: string[] = []
+    let recoveryAtProviderStop: unknown
+    context.terminal.send.mockImplementationOnce(async (_id, content) => {
+      context.pastes.push(content)
+      held.opened()
+      await held.pending
+      phases.push('confirmed')
+      return true
+    })
+    context.client.stop = async () => {
+      recoveryAtProviderStop = (await context.persisted()).sessions[sessionId].failedPrompt
+      phases.push('provider-stopped')
+      return []
+    }
+    const sending = context.send(context.service).finally(() => { phases.push('send-settled') })
+    await held.started
+    const stopping = context.service.stop()
+    held.release()
+    await Promise.all([sending, stopping])
+    expect(context.pastes).toEqual([context.submitted])
+    expect.soft(recoveryAtProviderStop).toBeUndefined()
+    expect.soft(phases.indexOf('confirmed')).toBeLessThan(phases.indexOf('provider-stopped'))
+    expect((await context.persisted()).sessions[sessionId].failedPrompt).toBeUndefined()
+  })
+
   it.each([
     ['message', false, false], ['command', false, false],
     ['message', true, false], ['command', true, false],
@@ -689,5 +750,327 @@ describe('Durable recovery resend ownership', () => {
     await reloaded.sendMessage(sessionId, context.original)
     expect(context.pastes).toEqual([context.original])
     expect(reloaded.store.get(sessionId)?.failedPrompt).toBeUndefined()
+  })
+})
+
+describe('Recovery and admission integration', () => {
+  it('joins confirmed command feedback and acknowledgement before provider teardown', async () => {
+    const context = await fixture('command')
+    const held = gate()
+    context.terminal.send.mockImplementationOnce(async (_id, content) => {
+      context.pastes.push(content)
+      held.opened()
+      await held.pending
+      return true
+    })
+    context.client.stop = vi.fn(async () => {
+      expect((await context.persisted()).sessions[sessionId].failedPrompt).toBeUndefined()
+      return []
+    })
+    const sending = context.send(context.service)
+    await held.started
+    const stopping = context.service.stop()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(context.client.stop).not.toHaveBeenCalled()
+    held.release()
+    await Promise.all([sending, stopping])
+    expect(context.pastes).toEqual([context.submitted])
+    expect(context.client.stop).toHaveBeenCalledOnce()
+  })
+
+  it.each(['message', 'command'] as const)(
+    'retains honest %s uncertainty when shutdown overlaps confirmed delivery and a storage outage',
+    async (kind) => {
+      const context = await fixture(kind)
+      const held = gate()
+      context.terminal.send.mockImplementationOnce(async (_id, content) => {
+        context.pastes.push(content)
+        held.opened()
+        await held.pending
+        context.refuseWrites()
+        return true
+      })
+      const sending = context.send(context.service)
+      const rejected = expect(sending).rejects.toMatchObject({
+        statusCode: 409, submission: { sessionId, accepted: true },
+      })
+      await held.started
+      const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+      const stopping = context.service.stop()
+      const refusedStop = expect(stopping).rejects.toBe(storageError)
+      held.release()
+      await Promise.all([rejected, refusedStop])
+      expect(context.service['pendingAcknowledgements'].size).toBe(0)
+      expect(context.service['acknowledgementTimers'].size).toBe(0)
+      expect((await context.persisted()).sessions[sessionId].failedPrompt).toEqual({
+        content: context.submitted, failedAt: token, uncertain: true,
+      })
+      const writes = vi.mocked(writeFile).mock.calls.length
+      await expect(context.service.store.update(sessionId, () => {})).rejects.toThrow('closed')
+      await expect(context.send(context.service, token)).rejects.toMatchObject({ statusCode: 503 })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(vi.mocked(writeFile).mock.calls).toHaveLength(writes)
+      context.refuseWrites(false)
+      const restarted = await context.load()
+      await expect(context.send(restarted)).rejects.toMatchObject({ statusCode: 409 })
+      expect(restarted.store.get(sessionId)?.failedPrompt?.failedAt).toBe(token)
+      expect(context.pastes).toEqual([context.submitted])
+    },
+  )
+
+  it.each(['message', 'command'] as const)(
+    'admits an accepted %s acknowledgement retry and joins it before closing the store',
+    async (kind) => {
+      const context = await fixture(kind)
+      context.refuseAcknowledgements()
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      await vi.waitFor(() => expect(context.service['acknowledgementTimers'].size).toBe(1))
+      const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+      const held = gate()
+      const clear = context.service.store.clearFailedPrompt.bind(context.service.store)
+      vi.spyOn(context.service.store, 'clearFailedPrompt').mockImplementationOnce(async (...args) => {
+        held.opened()
+        await held.pending
+        return clear(...args)
+      })
+      context.refuseAcknowledgements(false)
+      await held.started
+      let joined = false
+      const admission = context.service['admissions'].wait(sessionId).then(() => { joined = true })
+      context.client.stop = vi.fn(async () => {
+        expect((await context.persisted()).sessions[sessionId].failedPrompt).toBeUndefined()
+        return []
+      })
+      const stopping = context.service.stop()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(joined).toBe(false)
+      expect(context.client.stop).not.toHaveBeenCalled()
+      held.release()
+      await Promise.all([admission, stopping])
+      expect(context.service['pendingAcknowledgements'].size).toBe(0)
+      expect(context.service['acknowledgementTimers'].size).toBe(0)
+      expect(context.pastes).toEqual([context.submitted])
+      const restarted = await context.load()
+      await expect(context.send(restarted, token)).rejects.toMatchObject({ statusCode: 409 })
+      expect(context.pastes).toEqual([context.submitted])
+    },
+  )
+
+  it.each(['same owner', 'clear replacement', 'deleted owner'] as const)(
+    'does not let a joined old acknowledgement erase a newer recovery for %s',
+    async (change) => {
+      const context = await fixture()
+      context.refuseAcknowledgements()
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      await vi.waitFor(() => expect(context.service['acknowledgementTimers'].size).toBe(1))
+      const acceptedToken = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+      const held = gate()
+      const clear = context.service.store.clearFailedPrompt.bind(context.service.store)
+      vi.spyOn(context.service.store, 'clearFailedPrompt').mockImplementationOnce(async (...args) => {
+        held.opened()
+        await held.pending
+        return clear(...args)
+      })
+      context.refuseAcknowledgements(false)
+      await held.started
+      const owner = change === 'clear replacement' ? 'new-owner' : sessionId
+      if (change === 'clear replacement') {
+        await context.service.store.replaceWithClearedSession(sessionId, owner)
+      }
+      if (change === 'deleted owner') {
+        await context.service.store.remove(sessionId)
+      } else {
+        await context.service.store.update(owner, (session) => {
+          session.failedPrompt = { content: 'A different attempt', failedAt: 'new-decision', uncertain: true }
+        })
+      }
+      const stopping = context.service.stop()
+      held.release()
+      await stopping
+      const persisted = (await context.persisted()).sessions
+      if (change === 'deleted owner') expect(persisted[sessionId]).toBeUndefined()
+      else {
+        expect(persisted[owner].failedPrompt).toEqual({
+          content: 'A different attempt', failedAt: 'new-decision', uncertain: true,
+        })
+        const restarted = await context.load(false)
+        await expect(restarted.sendMessage(owner, context.submitted, false, acceptedToken))
+          .rejects.toMatchObject({ statusCode: 409 })
+      }
+      expect(context.pastes).toEqual([context.submitted])
+    },
+  )
+
+  it.each(['message', 'command'] as const)(
+    'forwards the claimed token when a recovered SDK %s joins the reserved FIFO',
+    async (kind) => {
+      const context = await sdkFixture(kind)
+      await context.service.store.enqueuePrompt(sessionId, {
+        id: 'older', content: 'Older queued prompt', createdAt: originalToken,
+      })
+      const enqueue = vi.spyOn(context.service.store, 'enqueueAnsweringPrompt')
+      await context.send(context.service)
+      await vi.waitFor(() => expect(context.calls).toEqual(['Older queued prompt']))
+      const forwarded = enqueue.mock.calls[0]?.[2]
+      expect(forwarded).toMatch(/^resend:/)
+      expect(forwarded).not.toBe(originalToken)
+      const expected = kind === 'command' ? context.generated : context.submitted
+      expect(context.service.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.content))
+        .toEqual([expected])
+      expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined()
+      await expect(context.send(context.service)).rejects.toMatchObject({ statusCode: 409 })
+      context.finishTurn()
+      await vi.waitFor(() => expect(context.calls).toEqual(['Older queued prompt', expected]))
+      await vi.waitFor(() => expect(context.service.store.get(sessionId)?.status).toBe('idle'))
+      expect((await context.persisted()).sessions[sessionId].failedPrompt).toBeUndefined()
+      expect(context.pastes).toEqual([])
+    },
+  )
+
+  it.each(['message', 'command'] as const)(
+    'keeps accepted recovery and canonical %s FIFO durable when a queued turn commits during stop',
+    async (kind) => {
+      const context = await sdkFixture(kind)
+      await context.service.store.enqueuePrompt(sessionId, {
+        id: 'older', content: 'Older queued prompt', createdAt: originalToken,
+      })
+      const held = gate()
+      let holding = false
+      vi.mocked(writeFile).mockImplementation(async (...args) => {
+        if (args[0] === `${context.statePath}.tmp` && !holding &&
+            JSON.parse(String(args[1])).sessions[sessionId]?.sdkQueueAdmission) {
+          holding = true
+          held.opened()
+          await held.pending
+        }
+        return disk.writeFile(...args)
+      })
+      const enqueue = vi.spyOn(context.service.store, 'enqueueAnsweringPrompt')
+      await context.send(context.service)
+      await held.started
+      const forwarded = enqueue.mock.calls[0]?.[2]
+      expect(forwarded).toMatch(/^resend:/)
+      const stopping = context.service.stop()
+      held.release()
+      await stopping
+      expect(context.calls).toEqual([])
+      const persisted = (await context.persisted()).sessions[sessionId]
+      expect(persisted.queuedPrompts.map((prompt: { content: string }) => prompt.content)).toEqual([
+        'Older queued prompt', kind === 'command' ? context.generated : context.submitted,
+      ])
+      expect(persisted.failedPrompt).toBeUndefined()
+      expect(persisted.sdkQueueAdmission).toBeUndefined()
+      const restarted = await context.load(false)
+      await expect(context.send(restarted)).rejects.toMatchObject({ statusCode: 409 })
+      await expect(context.send(restarted, forwarded)).rejects.toMatchObject({ statusCode: 409 })
+      expect(context.pastes).toEqual([])
+    },
+  )
+
+  it('keeps the generated-command delivery boundary when its acknowledgement outlives the send', async () => {
+    const context = await sdkFixture('command')
+    context.refuseAcknowledgements()
+    await expect(context.send(context.service)).rejects.toMatchObject({
+      statusCode: 409, submission: { accepted: true },
+    })
+    expect(context.calls).toEqual([context.generated])
+    const token = context.service.store.get(sessionId)!.failedPrompt!.failedAt!
+    await expect(context.send(context.service, token)).rejects.toMatchObject({ statusCode: 409 })
+    await context.service.stop()
+    expect(context.calls).toEqual([context.generated])
+    context.refuseAcknowledgements(false)
+    const restarted = await context.load(false)
+    await expect(context.send(restarted)).rejects.toMatchObject({ statusCode: 409 })
+    expect(restarted.store.get(sessionId)?.failedPrompt).toEqual({
+      content: context.submitted, failedAt: token, uncertain: true,
+    })
+  })
+
+  it.each(['message', 'command'] as const)(
+    'wakes SDK FIFO once after a recovered %s acknowledgement outlives its provider turn',
+    async (kind) => {
+      const context = await sdkFixture(kind)
+      context.refuseAcknowledgements()
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      await context.service.store.enqueuePrompt(sessionId, {
+        id: 'waiting', content: 'Waiting behind the accepted recovery', createdAt: originalToken,
+      })
+      context.finishTurn()
+      await vi.waitFor(() => expect(context.service.store.get(sessionId)?.status).toBe('idle'))
+      const first = kind === 'command' ? context.generated : context.submitted
+      expect(context.calls).toEqual([first])
+      context.refuseAcknowledgements(false)
+      await vi.waitFor(() => expect(context.calls).toEqual([first, 'Waiting behind the accepted recovery']))
+      await vi.waitFor(() => expect(context.service.store.get(sessionId)?.status).toBe('idle'))
+      expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined()
+      expect(context.service.store.get(sessionId)?.queuedCount).toBe(0)
+      expect(context.service['sdkQueueWakeups'].size).toBe(0)
+      expect(context.pastes).toEqual([])
+    },
+  )
+
+  it.each([false, true])(
+    'coalesces and tracks the native wake after accepted recovery settlement (stop=%s)',
+    async (stop) => {
+      const context = await fixture()
+      context.withEvents()
+      context.refuseAcknowledgements()
+      await expect(context.send(context.service)).rejects.toMatchObject({ submission: { accepted: true } })
+      await context.service.store.enqueuePrompt(sessionId, {
+        id: 'waiting', content: 'Native FIFO after recovery', createdAt: originalToken,
+      })
+      await context.service.store.update(sessionId, (session) => { session.status = 'idle' })
+      const held = gate()
+      const capture = vi.fn(async () => {
+        held.opened()
+        await held.pending
+        return '╻▄▄▄▄\n┃ \n╹▀▀▀▀\n / commands'
+      })
+      Object.assign(context.terminal, { capture })
+      context.refuseAcknowledgements(false)
+      await held.started
+      context.service['wakeTerminalQueue'](sessionId)
+      context.service['wakeTerminalQueue'](sessionId)
+      context.service['wakeTerminalQueue'](sessionId)
+      expect(context.service['terminalQueueWakeups'].size).toBe(1)
+      let stopped = false
+      const stopping = stop ? context.service.stop().then(() => { stopped = true }) : undefined
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(stopped).toBe(false)
+      held.release()
+      if (stopping) await stopping
+      else {
+        await vi.waitFor(() => expect(context.service.store.get(sessionId)?.queuedCount).toBe(0))
+        await vi.waitFor(() => expect(context.service['terminalQueueWakeups'].size).toBe(0))
+      }
+      expect(context.pastes).toEqual(stop ? [context.submitted] : [context.submitted, 'Native FIFO after recovery'])
+      expect((await context.persisted()).sessions[sessionId].queuedCount).toBe(stop ? 1 : 0)
+      expect(context.service['terminalQueueWakeups'].size).toBe(0)
+      const captures = capture.mock.calls.length
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(capture).toHaveBeenCalledTimes(captures)
+    },
+  )
+
+  it('does not let a recovery claim take ownership from a committed SDK queue admission', async () => {
+    const context = await sdkFixture()
+    await context.service.store.clearFailedPrompt(sessionId, originalToken)
+    await context.service.store.enqueuePrompt(sessionId, {
+      id: 'queued', content: 'Durable admitted text', createdAt: originalToken,
+    })
+    const { reservation } = await context.service.store.reserveQueuedPrompt(sessionId, () => true)
+    await context.service.store.beginPrompt(sessionId, 'Durable admitted text', 'assistant', () => true, reservation)
+    const saved = (await context.persisted()).sessions[sessionId]
+    await expect(context.service.store.claimFailedPrompt(
+      sessionId, saved.failedPrompt, 'Edited admission', 'resend:must-not-own',
+    )).rejects.toMatchObject({ statusCode: 409 })
+    expect((await context.persisted()).sessions[sessionId]).toEqual(saved)
+    expect(context.calls).toEqual([])
+    await context.service.stop()
+    const restarted = await context.load(false)
+    const recovery = restarted.store.get(sessionId)!.failedPrompt!
+    expect(recovery).toMatchObject({ content: 'Durable admitted text', uncertain: true })
+    await restarted.store.claimFailedPrompt(sessionId, recovery, 'Explicit new decision', 'resend:new-decision')
+    expect(restarted.store.get(sessionId)?.failedPrompt?.content).toBe('Explicit new decision')
   })
 })

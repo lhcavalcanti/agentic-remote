@@ -161,6 +161,43 @@ one store transaction. Reorder operations use this same boundary and must not
 add per-operation rollback. External provider delivery is not part of the
 filesystem transaction.
 
+SDK and Claude queue preparation durably reserves the current FIFO head without
+removing its text. Turn admission then atomically appends the user/assistant
+records, marks the turn running, and removes only the matching reserved head.
+A refused admission leaves the FIFO item intact even if every subsequent write
+also fails; there is no compensating enqueue that can fail and lose it. The
+private reservation is discarded on restart, before any turn was sent, so the
+original queued work remains available. Edits or a newer reservation invalidate
+an older prepared admission.
+
+Provider admissions share a tracked lifetime covering public sends, queued
+drains, provider loading, commit, and query registration. Shutdown closes that
+gate synchronously, cancels existing provider waits, and drains admitted
+boundaries before teardown. It does not wait for a full turn before cancelling
+the provider. Late SDK attachments are disposed rather than installed.
+Claude registration has its own owned completion signal; a stopped or
+superseded registration cannot launch a query or clear another owner's state.
+
+Queued SDK/Claude admissions retain a private handoff marker and existing
+uncertain-recovery text in the turn commit. A confirmed handoff clears that
+marker without redelivering work. Shutdown before handoff restores the exact
+committed queue entry and removes only its provisional transcript records.
+If that restoration cannot be saved, restart exposes the retained text as
+uncertain recovery instead of losing it or automatically replaying it.
+Settlement of an older handoff does not overwrite a newer owner's activity.
+
+Queue wake-ups are coalesced and scheduled only after reply and drain locks
+have been released. A typed stale-reservation rejection requests a fresh pass
+over the committed canonical FIFO; authentication/storage failures stop that
+pass until a new trigger. Completion and durable reply settlement are both
+triggers. Every pass rechecks ownership, pending cards, and stop/suspend/delete
+state before committing or dispatching work.
+
+`SessionStore.close()` fences new mutations and uploads, drains admitted
+writes, and checkpoints remaining streamed text. Provider teardown and
+owned-query cancellation precede that final storage boundary; late completion
+callbacks cannot publish updates or write into a closed store.
+
 Terminal queue delivery first atomically claims the exact FIFO head, moving its
 content into the existing uncertain-recovery record before any keystrokes are
 sent. A private `terminalQueueDispatch` identity hides that provisional recovery
@@ -171,7 +208,9 @@ it never repeats the terminal action. New delivery cannot consume an unresolved
 claim or overlap an admitted direct dispatch. A refused pre-delivery claim is
 retried even when no new terminal event arrives. If a delivered command's pane
 cannot be read, observation is retried rather than assuming a turn started;
-overlay closure is observed before continuing the FIFO. On restart an orphan
+retried settlement rechecks current native work and overlay state, and the
+next claim cannot run into a working pane. Overlay closure is observed before
+continuing the FIFO. On restart an orphan
 claim becomes visible uncertain recovery, not a
 retryable queue item. Older runtimes also retain the existing recovery record.
 Settlement preserves a newer native completion or permission state instead of
@@ -202,6 +241,22 @@ keeps the recovery claim reserved and retries only acknowledgement of its own
 token, following clear lineage when necessary. Public session reads do not offer
 a known-accepted marker while acknowledgement is pending. An anonymous copy of
 an unresolved `resend:` draft is refused instead of bypassing token validation.
+
+The same dispatch boundary and claimed token pass through admission wrappers,
+SDK turn preparation, generated command prompts, and durable answering-enqueue
+transactions. The first accepted acknowledgement belongs to the original send
+admission. Each later token-only retry enrolls separately; its backoff sleep is
+cancelled and resolved on shutdown. Teardown joins admitted sends and retries
+before stopping providers or closing the store. A failed final checkpoint is
+reported, with the fresh uncertainty retained for an explicit decision after
+restart. SDK handoff markers cannot be consumed as recovery claims while their
+queue admission still owns them.
+
+Recovery acknowledgement wakes the owning backend's queue through the tracked,
+coalesced wake-up path. A wake blocked by an existing drain is retained until that
+drain releases ownership, but stop closes admission before any new pass. Neither
+acknowledgement nor a delayed wake may clear a newer recovery, resurrect a retired
+owner, or replay a delivered action.
 
 Submission errors carry an optional `{ sessionId, failedAt, accepted }` receipt.
 The node error handler, remote-node client, hub error handler and browser API

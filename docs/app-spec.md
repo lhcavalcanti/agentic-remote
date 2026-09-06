@@ -209,6 +209,12 @@ Questions and permissions are the highest-priority UI state.
   a service restart, including structured ask-user forms.
 - If an SDK callback was lost, answering the recovered question MUST resume as a
   normal user turn.
+- While the owning service is running, an accepted SDK reply whose settlement
+  write failed MUST remain retryable without resolving the provider callback
+  again. A conflicting reply MUST be rejected, and settlement MUST preserve
+  newer questions, permissions, and their waiting status.
+- Multi-question flows MUST commit the next question card before advancing
+  their private request identity or collected answers.
 - A newly arriving question or permission MUST scroll into view.
 - Entering a session that is already waiting MUST scroll to the action card.
 
@@ -294,6 +300,34 @@ before delivery begins. A failed completion write MUST NOT resend the prompt;
 the service MUST retain the delivery outcome and retry only persistence. After
 restart, an unresolved delivery MUST expose its text as uncertain recovery and
 hold later queued work until the reader explicitly deals with it.
+
+An app-queued SDK or Claude prompt MUST remain durable until its complete turn
+record is committed. Failed turn admission MUST NOT depend on a compensating
+enqueue that can also fail during a storage outage. Native FIFO delivery MUST
+recheck idleness at delivery rather than steer a turn that began while queued
+command confirmation was being persisted.
+
+Shutdown MUST close new admissions before awaiting provider or storage work.
+Already-admitted work MUST finish its commit/registration boundary before
+provider teardown; a commit completed during shutdown MUST NOT start a new
+provider turn. Unsent queued text MUST be restored or remain as durable,
+explicit recovery when the cancellation write is refused. Storage MUST finish
+admitted writes and refuse late mutations after shutdown.
+
+Recovery sends MUST retain their per-dispatch delivery boundary through that
+admitted lifetime, including generated command prompts and answering-enqueue
+transactions. Confirmed-delivery acknowledgement MUST finish before provider
+teardown; acknowledgement retries MUST themselves be admitted, and shutdown
+MUST wake cancelled retry waiters without attempting another delivery. A storage
+outage MUST surface the failed settlement and retain the consumed-token
+uncertainty rather than allowing replay or a late write into a closed store.
+
+Queue drains MUST coalesce wake-ups and re-read the committed canonical queue
+after a reserved head is edited or removed. Stale reservations MAY retry;
+ordinary authentication or storage failures MUST NOT cause a hot retry loop.
+A durable reply settlement MUST wake eligible queued work after releasing its
+own locks, without clearing a newer question or dispatching from a stopped,
+suspended, deleting, or already-owned session.
 
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.

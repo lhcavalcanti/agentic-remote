@@ -190,6 +190,11 @@ release directory; a mismatch is refused before changing the runtime source.
 The release identifier `current` is reserved for the active symlink. Both setup
 argument parsing and publication reject it before installing dependencies,
 building, creating release paths, or quarantining existing inventory.
+Identifiers present in either the live or rejected inventory remain reserved,
+including file and symlink entries. Validation uses the canonical inventory
+location and runs before quarantine, so moving a rejected release cannot free
+its identity for reuse. A retry must use a fresh identifier; retained rejection
+markers and archived data are never overwritten by a new build.
 
 Graduate only what `origin/main` already contains. A clean local `main` can sit
 ahead of its upstream, so comparing `HEAD` against `refs/remotes/origin/main`

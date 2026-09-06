@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "3737ee671006dce7e8d6aeb8fe5b64cf22195b51",
+  "built_at_commit": "a0c2516a62895dc432595b3146df4029ce013f67",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -55,7 +55,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L135",
+      "source_location": "L144",
       "target": "bin_agentic_remote_derived_origins",
       "weight": 1.0
     },
@@ -77,7 +77,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L297",
+      "source_location": "L305",
       "target": "bin_agentic_remote_enable_linger",
       "weight": 1.0
     },
@@ -99,7 +99,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L437",
+      "source_location": "L445",
       "target": "bin_agentic_remote_pair_info",
       "weight": 1.0
     },
@@ -110,7 +110,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L218",
+      "source_location": "L227",
       "target": "bin_agentic_remote_publish_release",
       "weight": 1.0
     },
@@ -121,7 +121,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L177",
+      "source_location": "L186",
       "target": "bin_agentic_remote_quarantine_inactive_rejected_releases",
       "weight": 1.0
     },
@@ -154,7 +154,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L463",
+      "source_location": "L471",
       "target": "bin_agentic_remote_rollback_service",
       "weight": 1.0
     },
@@ -209,7 +209,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L310",
+      "source_location": "L318",
       "target": "bin_agentic_remote_setup_service",
       "weight": 1.0
     },
@@ -220,7 +220,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L144",
+      "source_location": "L153",
       "target": "bin_agentic_remote_sync_release_paths",
       "weight": 1.0
     },
@@ -242,7 +242,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L88",
+      "source_location": "L97",
       "target": "bin_agentic_remote_systemd_quote",
       "weight": 1.0
     },
@@ -253,7 +253,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L494",
+      "source_location": "L502",
       "target": "bin_agentic_remote_uninstall_service",
       "weight": 1.0
     },
@@ -264,7 +264,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L457",
+      "source_location": "L465",
       "target": "bin_agentic_remote_update_service",
       "weight": 1.0
     },
@@ -341,7 +341,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote",
       "source_file": "bin/agentic-remote",
-      "source_location": "L95",
+      "source_location": "L104",
       "target": "bin_agentic_remote_write_service",
       "weight": 1.0
     },
@@ -353,20 +353,8 @@
       "relation": "calls",
       "source": "bin_agentic_remote__entry",
       "source_file": "bin/agentic-remote",
-      "source_location": "L514",
+      "source_location": "L522",
       "target": "bin_agentic_remote_die",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote__entry",
-      "source_file": "bin/agentic-remote",
-      "source_location": "L527",
-      "target": "bin_agentic_remote_pair_info",
       "weight": 1.0
     },
     {
@@ -378,6 +366,18 @@
       "source": "bin_agentic_remote__entry",
       "source_file": "bin/agentic-remote",
       "source_location": "L535",
+      "target": "bin_agentic_remote_pair_info",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote__entry",
+      "source_file": "bin/agentic-remote",
+      "source_location": "L543",
       "target": "bin_agentic_remote_rollback_service",
       "weight": 1.0
     },
@@ -389,7 +389,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote__entry",
       "source_file": "bin/agentic-remote",
-      "source_location": "L511",
+      "source_location": "L519",
       "target": "bin_agentic_remote_setup_service",
       "weight": 1.0
     },
@@ -401,7 +401,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote__entry",
       "source_file": "bin/agentic-remote",
-      "source_location": "L539",
+      "source_location": "L547",
       "target": "bin_agentic_remote_uninstall_service",
       "weight": 1.0
     },
@@ -413,7 +413,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote__entry",
       "source_file": "bin/agentic-remote",
-      "source_location": "L531",
+      "source_location": "L539",
       "target": "bin_agentic_remote_update_service",
       "weight": 1.0
     },
@@ -425,7 +425,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote__entry",
       "source_file": "bin/agentic-remote",
-      "source_location": "L542",
+      "source_location": "L550",
       "target": "bin_agentic_remote_usage",
       "weight": 1.0
     },
@@ -437,7 +437,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_pair_info",
       "source_file": "bin/agentic-remote",
-      "source_location": "L440",
+      "source_location": "L448",
       "target": "bin_agentic_remote_config_value",
       "weight": 1.0
     },
@@ -449,7 +449,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_pair_info",
       "source_file": "bin/agentic-remote",
-      "source_location": "L445",
+      "source_location": "L453",
       "target": "bin_agentic_remote_die",
       "weight": 1.0
     },
@@ -461,7 +461,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_pair_info",
       "source_file": "bin/agentic-remote",
-      "source_location": "L438",
+      "source_location": "L446",
       "target": "bin_agentic_remote_require_command",
       "weight": 1.0
     },
@@ -2727,7 +2727,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_publish_release",
       "source_file": "bin/agentic-remote",
-      "source_location": "L238",
+      "source_location": "L246",
       "target": "bin_agentic_remote_cleanup_publication",
       "weight": 1.0
     },
@@ -2739,7 +2739,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_publish_release",
       "source_file": "bin/agentic-remote",
-      "source_location": "L223",
+      "source_location": "L232",
       "target": "bin_agentic_remote_die",
       "weight": 1.0
     },
@@ -2751,7 +2751,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_publish_release",
       "source_file": "bin/agentic-remote",
-      "source_location": "L227",
+      "source_location": "L236",
       "target": "bin_agentic_remote_quarantine_inactive_rejected_releases",
       "weight": 1.0
     },
@@ -2763,7 +2763,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_publish_release",
       "source_file": "bin/agentic-remote",
-      "source_location": "L266",
+      "source_location": "L274",
       "target": "bin_agentic_remote_sync_release_paths",
       "weight": 1.0
     },
@@ -2775,7 +2775,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_publish_release",
       "source_file": "bin/agentic-remote",
-      "source_location": "L221",
+      "source_location": "L230",
       "target": "bin_agentic_remote_validate_release_id",
       "weight": 1.0
     },
@@ -2787,7 +2787,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_quarantine_inactive_rejected_releases",
       "source_file": "bin/agentic-remote",
-      "source_location": "L212",
+      "source_location": "L221",
       "target": "bin_agentic_remote_sync_release_paths",
       "weight": 1.0
     },
@@ -2811,7 +2811,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_rollback_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L466",
+      "source_location": "L474",
       "target": "bin_agentic_remote_die",
       "weight": 1.0
     },
@@ -2823,7 +2823,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_rollback_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L467",
+      "source_location": "L475",
       "target": "bin_agentic_remote_quarantine_inactive_rejected_releases",
       "weight": 1.0
     },
@@ -2835,7 +2835,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_rollback_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L487",
+      "source_location": "L495",
       "target": "bin_agentic_remote_sync_release_paths",
       "weight": 1.0
     },
@@ -2847,7 +2847,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L355",
+      "source_location": "L363",
       "target": "bin_agentic_remote_config_value",
       "weight": 1.0
     },
@@ -2859,7 +2859,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L386",
+      "source_location": "L394",
       "target": "bin_agentic_remote_derived_origins",
       "weight": 1.0
     },
@@ -2871,7 +2871,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L318",
+      "source_location": "L326",
       "target": "bin_agentic_remote_die",
       "weight": 1.0
     },
@@ -2883,7 +2883,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L425",
+      "source_location": "L433",
       "target": "bin_agentic_remote_enable_linger",
       "weight": 1.0
     },
@@ -2895,7 +2895,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L395",
+      "source_location": "L403",
       "target": "bin_agentic_remote_publish_release",
       "weight": 1.0
     },
@@ -2907,7 +2907,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L426",
+      "source_location": "L434",
       "target": "bin_agentic_remote_quarantine_inactive_rejected_releases",
       "weight": 1.0
     },
@@ -2919,7 +2919,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L349",
+      "source_location": "L357",
       "target": "bin_agentic_remote_require_command",
       "weight": 1.0
     },
@@ -2931,7 +2931,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L371",
+      "source_location": "L379",
       "target": "bin_agentic_remote_validate_host",
       "weight": 1.0
     },
@@ -2943,7 +2943,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L374",
+      "source_location": "L382",
       "target": "bin_agentic_remote_validate_name",
       "weight": 1.0
     },
@@ -2955,7 +2955,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L372",
+      "source_location": "L380",
       "target": "bin_agentic_remote_validate_port",
       "weight": 1.0
     },
@@ -2967,7 +2967,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L340",
+      "source_location": "L348",
       "target": "bin_agentic_remote_validate_release_id",
       "weight": 1.0
     },
@@ -2979,7 +2979,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L373",
+      "source_location": "L381",
       "target": "bin_agentic_remote_validate_role",
       "weight": 1.0
     },
@@ -2991,7 +2991,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_setup_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L420",
+      "source_location": "L428",
       "target": "bin_agentic_remote_write_service",
       "weight": 1.0
     },
@@ -3003,7 +3003,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_update_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L458",
+      "source_location": "L466",
       "target": "bin_agentic_remote_require_command",
       "weight": 1.0
     },
@@ -3015,7 +3015,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_update_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L460",
+      "source_location": "L468",
       "target": "bin_agentic_remote_setup_service",
       "weight": 1.0
     },
@@ -3087,7 +3087,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_write_service",
       "source_file": "bin/agentic-remote",
-      "source_location": "L98",
+      "source_location": "L107",
       "target": "bin_agentic_remote_die",
       "weight": 1.0
     },
@@ -38554,7 +38554,7 @@
       "relation": "contains",
       "source": "server_release_publication_test",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L22",
+      "source_location": "L23",
       "target": "server_release_publication_test_directories",
       "weight": 1.0
     },
@@ -38565,7 +38565,7 @@
       "relation": "contains",
       "source": "server_release_publication_test",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L21",
+      "source_location": "L22",
       "target": "server_release_publication_test_exec",
       "weight": 1.0
     },
@@ -38576,7 +38576,7 @@
       "relation": "contains",
       "source": "server_release_publication_test",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L30",
+      "source_location": "L31",
       "target": "server_release_publication_test_publicationfixture",
       "weight": 1.0
     },
@@ -38587,7 +38587,7 @@
       "relation": "contains",
       "source": "server_release_publication_test",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L101",
+      "source_location": "L102",
       "target": "server_release_publication_test_publicationsyncevent",
       "weight": 1.0
     },
@@ -38598,7 +38598,7 @@
       "relation": "contains",
       "source": "server_release_publication_test",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L109",
+      "source_location": "L110",
       "target": "server_release_publication_test_publicationsynctrace",
       "weight": 1.0
     },
@@ -38610,7 +38610,7 @@
       "relation": "calls",
       "source": "server_release_publication_test_publicationfixture",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L58",
+      "source_location": "L59",
       "target": "server_release_publication_test_exec",
       "weight": 1.0
     },
@@ -72928,7 +72928,7 @@
       },
       "norm_label": "cleanup_publication()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L238"
+      "source_location": "L246"
     },
     {
       "_origin": "ast",
@@ -72988,7 +72988,7 @@
       },
       "norm_label": "derived_origins()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L135"
+      "source_location": "L144"
     },
     {
       "_origin": "ast",
@@ -73018,7 +73018,7 @@
       },
       "norm_label": "enable_linger()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L297"
+      "source_location": "L305"
     },
     {
       "_origin": "ast",
@@ -73048,7 +73048,7 @@
       },
       "norm_label": "pair_info()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L437"
+      "source_location": "L445"
     },
     {
       "_origin": "ast",
@@ -74548,7 +74548,7 @@
       },
       "norm_label": "publish_release()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L218"
+      "source_location": "L227"
     },
     {
       "_origin": "ast",
@@ -74563,7 +74563,7 @@
       },
       "norm_label": "quarantine_inactive_rejected_releases()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L177"
+      "source_location": "L186"
     },
     {
       "_origin": "ast",
@@ -74608,7 +74608,7 @@
       },
       "norm_label": "rollback_service()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L463"
+      "source_location": "L471"
     },
     {
       "_origin": "ast",
@@ -74683,7 +74683,7 @@
       },
       "norm_label": "setup_service()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L310"
+      "source_location": "L318"
     },
     {
       "_origin": "ast",
@@ -74698,7 +74698,7 @@
       },
       "norm_label": "sync_release_paths()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L144"
+      "source_location": "L153"
     },
     {
       "_origin": "ast",
@@ -74728,7 +74728,7 @@
       },
       "norm_label": "systemd_quote()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L88"
+      "source_location": "L97"
     },
     {
       "_origin": "ast",
@@ -74743,7 +74743,7 @@
       },
       "norm_label": "uninstall_service()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L494"
+      "source_location": "L502"
     },
     {
       "_origin": "ast",
@@ -74758,7 +74758,7 @@
       },
       "norm_label": "update_service()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L457"
+      "source_location": "L465"
     },
     {
       "_origin": "ast",
@@ -74863,7 +74863,7 @@
       },
       "norm_label": "write_service()",
       "source_file": "bin/agentic-remote",
-      "source_location": "L95"
+      "source_location": "L104"
     },
     {
       "_origin": "ast",
@@ -86160,7 +86160,7 @@
       "label": "directories",
       "norm_label": "directories",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L22"
+      "source_location": "L23"
     },
     {
       "_origin": "ast",
@@ -86171,7 +86171,7 @@
       "label": "exec",
       "norm_label": "exec",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L21"
+      "source_location": "L22"
     },
     {
       "_callable": true,
@@ -86183,7 +86183,7 @@
       "label": "publicationFixture()",
       "norm_label": "publicationfixture()",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L30"
+      "source_location": "L31"
     },
     {
       "_callable": true,
@@ -86196,7 +86196,7 @@
       "label": "PublicationSyncEvent",
       "norm_label": "publicationsyncevent",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L101"
+      "source_location": "L102"
     },
     {
       "_callable": true,
@@ -86208,7 +86208,7 @@
       "label": "publicationSyncTrace()",
       "norm_label": "publicationsynctrace()",
       "source_file": "server/release-publication.test.ts",
-      "source_location": "L109"
+      "source_location": "L110"
     },
     {
       "_origin": "ast",

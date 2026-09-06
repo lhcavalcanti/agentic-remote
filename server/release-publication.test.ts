@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  readlink,
   realpath,
   rename,
   rm,
@@ -239,6 +240,96 @@ fs.fsyncSync = (fd) => {
       }
     },
   )
+
+  describe('release ID namespace', () => {
+    it.each([
+      { command: 'publish_release', inventory: 'live' },
+      { command: 'publish_release', inventory: 'rejected' },
+      { command: 'setup_service', inventory: 'live' },
+      { command: 'setup_service', inventory: 'rejected' },
+    ] as const)('rejects a $inventory ID before $command changes either inventory', async ({ command, inventory }) => {
+      const { repository, config, run, build } = await publicationFixture()
+      await build('healthy')
+      await run('publish_release', {}, ['known-good'])
+      const releases = path.join(config, 'releases')
+      const archive = `${releases}.rejected`
+      const current = await realpath(path.join(releases, 'current'))
+      await mkdir(archive)
+      const retained = path.join(inventory === 'live' ? releases : archive, 'taken')
+      await mkdir(retained)
+      await writeFile(path.join(retained, '.promotion-failed'), 'retained rejection')
+      const other = path.join(releases, 'other-rejection')
+      await mkdir(other)
+      await writeFile(path.join(other, '.promotion-failed'), 'unrelated rejection')
+      const liveBefore = (await readdir(releases)).sort()
+      const archivedBefore = (await readdir(archive)).sort()
+      await build('candidate')
+
+      await expect(run(command, {}, command === 'setup_service'
+        ? ['--release-id', 'taken']
+        : ['taken'])).rejects.toThrow(/release.*already.*exist/i)
+
+      expect(await realpath(path.join(releases, 'current'))).toBe(current)
+      expect((await readdir(releases)).sort()).toEqual(liveBefore)
+      expect((await readdir(archive)).sort()).toEqual(archivedBefore)
+      expect(await readFile(path.join(retained, '.promotion-failed'), 'utf8')).toBe('retained rejection')
+      expect(await readFile(path.join(other, '.promotion-failed'), 'utf8')).toBe('unrelated rejection')
+      expect(existsSync(path.join(repository, 'setup-commands'))).toBe(false)
+      expect((await readdir(config)).some((entry) => entry.startsWith('.release-stage.'))).toBe(false)
+
+      await run('publish_release', {}, ['fresh-id'])
+      expect(await readFile(path.join(releases, 'current', 'dist', 'index.html'), 'utf8')).toBe('candidate')
+      expect(await readFile(path.join(archive, 'taken', '.promotion-failed'), 'utf8')).toBe('retained rejection')
+    })
+
+    it.each(['directory', 'file', 'symlink', 'dangling symlink'])(
+      'reserves archived %s IDs even before a live inventory exists',
+      async (kind) => {
+        const { config, run, build } = await publicationFixture()
+        const releases = path.join(config, 'releases')
+        const archive = `${releases}.rejected`
+        const entry = path.join(archive, 'taken')
+        await mkdir(archive, { recursive: true })
+        if (kind === 'directory') {
+          await mkdir(entry)
+        } else if (kind === 'file') {
+          await writeFile(entry, 'retained archive data')
+        } else {
+          if (kind === 'symlink') await mkdir(path.join(config, 'kept'))
+          await symlink('../kept', entry)
+        }
+        await build('candidate')
+
+        await expect(run('publish_release', {}, ['taken']))
+          .rejects.toThrow(/release.*already.*exist.*rejected/i)
+
+        expect(existsSync(releases)).toBe(false)
+        expect(await readdir(archive)).toEqual(['taken'])
+        if (kind === 'file') expect(await readFile(entry, 'utf8')).toBe('retained archive data')
+        if (kind.includes('symlink')) expect(await readlink(entry)).toBe('../kept')
+      },
+    )
+
+    it('checks the canonical rejected inventory when the live root is a symlink', async () => {
+      const { repository, config, run, build } = await publicationFixture()
+      const physical = path.join(path.dirname(repository), 'release-inventory')
+      const archive = `${physical}.rejected`
+      await mkdir(physical)
+      await mkdir(path.join(archive, 'taken'), { recursive: true })
+      await writeFile(path.join(archive, 'taken', '.promotion-failed'), 'kept physical archive')
+      await mkdir(config)
+      await symlink(physical, path.join(config, 'releases'))
+      await build('candidate')
+
+      await expect(run('publish_release', {}, ['taken']))
+        .rejects.toThrow(/release.*already.*exist.*rejected/i)
+
+      expect(await readdir(physical)).toEqual([])
+      expect(await realpath(path.join(config, 'releases'))).toBe(physical)
+      expect(await readFile(path.join(archive, 'taken', '.promotion-failed'), 'utf8'))
+        .toBe('kept physical archive')
+    })
+  })
 
   it('flushes the complete staged tree and both rename parents before durably activating it', async () => {
     const { repository, config, run, build } = await publicationFixture()

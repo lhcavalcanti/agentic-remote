@@ -176,7 +176,7 @@
     "public/manifest.webmanifest": "b2f4e97bc2e9e059aa9adde04f4ce84456f3fc9838c80e86ac2852853aa91e32",
     "public/sw.js": "839ab0725d2a8ac2c1aeeef24be32d1bc45ff35282c3ada447fa6541082c5387",
     "server/accent-theme.test.ts": "2703744170f93735fb97c52bfb333f78b96cbe43dc0cedd8e1954528d16c91e0",
-    "server/active-sessions.test.ts": "28a91f50fb12b50d3d75717b56f03da98692ab8f5c212ba2874361ab665e8417",
+    "server/active-sessions.test.ts": "d455ce5a86d715232f744f5db98f42c964b547d92096cb53335e3f471b70ff3a",
     "server/active-sessions.ts": "3a86fe9ec604721f7f9d6b4b0777d316887abbfcca794d90bd6c2c79fa707380",
     "server/activity-spacing.test.ts": "b6446956cba3c708e2c4ff4a47016528851f6d69519e5e548c14ae062f9a03ca",
     "server/agent-service.test.ts": "8d8a4ecb3a7a39f08f39010ebd354dc72be701350d63be8c05e15b9f576a0b5a",
@@ -345,18 +345,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "3cd84e6788f8ca4e77d4d175f8b12dd1cb9b6d9bb0b25fb7462d3e4be78e24e0",
+    "GRAPH_REPORT.md": "8888c22bd5eb26769df1de37e1c1b44803fd08ab4df14e1f40b12443a66e3314",
     "communities.json": "5b0c20bfb394f4dd14dabd4b6431615d82aec83b3d7b52de9ea4850a36c4de96",
-    "graph.html": "772cc2bde3a454b7c27c41dd6dfd4d5d947ac81624f59ed19e2178ea1a198f4f",
-    "graph.json": "39b1af4e284ede08ea3a5f2042ef2b0e9d5b473364709be59054eacb5fa34a70"
+    "graph.html": "cd51e7cfa8f70028253845959861d626d5505f0ab5340f134cd0c835ba4b7d38",
+    "graph.json": "493054b9f93e1652e333e954069ed73576a8dc9aa190038f6f53ba4dbd2b334a"
   },
   "schema_version": 1,
-  "source_commit": "0eeb2f8ba04008dc796d0c7789354c3fd96f015f",
-  "source_fingerprint": "acf5bee635595bcff458c7c547f9aff4103592073802d0db9d64ec4cf6b3fb7d",
+  "source_commit": "d9118199fcb65427ae4356dae4de8f0f29023c71",
+  "source_fingerprint": "a0532a93429be92bed691fe12bcae4d74e9185a915328bcf436294bb989b71f5",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "server/agent-service.ts",
-    "server/claude-agent-service.ts",
-    "server/session-reply-durability.test.ts"
+    "server/active-sessions.test.ts"
   ]
 }

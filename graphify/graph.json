@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "0eeb2f8ba04008dc796d0c7789354c3fd96f015f",
+  "built_at_commit": "d9118199fcb65427ae4356dae4de8f0f29023c71",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -4301,7 +4301,7 @@
       "relation": "contains",
       "source": "server_active_sessions_test",
       "source_file": "server/active-sessions.test.ts",
-      "source_location": "L489",
+      "source_location": "L495",
       "target": "server_active_sessions_test_processexists",
       "weight": 1.0
     },
@@ -4323,7 +4323,7 @@
       "relation": "contains",
       "source": "server_active_sessions_test",
       "source_file": "server/active-sessions.test.ts",
-      "source_location": "L506",
+      "source_location": "L512",
       "target": "server_active_sessions_test_waitforprocessexit",
       "weight": 1.0
     },
@@ -4395,7 +4395,7 @@
       "relation": "calls",
       "source": "server_active_sessions_test_waitforprocessexit",
       "source_file": "server/active-sessions.test.ts",
-      "source_location": "L508",
+      "source_location": "L514",
       "target": "server_active_sessions_test_processexists",
       "weight": 1.0
     },
@@ -70049,7 +70049,7 @@
       "label": "processExists()",
       "norm_label": "processexists()",
       "source_file": "server/active-sessions.test.ts",
-      "source_location": "L489"
+      "source_location": "L495"
     },
     {
       "_origin": "ast",
@@ -70072,7 +70072,7 @@
       "label": "waitForProcessExit()",
       "norm_label": "waitforprocessexit()",
       "source_file": "server/active-sessions.test.ts",
-      "source_location": "L506"
+      "source_location": "L512"
     },
     {
       "_origin": "ast",

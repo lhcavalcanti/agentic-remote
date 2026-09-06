@@ -80,6 +80,17 @@ function readyComposer(text = '', working = false): string {
 const shellReadyComposer =
   "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
 
+function fixtureReceiptWriter(filename: string): string {
+  return `
+import { renameSync, writeFileSync } from 'node:fs'
+const receiptPath = ${JSON.stringify(filename)}
+const writeReceipt = (value) => {
+  writeFileSync(receiptPath + '.tmp', JSON.stringify(value))
+  renameSync(receiptPath + '.tmp', receiptPath)
+}
+`
+}
+
 async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?: string, footer = '') {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
@@ -88,7 +99,7 @@ async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?
   const sessionId = randomUUID()
   await writeFile(output, '')
   await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let input = ''
 let pasted
 const received = { pastes: [], submits: [] }
@@ -109,12 +120,12 @@ process.stdin.on('data', (data) => {
     pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
     input = input.slice(end + 6)
     received.pastes.push(pasted)
-    writeFileSync(${JSON.stringify(output)}, JSON.stringify(received))
+    writeReceipt(received)
     draw(composer(pasted, ${working}))
   }
   if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
     received.submits.push(input.includes('\\x11') ? 'queue' : 'enter')
-    writeFileSync(${JSON.stringify(output)}, JSON.stringify(received))
+    writeReceipt(received)
     input = ''
     pasted = undefined
     draw(${JSON.stringify(nextPane)} ?? composer('', ${working}))
@@ -149,9 +160,9 @@ async function ownedStartupFixture(initialPane?: string, footer = '') {
   const output = path.join(directory, 'received.json')
   await writeFile(output, JSON.stringify({ keys: '', pastes: [], submits: 0 }))
   await writeFile(executable, `#!/usr/bin/env node
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 const state = { keys: '', pastes: [], submits: 0 }
-const save = () => writeFileSync(${JSON.stringify(output)}, JSON.stringify(state))
+const save = () => writeReceipt(state)
 const makeComposer = ${readyComposer.toString()}
 const composer = (text = '') => makeComposer(text) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
@@ -314,7 +325,7 @@ describe('TmuxTerminalSessionController', () => {
         cwd: await readlink(`/proc/${pid}/cwd`),
       }
     }
-    return { controller, sessionId, replacementCwd, executable, snapshot }
+    return { controller, sessionId, replacementCwd, executable, snapshot, location }
   }
 
   it('restores the original terminal command and cwd when replacement commit rejects', async () => {
@@ -337,10 +348,10 @@ describe('TmuxTerminalSessionController', () => {
   })
 
   it('reports both the rejected replacement and a failed terminal restoration', async () => {
-    const { controller, sessionId, replacementCwd, executable } = await clearFixture()
+    const { controller, sessionId, replacementCwd, location } = await clearFixture()
     const failure = new Error('Replacement write refused')
     await expect(controller.reset(sessionId, randomUUID(), replacementCwd, undefined, async () => {
-      await rm(executable)
+      await execFileAsync('tmux', ['kill-pane', '-t', location.windowId])
       throw failure
     })).rejects.toMatchObject({
       name: 'AggregateError',
@@ -370,7 +381,7 @@ describe('TmuxTerminalSessionController', () => {
         : Array.from({ length: 32 }, (_, index) => `line ${index}`).join('\n')
     await writeFile(output, '')
     await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let input = ''
 let pasted
 let enters = 0
@@ -394,7 +405,7 @@ process.stdin.on('data', (data) => {
   }
   if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
     enters += 1
-    writeFileSync(${JSON.stringify(output)}, JSON.stringify({ content: pasted, enters, queued: input.includes('\\x11') }))
+    writeReceipt({ content: pasted, enters, queued: input.includes('\\x11') })
     input = ''
     draw('')
   }
@@ -574,11 +585,11 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
       const sessionId = randomUUID()
       await writeFile(output, '')
       await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let selected = 1
 let pending = ''
 function finish(decision) {
-  writeFileSync(${JSON.stringify(output)}, JSON.stringify({ decision }))
+  writeReceipt({ decision })
   process.stdout.write('\\x1b[2J\\x1b[HReady\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
 }
 process.stdin.setRawMode(true)
@@ -698,12 +709,11 @@ process.stdout.write(${JSON.stringify(sessionInUsePane.replace('❯ 1.', '  1.')
     ]
     await writeFile(output, '')
     await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let selected = 0
 let pending = ''
 function finish(action) {
-  writeFileSync(${JSON.stringify(output)}, JSON.stringify(
-    action === 'accept' ? { accepted: selected === 0 } : { action }))
+  writeReceipt(action === 'accept' ? { accepted: selected === 0 } : { action })
   process.stdout.write('\\x1b[2J\\x1b[HFinished\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
 }
 function draw() {

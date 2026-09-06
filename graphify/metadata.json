@@ -117,9 +117,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 106,
+  "communities": 103,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5721,
+  "edges": 5724,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -228,7 +228,7 @@
     "server/session-store-providers.test.ts": "07465b5fada184615b1b40769b7973e8f2dcc6f0b61a6bb0cc0c35154e258d54",
     "server/session-store.test.ts": "c01fd8a8f8c5190dbb0926d09d93efabd6142c2c606640e0eab72e7614c064b4",
     "server/session-store.ts": "aeba670278a6a3b72cf590a80f054a40094023d3d68c1f7f33fbf3d1ede36172",
-    "server/terminal-session.test.ts": "1a029b567c9bf1cf24ebceda01c07bf2df9a76aff8bc4ec631e495a2ee15813c",
+    "server/terminal-session.test.ts": "1737d800bed51811da53c87a43a9f7fa7acc57f4e56a61a511815429eb1810fb",
     "server/terminal-session.ts": "5c15f30b9a04caf02fa9205788d7574a041e0d86adadf5d97c44eff54a61501c",
     "server/tmux-test-helpers.ts": "cfa80cfa5218c9d8d713a9805067f7a58759c0065c94ee6e6ae4fd62a5986116",
     "server/transcription-media-digests.test.ts": "dc7e6f6658dc2bdab766874a8e850c8fe837fb25252e82c8e6f255c0254ddd8d",
@@ -289,7 +289,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2209,
+  "nodes": 2210,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -341,21 +341,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "3e5383879455ccae83eb52533a4834f15ce667ac759dd0f18d037c3008f19d45",
-    "communities.json": "d926d5bd4c100190d6a7a88777616247363ec230b76878a4842ddf97c38f05f6",
-    "graph.html": "e14822c594889e81ac29d8e92b3a4ae53887c4fe039e45f103566d1e9bdd1931",
-    "graph.json": "60a03fccdfeed94ec1748e46e5ec688826ff0b46d503a7bb4dff10a3044b6a6c"
+    "GRAPH_REPORT.md": "44491a0b25a529ddbbffa7994a031c00d44a91303fcf2ed3721ef9ff0c785e03",
+    "communities.json": "25df897f25baa3db4703a600b909a906d2ddd22bed213a6c75ab9fa0c7197181",
+    "graph.html": "1a294bcc1f632d4d00197c9a32cf3e392c41afdaa74227162a8fa8358193136a",
+    "graph.json": "3acb8414e718a19aad132e991ca6b0b0c57de2b437aff33eb5b7f476259ba53f"
   },
   "schema_version": 1,
-  "source_commit": "a06e22e42e741fcc45c75d1edde972b00fbb8fb0",
-  "source_fingerprint": "ba8deb948081d79397d4f91b101d37010d2ffb74342b111d4e5d5827cf885be4",
+  "source_commit": "44d42137bc467fe086e1bc1034c94615aa4c7007",
+  "source_fingerprint": "7796217d7951822128ec275984253f7dc82eea802f48ebeb18d02706a738fe8f",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "server/agent-service.ts",
-    "server/session-store-durability.test.ts",
-    "server/session-store-providers.test.ts",
-    "server/session-store.test.ts",
-    "server/session-store.ts"
+    "server/terminal-session.test.ts"
   ]
 }

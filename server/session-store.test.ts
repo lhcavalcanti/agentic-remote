@@ -26,6 +26,32 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it('keeps the usable store when later legacy-lineage validation rejects a document', async () => {
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'kept', title: 'Keep this session', cwd: '/project',
+      updatedAt: '2026-09-05T00:00:00.000Z', status: 'idle', messages: [],
+    })
+    const before = store.list()
+    const invalid = JSON.stringify({
+      version: 1,
+      retiredSessionIds: ['kept'],
+      sessions: {
+        first: { id: 'first', messages: [], replacedSessionIds: ['older'] },
+        malformed: { id: 'malformed', messages: [], replacedSessionIds: [null] },
+      },
+    })
+    const filename = path.join(directory, 'state.json')
+    await writeFile(filename, invalid)
+    await expect(store.initialize()).rejects.toThrow('Invalid session retirement metadata')
+    expect(store.list()).toEqual(before)
+    expect(store.isRetiredSession('kept')).toBe(false)
+    expect(store.isRetiredSession('older')).toBe(false)
+    expect(await readFile(filename, 'utf8')).toBe(invalid)
+    await store.renameSession('kept', 'Still usable')
+    expect(JSON.parse(await readFile(filename, 'utf8')).sessions.kept.title).toBe('Still usable')
+  })
+
   it.each([
     { name: 'null document', value: null },
     { name: 'array document', value: [] },

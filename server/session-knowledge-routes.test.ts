@@ -7,7 +7,7 @@ import type {
   ComputerSummary, HubEvent, ManagedSession, ServerEvent, SessionDetail, SessionKnowledgeBinding,
 } from '../shared/contracts.js'
 import { buildApp, type ServerRole } from './app.js'
-import type { ComputerManager } from './computer-manager.js'
+import type { ComputerManager, SessionMetadataLookup } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import type { NodeIdentityStore } from './node-identity.js'
 import type { PushNotificationService } from './push-notification-service.js'
@@ -41,6 +41,7 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
   sessions = [session('hub', 'one'), session('hub', 'two'), session('worker', 'one')]
   history: ManagedSession[] = []
   answeredComputerIds = ['hub', 'worker', 'library']
+  historyAuthoritative: boolean | undefined
   registrations = new Map(this.computers.map((computer) => [computer.id, Symbol()]))
   legacyClear = false
   initialize = vi.fn(async () => undefined)
@@ -51,6 +52,18 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
     answeredComputerIds: [...this.answeredComputerIds],
   }))
   listHistory = vi.fn(async () => structuredClone(this.history))
+  lookupSessionMetadata = vi.fn(async (computerId: string, sessionId: string): Promise<SessionMetadataLookup> => {
+    const active = this.sessions.filter((entry) => entry.computerId === computerId)
+    const history = this.history.filter((entry) => entry.computerId === computerId)
+    return {
+      session: active.find((entry) => entry.id === sessionId) ?? history.find((entry) => entry.id === sessionId),
+      relatedSessions: structuredClone([...active, ...history].filter(
+        (entry) => entry.id === sessionId || entry.replacedSessionIds?.includes(sessionId),
+      )),
+      activeAuthoritative: this.answeredComputerIds.includes(computerId),
+      historyAuthoritative: this.historyAuthoritative ?? this.answeredComputerIds.includes(computerId),
+    }
+  })
   getSession = vi.fn(async () => { throw new Error('Metadata routes must not open a session') })
   activateSession = vi.fn()
   captureComputerRegistration = vi.fn((computerId: string) => {
@@ -60,6 +73,9 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
   })
   listKnowledge = vi.fn(async () => ({ path: '.', entries: [] }))
   deleteSession = vi.fn(async (computerId: string, sessionId: string) => {
+    if (![...this.sessions, ...this.history].some((entry) => entry.computerId === computerId && entry.id === sessionId)) {
+      throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+    }
     this.sessions = this.sessions.filter((entry) => entry.computerId !== computerId || entry.id !== sessionId)
     this.history = this.history.filter((entry) => entry.computerId !== computerId || entry.id !== sessionId)
     this.emit('event', { type: 'session.removed', computerId, sessionId })
@@ -96,9 +112,11 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
   }
 }
 
-async function fixture(options: { role?: ServerRole; actualManager?: boolean } = {}) {
-  const directory = path.join(process.cwd(), `.session-knowledge-routes-test-${randomUUID()}`)
-  const manager = new FakeManager()
+async function fixture(options: {
+  role?: ServerRole; actualManager?: boolean; directory?: string; manager?: FakeManager
+} = {}) {
+  const directory = options.directory ?? path.join(process.cwd(), `.session-knowledge-routes-test-${randomUUID()}`)
+  const manager = options.manager ?? new FakeManager()
   const service = Object.assign(new EventEmitter<{ event: [ServerEvent] }>(), {
     providers: () => [],
     start: vi.fn(async () => undefined),
@@ -361,11 +379,12 @@ describe('session Knowledge routes', () => {
   it.each(['hub', 'library'])('rejects pairing changes to %s during identity validation', async (computerId) => {
     const { manager, put, root, store, updates } = await fixture()
     const held = gate()
-    manager.listSessionsWithAuthority.mockImplementationOnce(async () => {
-      const sessions = structuredClone(manager.sessions)
+    const lookup = manager.lookupSessionMetadata.getMockImplementation()!
+    manager.lookupSessionMetadata.mockImplementationOnce(async (...args) => {
+      const result = await lookup(...args)
       held.start()
       await held.wait
-      return { sessions, answeredComputerIds: ['hub', 'worker', 'library'] }
+      return result
     })
     const pending = put(root.id).then((response) => response)
     await held.started
@@ -388,30 +407,41 @@ describe('session Knowledge routes', () => {
     expect(updates).toEqual([])
   })
 
-  it.each(['hub', 'library'])('does not broadcast a commit overtaken by %s re-pairing', async (computerId) => {
-    const { manager, put, root, updates } = await fixture()
+  it.each(['hub', 'library'])('restores memory and disk when %s re-pairing overtakes rename', async (computerId) => {
+    const { manager, put, root, secondRoot, updates, store, directory, knowledge } = await fixture()
+    await put(secondRoot.id)
+    const before = store.get('hub', 'one')
+    const statePath = path.join(directory, 'session-knowledge.json')
+    const persisted = await readFile(statePath, 'utf8')
+    updates.length = 0
     const held = gate()
     vi.mocked(rename).mockImplementationOnce(async (...args) => {
       await disk.rename(...args)
       held.start()
       await held.wait
     })
-    const pending = put(root.id).then((response) => response)
+    const pending = put(root.id, 1).then((response) => response)
     await held.started
     manager.rePair(computerId)
     held.finish()
     expect((await pending).statusCode).toBe(409)
     expect(updates).toEqual([])
+    expect(store.get('hub', 'one')).toEqual(before)
+    expect(await readFile(statePath, 'utf8')).toBe(persisted)
+    const reloaded = new SessionKnowledgeStore(directory, knowledge)
+    await reloaded.initialize()
+    expect(reloaded.get('hub', 'one')).toEqual(before)
   })
 
   it('does not accept a lookup snapshot overtaken by a session removal', async () => {
     const { manager, put, root, store } = await fixture()
     const held = gate()
-    manager.listSessionsWithAuthority.mockImplementationOnce(async () => {
-      const sessions = structuredClone(manager.sessions)
+    const lookup = manager.lookupSessionMetadata.getMockImplementation()!
+    manager.lookupSessionMetadata.mockImplementationOnce(async (...args) => {
+      const result = await lookup(...args)
       held.start()
       await held.wait
-      return { sessions, answeredComputerIds: ['hub'] }
+      return result
     })
     const pending = put(root.id).then((response) => response)
     await held.started
@@ -419,6 +449,140 @@ describe('session Knowledge routes', () => {
     held.finish()
     expect((await pending).statusCode).toBe(409)
     expect(store.get('hub', 'one').revision).toBe(0)
+  })
+
+  it('restores the previous binding in memory and on disk when the chosen root is deleted during rename', async () => {
+    const { put, root, secondRoot, knowledge, store, directory, updates } = await fixture()
+    await put(secondRoot.id)
+    const before = store.get('hub', 'one')
+    const statePath = path.join(directory, 'session-knowledge.json')
+    const persisted = await readFile(statePath, 'utf8')
+    const held = gate()
+    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+      await disk.rename(...args)
+      held.start()
+      await held.wait
+    })
+    updates.length = 0
+    const pending = put(root.id, 1).then((response) => response)
+    await held.started
+    await knowledge.removeRoot(root.id)
+    held.finish()
+    expect((await pending).statusCode).toBe(404)
+    expect(store.get('hub', 'one')).toEqual(before)
+    expect(await readFile(statePath, 'utf8')).toBe(persisted)
+    expect(updates).toEqual([])
+  })
+
+  it('rolls a rejected choice back before clear transfers the prior binding to its replacement', async () => {
+    const { app, manager, put, root, secondRoot, store, directory, get, updates } = await fixture()
+    await put(root.id)
+    const held = gate()
+    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+      await disk.rename(...args)
+      held.start()
+      await held.wait
+    })
+    updates.length = 0
+    const changing = put(secondRoot.id, 1).then((response) => response)
+    await held.started
+    const removed = new Promise<void>((resolve) => {
+      manager.once('event', (event) => {
+        expect(event.type).toBe('session.removed')
+        resolve()
+      })
+    })
+    const clearing = app.inject({
+      method: 'POST', url: '/api/computers/hub/sessions/one/clear', headers: trusted,
+    }).then((response) => response)
+    await removed
+    held.finish()
+    expect((await changing).statusCode).toBe(409)
+    expect((await clearing).statusCode).toBe(200)
+    expect((await get('hub', 'one-cleared')).json().binding.rootId).toBe(root.id)
+    expect(store.get('hub', 'one').revision).toBe(0)
+    const persisted = JSON.parse(await readFile(path.join(directory, 'session-knowledge.json'), 'utf8'))
+    expect(persisted.bindings).toEqual([expect.objectContaining({ sessionId: 'one-cleared', rootId: root.id, revision: 1 })])
+    expect(updates.every((binding) => binding.rootId === root.id)).toBe(true)
+  })
+
+  it('discards old-generation queued lineage when the same computer ID is re-registered', async () => {
+    const { manager, put, get, root, secondRoot, store, directory } = await fixture()
+    await put(root.id, 0, 'worker', 'one')
+    const held = holdWrite()
+    const blocker = put(secondRoot.id, 0, 'hub', 'two').then((response) => response)
+    await held.started
+    manager.emit('event', {
+      type: 'session.removed', computerId: 'worker', sessionId: 'one', replacedBy: 'successor',
+    })
+    manager.rePair('worker')
+    manager.sessions = [session('hub', 'two'), session('worker', 'one'), session('worker', 'successor')]
+    held.finish()
+    expect((await blocker).statusCode).toBe(200)
+    expect((await get('worker', 'one')).statusCode).toBe(200)
+    expect((await get('worker', 'successor')).json().binding.revision).toBe(0)
+    expect(store.get('worker', 'one').rootId).toBe(root.id)
+    const persisted = JSON.parse(await readFile(path.join(directory, 'session-knowledge.json'), 'utf8'))
+    expect(persisted.bindings.some((binding: SessionKnowledgeBinding) => binding.sessionId === 'successor')).toBe(false)
+    expect((await put(secondRoot.id, 1, 'worker', 'one')).statusCode).toBe(200)
+    expect((await put(root.id, 0, 'worker', 'successor')).statusCode).toBe(200)
+  })
+
+  it('does not let an old clear response install lineage in a new registration', async () => {
+    const { app, manager, put, get, root, store } = await fixture()
+    await put(root.id, 0, 'worker', 'one')
+    const held = gate()
+    manager.clearConversation.mockImplementationOnce(async () => {
+      held.start()
+      await held.wait
+      return session('worker', 'successor', ['one'])
+    })
+    const clearing = app.inject({
+      method: 'POST', url: '/api/computers/worker/sessions/one/clear', headers: trusted,
+    }).then((response) => response)
+    await held.started
+    manager.rePair('worker')
+    manager.sessions = [session('worker', 'one'), session('worker', 'successor')]
+    held.finish()
+    expect((await clearing).statusCode).toBe(409)
+    expect((await get('worker', 'one')).statusCode).toBe(200)
+    expect((await get('worker', 'successor')).json().binding.revision).toBe(0)
+    expect(store.get('worker', 'one').rootId).toBe(root.id)
+  })
+
+  it('retains lineage across ordinary online/offline updates of the same registration', async () => {
+    const { app, manager, put, get, root } = await fixture()
+    await put(root.id, 0, 'worker', 'one')
+    expect((await app.inject({
+      method: 'POST', url: '/api/computers/worker/sessions/one/clear', headers: trusted,
+    })).statusCode).toBe(200)
+    manager.sessions.push(session('worker', 'one'))
+    for (const online of [false, true]) {
+      const computer = manager.computers.find((entry) => entry.id === 'worker')!
+      computer.online = online
+      manager.emit('event', { type: 'computer.updated', computer })
+      expect((await get('worker', 'one')).statusCode).toBe(404)
+      expect((await get('worker', 'one-cleared')).json().binding.rootId).toBe(root.id)
+    }
+  })
+
+  it('does not call fleet-wide inventories when an unrelated node is hung', async () => {
+    const { manager, get, put, root } = await fixture()
+    manager.listSessionsWithAuthority.mockImplementation(() => new Promise(() => {}))
+    manager.listHistory.mockImplementation(() => new Promise(() => {}))
+    expect((await get()).statusCode).toBe(200)
+    expect((await put(root.id)).statusCode).toBe(200)
+    expect(manager.listSessionsWithAuthority).not.toHaveBeenCalled()
+    expect(manager.listHistory).not.toHaveBeenCalled()
+  })
+
+  it('returns retryable 503, not absence, when active metadata succeeds but history fails', async () => {
+    const { get, put, root, service } = await fixture({ actualManager: true })
+    service.listHistory.mockImplementation(() => { throw new Error('history unavailable') })
+    expect((await get('hub', 'historical')).statusCode).toBe(503)
+    expect((await put(root.id, 0, 'hub', 'historical')).statusCode).toBe(503)
+    expect(service.openSession).not.toHaveBeenCalled()
+    expect(service.activateSession).not.toHaveBeenCalled()
   })
 
   it('keeps failed persistence visible, emits no update, and permits retry', async () => {
@@ -600,6 +764,62 @@ describe('session Knowledge routes', () => {
     expect(store.get('hub', 'one').revision).toBe(0)
     expect(store.get('hub', 'two').rootId).toBe(root.id)
     expect(knowledge.getRoot(root.id)).toEqual(root)
+  })
+
+  it.each([false, true])('finishes failed delete cleanup idempotently (restart before retry: %s)', async (restart) => {
+    let context = await fixture()
+    const { manager, directory, root } = context
+    await context.put(root.id)
+    vi.mocked(rename).mockRejectedValueOnce(new Error('metadata rename refused'))
+    const failed = await context.app.inject({
+      method: 'DELETE', url: '/api/computers/hub/sessions/one', headers: trusted,
+    })
+    expect(failed.statusCode).toBe(503)
+    expect(manager.deleteSession).toHaveBeenCalledOnce()
+    expect(manager.sessions.some((session) => session.computerId === 'hub' && session.id === 'one')).toBe(false)
+    expect(context.store.get('hub', 'one').rootId).toBe(root.id)
+    if (restart) {
+      await context.app.close()
+      fixtures.splice(fixtures.findIndex((entry) => entry.runtime === context.runtime), 1)
+      context = await fixture({ directory, manager })
+      expect(context.store.get('hub', 'one').rootId).toBe(root.id)
+    }
+    const retried = await context.app.inject({
+      method: 'DELETE', url: '/api/computers/hub/sessions/one', headers: trusted,
+    })
+    expect(retried.statusCode).toBe(204)
+    // The fake provider throws not-found if called again. Confirmed passive
+    // absence, rather than swallowing that exception, finishes the cleanup.
+    expect(manager.deleteSession).toHaveBeenCalledOnce()
+    expect(context.store.get('hub', 'one').revision).toBe(0)
+    const reloaded = new SessionKnowledgeStore(directory, context.knowledge)
+    await reloaded.initialize()
+    expect(reloaded.get('hub', 'one').revision).toBe(0)
+  })
+
+  it.each([false, true])('does not infer delete completion from partial authority (active: %s)', async (active) => {
+    const { app, manager, put, root, store } = await fixture()
+    await put(root.id)
+    manager.sessions = []
+    manager.answeredComputerIds = active ? ['hub'] : []
+    manager.historyAuthoritative = !active
+    const response = await app.inject({
+      method: 'DELETE', url: '/api/computers/hub/sessions/one', headers: trusted,
+    })
+    expect(response.statusCode).toBe(503)
+    expect(manager.deleteSession).not.toHaveBeenCalled()
+    expect(store.get('hub', 'one').rootId).toBe(root.id)
+  })
+
+  it.each([403, 500])('does not swallow an unrelated deletion failure with status %s', async (statusCode) => {
+    const { app, manager, put, root, store } = await fixture()
+    await put(root.id)
+    manager.deleteSession.mockRejectedValueOnce(Object.assign(new Error('Deletion refused'), { statusCode }))
+    const response = await app.inject({
+      method: 'DELETE', url: '/api/computers/hub/sessions/one', headers: trusted,
+    })
+    expect(response.statusCode).toBe(statusCode)
+    expect(store.get('hub', 'one').rootId).toBe(root.id)
   })
 
   it('cleans unpaired session owners but retains other sessions’ unavailable root snapshots', async () => {

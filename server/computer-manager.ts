@@ -40,6 +40,13 @@ interface ComputerManagerEvents {
   event: [event: HubEvent]
 }
 
+export interface SessionMetadataLookup {
+  session?: ManagedSession
+  relatedSessions: ManagedSession[]
+  activeAuthoritative: boolean
+  historyAuthoritative: boolean
+}
+
 interface RemoteSessionListing {
   sessions: ManagedSession[]
   previous: ManagedSession[]
@@ -84,6 +91,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   private readonly sessionReads = new Map<string, RemoteSessionRead>()
   private readonly snapshotTokens = new Map<string, symbol>()
   private readonly remoteResyncs = new Map<string, RemoteResync>()
+  private readonly metadataClients = new Map<string, RemoteNodeClient>()
 
   constructor(
     private readonly localService: SessionService,
@@ -109,6 +117,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     this.sessionReads.clear()
     this.snapshotTokens.clear()
     this.remoteResyncs.clear()
+    this.metadataClients.clear()
     for (const client of clients) {
       client.stop()
     }
@@ -171,6 +180,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     this.invalidateRemoteReads(id)
     client?.stop()
     this.sessionCache.delete(id)
+    this.metadataClients.delete(id)
     await this.registry.remove(id)
     this.emit('event', { type: 'computer.removed', computerId: id })
   }
@@ -239,6 +249,69 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return [...local, ...remote.flat()].sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt),
     )
+  }
+
+  /** Passive identity/lineage lookup; never hydrates or activates an agent. */
+  async lookupSessionMetadata(
+    computerId: string,
+    sessionId: string,
+  ): Promise<SessionMetadataLookup> {
+    const computer = this.requireComputer(computerId)
+    const registrationIsCurrent = this.captureComputerRegistration(computerId)
+    const assertCurrent = () => {
+      if (!registrationIsCurrent()) {
+        throw Object.assign(new Error('Computer pairing changed while reading session metadata. Reload and retry.'), {
+          statusCode: 409,
+        })
+      }
+    }
+    let active: ManagedSession[] = []
+    let history: ManagedSession[] = []
+    let activeAuthoritative = false
+    let historyAuthoritative = false
+    const local = computerId === this.identity.info.id
+    const client = local ? undefined : this.requireClient(computerId)
+    try {
+      if (local) {
+        active = this.localService.listSessions().map((session) => managedSession(session, computer))
+        activeAuthoritative = true
+      } else {
+        const registered = this.registry.list().find((entry) => entry.id === computerId)!
+        const listing = await this.readRemoteSessions(registered, client!)
+        active = listing.authoritative || this.metadataClients.get(computerId) === client
+          ? listing.sessions : []
+        activeAuthoritative = listing.authoritative
+        if (listing.authoritative) this.metadataClients.set(computerId, client!)
+      }
+    } catch {
+      active = !local && this.metadataClients.get(computerId) === client
+        ? this.sessionCache.get(computerId) ?? [] : []
+    }
+    assertCurrent()
+    if (!active.some((session) => session.id === sessionId)) {
+      try {
+        history = (local ? this.localService.listHistory() : await client!.listHistory())
+          .map((session) => managedSession(session, computer))
+        historyAuthoritative = true
+      } catch {
+        // Failure to read history must not turn an empty active list into a
+        // claim that a suspended/historical session has been deleted.
+      }
+    }
+    assertCurrent()
+    const related = new Map<string, ManagedSession>()
+    for (const session of [...history, ...active]) {
+      if (session.id === sessionId || session.replacedSessionIds?.includes(sessionId)) {
+        related.set(session.id, session)
+      }
+    }
+    return {
+      session: active.find((session) => session.id === sessionId) ??
+        history.find((session) => session.id === sessionId),
+      relatedSessions: [...related.values()],
+      activeAuthoritative,
+      historyAuthoritative,
+    }
   }
 
   async listDirectories(

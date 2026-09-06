@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KnowledgeRoot, SessionKnowledgeBinding } from '../shared/contracts.js'
 import {
   SessionKnowledgeConflictError,
+  SessionKnowledgeRecoveryError,
   SessionKnowledgeReferenceError,
   SessionKnowledgeStore,
 } from './session-knowledge-store.js'
@@ -145,7 +146,7 @@ describe('SessionKnowledgeStore', () => {
     gate.finish()
     await first
     await refused
-    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeFile).mock.calls.filter(([file]) => String(file).endsWith('.pending'))).toHaveLength(1)
     expect(store.get('computer', 'session').rootId).toBe('one')
   })
 
@@ -217,6 +218,60 @@ describe('SessionKnowledgeStore', () => {
     gate.finish()
     await refused
     expect(store.get('computer', 'session').revision).toBe(0)
+    expect(await readdir(directory)).toEqual([])
+  })
+
+  it.each(['write', 'rename'] as const)('fails closed if rollback %s fails, and recovers the prior durable snapshot on restart', async (failure) => {
+    const { store, directory, statePath, catalog } = await fixture()
+    const before = await store.update('computer', 'session', { rootId: 'one', expectedRevision: 0 })
+    const persisted = await readFile(statePath, 'utf8')
+    const events: SessionKnowledgeBinding[] = []
+    store.on('updated', (binding) => events.push(binding))
+    let started!: () => void
+    let finish!: () => void
+    const renamed = new Promise<void>((resolve) => { started = resolve })
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    releases.push(finish)
+    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+      await disk.rename(...args)
+      started()
+      await gate
+    })
+    let valid = true
+    const writing = store.update('computer', 'session', { rootId: 'two', expectedRevision: 1 }, () => {
+      if (!valid) throw new SessionKnowledgeReferenceError('Computer pairing changed', 409)
+    })
+    const failed = expect(writing).rejects.toBeInstanceOf(SessionKnowledgeRecoveryError)
+    await renamed
+    expect(store.get('computer', 'session')).toEqual(before)
+    valid = false
+    if (failure === 'write') vi.mocked(writeFile).mockRejectedValueOnce(new Error('rollback disk full'))
+    else vi.mocked(rename).mockRejectedValueOnce(new Error('rollback rename refused'))
+    finish()
+    await failed
+    expect(() => store.get('computer', 'session')).toThrow(SessionKnowledgeRecoveryError)
+    expect(() => store.listBindings()).toThrow(SessionKnowledgeRecoveryError)
+    expect(events).toEqual([])
+    expect(JSON.parse(await readFile(statePath, 'utf8')).bindings[0].rootId).toBe('two')
+    expect(JSON.parse(await readFile(`${statePath}.recovery`, 'utf8')).previous).toBe(persisted)
+    expect((await stat(`${statePath}.recovery`)).mode & 0o777).toBe(0o600)
+    const reloaded = new SessionKnowledgeStore(directory, catalog)
+    await reloaded.initialize()
+    expect(reloaded.get('computer', 'session')).toEqual(before)
+    expect(await readFile(statePath, 'utf8')).toBe(persisted)
+    expect(await readdir(directory)).toEqual(['session-knowledge.json'])
+  })
+
+  it('recovers an interrupted initial write without accepting its root or creating an unlink tombstone', async () => {
+    const { directory, statePath, catalog } = await fixture()
+    await disk.mkdir(directory, { recursive: true })
+    await disk.writeFile(`${statePath}.recovery`, JSON.stringify({ version: 1, previous: null }), { mode: 0o600 })
+    await disk.writeFile(statePath, JSON.stringify({
+      version: 1, bindings: [{ computerId: 'computer', sessionId: 'session', rootId: 'one', root: root('one'), revision: 1 }],
+    }))
+    const reloaded = new SessionKnowledgeStore(directory, catalog)
+    await reloaded.initialize()
+    expect(reloaded.get('computer', 'session')).toMatchObject({ rootId: null, revision: 0 })
     expect(await readdir(directory)).toEqual([])
   })
 

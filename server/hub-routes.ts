@@ -544,9 +544,10 @@ export async function registerHubRoutes(
       const silenced =
         mutes?.settings().mutedSessions.includes(`${computerId}:${sessionId}`) ??
         false
+      const carryKnowledge = sessionKnowledgeLifecycle?.replacementCarrier(computerId)
       const session = await manager.clearConversation(computerId, sessionId)
       await Promise.all([
-        sessionKnowledgeLifecycle?.replaceSession(computerId, sessionId, session),
+        carryKnowledge?.(sessionId, session),
         silenced && session.id !== sessionId
           ? mutes?.setSessionMuted(computerId, session.id, true)
           : undefined,
@@ -731,14 +732,12 @@ export async function registerHubRoutes(
   app.delete<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId',
     async (request, reply) => {
-      await manager.deleteSession(
-        request.params.computerId,
-        request.params.sessionId,
-      )
-      await sessionKnowledgeLifecycle?.removeSession(
-        request.params.computerId,
-        request.params.sessionId,
-      )
+      const { computerId, sessionId } = request.params
+      if (sessionKnowledgeLifecycle) {
+        await sessionKnowledgeLifecycle.deleteSession(computerId, sessionId)
+      } else {
+        await manager.deleteSession(computerId, sessionId)
+      }
       return reply.code(204).send()
     },
   )

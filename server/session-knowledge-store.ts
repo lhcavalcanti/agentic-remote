@@ -39,6 +39,11 @@ const stateSchema = z.object({
   'A session cannot have more than one Knowledge binding',
 )
 
+const recoverySchema = z.object({
+  version: z.literal(1),
+  previous: z.string().nullable(),
+}).strict()
+
 type StoredBinding = z.infer<typeof bindingSchema>
 type State = z.infer<typeof stateSchema>
 type Identity = Pick<SessionKnowledgeBinding, 'computerId' | 'sessionId'>
@@ -80,9 +85,24 @@ export class SessionKnowledgePersistenceError extends Error {
   }
 }
 
+export class SessionKnowledgeRecoveryError extends Error {
+  readonly statusCode = 503
+
+  constructor(cause: unknown) {
+    super('Session Knowledge metadata recovery could not finish. Restore writable storage and retry; no new binding was accepted.', {
+      cause,
+    })
+    this.name = 'SessionKnowledgeRecoveryError'
+  }
+}
+
 export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> {
   private readonly statePath: string
+  private readonly recoveryPath: string
   private state: State = { version: 1, bindings: [] }
+  private persisted: string | null = null
+  private recovery?: z.infer<typeof recoverySchema>
+  private unavailable?: SessionKnowledgeRecoveryError
   private writeQueue: Promise<void> = Promise.resolve()
   private initialized = false
 
@@ -92,13 +112,25 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
   ) {
     super()
     this.statePath = path.join(directory, 'session-knowledge.json')
+    this.recoveryPath = `${this.statePath}.recovery`
   }
 
   async initialize(): Promise<void> {
-    if (this.initialized) return
+    if (this.initialized) return this.recover()
+    try {
+      const recovery = recoverySchema.parse(JSON.parse(await readFile(this.recoveryPath, 'utf8')))
+      if (recovery.previous !== null) stateSchema.parse(JSON.parse(recovery.previous))
+      this.recovery = recovery
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw new Error('Cannot load session Knowledge recovery metadata; the existing files were not changed.', { cause: error })
+      }
+    }
+    if (this.recovery) await this.restore()
     try {
       const contents = await readFile(this.statePath, 'utf8')
       this.state = stateSchema.parse(JSON.parse(contents))
+      this.persisted = contents
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw new Error('Cannot load session Knowledge metadata; the existing file was not changed.', {
@@ -111,12 +143,12 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
   }
 
   get(computerId: string, sessionId: string): SessionKnowledgeBinding {
-    this.requireInitialized()
+    this.requireReadable()
     return this.snapshot({ computerId, sessionId })
   }
 
   listBindings(): SessionKnowledgeBinding[] {
-    this.requireInitialized()
+    this.requireReadable()
     return this.state.bindings.map((binding) => this.snapshot(binding))
   }
 
@@ -195,9 +227,10 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     }, validate)
   }
 
-  removeSession(computerId: string, sessionId: string): Promise<void> {
-    return this.remove((binding) =>
-      binding.computerId === computerId && binding.sessionId === sessionId,
+  removeSession(computerId: string, sessionId: string, validate?: () => void): Promise<void> {
+    return this.remove(
+      (binding) => binding.computerId === computerId && binding.sessionId === sessionId,
+      validate,
     )
   }
 
@@ -209,6 +242,7 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
   refreshAvailability(rootIds: readonly string[]): Promise<void> {
     const roots = new Set(rootIds)
     const task = this.writeQueue.then(() => {
+      this.requireReadable()
       for (const binding of this.state.bindings) {
         if (binding.rootId !== null && roots.has(binding.rootId)) {
           this.emit('updated', this.snapshot(binding))
@@ -223,12 +257,20 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     return this.writeQueue
   }
 
-  private remove(matches: (binding: StoredBinding) => boolean): Promise<void> {
+  recover(): Promise<void> {
+    const task = this.writeQueue.then(async () => {
+      if (this.unavailable) await this.restore()
+    })
+    this.writeQueue = task.catch(() => undefined)
+    return task
+  }
+
+  private remove(matches: (binding: StoredBinding) => boolean, validate?: () => void): Promise<void> {
     return this.change((next) => {
       const before = next.bindings.length
       next.bindings = next.bindings.filter((binding) => !matches(binding))
       return { changed: before !== next.bindings.length, result: () => undefined }
-    })
+    }, validate)
   }
 
   private snapshot(identity: Identity): SessionKnowledgeBinding {
@@ -255,15 +297,15 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
   ): Promise<TResult> {
     const task = this.writeQueue.then(async () => {
       this.requireInitialized()
+      if (this.unavailable) await this.restore()
       validate?.()
       const next = structuredClone(this.state)
       const mutation = mutate(next)
       if (mutation.changed) {
         await this.persist(next, validate)
         this.state = next
-        // A pairing can retire while rename is in flight. Its durable commit
-        // must not send a late update to the new pairing; queued lifecycle
-        // cleanup still runs and the request rechecks its registration.
+        // Persistence already checked the guard after rename. A later
+        // retirement can suppress delivery, but cannot reject that commit.
         let current = true
         try {
           validate?.()
@@ -284,16 +326,59 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
 
   private async persist(state: State, validate?: () => void): Promise<void> {
     const pending = `${this.statePath}.${randomUUID()}.pending`
+    const contents = JSON.stringify(state)
     try {
       await mkdir(this.directory, { recursive: true, mode: 0o700 })
-      await writeFile(pending, JSON.stringify(state), { mode: 0o600, flag: 'wx' })
+      await writeFile(pending, contents, { mode: 0o600, flag: 'wx' })
+      validate?.()
+      this.recovery = { version: 1, previous: this.persisted }
+      await writeFile(this.recoveryPath, JSON.stringify(this.recovery), { mode: 0o600, flag: 'wx' })
       validate?.()
       await rename(pending, this.statePath)
+      // This is the guarded commit point. Keep both queue ownership and the
+      // durable undo record until validation and finalization have succeeded.
+      validate?.()
+      await rm(this.recoveryPath)
+      this.recovery = undefined
+      this.persisted = contents
     } catch (error) {
       await rm(pending, { force: true }).catch(() => undefined)
+      if (this.recovery) {
+        try {
+          await this.restore()
+        } catch (recoveryError) {
+          this.unavailable = new SessionKnowledgeRecoveryError(new AggregateError([error, recoveryError]))
+          throw this.unavailable
+        }
+      }
       if (error instanceof SessionKnowledgeReferenceError) throw error
       throw new SessionKnowledgePersistenceError(error)
     }
+  }
+
+  private async restore(): Promise<void> {
+    if (!this.recovery) return
+    const pending = `${this.statePath}.${randomUUID()}.pending`
+    try {
+      if (this.recovery.previous === null) {
+        await rm(this.statePath, { force: true })
+      } else {
+        await writeFile(pending, this.recovery.previous, { mode: 0o600, flag: 'wx' })
+        await rename(pending, this.statePath)
+      }
+      await rm(this.recoveryPath, { force: true })
+      this.recovery = undefined
+      this.unavailable = undefined
+    } catch (error) {
+      await rm(pending, { force: true }).catch(() => undefined)
+      this.unavailable = new SessionKnowledgeRecoveryError(error)
+      throw this.unavailable
+    }
+  }
+
+  private requireReadable(): void {
+    this.requireInitialized()
+    if (this.unavailable) throw this.unavailable
   }
 
   private requireInitialized(): void {

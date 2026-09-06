@@ -230,7 +230,7 @@
     "server/session-store.test.ts": "c01fd8a8f8c5190dbb0926d09d93efabd6142c2c606640e0eab72e7614c064b4",
     "server/session-store.ts": "e8b53c9542389ba02514041db3dbe33665572357c7f934e05bc0cdc78a82678a",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
-    "server/terminal-session.test.ts": "560bcdb762da2892a4ac70a1316063bbaaa873f5da4b10a3bbdcc77a9cc57c24",
+    "server/terminal-session.test.ts": "3ec6f4d37121acc1dfc01d27e035d56b110afeb9c5627ccaf5f49d947c17b16d",
     "server/terminal-session.ts": "643387de84a34f24a0a12439f0a38c4bf680908c32afdea520926b2b1ed15d62",
     "server/tmux-test-helpers.ts": "cfa80cfa5218c9d8d713a9805067f7a58759c0065c94ee6e6ae4fd62a5986116",
     "server/transcription-media-digests.test.ts": "dc7e6f6658dc2bdab766874a8e850c8fe837fb25252e82c8e6f255c0254ddd8d",
@@ -343,24 +343,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "a0a5033023b7a305de1f2236193925b4500ba77464bf1d153968e0956bd02ac2",
+    "GRAPH_REPORT.md": "9ecfd634cd7995d6da96dffca98475893acf5f7ddc226b616f06b4f8511eb68f",
     "communities.json": "4b4658c0324dc54f3de84bed11a3d315092a0edc92604deed126ce3f9b235386",
-    "graph.html": "992bbac8bed906a9592b758fb46d3d5b506866990d54d5e6e22ff052529c17f5",
-    "graph.json": "a1265332d1ad83917136f9577acfb8e7bfaced9b61c034508fceacf9333bdaa5"
+    "graph.html": "3d0f0b3bf50f13e05145a101833fab759903e20f4b230bcd151ae647ed086411",
+    "graph.json": "51cffdf5c130e46feaed754b87e1941dcaa7a29d8180e78082944cc755c71b6c"
   },
   "schema_version": 1,
-  "source_commit": "ae77cfab473a3ee8be349e6b6f34632b80644971",
-  "source_fingerprint": "b18a4b1cdc345cf689be765e6bced518ad6903e660dc29dcd1bb5960f09d685d",
+  "source_commit": "02230df6d9d81002d9877a7a8a94db12c1386463",
+  "source_fingerprint": "aa6ff3de8acf49664fe09e3f61d558f18f002f42d593b6b0585e5ac851fa1d5b",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "server/agent-service.ts",
-    "server/claude-agent-service.test.ts",
-    "server/claude-agent-service.ts",
-    "server/session-store-durability.test.ts",
-    "server/session-store-providers.test.ts",
-    "server/session-store.ts",
-    "server/terminal-queue-delivery.test.ts",
-    "server/terminal-session.ts"
+    "server/terminal-session.test.ts"
   ]
 }

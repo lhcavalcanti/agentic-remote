@@ -130,7 +130,7 @@ describe('TmuxTerminalSessionController', () => {
         cwd: await readlink(`/proc/${pid}/cwd`),
       }
     }
-    return { controller, sessionId, replacementCwd, executable, snapshot }
+    return { controller, sessionId, replacementCwd, executable, snapshot, location }
   }
 
   it('restores the original terminal command and cwd when replacement commit rejects', async () => {
@@ -153,10 +153,10 @@ describe('TmuxTerminalSessionController', () => {
   })
 
   it('reports both the rejected replacement and a failed terminal restoration', async () => {
-    const { controller, sessionId, replacementCwd, executable } = await clearFixture()
+    const { controller, sessionId, replacementCwd, location } = await clearFixture()
     const failure = new Error('Replacement write refused')
     await expect(controller.reset(sessionId, randomUUID(), replacementCwd, undefined, async () => {
-      await rm(executable)
+      await execFileAsync('tmux', ['kill-pane', '-t', location.windowId])
       throw failure
     })).rejects.toMatchObject({
       name: 'AggregateError',

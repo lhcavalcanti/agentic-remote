@@ -307,7 +307,7 @@ async function healthyReleaseFixture(withLegacyCli = false): Promise<{
     const source = path.join(context.dev, 'bin', 'agentic-remote')
     const setup = await readFile(source, 'utf8')
     const cliSource = await readFile(AGENTIC_REMOTE, 'utf8')
-    const current = ['quarantine_inactive_rejected_releases', 'rollback_service'].map((name) => {
+    const current = ['sync_release_paths', 'quarantine_inactive_rejected_releases', 'rollback_service'].map((name) => {
       const body = cliSource.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0]
       if (!body) throw new Error(`Missing ${name} function`)
       return body

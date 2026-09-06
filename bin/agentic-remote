@@ -141,6 +141,39 @@ derived_origins() {
     "$derived_host" "$derived_port" "$derived_port" "$derived_port"
 }
 
+sync_release_paths() {
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const [mode, ...directories] = process.argv.slice(1);
+    if (!["tree", "directories"].includes(mode) || !directories.length) {
+      throw new Error("invalid release sync operation");
+    }
+    const sync = (entry, directory) => {
+      const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW |
+        (directory ? fs.constants.O_DIRECTORY : 0));
+      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    };
+    const syncTree = (entry) => {
+      const stat = fs.lstatSync(entry);
+      if (stat.isSymbolicLink()) return;
+      if (stat.isDirectory()) {
+        for (const name of fs.readdirSync(entry)) syncTree(path.join(entry, name));
+      } else if (!stat.isFile()) {
+        throw new Error(`unsupported release entry: ${entry}`);
+      }
+      sync(entry, stat.isDirectory());
+    };
+    for (const directory of directories) {
+      if (!fs.lstatSync(directory).isDirectory()) {
+        throw new Error(`release sync requires a real directory: ${directory}`);
+      }
+      if (mode === "tree") syncTree(directory);
+      else sync(directory, true);
+    }
+  ' "$@"
+}
+
 quarantine_inactive_rejected_releases() {
   local releases_dir current_release failed_release quarantine_root target
   releases_dir="$CONFIG_DIR/releases"
@@ -175,18 +208,15 @@ quarantine_inactive_rejected_releases() {
       "$failed_release" "$target" || return 1
     printf 'Quarantined rejected release at %s\n' "$target"
   done
-  node -e '
-    const fs = require("node:fs");
-    for (const directory of process.argv.slice(1)) {
-      if (!fs.existsSync(directory)) continue;
-      const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
-      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    }
-  ' "$releases_dir" "$quarantine_root"
+  if [[ -e "$quarantine_root" || -L "$quarantine_root" ]]; then
+    sync_release_paths directories "$releases_dir" "$quarantine_root"
+  else
+    sync_release_paths directories "$releases_dir"
+  fi
 }
 
 publish_release() {
-  local releases_dir release_id release_dir temporary_link staging_dir
+  local releases_dir release_id release_dir temporary_link staging_dir staging_parent
   release_id="${1:-$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}}"
   validate_release_id "$release_id"
   [[ -s "$REPO_ROOT/dist/build-info.json" ]] ||
@@ -200,7 +230,8 @@ publish_release() {
   temporary_link="$releases_dir/.current-$release_id"
   [[ ! -e "$release_dir" && ! -L "$release_dir" ]] ||
     die "release already exists: $release_id"
-  staging_dir="$(mktemp -d "$CONFIG_DIR/.release-stage.XXXXXX")"
+  staging_parent="$(readlink -f -- "$CONFIG_DIR")"
+  staging_dir="$(mktemp -d "$staging_parent/.release-stage.XXXXXX")"
   (
     published=0
     activated=0
@@ -232,42 +263,17 @@ publish_release() {
       "$REPO_ROOT/tsconfig.server.json" \
       "$staging_dir/"
     cp -a "$REPO_ROOT/node_modules/." "$staging_dir/node_modules/"
-    node -e '
-      const fs = require("node:fs");
-      const path = require("node:path");
-      function syncTree(entry) {
-        const stat = fs.lstatSync(entry);
-        if (stat.isSymbolicLink()) return;
-        if (stat.isDirectory()) {
-          for (const child of fs.readdirSync(entry)) syncTree(path.join(entry, child));
-        } else if (!stat.isFile()) {
-          throw new Error("Unsupported release entry: " + entry);
-        }
-        const fd = fs.openSync(entry, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-      }
-      syncTree(process.argv[1]);
-    ' "$staging_dir"
+    sync_release_paths tree "$staging_dir"
     node -e 'require("node:fs").renameSync(process.argv[1], process.argv[2])' \
       "$staging_dir" "$release_dir"
     published=1
-    node -e '
-      const fs = require("node:fs");
-      for (const directory of process.argv.slice(1)) {
-        const fd = fs.openSync(fs.realpathSync(directory), fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
-        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-      }
-    ' "$CONFIG_DIR" "$releases_dir"
+    sync_release_paths directories "$releases_dir" "$staging_parent"
     ln -s "$release_dir" "$temporary_link"
     mv -Tf "$temporary_link" "$releases_dir/current"
     [[ "$(readlink -f -- "$releases_dir/current")" == "$release_dir" ]] ||
       die "release activation did not install $release_id"
+    sync_release_paths directories "$releases_dir"
     activated=1
-    node -e '
-      const fs = require("node:fs");
-      const fd = fs.openSync(process.argv[1], fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
-      try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    ' "$releases_dir"
   )
 
   # Always retain current, regardless of directory timestamps.
@@ -285,6 +291,7 @@ publish_release() {
         fi
       done
     }
+  sync_release_paths directories "$releases_dir"
 }
 
 enable_linger() {
@@ -477,6 +484,7 @@ rollback_service() {
   temporary_link="$releases_dir/.current-$$"
   ln -s "$previous_release" "$temporary_link"
   mv -Tf "$temporary_link" "$releases_dir/current"
+  sync_release_paths directories "$releases_dir"
   systemctl --user restart "$SERVICE_NAME"
   quarantine_inactive_rejected_releases ||
     die "the previous release was activated, but inactive rejected releases could not be quarantined"

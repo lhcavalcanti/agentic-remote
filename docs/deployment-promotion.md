@@ -167,17 +167,21 @@ restoration or safe removal/quarantine fails, keep the marker-aware source
 installed and report incomplete recovery. Subsequent manual rollbacks then
 continue to exclude the rejected candidate, even after it becomes inactive.
 
-Publication stages complete bundles outside the rollback inventory and installs
-them with an atomic directory rename before switching `current`. Before that
-rename, every staged regular file and directory is fsynced without following
-symlinks outside the bundle. After rename, both inventory parents are fsynced;
-after activating `current`, its parent is fsynced again. Publication must finish
-these boundaries before the monitor can record `local-verified` or `verified`.
-A refused pre-activation sync leaves the healthy pointer in place. A refused
-post-activation sync reports failure but retains the active complete candidate
-for journal-driven restoration; cleanup never deletes the active release.
-The monitor
-supplies a unique `--release-id`, then checks that both the source checkout and
+Publication stages complete bundles outside the rollback inventory, flushes
+every regular file and directory in child-before-parent order, then installs
+them with an atomic directory rename. Symlinks are not followed; their containing
+directories persist the link entries, and special files are rejected. Both the
+actual staging parent and release inventory are flushed before switching
+`current`, and the inventory is flushed again after the pointer switch and
+retention cleanup. Manual rollback also
+flushes its pointer switch before restarting the service. A flush error fails
+the operation instead of allowing the monitor to record `local-verified` or
+`verified`. A refused pre-activation flush preserves the healthy pointer. If the
+active-pointer flush fails, setup does not restart the service and retains the
+complete candidate while the prepared promotion journal restores the known-good
+release; an indeterminate active target is never deleted during publication
+cleanup. The monitor supplies a unique `--release-id`, then checks that both the
+source checkout and
 the active release match its candidate. A setup failure before pointer activation
 cannot hide an unverified candidate behind the previous healthy pointer. The
 promotion record contains the promoted and previous release paths as well as

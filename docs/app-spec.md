@@ -256,6 +256,12 @@ the service MUST retain the delivery outcome and retry only persistence. After
 restart, an unresolved delivery MUST expose its text as uncertain recovery and
 hold later queued work until the reader explicitly deals with it.
 
+An app-queued SDK or Claude prompt MUST remain durable until its complete turn
+record is committed. Failed turn admission MUST NOT depend on a compensating
+enqueue that can also fail during a storage outage. Native FIFO delivery MUST
+recheck idleness at delivery rather than steer a turn that began while queued
+command confirmation was being persisted.
+
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
 

@@ -60,6 +60,7 @@ import {
   SessionReplacementCleanupError,
   SessionStore,
   type DiscoveredSession,
+  type QueuedPromptReservation,
   type TerminalQueueOutcome,
 } from './session-store.js'
 import {
@@ -3670,6 +3671,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     content: string,
     fromQueue = false,
+    reservation?: QueuedPromptReservation,
   ): Promise<SessionDetail> {
     // Anything already waiting goes first. A resume whose drain failed leaves
     // the prompt back on the queue, and a message written afterwards would
@@ -3683,28 +3685,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return queued
     }
     const sdkSession = await this.ensureLoaded(sessionId)
-    const createdAt = new Date().toISOString()
-    await this.store.addMessage(sessionId, {
-      id: randomUUID(),
-      role: 'user',
-      content,
-      createdAt,
-    })
     const assistantMessageId = randomUUID()
-    await this.store.addMessage(sessionId, {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      createdAt: new Date().toISOString(),
-      streaming: true,
-    })
-    const updated = await this.store.update(sessionId, (session) => {
-      session.status = 'running'
-      session.activity = 'Thinking'
-      if (session.messages.filter((message) => message.role === 'user').length === 1) {
-        session.title = content.length > 52 ? `${content.slice(0, 52)}…` : content
-      }
-    })
+    const updated = await this.store.beginPrompt(
+      sessionId, content, assistantMessageId,
+      () => !this.stopped && !this.deletingSessions.has(sessionId) &&
+        !this.suspendingSessions.has(sessionId) && !this.activePrompts.has(sessionId) &&
+        (fromQueue || !this.drainingSessions.has(sessionId)),
+      reservation,
+    )
     this.activePrompts.set(sessionId, { assistantMessageId })
     this.publish(updated)
 
@@ -5951,20 +5939,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.drainingSessions.add(sessionId)
     try {
       if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
-        const { session: queued, prompt: next } = await this.serializeQueue(
+        const { session: queued, reservation } = await this.serializeQueue(
           sessionId,
-          () => this.store.shiftQueuedPrompt(sessionId),
+          () => this.store.reserveQueuedPrompt(
+            sessionId,
+            () => !this.stopped && !this.deletingSessions.has(sessionId) &&
+              !this.suspendingSessions.has(sessionId) && !this.activePrompts.has(sessionId),
+          ),
         )
         this.publish(queued)
-        if (next) {
+        if (reservation) {
           try {
-            await this.startMessage(sessionId, next.content, true)
+            await this.startMessage(sessionId, reservation.prompt.content, true, reservation)
           } catch (error) {
-            const restored = await this.serializeQueue(
-              sessionId,
-              () => this.store.enqueuePrompt(sessionId, next, true),
-            )
-            this.publish(restored)
             this.publishError(sessionId, error)
           }
         }
@@ -6042,7 +6029,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       const before = await this.terminalController.capture?.(sessionId)
-      if (before && isTerminalOverlay(before)) {
+      if (before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
         this.retryTerminalQueueClaim(sessionId)
         return false
       }
@@ -6061,7 +6048,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.suspendingSessions.has(sessionId)) {
           throw new Error('The session began suspending before queued delivery; nothing was sent')
         }
-        if (!(await this.terminalController.send(sessionId, next.content, false))) {
+        const sent = this.terminalController.sendWhenIdle
+          ? await this.terminalController.sendWhenIdle(sessionId, next.content)
+          : await this.terminalController.send(sessionId, next.content, false)
+        if (!sent) {
           throw new Error('External terminal is no longer available')
         }
         outcome = next.command
@@ -6129,6 +6119,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (this.stopped) return false
         pending.outcome = { kind: 'accepted', startedTurn: feedback.startedTurn, notice: feedback.notice }
         pending.overlayOpen = feedback.overlayOpen
+      }
+      if (
+        pending.retryAt > 0 &&
+        pending.outcome.kind === 'accepted' &&
+        !pending.outcome.startedTurn &&
+        this.terminalController.capture
+      ) {
+        const pane = await this.terminalController.capture(sessionId)
+        if (!pane) throw new Error('The terminal is unavailable for delivery confirmation')
+        pending.overlayOpen = isTerminalOverlay(pane)
+        if (isTerminalAgentWorking(pane)) {
+          pending.outcome = { ...pending.outcome, startedTurn: true }
+        }
       }
       settled = await this.store.settleTerminalQueuedPrompt(
         sessionId, pending.dispatchId, pending.outcome,

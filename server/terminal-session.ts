@@ -108,6 +108,7 @@ export interface TerminalSessionController {
   ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
   send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
+  sendWhenIdle?(sessionId: string, content: string): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
   /**
@@ -840,6 +841,19 @@ export class TmuxTerminalSessionController
     content: string,
     enqueue: boolean,
   ): Promise<boolean> {
+    return this.sendInternal(sessionId, content, enqueue, false)
+  }
+
+  async sendWhenIdle(sessionId: string, content: string): Promise<boolean> {
+    return this.sendInternal(sessionId, content, false, true)
+  }
+
+  private async sendInternal(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    idleOnly: boolean,
+  ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const target = await this.target(sessionId)
       if (!target) {
@@ -889,6 +903,9 @@ export class TmuxTerminalSessionController
           { statusCode: 409 },
         )
       }
+      if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
+        throw Object.assign(new Error('The terminal started working before queued delivery; nothing was sent'), { statusCode: 409 })
+      }
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -918,6 +935,7 @@ export class TmuxTerminalSessionController
           confirmation,
           paneBeforePaste,
           enqueue,
+          idleOnly,
         )
       } catch (error) {
         if (
@@ -943,6 +961,7 @@ export class TmuxTerminalSessionController
     confirmation: string,
     paneBeforePaste: string,
     enqueue: boolean,
+    idleOnly = false,
   ): Promise<boolean> {
       if (
         !(await waitForComposerPaste(
@@ -1008,6 +1027,12 @@ export class TmuxTerminalSessionController
         }
       }
       try {
+        if (idleOnly) {
+          const current = await capturePane(target)
+          if (isTerminalAgentWorking(current) || isTerminalOverlay(current)) {
+            throw new Error('The terminal changed before queued submission')
+          }
+        }
         await execFileAsync(
           'tmux',
           enqueue
@@ -1346,7 +1371,7 @@ export function isTerminalOverlay(pane: string): boolean {
 // The CLI only offers to interrupt while the agent is working, so this marks
 // the frames whose new lines belong to a turn rather than to a command.
 export function isTerminalAgentWorking(pane: string): boolean {
-  return /esc\s+interrupt/i.test(pane.split('\n').slice(-6).join(' '))
+  return /esc\s+interrupt/i.test(terminalControlLines(pane).slice(-6).join(' '))
 }
 
 /**

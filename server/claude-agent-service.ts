@@ -43,7 +43,7 @@ import {
   validateSessionDirectory,
 } from './session-directory.js'
 import type { SessionService } from './session-service.js'
-import { SessionReplacementCleanupError, SessionStore } from './session-store.js'
+import { SessionReplacementCleanupError, SessionStore, type QueuedPromptReservation } from './session-store.js'
 import {
   listWorkspace,
   readWorkspaceFile,
@@ -227,6 +227,7 @@ export class ClaudeAgentService
   private readonly startedQuery = new Map<string, () => void>()
   /** Sessions whose queue is being drained, so two drains cannot overlap. */
   private readonly drainingSessions = new Set<string>()
+  private queueStopped = false
   private readonly permissions = new Map<string, PendingClaudePermission>()
   private readonly userInputs = new Map<string, PendingClaudeInput>()
 
@@ -287,6 +288,7 @@ export class ClaudeAgentService
   }
 
   async stop(): Promise<void> {
+    this.queueStopped = true
     for (const active of this.active.values()) {
       active.abortController.abort()
     }
@@ -697,6 +699,7 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
   ): Promise<SessionDetail> {
+    if (this.queueStopped) throw new Error('The session service is stopping')
     if (this.deletingSessions.has(sessionId)) {
       // Deleting takes several awaits, and a send starting inside any of them
       // ran a turn against a conversation on its way out.
@@ -752,8 +755,12 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
     fromQueue = false,
+    reservation?: QueuedPromptReservation,
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(sessionId)
+    if (this.queueStopped || this.deletingSessions.has(sessionId)) {
+      throw new Error('Session is no longer available')
+    }
     if (!fromQueue && this.admissionClosed.has(sessionId)) {
       throw Object.assign(new Error('The session is still resuming'), { statusCode: 409 })
     }
@@ -819,79 +826,14 @@ export class ClaudeAgentService
         statusCode: 409,
       })
     }
-    const createdAt = new Date().toISOString()
-    // Kept so a refused send can put it back. Both `addMessage` calls move the
-    // session to the top of the list, and a rollback that only removed the
-    // messages left a suspended session reordered by a send it rejected.
-    const previousUpdatedAt = this.store.get(sessionId)?.updatedAt
-    const userId = randomUUID()
-    await this.store.addMessage(sessionId, {
-      id: userId,
-      role: 'user',
-      content,
-      createdAt,
-    })
     const assistantId = randomUUID()
-    await this.store.addMessage(sessionId, {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      createdAt: new Date().toISOString(),
-      streaming: true,
-    })
-    if (
-      this.store.get(sessionId)?.suspended ||
-      this.suspendingSessions.has(sessionId)
-    ) {
-      // Suspending saw an idle session and took it down while the message was
-      // being recorded. Starting the query now would run it against a session
-      // the app describes as having nothing running.
-      //
-      // Both entries go back out together. Refusing the send while keeping
-      // them leaves the prompt in the transcript and an assistant reply that
-      // is blank for good, and the client restores the draft on top of it.
-      let repaired = true
-      await this.store
-        .update(sessionId, (stored) => {
-          stored.messages = stored.messages.filter(
-            (message) => message.id !== userId && message.id !== assistantId,
-          )
-          if (previousUpdatedAt) {
-            // `updatedAt` is when the conversation last moved, and the list is
-            // ordered by it. This send did not move it.
-            stored.updatedAt = previousUpdatedAt
-          }
-        })
-        // Announced as well as written: readers were shown the prompt and the
-        // blank reply as they went in, so putting the store back without
-        // saying so leaves both on screen for good.
-        .then((session) => this.publish(session))
-        .catch(() => {
-          repaired = false
-        })
-      if (!repaired) {
-        // Saying only that the send was refused would describe a transcript
-        // that is still holding a prompt and a reply that stays blank as
-        // though it had been put back the way it was found.
-        throw new Error(
-          'Resume the session before sending to it. The message could not be taken back out of the transcript.',
-        )
-      }
-      throw Object.assign(new Error('Resume the session before sending to it'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
-    }
-    const running = await this.store.update(sessionId, (stored) => {
-      stored.status = 'running'
-      stored.activity = 'Thinking'
-      if (stored.messages.filter((message) => message.role === 'user').length === 1) {
-        stored.title =
-          content.length > 52 ? `${content.slice(0, 52)}…` : content
-      }
-    })
+    const running = await this.store.beginPrompt(
+      sessionId, content, assistantId,
+      () => !this.queueStopped && !this.deletingSessions.has(sessionId) &&
+        !this.suspendingSessions.has(sessionId) && !this.active.has(sessionId) &&
+        !this.startingQueries.has(sessionId) && (fromQueue || !this.admissionClosed.has(sessionId)),
+      reservation,
+    )
     this.publish(running)
     // Nothing waits on this, so a rejection escaping it would be unhandled and
     // could take the process down. The turn reports its own failures on the
@@ -1592,7 +1534,7 @@ export class ClaudeAgentService
     // already waiting each took a different head off the queue before either
     // marked the session running, and started concurrent turns: the queue lost
     // its order, and the second registration hid the first from cancellation.
-    if (this.drainingSessions.has(sessionId)) {
+    if (this.queueStopped || this.deletingSessions.has(sessionId) || this.drainingSessions.has(sessionId)) {
       return
     }
     this.drainingSessions.add(sessionId)
@@ -1616,16 +1558,8 @@ export class ClaudeAgentService
     if (!session.queuedPrompts?.length) {
       return
     }
-    // Reads expose committed state. An edit may already be waiting to remove
-    // that visible head, so choose and claim the head in the same transaction.
-    const { prompt: next } = await this.store.shiftQueuedPrompt(sessionId)
-    if (!next) {
-      return
-    }
-    // Held from the moment the prompt leaves the queue until its turn has
-    // registered. Without it a send arriving in between saw an idle session
-    // with an empty queue, started a turn of its own beside this one, and the
-    // later registration hid the first from cancellation.
+    // Reserve admission before the first await. The FIFO item stays durable
+    // until its transcript and running state commit in the same write.
     this.admissionClosed.add(sessionId)
     // The drain's own prompt is a send too, and it goes straight to the
     // dispatch rather than through the public path. Deletion looked only at
@@ -1640,18 +1574,18 @@ export class ClaudeAgentService
       draining,
     ])
     try {
+      const { reservation } = await this.store.reserveQueuedPrompt(
+        sessionId,
+        () => !this.queueStopped && !this.deletingSessions.has(sessionId) &&
+          !this.suspendingSessions.has(sessionId) && !this.active.has(sessionId) &&
+          !this.startingQueries.has(sessionId),
+      )
+      if (!reservation) return
       // The queue's own prompt is the one admission is being held for, so it
       // goes past that gate rather than into it. Sending through the public
       // path refused it on the very flag that exists to keep newer work out
       // until this has gone in, so resume finished having sent nothing.
-      await this.dispatchQueued(sessionId, next.content, false, true)
-    } catch (error) {
-      // The prompt is off the queue and was never sent, so it goes back where
-      // it was rather than disappearing.
-      await this.store
-        .enqueuePrompt(sessionId, next, true)
-        .catch(() => undefined)
-      throw error
+      await this.dispatchQueued(sessionId, reservation.prompt.content, false, true, reservation)
     } finally {
       // Let go of only once the turn is registered, or once it has failed and
       // its prompt is back where it was.

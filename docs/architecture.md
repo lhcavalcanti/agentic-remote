@@ -161,6 +161,15 @@ one store transaction. Reorder operations use this same boundary and must not
 add per-operation rollback. External provider delivery is not part of the
 filesystem transaction.
 
+SDK and Claude queue preparation durably reserves the current FIFO head without
+removing its text. Turn admission then atomically appends the user/assistant
+records, marks the turn running, and removes only the matching reserved head.
+A refused admission leaves the FIFO item intact even if every subsequent write
+also fails; there is no compensating enqueue that can fail and lose it. The
+private reservation is discarded on restart, before any turn was sent, so the
+original queued work remains available. Edits or a newer reservation invalidate
+an older prepared admission.
+
 Terminal queue delivery first atomically claims the exact FIFO head, moving its
 content into the existing uncertain-recovery record before any keystrokes are
 sent. A private `terminalQueueDispatch` identity hides that provisional recovery
@@ -171,7 +180,9 @@ it never repeats the terminal action. New delivery cannot consume an unresolved
 claim or overlap an admitted direct dispatch. A refused pre-delivery claim is
 retried even when no new terminal event arrives. If a delivered command's pane
 cannot be read, observation is retried rather than assuming a turn started;
-overlay closure is observed before continuing the FIFO. On restart an orphan
+retried settlement rechecks current native work and overlay state, and the
+next claim cannot run into a working pane. Overlay closure is observed before
+continuing the FIFO. On restart an orphan
 claim becomes visible uncertain recovery, not a
 retryable queue item. Older runtimes also retain the existing recovery record.
 Settlement preserves a newer native completion or permission state instead of

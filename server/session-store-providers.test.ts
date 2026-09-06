@@ -10,7 +10,7 @@ import {
   type CopilotSessionLike,
 } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
-import { SessionStore } from './session-store.js'
+import { SessionStore, type QueuedPromptReservation } from './session-store.js'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>()
@@ -82,6 +82,7 @@ function copilot(
   store: SessionStore,
   history?: SessionEvent[],
   activeSessionReader: NonNullable<ConstructorParameters<typeof AgentService>[2]> = async () => [],
+  eventVersion?: NonNullable<ConstructorParameters<typeof AgentService>[5]>,
 ) {
   const resumeSession = vi.fn(async () => {
     throw new Error('A provider must not run before a durable dequeue')
@@ -115,7 +116,7 @@ function copilot(
     activeSessionReader,
     async () => {},
     async () => history || [],
-    async () => history ? 'events-v1' : undefined,
+    eventVersion ?? (async () => history ? 'events-v1' : undefined),
     terminal,
     workspaceReader,
     workspaceVersion,
@@ -738,6 +739,78 @@ describe('Provider decisions after admitted writes', () => {
 describe('Provider queue persistence boundaries', () => {
   const drainTerminal = (service: AgentService) =>
     (service as unknown as { drainTerminalQueue(id: string): Promise<void> }).drainTerminalQueue('session')
+
+  it.each([['Copilot', copilot], ['Claude', claude]] as const)(
+    '%s retains queued text when turn admission and all later writes fail',
+    async (_name, provider) => {
+      const { store, directory } = await fixture()
+      const runtime = provider(store)
+      const sdk = sdkSession('session')
+      if ('client' in runtime) runtime.client.resumeSession = vi.fn(async () => sdk)
+      const failure = new Error('Persistent turn-admission outage')
+      vi.mocked(writeFile).mockImplementationOnce(disk.writeFile).mockRejectedValue(failure)
+      if ('client' in runtime) {
+        await (runtime.service as unknown as { drainSdkQueue(id: string): Promise<void> }).drainSdkQueue('session')
+        expect(sdk.sendAndWait).not.toHaveBeenCalled()
+      } else {
+        await expect((runtime.service as unknown as { drainQueue(id: string): Promise<void> }).drainQueue('session'))
+          .rejects.toBe(failure)
+        expect(runtime.query).not.toHaveBeenCalled()
+      }
+      expect(store.get('session')).toMatchObject({
+        queuedPrompts: [{ id: 'first', content: 'first' }, { id: 'second', content: 'second' }],
+        queuedCount: 2,
+        messages: [],
+      })
+      const persisted = JSON.parse(await readFile(path.join(directory, 'state.json'), 'utf8'))
+      expect(persisted.sessions.session.queuedPrompts.map((entry: { id: string }) => entry.id))
+        .toEqual(['first', 'second'])
+      const reloaded = new SessionStore(directory)
+      await reloaded.initialize()
+      expect(reloaded.get('session')?.queuedPrompts?.map((entry) => entry.id)).toEqual(['first', 'second'])
+      expect(reloaded.get('session')).not.toHaveProperty('queuedPromptReservation')
+    },
+  )
+
+  it('rechecks native liveness before retrying an accepted command settlement', async () => {
+    const { store, directory } = await fixture()
+    await store.update('session', (session) => {
+      session.queuedPrompts![0] = { ...session.queuedPrompts![0], command: true, content: '/usage' }
+    })
+    const history: SessionEvent[] = []
+    let version = 0
+    const { service, terminal } = copilot(store, history, async () => [{
+      id: 'session', cwd: directory, title: 'Session', updatedAt: '2026-09-04T00:00:00.000Z',
+    }], async () => `events-${version}`)
+    const composer = [
+      '\u257b\u2584\u2584\u2584\u2584',
+      '\u2503',
+      '\u2579\u2580\u2580\u2580\u2580',
+      ' / commands',
+    ].join('\n')
+    let pane = composer
+    Object.assign(terminal, { capture: vi.fn(async () => pane) })
+    await service.refreshDiscovery()
+    terminal.send.mockImplementationOnce(async () => {
+      pane = ` \u25cf Usage: 42 requests\n${composer}`
+      vi.mocked(writeFile).mockRejectedValueOnce(new Error('Command settlement refused'))
+      return true
+    })
+    await drainTerminal(service)
+    expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', '/usage', false)
+    pane = `${composer}\n Working \u00b7 esc interrupt`
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000)
+    await service.refreshTranscripts()
+    expect(terminal.send).toHaveBeenCalledOnce()
+    expect(store.get('session')).toMatchObject({ status: 'running', queuedCount: 1 })
+    pane = composer
+    history.push({ ...event('session.idle', {}), timestamp: new Date(Date.now() + 1_000).toISOString() })
+    version += 1
+    await service.refreshTranscripts()
+    expect(terminal.send.mock.calls).toEqual([
+      ['session', '/usage', false], ['session', 'second', false],
+    ])
+  })
 
   it('does not deliver a terminal queue item before its claim is durable', async () => {
     const { store, block } = await fixture()
@@ -1594,16 +1667,20 @@ describe('Provider queue persistence boundaries', () => {
     const { service, query } = claude(store)
     const internals = service as unknown as {
       drainQueue(id: string): Promise<void>
-      dispatchQueued(id: string, content: string): Promise<unknown>
+      dispatchQueued(id: string, content: string, enqueue: boolean, fromQueue: boolean, reservation?: QueuedPromptReservation): Promise<unknown>
     }
     const dispatch = vi.spyOn(internals, 'dispatchQueued').mockImplementation(
-      async (id) => store.updateStatus(id, 'running'),
+      async (id, content, _enqueue, _fromQueue, reservation) =>
+        store.beginPrompt(id, content, 'assistant', () => true, reservation),
     )
     const removing = service.removeQueuedPrompt('session', 'first')
     const draining = internals.drainQueue('session')
     const [removed] = await Promise.all([removing, draining])
     expect(removed.prompt.id).toBe('first')
-    expect(dispatch).toHaveBeenCalledExactlyOnceWith('session', 'second', false, true)
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith(
+      'session', 'second', false, true,
+      expect.objectContaining({ prompt: expect.objectContaining({ id: 'second' }) }),
+    )
     expect(query).not.toHaveBeenCalled()
     expect(service.getSession('session')?.queuedPrompts).toEqual([])
   })

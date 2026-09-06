@@ -25,6 +25,11 @@ export interface TerminalQueueDispatch {
   startedAt: string
 }
 
+export interface QueuedPromptReservation {
+  id: string
+  prompt: QueuedPrompt
+}
+
 export type TerminalQueueOutcome =
   | { kind: 'accepted'; startedTurn: boolean; notice?: string }
   | { kind: 'failed'; uncertain: boolean }
@@ -50,6 +55,7 @@ interface StoredSession extends SessionDetail {
   contextCwd?: boolean
   workspaceTitle?: boolean
   terminalQueueDispatch?: TerminalQueueDispatch
+  queuedPromptReservation?: { id: string; promptId: string }
 }
 
 interface PendingMutation {
@@ -100,6 +106,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     customTitle: _customTitle,
     queueDispatchAt: _queueDispatchAt,
     terminalQueueDispatch,
+    queuedPromptReservation: _queuedPromptReservation,
     contextCwd: _contextCwd,
     workspaceTitle: _workspaceTitle,
     executionMode: _executionMode,
@@ -176,6 +183,7 @@ export class SessionStore {
       session.isOpen = session.managedOpen === true
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
+      session.queuedPromptReservation = undefined
       session.pendingUserInput = undefined
       const dispatch = session.terminalQueueDispatch
       if (dispatch !== undefined) {
@@ -189,6 +197,7 @@ export class SessionStore {
         }
         if (session.queueDispatchAt === dispatch.startedAt) session.queueDispatchAt = undefined
         session.terminalQueueDispatch = undefined
+        session.queuedPromptReservation = undefined
       }
       if (session.queueDispatchAt) {
         session.status = 'running'
@@ -624,6 +633,7 @@ export class SessionStore {
         queuedCount: 0,
         queueDispatchAt: undefined,
         terminalQueueDispatch: undefined,
+        queuedPromptReservation: undefined,
         updatedAt: new Date().toISOString(),
         runtime: existing.runtime
           ? {
@@ -654,6 +664,86 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
+    })
+  }
+
+  async reserveQueuedPrompt(
+    sessionId: string,
+    isCurrent: () => boolean,
+  ): Promise<{ session: SessionDetail; reservation?: QueuedPromptReservation }> {
+    return this.change((state) => {
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) {
+        throw new Error(`Session ${sessionId} does not exist`)
+      }
+      const prompt = existing.queuedPrompts?.[0]
+      if (!prompt) return () => ({ session: this.requireSession(sessionId) })
+      if (
+        !isCurrent() || existing.suspended ||
+        (existing.status !== 'idle' && existing.status !== 'error') ||
+        existing.failedPrompt || existing.terminalQueueDispatch ||
+        existing.pendingPermission || existing.pendingUserInput
+      ) {
+        throw Object.assign(new Error('The session changed before queue reservation; nothing was sent'), { statusCode: 409 })
+      }
+      const reservation = { id: randomUUID(), prompt: structuredClone(prompt) }
+      const session = structuredClone(existing)
+      session.queuedPromptReservation = { id: reservation.id, promptId: prompt.id }
+      session.revision = (session.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => ({ session: this.requireSession(sessionId), reservation })
+    })
+  }
+
+  async beginPrompt(
+    sessionId: string,
+    content: string,
+    assistantId: string,
+    isCurrent: () => boolean,
+    reservation?: QueuedPromptReservation,
+  ): Promise<SessionDetail> {
+    const createdAt = new Date().toISOString()
+    const userId = randomUUID()
+    return this.mutate(sessionId, (session) => {
+      if (session.suspended) {
+        throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409 })
+      }
+      if (!isCurrent()) {
+        throw Object.assign(new Error('The session changed before turn admission; nothing was sent'), { statusCode: 409 })
+      }
+      if (session.status !== 'idle' && session.status !== 'error') {
+        throw Object.assign(new Error('A turn can only start while the session is idle'), { statusCode: 409 })
+      }
+      if (reservation) {
+        const head = session.queuedPrompts?.[0]
+        if (
+          session.queuedPromptReservation?.id !== reservation.id ||
+          !head || head.id !== reservation.prompt.id ||
+          head.content !== reservation.prompt.content ||
+          head.createdAt !== reservation.prompt.createdAt ||
+          head.command !== reservation.prompt.command ||
+          content !== head.content ||
+          (session.status !== 'idle' && session.status !== 'error') ||
+          session.failedPrompt || session.pendingPermission || session.pendingUserInput
+        ) {
+          throw Object.assign(new Error('The queued prompt changed before turn admission; nothing was sent'), { statusCode: 409 })
+        }
+        // A rejected turn write leaves the original FIFO item durable. No
+        // compensating enqueue is needed while storage is still unavailable.
+        session.queuedPrompts = session.queuedPrompts!.slice(1)
+        session.queuedCount = session.queuedPrompts.length
+        session.queuedPromptReservation = undefined
+      }
+      session.messages.push(
+        { id: userId, role: 'user', content, createdAt },
+        { id: assistantId, role: 'assistant', content: '', createdAt, streaming: true },
+      )
+      session.updatedAt = createdAt
+      session.status = 'running'
+      session.activity = 'Thinking'
+      if (session.messages.filter((message) => message.role === 'user').length === 1) {
+        session.title = content.length > 52 ? `${content.slice(0, 52)}…` : content
+      }
     })
   }
 

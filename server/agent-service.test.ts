@@ -4780,9 +4780,15 @@ describe('AgentService deletion', () => {
     ])
     let eventVersion: string | undefined = 'events-v0'
     let events: SessionEvent[] = []
+    const composer = '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'
+    let pane = composer
     const terminal = {
       has: vi.fn(async () => true),
-      send: vi.fn(async () => true),
+      send: vi.fn(async (_id: string, content: string) => {
+        if (content === '/usage') pane = ` \u25cf Usage ready\n${composer}`
+        return true
+      }),
+      capture: vi.fn(async () => pane),
       cancel: vi.fn(async () => true),
     }
     const service = new AgentService(

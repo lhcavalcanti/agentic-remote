@@ -4163,17 +4163,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     command: string,
     before: string | undefined,
+    requireObservation = false,
   ): Promise<{ notice: string; startedTurn: boolean; overlayOpen: boolean }> {
     if (before === undefined || !this.terminalController.capture) {
+      if (requireObservation) {
+        throw new Error('Queued command feedback is unavailable; waiting for a readable terminal')
+      }
       return { notice: command, startedTurn: false, overlayOpen: false }
     }
     let previous: string | undefined
+    let consecutiveReadable = 0
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 150))
       const after = await this.terminalController.capture(sessionId)
-      if (!after) {
+      if (!after?.trim()) {
+        consecutiveReadable = 0
+        previous = undefined
         continue
       }
+      consecutiveReadable += 1
       if (isTerminalOverlay(after)) {
         // The view takes the keyboard: anything sent now lands in its search
         // box instead of the composer, so the terminal counts as held.
@@ -4199,6 +4207,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }
       previous = output
+    }
+    if (requireObservation && consecutiveReadable < 2) {
+      throw new Error('Queued command feedback is unavailable; waiting for a readable terminal')
     }
     return {
       notice: previous ? `${command}\n\n${previous}` : command,
@@ -6162,6 +6173,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       const before = await this.terminalController.capture?.(sessionId)
+      if (next.command && !before?.trim()) {
+        throw new Error('The terminal could not be read before command delivery; the command remains queued')
+      }
       if (before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
         this.retryTerminalQueueClaim(sessionId)
         return false
@@ -6247,7 +6261,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       if (pending.outcome.kind === 'feedback') {
         const feedback = await this.terminalCommandFeedback(
-          sessionId, pending.outcome.command, pending.outcome.before,
+          sessionId, pending.outcome.command, pending.outcome.before, true,
         )
         if (this.stopped) return false
         pending.outcome = { kind: 'accepted', startedTurn: feedback.startedTurn, notice: feedback.notice }

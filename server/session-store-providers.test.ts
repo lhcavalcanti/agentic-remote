@@ -812,6 +812,44 @@ describe('Provider queue persistence boundaries', () => {
     ])
   })
 
+  it.each(['before send', 'all after send', 'last observations'] as const)(
+    'keeps queued commands held when capture is unreadable %s',
+    async (timing) => {
+      const { store } = await fixture()
+      await store.update('session', (session) => {
+        session.queuedPrompts![0] = { ...session.queuedPrompts![0], command: true, content: '/init' }
+      })
+      const { service, terminal } = copilot(store)
+      const ready = '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'
+      const working = `${ready}\n Working - esc interrupt`
+      let sent = false
+      let readable = false
+      let observations = 0
+      Object.assign(terminal, {
+        capture: vi.fn(async () => {
+          if (readable) return sent ? working : ready
+          if (!sent) return timing === 'before send' ? undefined : ready
+          observations += 1
+          return timing === 'last observations' && observations === 1 ? ready : undefined
+        }),
+      })
+      terminal.send.mockImplementation(async () => { sent = true; return true })
+      await drainTerminal(service)
+      expect(terminal.send).toHaveBeenCalledTimes(timing === 'before send' ? 0 : 1)
+      expect(store.get('session')?.queuedCount).toBe(timing === 'before send' ? 2 : 1)
+      if (timing !== 'before send') {
+        expect(store.terminalQueueDispatch('session')).toBeDefined()
+        expect(store.get('session')?.status).toBe('running')
+      }
+      readable = true
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_000)
+      await service.refreshTranscripts()
+      expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', '/init', false)
+      expect(store.get('session')).toMatchObject({ status: 'running', queuedCount: 1 })
+      expect(store.terminalQueueDispatch('session')).toBeUndefined()
+    },
+  )
+
   it('does not deliver a terminal queue item before its claim is durable', async () => {
     const { store, block } = await fixture()
     const { service, terminal } = copilot(store)
@@ -1059,7 +1097,11 @@ describe('Provider queue persistence boundaries', () => {
       session.queuedPrompts![0] = { ...session.queuedPrompts![0], command: true, content: '/usage' }
     })
     const { service, terminal } = copilot(store)
+    const composer = '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'
+    let pane = composer
+    Object.assign(terminal, { capture: vi.fn(async () => pane) })
     terminal.send.mockImplementationOnce(async () => {
+      pane = ` \u25cf Usage ready\n${composer}`
       vi.mocked(writeFile).mockRejectedValueOnce(new Error('command settlement refused'))
       return true
     })
@@ -1072,7 +1114,7 @@ describe('Provider queue persistence boundaries', () => {
       ['session', '/usage', false], ['session', 'second', false],
     ])
     expect(store.get('session')?.messages).toEqual([
-      expect.objectContaining({ role: 'notice', content: '/usage' }),
+      expect.objectContaining({ role: 'notice', content: '/usage\n\nUsage ready' }),
     ])
     await service.refreshTranscripts()
     expect(store.get('session')?.messages).toHaveLength(1)

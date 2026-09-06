@@ -2197,6 +2197,48 @@ button {
   height: 30px;
 }
 
+.composer-paste-recovery {
+  max-width: var(--composer-max-width);
+  margin: 0 auto 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--panel-raised);
+  font-size: 13px;
+}
+
+.composer-paste-recovery p {
+  margin: 6px 0 10px;
+  color: var(--muted);
+}
+
+.composer-paste-recovery__list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.composer-paste-recovery summary {
+  cursor: pointer;
+}
+
+.composer-paste-recovery pre {
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.composer-paste-recovery__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.composer-paste-recovery__actions button {
+  min-height: 40px;
+}
+
 .web-statusline {
   grid-area: statusline;
   display: flex;

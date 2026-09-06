@@ -120,9 +120,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 98,
+  "communities": 103,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5843,
+  "edges": 5884,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -154,7 +154,7 @@
     "bin/agentic-remote-promotion-setup": "8c90f5750c7eb945098ee3b170a4f0f25fbd4dc1b7543771f8257c0f88ed7e1a",
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "a3f4aedc99933505110c6684aadead95d39c257944ce473d4b809718956d89fa",
+    "docs/app-spec.md": "12bdaf6ba0e55e91f46da9d1a9a251564e8c2121aa6ac97a9727d87484fd276c",
     "docs/architecture.md": "5105583fbd481b9021b5e3ab4613ccdcd695a2c42d976fe651cf34b47b59a396",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -262,8 +262,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "9a648f1d0102abad0ffc5fd636f43c0042541bab315f1620152a8fa6e6ecef99",
-    "src/App.tsx": "d687c6bd68bcb9902ed680145924a30e7439f66736b5de3586f708b9c7a66f48",
+    "src/App.test.tsx": "468e73bb10c04f961593625e063b97995904ad89cb3fa8781fd8859a23211acd",
+    "src/App.tsx": "cc083833b27ef0f58ba78f30a74b701644b7621fd0c9f5c750178f4b9aa87cb3",
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
     "src/MermaidDiagram.test.tsx": "db09c107f11b4c5f22c69cc6f8d50ae6bcc25944ec5601a535986122f5dc1281",
     "src/MermaidDiagram.tsx": "98849de396761797dad407e96ea609fe233756b156462b349150fbb6f69f16a2",
@@ -273,7 +273,7 @@
     "src/api.ts": "9a7dd75a4528a8978ce92df782f456d242cbf3a668b37a9f288c1e4182ef8818",
     "src/composer-sizing.ts": "287d9a67a40dffb32161e6867173ffd3d51ae35d7942b7b0c456478bf2082d8d",
     "src/env.d.ts": "7dfb7763ec2101e5d66963c95cb8f938ea84fa576f0055dcd1922f6572add894",
-    "src/index.css": "b1d7015be54f811c2d520d74a145433b6c8b7113b1b105816ed3520e01e240bf",
+    "src/index.css": "5df2fc261dbb8e3a37b9274787a59dc6d95957bf78c675be49f58ebd80fa982d",
     "src/knowledge-position.ts": "ae9592b0d6d4824a37731ddf7d23ee011c7bcc7875848269ffff3d3abe74b6b2",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -295,7 +295,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2261,
+  "nodes": 2268,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -347,34 +347,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "cc4c133f8a275b6e8da08ffdaead247ea8afca345cd714885efe5fea2f37366d",
-    "communities.json": "40998ed231ea1a86c9d4d81073e0eb84625321a64e31b040e9313116395f29f2",
-    "graph.html": "d105385f79b91fbf769a1c4220e3eef77c21cb2fd9ca99cb8ca58ffb75bfb614",
-    "graph.json": "e7f22259f0cc01a73d4b12e31c50e47bbaef5b8fe31b0c25816de4fc409494b1"
+    "GRAPH_REPORT.md": "82ea1212139ddb117394df3a809042e17da960c06b63065501b004b2268233db",
+    "communities.json": "938b7767b7a00f313f2e357b54e8f5d6012306fe325f58ca2a1e73dc330522a5",
+    "graph.html": "104e75f6909b1d5a2095ef03a2c06eabb20d462a9ff43450f492a3b59ba874c7",
+    "graph.json": "b50678d33de8271e8443c8c8618803b888ebed61024bd9b327fd586d5381c2cd"
   },
   "schema_version": 1,
-  "source_commit": "125ec298fdc6748cca5fde8a49690030f41bf739",
-  "source_fingerprint": "06c49d26cb90b299043364a07b311ca7b238516b22d21f7ca02ddd7180d66cfb",
+  "source_commit": "235af51046f002b9e43f0abc2ac95e7eb109f14c",
+  "source_fingerprint": "2f793ee140f6f964fa8e6caeab24738a31a2240ad19b779ddccef437cc30c244",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    ".github/skills/frontend-design/LICENSE.txt",
-    ".github/skills/frontend-design/SKILL.md",
-    ".github/skills/frontend-design/SOURCE.md",
-    ".github/skills/frontend-design/UI-SKILLS.md",
-    ".github/skills/frontend-design/licenses/antfu-skills-MIT.txt",
-    ".github/skills/frontend-design/licenses/better-ui-MIT.txt",
-    ".github/skills/frontend-design/licenses/frontend-ui-engineering-MIT.txt",
-    ".github/skills/frontend-design/licenses/improve-ui-MIT.txt",
-    ".github/skills/frontend-design/licenses/interface-design-MIT.txt",
-    ".github/skills/frontend-design/licenses/vercel-guidelines-MIT.txt",
-    ".github/skills/frontend-design/references/accessibility-and-input.md",
-    ".github/skills/frontend-design/references/agentic-remote.md",
-    ".github/skills/frontend-design/references/evidence-and-review.md",
-    ".github/skills/frontend-design/references/motion-and-performance.md",
-    ".github/skills/frontend-design/references/product-workspaces.md",
-    ".oxlintrc.json",
-    "README.md",
-    "server/remote-node-client.test.ts",
-    "server/remote-node-client.ts"
+    "docs/app-spec.md",
+    "src/App.test.tsx",
+    "src/App.tsx",
+    "src/index.css"
   ]
 }

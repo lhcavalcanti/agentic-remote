@@ -20,7 +20,12 @@ import type {
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
-import App, { orderTasksForReading } from './App'
+import App, {
+  applyComposerEdit,
+  orderTasksForReading,
+  reconcileComposerEdit,
+  resolveComposerPastes,
+} from './App'
 import {
   activateSession,
   cancelBackgroundTask,
@@ -2439,6 +2444,450 @@ describe('App', () => {
       }),
     )
   })
+
+  it.each(['Backspace', 'Delete', 'x'])(
+    'reveals the owned paste without losing its payload after a partial label edit: %s',
+    async (key) => {
+      const pasted = Array.from({ length: 21 }, (_, index) => `owned ${index}`).join('\n')
+      const label = '[Paste #1 - 21 lines]'
+      const suffix = ` after\nLiteral ${label}`
+      const rendered = render(<App />)
+      const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+      fireEvent.change(textarea, { target: { value: `Before ${suffix}` } })
+      textarea.setSelectionRange(7, 7)
+      fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+      const before = textarea.value
+      const position = key === 'Backspace' ? 7 + label.length : key === 'Delete' ? 7 : 12
+      textarea.setSelectionRange(position, position)
+      fireEvent.keyDown(textarea, { key })
+      const after = key === 'Backspace'
+        ? before.slice(0, position - 1) + before.slice(position)
+        : key === 'Delete'
+          ? before.slice(0, position) + before.slice(position + 1)
+          : before.slice(0, position) + key + before.slice(position)
+      fireEvent.change(textarea, { target: { value: after } })
+      const expected = `Before ${pasted}${key === 'x' ? 'x' : ''}${suffix}`
+      expect(textarea).toHaveValue(expected)
+      rendered.unmount()
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue(expected)
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() =>
+        expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+          content: expected, enqueue: false,
+        }),
+      )
+    },
+  )
+
+  it.each(['duplicate-labels', 'competing-payloads', 'missing-label', 'orphan-payload', 'existing-v2'])(
+    'preserves unresolved legacy paste payloads for manual recovery: %s',
+    async (kind) => {
+      const pasted = Array.from({ length: 21 }, (_, index) => `legacy saved ${index}`).join('\n')
+      const second = Array.from({ length: 21 }, (_, index) => `other saved ${index}`).join('\n')
+      const label = '[Paste #1 - 21 lines]'
+      const text = kind === 'missing-label' ? label.slice(0, -1)
+        : kind === 'orphan-payload' ? ''
+          : kind === 'competing-payloads' ? label : `${label}\n${label}`
+      localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify(
+        kind === 'orphan-payload' ? {} : { 'computer-1:session-1': text },
+      ))
+      localStorage.setItem('agentic-remote:composer-pastes', JSON.stringify({
+        'computer-1:session-1': [
+          { id: 1, content: pasted, lineCount: 21 },
+          ...(kind === 'competing-payloads' ? [{ id: 1, content: second, lineCount: 21 }] : []),
+        ],
+      }))
+      if (kind === 'existing-v2') {
+        localStorage.setItem('agentic-remote:composer-drafts-generation', '1')
+        localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+          'computer-1:session-1': { text, pastes: [] },
+        }))
+      }
+      const rendered = render(<App />)
+      const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+      const recovery = screen.getByRole('region', { name: 'Saved paste recovery' })
+      expect(recovery).toHaveTextContent('legacy saved 0')
+      expect(within(recovery).getAllByRole('button', { name: /Insert saved paste/ })).toHaveLength(
+        kind === 'competing-payloads' ? 2 : 1,
+      )
+      expect(textarea).toHaveValue(text)
+      if (text) {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+        expect(sendMessage).not.toHaveBeenCalled()
+      }
+      rendered.unmount()
+      render(<App />)
+      const reloaded = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+      expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toHaveTextContent('legacy saved 0')
+      expect(reloaded).toHaveValue(text)
+      const start = kind === 'duplicate-labels' || kind === 'existing-v2' ? label.length + 1 : 0
+      reloaded.setSelectionRange(start, text.length)
+      fireEvent.click(screen.getByRole('button', { name: 'Insert saved paste 1' }))
+      if (kind === 'competing-payloads') {
+        fireEvent.click(screen.getByRole('button', { name: 'Discard saved paste 1' }))
+      }
+      expect(screen.queryByRole('region', { name: 'Saved paste recovery' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() =>
+        expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+          content: `${start ? `${label}\n` : ''}${pasted}`,
+          enqueue: false,
+        }),
+      )
+    },
+  )
+
+  it.each([false, true])(
+    'rejects an expanded whitespace-only paste before submission admission (enqueue=%s)',
+    async (enqueue) => {
+      const pasted = Array.from({ length: 21 }, () => ' \t ').join('\n')
+      const running = { ...session, status: 'running' as const }
+      vi.mocked(listSessions).mockResolvedValue([running])
+      vi.mocked(getSession).mockResolvedValue(running)
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+      fireEvent.click(screen.getByRole('button', { name: enqueue ? 'Queue message' : 'Send message' }))
+      await waitFor(() => expect(screen.getAllByText(/expanded message is empty/)).not.toHaveLength(0))
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+      expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
+      fireEvent.change(textarea, { target: { value: 'Meaningful [Paste #1 - 21 lines]' } })
+      fireEvent.click(screen.getByRole('button', { name: enqueue ? 'Queue message' : 'Send message' }))
+      await waitFor(() =>
+        expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+          content: `Meaningful ${pasted}`, enqueue,
+        }),
+      )
+    },
+  )
+
+  describe('composer paste ownership helpers', () => {
+    const label = (id: number) => `[Paste #${id} - 21 lines]`
+    const paste = (id: number, start: number) => ({
+      id, start, key: `generated-${id}`, lineCount: 21,
+      content: Array.from({ length: 21 }, (_, index) => `payload ${id}:${index}`).join('\n'),
+    })
+
+    it.each(['', '[Paste #1 - 21 lines]'])(
+      'treats a complete selected token replacement as intentional: %s',
+      (replacement) => {
+        const owned = paste(1, 2)
+        const edited = applyComposerEdit(
+          { text: `a ${label(1)} z`, pastes: [owned] },
+          2, 2 + label(1).length, { text: replacement, pastes: [] },
+        )
+        expect(edited.content).toEqual({ text: `a ${replacement} z`, pastes: [] })
+      },
+    )
+
+    it.each([0, '[Paste #1 - 21 lines]'.length])(
+      'keeps a literal label insertion separate at boundary %s',
+      (position) => {
+        const owned = paste(1, 0)
+        const edited = applyComposerEdit(
+          { text: label(1), pastes: [owned] },
+          position, position, { text: label(1), pastes: [] },
+        )
+        expect(edited.content.text).toBe(label(1) + label(1))
+        expect(edited.content.pastes).toEqual([
+          { ...owned, start: position === 0 ? label(1).length : 0 },
+        ])
+      },
+    )
+
+    it('retains partial edge tokens but removes a fully selected token between them', () => {
+      const text = `${label(1)} - ${label(2)} - ${label(3)}`
+      const first = paste(1, 0)
+      const middle = paste(2, label(1).length + 3)
+      const last = paste(3, middle.start + label(2).length + 3)
+      const edited = applyComposerEdit(
+        { text, pastes: [first, middle, last] },
+        2, last.start + 3, { text: 'replacement', pastes: [] },
+      )
+      expect(edited.content).toEqual({
+        text: `${first.content}replacement${last.content}`,
+        pastes: [],
+      })
+      expect(edited.cursor).toBe(first.content.length + 'replacement'.length)
+    })
+
+    it('preserves raw CRLF outside a native textarea edit after revealing a paste', () => {
+      const owned = { ...paste(1, 0), content: paste(1, 0).content.replace(/\n/g, '\r\n') }
+      const revealed = applyComposerEdit(
+        { text: `${label(1)} tail`, pastes: [owned] },
+        label(1).length - 1, label(1).length, { text: '', pastes: [] },
+      )
+      expect(revealed.content.text).toBe(`${owned.content} tail`)
+      const changed = reconcileComposerEdit(
+        revealed.content,
+        `${owned.content.replace(/\r\n/g, '\n')} tail edited`,
+      )
+      expect(changed.content.text).toBe(`${owned.content} tail edited`)
+    })
+
+    it('retains known positional ownership when an identical literal label exists', () => {
+      const owned = paste(1, 0)
+      expect(resolveComposerPastes(`${label(1)}\n${label(1)}`, [owned], 'computer:session')).toEqual({
+        pastes: [owned], unresolvedPastes: [],
+      })
+    })
+
+    it.each(['duplicate', 'competing', 'missing', 'orphan', 'manual'])(
+      'keeps unresolved legacy candidates without guessing: %s',
+      (kind) => {
+        const first = paste(1, 0)
+        const second = { ...paste(1, 0), key: 'second', content: 'other\n'.repeat(20) + 'last' }
+        const values = kind === 'competing' ? [first, second]
+          : [{ ...first, ...(kind === 'manual' ? { unresolved: true } : {}) }]
+        const text = kind === 'duplicate' ? `${label(1)} ${label(1)}`
+          : kind === 'missing' ? label(1).slice(1)
+            : kind === 'orphan' ? '' : label(1)
+        const decoded = resolveComposerPastes(text, values, 'computer:session', true)
+        expect(decoded.pastes).toEqual([])
+        expect(decoded.unresolvedPastes.map((entry) => entry.content)).toEqual(
+          values.map((entry) => entry.content),
+        )
+      },
+    )
+  })
+
+  it('deletes a fully selected generated paste without resurrecting it on reload', async () => {
+    const pasted = Array.from({ length: 21 }, (_, index) => `remove ${index}`).join('\n')
+    const rendered = render(<App />)
+    const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+    fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+    textarea.setSelectionRange(0, textarea.value.length)
+    fireEvent.keyDown(textarea, { key: 'Backspace' })
+    fireEvent.change(textarea, { target: { value: '' } })
+    expect(textarea).toHaveValue('')
+    expect(localStorage.getItem('agentic-remote:composer-drafts-v2')).not.toContain('remove 0')
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('')
+    expect(screen.queryByRole('region', { name: 'Saved paste recovery' })).not.toBeInTheDocument()
+  })
+
+  it('can intentionally replace a generated paste with its identical literal label', async () => {
+    const pasted = Array.from({ length: 21 }, (_, index) => `remove ${index}`).join('\n')
+    const label = '[Paste #1 - 21 lines]'
+    render(<App />)
+    const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+    fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+    textarea.setSelectionRange(0, textarea.value.length)
+    fireEvent.paste(textarea, { clipboardData: { getData: () => label } })
+    expect(textarea).toHaveValue(label)
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        content: label, enqueue: false,
+      }),
+    )
+  })
+
+  it('does not assign an owned paste to an identical literal pasted before it', async () => {
+    const pasted = Array.from({ length: 21 }, (_, index) => `owned ${index}`).join('\n')
+    const label = '[Paste #1 - 21 lines]'
+    render(<App />)
+    const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+    fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+    textarea.setSelectionRange(0, 0)
+    fireEvent.paste(textarea, { clipboardData: { getData: () => label } })
+    fireEvent.change(textarea, { target: { value: label + label } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        content: label + pasted, enqueue: false,
+      }),
+    )
+  })
+
+  it('preserves a revealed newer paste beside an in-flight submission that fails', async () => {
+    const first = Array.from({ length: 21 }, (_, index) => `first ${index}`).join('\n')
+    const second = Array.from({ length: 21 }, (_, index) => `second ${index}`).join('\n')
+    let reject: ((error: Error) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail }))
+    const rendered = render(<App />)
+    const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+    fireEvent.paste(textarea, { clipboardData: { getData: () => first } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, { clipboardData: { getData: () => second } })
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    fireEvent.keyDown(textarea, { key: 'Backspace' })
+    fireEvent.change(textarea, { target: { value: textarea.value.slice(0, -1) } })
+    expect(textarea).toHaveValue(second)
+    await act(async () => { reject?.(new Error('Request failed')) })
+    expect(textarea).toHaveValue(`[Paste #1 - 21 lines]\n\n${second}`)
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue(`[Paste #1 - 21 lines]\n\n${second}`)
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenLastCalledWith('computer-1', 'session-1', {
+        content: `${first}\n\n${second}`, enqueue: false,
+      }),
+    )
+  })
+
+  it('keeps pasted literal labels unchanged through queue editing and resend', async () => {
+    const pasted = '[Paste #1 - 21 lines]\n' +
+      Array.from({ length: 20 }, (_, index) => `queued ${index}`).join('\n')
+    const prompt = { id: 'queue-paste', content: pasted, createdAt: session.updatedAt }
+    const running = { ...session, status: 'running' as const }
+    const queued = { ...running, queuedCount: 1, queuedPrompts: [prompt] }
+    vi.mocked(listSessions).mockResolvedValue([running])
+    vi.mocked(getSession).mockResolvedValue(running)
+    vi.mocked(sendMessage).mockResolvedValueOnce(queued)
+    vi.mocked(removeQueuedPrompt).mockResolvedValueOnce({ session: running, prompt })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+    fireEvent.click(screen.getByRole('button', { name: 'Queue message' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 1' }))
+    await waitFor(() => expect(textarea).toHaveValue(pasted))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenLastCalledWith('computer-1', 'session-1', {
+        content: pasted, enqueue: false,
+      }),
+    )
+  })
+
+  it('keeps unresolved paste recovery isolated across computers and replacement drafts', async () => {
+    const first = Array.from({ length: 21 }, (_, index) => `local saved ${index}`).join('\n')
+    const remotePayload = Array.from({ length: 21 }, (_, index) => `remote saved ${index}`).join('\n')
+    const label = '[Paste #1 - 21 lines]'
+    const remote = { ...session, computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote recovery' }
+    const replacement = { ...session, id: 'replacement', messages: [], replacedSessionIds: [session.id] }
+    const newer = 'Newer replacement draft\n'
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remote])
+    vi.mocked(getSession).mockImplementation(async (computerId, sessionId) =>
+      computerId === secondComputer.id ? remote : sessionId === replacement.id ? replacement : session,
+    )
+    vi.mocked(clearConversation).mockResolvedValueOnce(replacement)
+    localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+      'computer-1:replacement': { text: newer, pastes: [] },
+    }))
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+      'computer-1:session-1': `${label}\n${label}`,
+      'computer-2:session-1': `${label}\n${label}`,
+      'computer-1:replacement': newer,
+    }))
+    localStorage.setItem('agentic-remote:composer-pastes', JSON.stringify({
+      'computer-1:session-1': [{ id: 1, content: first, lineCount: 21 }],
+      'computer-2:session-1': [{ id: 1, content: remotePayload, lineCount: 21 }],
+    }))
+    const rendered = render(<App />)
+    await screen.findByLabelText('Message')
+    expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toHaveTextContent('local saved 0')
+    fireEvent.click(screen.getByText('Remote recovery').closest('button')!)
+    expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toHaveTextContent('remote saved 0')
+    vi.mocked(window.confirm).mockReturnValueOnce(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Discard saved paste 1' }))
+    expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard saved paste 1' }))
+    expect(screen.queryByRole('region', { name: 'Saved paste recovery' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText('Project chat').closest('button')!)
+    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(newer))
+    expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toHaveTextContent('local saved 0')
+    rendered.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement, remote])
+    render(<App />)
+    const textarea = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+    expect(textarea).toHaveValue(newer)
+    textarea.setSelectionRange(newer.length, newer.length)
+    fireEvent.click(screen.getByRole('button', { name: 'Insert saved paste 1' }))
+    expect(localStorage.getItem('agentic-remote:composer-pastes')).toBeNull()
+    vi.mocked(sendMessage).mockResolvedValueOnce(replacement)
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'replacement', {
+        content: newer + first, enqueue: false,
+      }),
+    )
+  })
+
+  it('keeps a malformed persisted generated paste recoverable after clearing its visible text', async () => {
+    const pasted = Array.from({ length: 21 }, (_, index) => `saved ${index}`).join('\n')
+    const text = '[Paste #1 - 21 lines'
+    localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+      'computer-1:session-1': {
+        text,
+        pastes: [{ key: 'persisted-owner', id: 1, content: pasted, lineCount: 21, start: 0 }],
+      },
+    }))
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({ 'computer-1:session-1': text }))
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toHaveTextContent('saved 0')
+    fireEvent.change(textarea, { target: { value: '' } })
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('')
+    expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toHaveTextContent('saved 0')
+    fireEvent.click(screen.getByRole('button', { name: 'Insert saved paste 1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
+        content: pasted, enqueue: false,
+      }),
+    )
+  })
+
+  it('does not silently resolve legacy ambiguity when editing leaves one label', async () => {
+    const pasted = Array.from({ length: 21 }, (_, index) => `saved ${index}`).join('\n')
+    const label = '[Paste #1 - 21 lines]'
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+      'computer-1:session-1': label + label,
+    }))
+    localStorage.setItem('agentic-remote:composer-pastes', JSON.stringify({
+      'computer-1:session-1': [{ id: 1, content: pasted, lineCount: 21 }],
+    }))
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: label } })
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue(label)
+    expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it.each(['', 'Newer legacy writing', '[Paste #1 - 21 lines]'])(
+    'preserves an unresolved saved copy when a legacy editor changes or clears the text: %s',
+    async (legacyText) => {
+      const pasted = Array.from({ length: 21 }, (_, index) => `unresolved ${index}`).join('\n')
+      localStorage.setItem('agentic-remote:composer-drafts-generation', '1')
+      localStorage.setItem('agentic-remote:composer-drafts-v2', JSON.stringify({
+        'computer-1:session-1': {
+          text: 'Previous draft', pastes: [],
+          unresolvedPastes: [{ key: 'manual-copy', id: 1, content: pasted, lineCount: 21 }],
+        },
+      }))
+      localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify(
+        legacyText ? { 'computer-1:session-1': legacyText } : {},
+      ))
+      if (legacyText.startsWith('[Paste')) {
+        localStorage.setItem('agentic-remote:composer-pastes', JSON.stringify({
+          'computer-1:session-1': [{ id: 1, content: pasted, lineCount: 21 }],
+        }))
+      }
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      expect(textarea).toHaveValue(legacyText)
+      expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toHaveTextContent('unresolved 0')
+      expect(JSON.parse(
+        localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+      )['computer-1:session-1'].pastes).toEqual([])
+      expect(sendMessage).not.toHaveBeenCalled()
+    },
+  )
 
   it('preserves whitespace at the boundary of a pasted payload', async () => {
     const pasted = `\n${Array.from(

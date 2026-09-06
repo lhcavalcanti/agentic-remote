@@ -313,6 +313,26 @@ pasted text MUST remain embedded in the draft and replace its label when the
 message is sent or queued. Shorter pastes MUST remain ordinary editable text.
 Collapsed pastes MUST survive reloads, session switches, failed sends, and
 clear replacement IDs without losing, duplicating, or reordering content.
+Editing or deleting only part of a generated label MUST reveal the complete
+stored payload instead of deleting hidden characters. Inserted text is retained
+at the revealed paste's boundary. Selecting and replacing or deleting the
+complete label intentionally removes that paste. Literal lookalike labels MUST
+remain ordinary text, including clipboard copies and queue round-trips.
+
+Saved paste metadata whose label is missing, duplicated, or claimed by competing
+payloads MUST remain available for explicit recovery, not be guessed into a
+literal label or silently discarded. The composer MUST let the user inspect,
+insert, or explicitly discard each saved copy. Unresolved copies persist with
+their computer/session draft, including an empty editor and replacement IDs;
+editing the visible text alone does not resolve their ownership. Delivery of
+that draft waits for these decisions, while a history preview preserves the
+hidden recovery state. Legacy payload copies are retired only after the current
+recovery inventory and compatible draft copies have been saved.
+
+Emptiness MUST be checked on the expanded payload before submission admission.
+A whitespace-only collapsed paste MUST stay editable with an actionable error;
+neither Send nor Queue may dispatch it. Nonempty payloads keep their original
+whitespace.
 
 ### 6.3 Recording state
 

@@ -83,6 +83,15 @@ validate_release_id() {
     die "release ID contains unsupported characters"
   [[ "$1" != current ]] ||
     die "release ID current is reserved for the active-release pointer"
+  local inventory="${2:-$CONFIG_DIR/releases}"
+  if [[ -d "$inventory" ]]; then
+    inventory="$(readlink -f -- "$inventory")" ||
+      die "could not resolve the release inventory"
+  fi
+  [[ ! -e "$inventory/$1" && ! -L "$inventory/$1" ]] ||
+    die "release already exists: $1"
+  [[ ! -e "$inventory.rejected/$1" && ! -L "$inventory.rejected/$1" ]] ||
+    die "release already exists in the rejected archive: $1"
 }
 
 systemd_quote() {
@@ -228,8 +237,7 @@ publish_release() {
     die "could not quarantine inactive rejected releases before publication"
   release_dir="$releases_dir/$release_id"
   temporary_link="$releases_dir/.current-$release_id"
-  [[ ! -e "$release_dir" && ! -L "$release_dir" ]] ||
-    die "release already exists: $release_id"
+  validate_release_id "$release_id" "$releases_dir"
   staging_parent="$(readlink -f -- "$CONFIG_DIR")"
   staging_dir="$(mktemp -d "$staging_parent/.release-stage.XXXXXX")"
   (

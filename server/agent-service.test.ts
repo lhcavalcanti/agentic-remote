@@ -2051,7 +2051,7 @@ describe('AgentService deletion', () => {
       // The state directory disappearing mid-prompt is what happens when a
       // write outlives its data directory; runPrompt persists from its own
       // completion and failure paths, and it is dispatched fire-and-forget.
-      vi.spyOn(store, 'update').mockRejectedValue(
+      vi.spyOn(store, 'updateIf').mockRejectedValue(
         new Error('state directory is gone'),
       )
       client.session.resolvePrompt()

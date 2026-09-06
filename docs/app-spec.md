@@ -268,6 +268,20 @@ enqueue that can also fail during a storage outage. Native FIFO delivery MUST
 recheck idleness at delivery rather than steer a turn that began while queued
 command confirmation was being persisted.
 
+Shutdown MUST close new admissions before awaiting provider or storage work.
+Already-admitted work MUST finish its commit/registration boundary before
+provider teardown; a commit completed during shutdown MUST NOT start a new
+provider turn. Unsent queued text MUST be restored or remain as durable,
+explicit recovery when the cancellation write is refused. Storage MUST finish
+admitted writes and refuse late mutations after shutdown.
+
+Queue drains MUST coalesce wake-ups and re-read the committed canonical queue
+after a reserved head is edited or removed. Stale reservations MAY retry;
+ordinary authentication or storage failures MUST NOT cause a hot retry loop.
+A durable reply settlement MUST wake eligible queued work after releasing its
+own locks, without clearing a newer question or dispatching from a stopped,
+suspended, deleting, or already-owned session.
+
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
 

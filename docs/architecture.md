@@ -170,6 +170,34 @@ private reservation is discarded on restart, before any turn was sent, so the
 original queued work remains available. Edits or a newer reservation invalidate
 an older prepared admission.
 
+Provider admissions share a tracked lifetime covering public sends, queued
+drains, provider loading, commit, and query registration. Shutdown closes that
+gate synchronously, cancels existing provider waits, and drains admitted
+boundaries before teardown. It does not wait for a full turn before cancelling
+the provider. Late SDK attachments are disposed rather than installed.
+Claude registration has its own owned completion signal; a stopped or
+superseded registration cannot launch a query or clear another owner's state.
+
+Queued SDK/Claude admissions retain a private handoff marker and existing
+uncertain-recovery text in the turn commit. A confirmed handoff clears that
+marker without redelivering work. Shutdown before handoff restores the exact
+committed queue entry and removes only its provisional transcript records.
+If that restoration cannot be saved, restart exposes the retained text as
+uncertain recovery instead of losing it or automatically replaying it.
+Settlement of an older handoff does not overwrite a newer owner's activity.
+
+Queue wake-ups are coalesced and scheduled only after reply and drain locks
+have been released. A typed stale-reservation rejection requests a fresh pass
+over the committed canonical FIFO; authentication/storage failures stop that
+pass until a new trigger. Completion and durable reply settlement are both
+triggers. Every pass rechecks ownership, pending cards, and stop/suspend/delete
+state before committing or dispatching work.
+
+`SessionStore.close()` fences new mutations and uploads, drains admitted
+writes, and checkpoints remaining streamed text. Provider teardown and
+owned-query cancellation precede that final storage boundary; late completion
+callbacks cannot publish updates or write into a closed store.
+
 Terminal queue delivery first atomically claims the exact FIFO head, moving its
 content into the existing uncertain-recovery record before any keystrokes are
 sent. A private `terminalQueueDispatch` identity hides that provisional recovery

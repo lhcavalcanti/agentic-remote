@@ -43,7 +43,11 @@ import {
   validateSessionDirectory,
 } from './session-directory.js'
 import type { SessionService } from './session-service.js'
-import { SessionReplacementCleanupError, SessionStore, type QueuedPromptReservation } from './session-store.js'
+import {
+  SessionReplacementCleanupError, SessionStore, StaleQueuedPromptReservationError,
+  type QueuedPromptReservation,
+} from './session-store.js'
+import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
 import {
   listWorkspace,
   readWorkspaceFile,
@@ -183,6 +187,7 @@ export class ClaudeAgentService
     sessionId: string,
     run: () => Promise<T>,
   ): Promise<T> {
+    if (this.stopped) return Promise.reject(new Error('The session service is stopping'))
     const previous = this.lifecycleLocks.get(sessionId) ?? Promise.resolve()
     const next = previous.catch(() => undefined).then(run)
     // Only that it finished, never what it produced.
@@ -228,19 +233,23 @@ export class ClaudeAgentService
    * register, and work that only looks at `active` read that gap as nothing
    * running.
    */
-  private readonly startingQueries = new Map<string, Promise<void>>()
+  private readonly startingQueries = new Map<string, Promise<boolean>>()
   /** Sessions being deleted, closed to new work from before the first await. */
   private readonly deletingSessions = new Set<string>()
-  /** Sends that have been admitted but have not finished being admitted. */
-  private readonly admittingSends = new Map<string, Promise<void>[]>()
   /** Settles the matching `startingQueries` entry once a turn has registered. */
-  private readonly startedQuery = new Map<string, () => void>()
+  private readonly startedQuery = new Map<string, (registered: boolean) => void>()
   /** Sessions whose queue is being drained, so two drains cannot overlap. */
   private readonly drainingSessions = new Set<string>()
   private readonly permissions = new Map<string, PendingClaudePermission>()
   private readonly userInputs = new Map<string, PendingClaudeInput>()
   private readonly pendingReplies = new Map<string, PendingClaudeReply>()
   private stopped = false
+  private stopTask?: Promise<void>
+  private readonly admissions = new SessionAdmissions(() => this.stopped)
+  private readonly drainRequested = new Set<string>()
+  private readonly queueWakeups = new Map<string, Promise<void>>()
+  private readonly pendingQueueAdmissions = new Map<string, PendingQueueAdmission>()
+  private readonly modelQueries = new Set<AbortController>()
 
   constructor(
     readonly store: SessionStore,
@@ -277,10 +286,15 @@ export class ClaudeAgentService
     ]
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    return this.admissions.run('@startup', () => this.startAdmitted())
+  }
+
+  private async startAdmitted(): Promise<void> {
     await this.store.initialize()
+    if (this.stopped) return
     await this.detectAvailability()
-    if (this.available) {
+    if (!this.stopped && this.available) {
       await Promise.all(
         this.store
           .list()
@@ -298,12 +312,17 @@ export class ClaudeAgentService
     }
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     this.stopped = true
+    this.stopTask ??= this.stopSettled()
+    return this.stopTask
+  }
+
+  private async stopSettled(): Promise<void> {
+    for (const query of this.modelQueries) query.abort()
     for (const active of this.active.values()) {
       active.abortController.abort()
     }
-    this.active.clear()
     for (const permission of this.permissions.values()) {
       permission.resolve({
         behavior: 'deny',
@@ -318,9 +337,26 @@ export class ClaudeAgentService
       })
     }
     this.userInputs.clear()
+    await this.admissions.wait()
+    await Promise.allSettled([
+      ...this.queueWakeups.values(),
+      ...this.startingQueries.values(),
+      ...this.lifecycleLocks.values(),
+    ])
+    const active = [...this.active.values()]
+    for (const query of active) query.abortController.abort()
+    await Promise.allSettled(active.map((query) => query.done))
+    this.active.clear()
     await Promise.allSettled(this.claudeReplyWrites())
     this.pendingReplies.clear()
-    await this.store.flush()
+    const settlements = await Promise.allSettled(
+      [...this.pendingQueueAdmissions.keys()].map((id) => this.settleQueueAdmission(id)),
+    )
+    this.pendingQueueAdmissions.clear()
+    this.drainRequested.clear()
+    await this.store.close()
+    const errors = settlements.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
+    if (errors.length) throw new AggregateError(errors, 'Claude admission cleanup failed')
   }
 
   listSessions(): SessionDetail[] {
@@ -736,6 +772,13 @@ export class ClaudeAgentService
     sessionId: string,
     promptId: string,
   ): Promise<RemovedQueuedPrompt> {
+    return this.admissions.run(sessionId, () => this.removeAdmittedQueuedPrompt(sessionId, promptId))
+  }
+
+  private async removeAdmittedQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+  ): Promise<RemovedQueuedPrompt> {
     const result = await this.store.removeQueuedPrompt(sessionId, promptId)
     if (!result.prompt) {
       throw new Error('Queued prompt not found')
@@ -755,30 +798,7 @@ export class ClaudeAgentService
       // ran a turn against a conversation on its way out.
       throw new Error('Session not found')
     }
-    // Claimed here, before the first await. A send that got past the check
-    // above could then wait in authentication while deletion began, find its
-    // only synchronisation point empty, and register a query afterwards --
-    // provider work and tool side effects carrying on against a conversation
-    // that was gone.
-    let admitted = () => {}
-    const admission = new Promise<void>((resolve) => {
-      admitted = resolve
-    })
-    this.admittingSends.set(sessionId, [
-      ...(this.admittingSends.get(sessionId) || []),
-      admission,
-    ])
-    try {
-      return await this.admitSend(sessionId, content, enqueue)
-    } finally {
-      admitted()
-      this.admittingSends.set(
-        sessionId,
-        (this.admittingSends.get(sessionId) || []).filter(
-          (entry) => entry !== admission,
-        ),
-      )
-    }
+    return this.admissions.run(sessionId, () => this.admitSend(sessionId, content, enqueue))
   }
 
   private async admitSend(
@@ -805,6 +825,17 @@ export class ClaudeAgentService
     content: string,
     enqueue = false,
     fromQueue = false,
+    reservation?: QueuedPromptReservation,
+  ): Promise<SessionDetail> {
+    return this.admissions.run(sessionId, () =>
+      this.dispatchAdmitted(sessionId, content, enqueue, fromQueue, reservation))
+  }
+
+  private async dispatchAdmitted(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    fromQueue: boolean,
     reservation?: QueuedPromptReservation,
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(sessionId)
@@ -838,10 +869,13 @@ export class ClaudeAgentService
       // take it off again. Without this the queue stands still and every
       // message written afterwards simply joins it. The drain does nothing at
       // all while the session is busy, so this is safe to ask for either way.
-      void this.drainQueue(sessionId).catch(() => undefined)
+      this.wakeQueue(sessionId)
       return queued
     }
     await this.refreshAuthentication()
+    if (this.stopped || this.deletingSessions.has(sessionId)) {
+      throw new Error('The session service is stopping')
+    }
     // Suspending may have finished while authentication was being refreshed,
     // and may still finish before the turn starts, so it is asked again there.
     if (this.store.get(sessionId)?.suspended) {
@@ -884,7 +918,18 @@ export class ClaudeAgentService
         !this.startingQueries.has(sessionId) && (fromQueue || !this.admissionClosed.has(sessionId)),
       reservation,
     )
-    this.publish(running)
+    if (reservation) {
+      this.pendingQueueAdmissions.set(sessionId, { assistantId, started: false })
+    }
+    if (this.stopped || this.deletingSessions.has(sessionId) || this.suspendingSessions.has(sessionId) ||
+        this.active.has(sessionId)) {
+      if (reservation) await this.settleQueueAdmission(sessionId)
+      else await this.store.cancelPromptAdmission(sessionId, assistantId, () => !this.active.has(sessionId))
+      throw Object.assign(new Error(this.stopped
+        ? 'The session service stopped before provider dispatch; the prompt was retained'
+        : 'The session changed before provider dispatch; the prompt was retained'),
+      { statusCode: this.stopped ? 503 : 409 })
+    }
     // Nothing waits on this, so a rejection escaping it would be unhandled and
     // could take the process down. The turn reports its own failures on the
     // session; the queue drain that runs after it puts its prompt back and
@@ -894,21 +939,26 @@ export class ClaudeAgentService
     // session left a window in which a delete found nothing running, took the
     // conversation away, and the turn then started against a session that no
     // longer existed.
-    let started = () => {}
-    this.startingQueries.set(
-      sessionId,
-      new Promise<void>((resolve) => {
-        started = resolve
-      }),
-    )
+    let started: (registered: boolean) => void = () => {}
+    const registering = new Promise<boolean>((resolve) => { started = resolve })
+    this.startingQueries.set(sessionId, registering)
     this.startedQuery.set(sessionId, started)
     void this.runQuery(sessionId, content, assistantId).catch((error) => {
-      console.warn(
+      if (!this.stopped) console.warn(
         `Claude turn for ${sessionId} ended in an unreported failure:`,
         error,
       )
     })
-    return running
+    const registered = await registering
+    if (reservation) await this.settleQueueAdmission(sessionId)
+    if (!registered) {
+      throw new Error(this.stopped
+        ? 'The session service stopped before provider dispatch; the prompt was retained'
+        : 'The provider turn could not be started')
+    }
+    const current = this.store.get(sessionId) || running
+    this.publish(current)
+    return current
   }
 
   async listCommands(_sessionId: string): Promise<SlashCommand[]> {
@@ -980,10 +1030,7 @@ export class ClaudeAgentService
     // Sends already inside admission, before whatever they are waiting on can
     // let them through. Sampling only the registered turns found nothing and
     // deleted the conversation out from under one that was still on its way.
-    const admitting = this.admittingSends.get(sessionId) || []
-    if (admitting.length) {
-      await Promise.allSettled(admitting)
-    }
+    await this.admissions.wait(sessionId)
     const starting = this.startingQueries.get(sessionId)
     if (starting) {
       await starting.catch(() => undefined)
@@ -1005,6 +1052,7 @@ export class ClaudeAgentService
       }
     }
     await this.store.remove(sessionId)
+    this.pendingQueueAdmissions.delete(sessionId)
     this.forgetClaudeReplies(sessionId)
     this.emit('event', { type: 'session.removed', sessionId })
     if (cleanupError) {
@@ -1032,7 +1080,9 @@ export class ClaudeAgentService
     persist: () => Promise<SessionDetail>,
   ): Promise<SessionDetail> {
     this.pendingReplies.set(requestId, reply)
+    let settled = false
     const completion = persist().then((updated) => {
+      settled = true
       if (this.pendingReplies.get(requestId) === reply) this.pendingReplies.delete(requestId)
       if (!this.stopped && !this.deletingSessions.has(reply.sessionId) && this.store.get(reply.sessionId)) {
         this.publish(updated)
@@ -1051,6 +1101,7 @@ export class ClaudeAgentService
       ), { statusCode: 503 })
     }).finally(() => {
       reply.completion = undefined
+      if (settled && reply.accepted) this.wakeQueue(reply.sessionId)
     })
     reply.completion = completion
     return completion
@@ -1171,14 +1222,19 @@ export class ClaudeAgentService
   }
 
   private async detectAvailability(): Promise<void> {
+    if (this.stopped) return
     try {
       await access(this.executable)
+      if (this.stopped) return
       const status = await this.authStatus(this.executable)
+      if (this.stopped) return
       if (!status.loggedIn) {
         this.unavailableReason = 'Run claude auth login on this computer'
         return
       }
-      this.models = await this.loadModels()
+      const models = await this.loadModels()
+      if (this.stopped) return
+      this.models = models
       this.available = true
       this.unavailableReason = ''
     } catch (error) {
@@ -1214,23 +1270,30 @@ export class ClaudeAgentService
   }
 
   private async loadModels(): Promise<RuntimeModelOption[]> {
+    return this.admissions.run('@models', () => this.loadAdmittedModels())
+  }
+
+  private async loadAdmittedModels(): Promise<RuntimeModelOption[]> {
     async function* emptyPrompt() {}
     const abortController = new AbortController()
-    const modelQuery = this.sdk.query({
-      prompt: emptyPrompt(),
-      options: {
-        abortController,
-        cwd: process.cwd(),
-        pathToClaudeCodeExecutable: this.executable,
-      },
-    })
+    this.modelQueries.add(abortController)
+    let modelQuery: Query | undefined
     try {
+      modelQuery = this.sdk.query({
+        prompt: emptyPrompt(),
+        options: {
+          abortController,
+          cwd: process.cwd(),
+          pathToClaudeCodeExecutable: this.executable,
+        },
+      })
       return (await modelQuery.supportedModels()).map((model) =>
         this.runtimeModel(model),
       )
     } finally {
+      this.modelQueries.delete(abortController)
       abortController.abort()
-      await modelQuery.return(undefined).catch(() => undefined)
+      await modelQuery?.return(undefined).catch(() => undefined)
     }
   }
 
@@ -1252,17 +1315,31 @@ export class ClaudeAgentService
     prompt: string,
     assistantId: string,
   ): Promise<void> {
+    if (this.stopped && !this.startingQueries.has(sessionId)) return
     const session = this.requireSession(sessionId)
     const abortController = new AbortController()
     // This run's own entry, so cleanup cannot remove a newer one.
     let owned: ActiveClaudeQuery | undefined
     const runtime = session.runtime
     const toolIds = new Set<string>()
+    const registering = this.startingQueries.get(sessionId)
+    const finishRegistration = this.startedQuery.get(sessionId)
+    let registered = false
     let aborted = false
     try {
       const hasProviderSession = Boolean(
         await this.sdk.getSessionInfo(sessionId, { dir: session.cwd }),
       )
+      if (this.stopped || this.deletingSessions.has(sessionId) || this.suspendingSessions.has(sessionId) ||
+          this.active.has(sessionId) || this.startingQueries.get(sessionId) !== registering) {
+        aborted = true
+        const admission = this.pendingQueueAdmissions.get(sessionId)
+        if (admission?.assistantId === assistantId) await this.settleQueueAdmission(sessionId)
+        else await this.store.cancelPromptAdmission(sessionId, assistantId, () => !this.active.has(sessionId))
+        return
+      }
+      const admission = this.pendingQueueAdmissions.get(sessionId)
+      if (admission?.assistantId === assistantId) admission.started = true
       const activeQuery = this.sdk.query({
         prompt,
         options: {
@@ -1295,11 +1372,14 @@ export class ClaudeAgentService
       }
       owned = entry
       this.active.set(sessionId, entry)
-      this.startedQuery.get(sessionId)?.()
-      this.startedQuery.delete(sessionId)
-      this.startingQueries.delete(sessionId)
+      registered = true
+      finishRegistration?.(true)
+      if (this.startingQueries.get(sessionId) === registering) {
+        this.startedQuery.delete(sessionId)
+        this.startingQueries.delete(sessionId)
+      }
       for await (const message of activeQuery) {
-        if (!this.store.get(sessionId)) {
+        if (!this.store.get(sessionId) || this.active.get(sessionId) !== owned) {
           return
         }
         await this.handleMessage(sessionId, assistantId, message, toolIds)
@@ -1308,18 +1388,21 @@ export class ClaudeAgentService
         return
       }
       const finished = await this.store.finishMessage(sessionId, assistantId)
-      const idle = await this.store.update(finished.id, (stored) => {
+      const idle = await this.store.updateIf(finished.id, (stored) => {
+        if (this.active.get(sessionId) !== owned) return false
         stored.status = 'idle'
         stored.activity = undefined
         stored.pendingPermission = undefined
         stored.pendingUserInput = undefined
+        return true
       })
+      if (!idle) return
       this.publish(idle)
       await this.sdk.renameSession(sessionId, idle.title, {
         dir: idle.cwd,
       }).catch(() => undefined)
     } catch (error) {
-      if (!this.store.get(sessionId)) {
+      if (!this.store.get(sessionId) || (this.active.has(sessionId) && this.active.get(sessionId) !== owned)) {
         return
       }
       aborted = abortController.signal.aborted
@@ -1328,7 +1411,8 @@ export class ClaudeAgentService
         this.unavailableReason = 'Run claude auth login on this computer'
       }
       await this.store.finishMessage(sessionId, assistantId).catch(() => undefined)
-      const failed = await this.store.update(sessionId, (stored) => {
+      const failed = await this.store.updateIf(sessionId, (stored) => {
+        if (owned && this.active.get(sessionId) !== owned) return false
         stored.status = aborted ? 'idle' : 'error'
         stored.activity = undefined
         stored.pendingPermission = undefined
@@ -1345,9 +1429,10 @@ export class ClaudeAgentService
                 }`
           }
         }
+        return true
       })
-      this.publish(failed)
-      if (!aborted) {
+      if (failed) this.publish(failed)
+      if (failed && !aborted && !this.stopped) {
         this.emit('event', {
           type: 'error',
           sessionId,
@@ -1367,26 +1452,13 @@ export class ClaudeAgentService
         this.active.delete(sessionId)
       }
       owned?.finish()
-      this.startedQuery.get(sessionId)?.()
-      this.startedQuery.delete(sessionId)
-      this.startingQueries.delete(sessionId)
-      this.resolvePending(sessionId, 'Claude Agent stopped')
-      if (!aborted) {
-        // The drain puts its own prompt back before rethrowing, and there is
-        // nobody above this to tell. Reported rather than thrown out of a
-        // finally block, which would replace whatever this turn was already
-        // saying.
-        await this.drainQueue(sessionId).catch((drainError: unknown) => {
-          this.emit('event', {
-            type: 'error',
-            sessionId,
-            message:
-              drainError instanceof Error
-                ? drainError.message
-                : String(drainError),
-          })
-        })
+      if (!registered) finishRegistration?.(false)
+      if (this.startingQueries.get(sessionId) === registering) {
+        this.startedQuery.delete(sessionId)
+        this.startingQueries.delete(sessionId)
       }
+      if (!this.active.has(sessionId)) this.resolvePending(sessionId, 'Claude Agent stopped')
+      if (!aborted) this.wakeQueue(sessionId)
     }
   }
 
@@ -1697,25 +1769,70 @@ export class ClaudeAgentService
     }
   }
 
+  private async settleQueueAdmission(sessionId: string): Promise<SessionDetail | undefined> {
+    const pending = this.pendingQueueAdmissions.get(sessionId)
+    if (!pending) return
+    if (pending.completion) return pending.completion
+    const completion = this.store.settleSdkQueueAdmission(
+      sessionId, pending.assistantId, pending.started, () => !this.active.has(sessionId),
+    ).then((session) => {
+      if (this.pendingQueueAdmissions.get(sessionId) === pending) {
+        this.pendingQueueAdmissions.delete(sessionId)
+      }
+      this.publish(session)
+      return session
+    }).finally(() => { pending.completion = undefined })
+    pending.completion = completion
+    return completion
+  }
+
+  private wakeQueue(sessionId: string): void {
+    if (this.stopped || this.deletingSessions.has(sessionId)) return
+    this.drainRequested.add(sessionId)
+    if (this.drainingSessions.has(sessionId) || this.queueWakeups.has(sessionId)) return
+    const waking = Promise.resolve().then(async () => {
+      if (!this.stopped) await this.drainQueue(sessionId)
+    }).catch((error: unknown) => this.publishError(sessionId, error)).finally(() => {
+      this.queueWakeups.delete(sessionId)
+      if (this.drainRequested.has(sessionId)) this.wakeQueue(sessionId)
+    })
+    this.queueWakeups.set(sessionId, waking)
+  }
+
   private async drainQueue(sessionId: string): Promise<void> {
     // One drain at a time. Two sends reaching an idle session with a prompt
     // already waiting each took a different head off the queue before either
     // marked the session running, and started concurrent turns: the queue lost
     // its order, and the second registration hid the first from cancellation.
-    if (this.stopped || this.deletingSessions.has(sessionId) || this.drainingSessions.has(sessionId)) {
+    if (this.stopped || this.deletingSessions.has(sessionId)) return
+    if (this.drainingSessions.has(sessionId)) {
+      this.drainRequested.add(sessionId)
       return
     }
+    this.drainRequested.delete(sessionId)
     this.drainingSessions.add(sessionId)
     try {
-      await this.drainSerialized(sessionId)
+      await this.admissions.run(sessionId, async () => {
+        await this.settleQueueAdmission(sessionId)
+        await this.drainSerialized(sessionId)
+      })
+    } catch (error) {
+      if (error instanceof StaleQueuedPromptReservationError) this.drainRequested.add(sessionId)
+      else {
+        this.drainRequested.delete(sessionId)
+        throw error
+      }
     } finally {
       this.drainingSessions.delete(sessionId)
+      if (this.drainRequested.has(sessionId)) this.wakeQueue(sessionId)
     }
   }
 
   private async drainSerialized(sessionId: string): Promise<void> {
     const session = this.store.get(sessionId)
-    if (!session || session.status !== 'idle') {
+    if (!session || session.status !== 'idle' || session.pendingPermission ||
+        session.pendingUserInput || session.failedPrompt || this.active.has(sessionId) ||
+        this.startingQueries.has(sessionId) || this.stopped || this.deletingSessions.has(sessionId)) {
       return
     }
     if (session.suspended || this.suspendingSessions.has(sessionId)) {
@@ -1729,18 +1846,6 @@ export class ClaudeAgentService
     // Reserve admission before the first await. The FIFO item stays durable
     // until its transcript and running state commit in the same write.
     this.admissionClosed.add(sessionId)
-    // The drain's own prompt is a send too, and it goes straight to the
-    // dispatch rather than through the public path. Deletion looked only at
-    // sends that came in that way, so a drain between taking its prompt off
-    // the queue and registering its turn was invisible to it.
-    let drained = () => {}
-    const draining = new Promise<void>((resolve) => {
-      drained = resolve
-    })
-    this.admittingSends.set(sessionId, [
-      ...(this.admittingSends.get(sessionId) || []),
-      draining,
-    ])
     try {
       const { reservation } = await this.store.reserveQueuedPrompt(
         sessionId,
@@ -1757,18 +1862,7 @@ export class ClaudeAgentService
     } finally {
       // Let go of only once the turn is registered, or once it has failed and
       // its prompt is back where it was.
-      const starting = this.startingQueries.get(sessionId)
-      if (starting) {
-        await starting.catch(() => undefined)
-      }
       this.admissionClosed.delete(sessionId)
-      drained()
-      this.admittingSends.set(
-        sessionId,
-        (this.admittingSends.get(sessionId) || []).filter(
-          (entry) => entry !== draining,
-        ),
-      )
     }
   }
 
@@ -1832,7 +1926,15 @@ export class ClaudeAgentService
   }
 
   private publish(session: SessionDetail): void {
+    if (this.stopped) return
     this.emit('event', { type: 'session.upserted', session })
+  }
+
+  private publishError(sessionId: string, error: unknown): void {
+    if (this.stopped) return
+    this.emit('event', {
+      type: 'error', sessionId, message: error instanceof Error ? error.message : String(error),
+    })
   }
 
   private async validateDirectory(inputPath: string): Promise<string> {

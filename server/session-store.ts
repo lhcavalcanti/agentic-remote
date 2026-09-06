@@ -30,6 +30,22 @@ export interface QueuedPromptReservation {
   prompt: QueuedPrompt
 }
 
+export class StaleQueuedPromptReservationError extends Error {
+  readonly statusCode = 409
+
+  constructor() {
+    super('The queued prompt changed before turn admission; nothing was sent')
+    this.name = 'StaleQueuedPromptReservationError'
+  }
+}
+
+interface SdkQueueAdmission {
+  assistantId: string
+  userId: string
+  prompt: QueuedPrompt
+  startedAt: string
+}
+
 export type TerminalQueueOutcome =
   | { kind: 'accepted'; startedTurn: boolean; notice?: string }
   | { kind: 'failed'; uncertain: boolean }
@@ -56,6 +72,7 @@ interface StoredSession extends SessionDetail {
   workspaceTitle?: boolean
   terminalQueueDispatch?: TerminalQueueDispatch
   queuedPromptReservation?: { id: string; promptId: string }
+  sdkQueueAdmission?: SdkQueueAdmission
 }
 
 interface PendingMutation {
@@ -107,12 +124,16 @@ function cloneSession(session: StoredSession): SessionDetail {
     queueDispatchAt: _queueDispatchAt,
     terminalQueueDispatch,
     queuedPromptReservation: _queuedPromptReservation,
+    sdkQueueAdmission,
     contextCwd: _contextCwd,
     workspaceTitle: _workspaceTitle,
     executionMode: _executionMode,
     ...detail
   } = structuredClone(session)
   if (terminalQueueDispatch && terminalQueueDispatch.startedAt === detail.failedPrompt?.failedAt) {
+    detail.failedPrompt = undefined
+  }
+  if (sdkQueueAdmission && sdkQueueAdmission.startedAt === detail.failedPrompt?.failedAt) {
     detail.failedPrompt = undefined
   }
   return {
@@ -127,6 +148,9 @@ export class SessionStore {
   private state: StoredState = { version: 1, sessions: {} }
   private checkpoint = this.state
   private writeQueue: Promise<void> = Promise.resolve()
+  private closed = false
+  private closing?: Promise<void>
+  private readonly fileWrites = new Set<Promise<unknown>>()
   private pendingPersist?: Promise<void>
   private pendingChanges: PendingChange[] = []
   private writingState?: StoredState
@@ -134,6 +158,7 @@ export class SessionStore {
   private readonly streamTargets = new WeakMap<ChatMessage[], Map<string, ChatMessage>>()
   private readonly retirementCache = new WeakMap<string[], ReadonlySet<string>>()
   private lastTerminalQueueDispatchAt = 0
+  private lastSdkAdmissionAt = 0
 
   constructor(
     directory = resolveDataDirectory(),
@@ -143,6 +168,7 @@ export class SessionStore {
   }
 
   async initialize(): Promise<void> {
+    if (this.closed) throw new Error('Session store is closed')
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
     let loaded: StoredState
     try {
@@ -185,6 +211,25 @@ export class SessionStore {
       session.queuedCount = session.queuedPrompts.length
       session.queuedPromptReservation = undefined
       session.pendingUserInput = undefined
+      const admission = session.sdkQueueAdmission
+      if (admission !== undefined) {
+        if (
+          !admission || typeof admission !== 'object' || Array.isArray(admission) ||
+          typeof admission.assistantId !== 'string' || !admission.assistantId ||
+          typeof admission.userId !== 'string' || !admission.userId ||
+          typeof admission.startedAt !== 'string' || !Number.isFinite(Date.parse(admission.startedAt)) ||
+          !admission.prompt || typeof admission.prompt !== 'object' || Array.isArray(admission.prompt) ||
+          typeof admission.prompt.id !== 'string' || !admission.prompt.id ||
+          typeof admission.prompt.content !== 'string' || !admission.prompt.content ||
+          typeof admission.prompt.createdAt !== 'string' ||
+          !Number.isFinite(Date.parse(admission.prompt.createdAt)) ||
+          (admission.prompt.command !== undefined && typeof admission.prompt.command !== 'boolean')
+        ) throw new Error('Invalid SDK queue admission metadata')
+        if (session.failedPrompt?.failedAt === admission.startedAt) {
+          session.failedPrompt.uncertain = true
+        }
+        session.sdkQueueAdmission = undefined
+      }
       const dispatch = session.terminalQueueDispatch
       if (dispatch !== undefined) {
         if (
@@ -638,6 +683,7 @@ export class SessionStore {
         queueDispatchAt: undefined,
         terminalQueueDispatch: undefined,
         queuedPromptReservation: undefined,
+        sdkQueueAdmission: undefined,
         updatedAt: new Date().toISOString(),
         runtime: existing.runtime
           ? {
@@ -706,7 +752,8 @@ export class SessionStore {
     isCurrent: () => boolean,
     reservation?: QueuedPromptReservation,
   ): Promise<SessionDetail> {
-    const createdAt = new Date().toISOString()
+    this.lastSdkAdmissionAt = Math.max(Date.now(), this.lastSdkAdmissionAt + 1)
+    const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
     const userId = randomUUID()
     return this.mutate(sessionId, (session) => {
       if (session.suspended) {
@@ -730,13 +777,19 @@ export class SessionStore {
           (session.status !== 'idle' && session.status !== 'error') ||
           session.failedPrompt || session.pendingPermission || session.pendingUserInput
         ) {
-          throw Object.assign(new Error('The queued prompt changed before turn admission; nothing was sent'), { statusCode: 409 })
+          throw new StaleQueuedPromptReservationError()
         }
         // A rejected turn write leaves the original FIFO item durable. No
         // compensating enqueue is needed while storage is still unavailable.
         session.queuedPrompts = session.queuedPrompts!.slice(1)
         session.queuedCount = session.queuedPrompts.length
         session.queuedPromptReservation = undefined
+        // If shutdown interrupts the committed handoff, even a refused
+        // cancellation write leaves its text recoverable after restart.
+        session.sdkQueueAdmission = {
+          assistantId, userId, prompt: structuredClone(head), startedAt: createdAt,
+        }
+        session.failedPrompt = { content: head.content, failedAt: createdAt, uncertain: true }
       }
       session.messages.push(
         { id: userId, role: 'user', content, createdAt },
@@ -747,6 +800,55 @@ export class SessionStore {
       session.activity = 'Thinking'
       if (session.messages.filter((message) => message.role === 'user').length === 1) {
         session.title = content.length > 52 ? `${content.slice(0, 52)}…` : content
+      }
+    })
+  }
+
+  async settleSdkQueueAdmission(
+    sessionId: string,
+    assistantId: string,
+    started: boolean,
+    canBecomeIdle: () => boolean = () => true,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const admission = session.sdkQueueAdmission!
+      if (!started) {
+        const queue = session.queuedPrompts || []
+        if (queue.some((prompt) => prompt.id === admission.prompt.id)) {
+          throw new Error('A cancelled admission conflicts with the canonical queue')
+        }
+        session.queuedPrompts = [admission.prompt, ...queue]
+        session.queuedCount = session.queuedPrompts.length
+        session.messages = session.messages.filter((message) =>
+          message.id !== admission.assistantId && message.id !== admission.userId)
+        if (canBecomeIdle()) {
+          session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'idle'
+          session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
+        }
+      }
+      if (session.failedPrompt?.failedAt === admission.startedAt) session.failedPrompt = undefined
+      session.sdkQueueAdmission = undefined
+    }, (session) => session.sdkQueueAdmission?.assistantId === assistantId)
+  }
+
+  async cancelPromptAdmission(
+    sessionId: string,
+    assistantId: string,
+    canBecomeIdle: () => boolean = () => true,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      const index = session.messages.findIndex((message) => message.id === assistantId)
+      const assistant = session.messages[index]
+      const user = session.messages[index - 1]
+      if (!assistant || assistant.role !== 'assistant' || user?.role !== 'user') return
+      assistant.streaming = false
+      assistant.content = 'Not sent: the session service stopped before provider dispatch.'
+      if (canBecomeIdle()) {
+        session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'idle'
+        session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
+      }
+      if (!session.failedPrompt) {
+        session.failedPrompt = { content: user.content, failedAt: new Date().toISOString() }
       }
     })
   }
@@ -857,7 +959,7 @@ export class SessionStore {
     uncertain = false,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
-      if (stored.terminalQueueDispatch) {
+      if (stored.terminalQueueDispatch || stored.sdkQueueAdmission) {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }
       const queue = stored.queuedPrompts || []
@@ -884,7 +986,7 @@ export class SessionStore {
     answers: string | undefined,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      if (session.terminalQueueDispatch) {
+      if (session.terminalQueueDispatch || session.sdkQueueAdmission) {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }
       const queue = session.queuedPrompts || []
@@ -901,7 +1003,7 @@ export class SessionStore {
 
   async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
-      if (stored.terminalQueueDispatch) {
+      if (stored.terminalQueueDispatch || stored.sdkQueueAdmission) {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }
       stored.failedPrompt = undefined
@@ -980,6 +1082,21 @@ export class SessionStore {
   }
 
   async saveUpload(
+    sessionId: string,
+    filename: string,
+    data: Buffer,
+  ): Promise<SessionFileUpload> {
+    if (this.closed) throw new Error('Session store is closed')
+    const writing = this.writeUpload(sessionId, filename, data)
+    this.fileWrites.add(writing)
+    try {
+      return await writing
+    } finally {
+      this.fileWrites.delete(writing)
+    }
+  }
+
+  private async writeUpload(
     sessionId: string,
     filename: string,
     data: Buffer,
@@ -1140,6 +1257,11 @@ export class SessionStore {
         throw new Error(`Message ${messageId} does not exist`)
       }
       message.streaming = false
+      const admission = session.sdkQueueAdmission
+      if (admission?.assistantId === messageId) {
+        if (session.failedPrompt?.failedAt === admission.startedAt) session.failedPrompt = undefined
+        session.sdkQueueAdmission = undefined
+      }
       session.updatedAt = new Date().toISOString()
     })
   }
@@ -1207,6 +1329,7 @@ export class SessionStore {
 
   private mutateInMemory(change: StreamMutation): SessionDetail {
     const { sessionId, messageId } = change
+    if (this.closed) return this.requireSession(sessionId)
     const session = this.state.sessions[sessionId]
     if (!session || this.isRetiredSession(sessionId)) {
       throw new Error(`Session ${sessionId} does not exist`)
@@ -1331,6 +1454,7 @@ export class SessionStore {
     mutation: (state: StoredState) => () => T,
     separateCommit = false,
   ): Promise<T> {
+    if (this.closed) return Promise.reject(new Error('Session store is closed'))
     return new Promise((resolve, reject) => {
       this.pendingChanges.push({
         kind: 'mutation',
@@ -1393,7 +1517,21 @@ export class SessionStore {
     }
   }
 
-  private persist(): Promise<void> {
+  close(): Promise<void> {
+    if (!this.closing) {
+      this.closed = true
+      this.closing = (async () => {
+        const files = await Promise.allSettled([...this.fileWrites])
+        await this.flush()
+        if (this.pendingChanges.length) await this.persist(true)
+        const failures = files.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
+        if (failures.length) throw new AggregateError(failures, 'Session uploads did not finish cleanly')
+      })()
+    }
+    return this.closing
+  }
+
+  private persist(checkpointStreams = false): Promise<void> {
     if (this.pendingPersist) {
       return this.pendingPersist
     }
@@ -1431,7 +1569,7 @@ export class SessionStore {
             change.reject(error)
           }
         }
-        if (changes.length && !durableChange) {
+        if (changes.length && !durableChange && !checkpointStreams) {
           this.restoreStreams(changes)
           for (const resolve of applied) {
             resolve()

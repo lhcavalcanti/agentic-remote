@@ -60,10 +60,12 @@ import { BackgroundTaskTracker } from './background-task-tracker.js'
 import {
   SessionReplacementCleanupError,
   SessionStore,
+  StaleQueuedPromptReservationError,
   type DiscoveredSession,
   type QueuedPromptReservation,
   type TerminalQueueOutcome,
 } from './session-store.js'
+import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
@@ -1542,6 +1544,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingTerminalQueueClaims = new Map<string, { retryAt: number; retryDelay: number }>()
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
+  private stopTask?: Promise<void>
+  private readonly admissions = new SessionAdmissions(() => this.stopped)
+  private readonly sdkDrainRequested = new Set<string>()
+  private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
+  private readonly pendingSdkQueueAdmissions = new Map<string, PendingQueueAdmission>()
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
@@ -1763,17 +1770,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ]
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    return this.admissions.run('@startup', () => this.startAdmitted())
+  }
+
+  private async startAdmitted(): Promise<void> {
     await this.store.initialize()
+    if (this.stopped) return
     await this.client.start()
+    if (this.stopped) return
     await this.ensureRuntimeModels().catch((error: unknown) => {
       console.warn('Unable to load runtime models:', error)
     })
+    if (this.stopped) return
     await this.discoverSessions()
     const recoveredTerminalSessions = await this.recoverTerminalSessions()
     if (recoveredTerminalSessions > 0) {
       await this.discoverSessions()
     }
+    if (this.stopped) return
 
     await this.reconcileUntrackedTerminalDispatches()
     await this.refreshTranscripts()
@@ -1792,6 +1807,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
         .map((session) => this.drainSdkQueue(session.id)),
     )
+    if (this.stopped) return
     this.discoveryTimer = setInterval(() => {
       void this.refreshDiscovery()
     }, 10_000)
@@ -1802,8 +1818,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.transcriptTimer.unref()
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
     this.stopped = true
+    this.stopTask ??= this.stopSettled()
+    return this.stopTask
+  }
+
+  private async stopSettled(): Promise<void> {
     for (const timer of this.acknowledgementTimers) {
       clearTimeout(timer)
     }
@@ -1828,6 +1849,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       elicitation.resolve({ action: 'cancel' })
     }
     this.elicitations.clear()
+    await this.admissions.wait()
+    await Promise.allSettled([
+      ...this.sdkQueueWakeups.values(),
+      ...this.loadingSessions.values(),
+      ...this.hydratingSessions.values(),
+      this.runtimeModelLoad,
+    ])
     await Promise.allSettled(this.sdkReplyWrites())
     this.acceptedSdkReplies.clear()
     this.terminalUserInputChecks.clear()
@@ -1839,6 +1867,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await Promise.all([...this.sessionCreations])
     await Promise.all([...this.lifecycleLocks.values()])
     await Promise.allSettled([...this.queueOperations.values()])
+    const admissionSettlements = await Promise.allSettled(
+      [...this.pendingSdkQueueAdmissions.keys()].map((id) => this.settleQueueAdmission(id)),
+    )
+    this.pendingSdkQueueAdmissions.clear()
+    this.sdkDrainRequested.clear()
     this.pendingTerminalQueueSettlements.clear()
     this.pendingTerminalQueueClaims.clear()
     for (const session of this.store.list()) {
@@ -1849,12 +1882,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
     this.sessions.clear()
     const runtimeErrors = await this.client.stop()
+    this.activePrompts.clear()
     const synchronized = await Promise.allSettled([
       this.discoveryInFlight,
       this.transcriptInFlight,
     ])
     const errors = [
-      ...[...disconnected, ...synchronized].flatMap((result) =>
+      ...[...disconnected, ...synchronized, ...admissionSettlements].flatMap((result) =>
         result.status === 'rejected'
           ? [
               result.reason instanceof Error
@@ -1868,7 +1902,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // Sessions and the SDK are down, so settle any write they triggered. Once
     // stop() resolves no further write can land, which is what lets a caller
     // safely tear down the data directory.
-    await this.store.flush()
+    await this.store.close()
     const runtimeTimeouts = errors.filter((error) =>
       error.message.startsWith(
         'Failed to gracefully shut down runtime: runtime.shutdown timed out',
@@ -1963,6 +1997,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private ensureRuntimeModels(): Promise<void> {
+    if (this.stopped) return Promise.reject(new Error('The session service is stopping'))
     if (this.runtimeModels.size > 0) {
       return Promise.resolve()
     }
@@ -1970,6 +2005,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private refreshRuntimeModels(): Promise<void> {
+    if (this.stopped) return Promise.reject(new Error('The session service is stopping'))
     if (this.runtimeModelLoad) {
       return this.runtimeModelLoad
     }
@@ -2116,7 +2152,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       streaming: true,
       ...runtime,
       onPermissionRequest: allowAllPermissions
-        ? async () => ({ kind: 'approve-once' })
+        ? async () => ({ kind: this.stopped ? 'user-not-available' : 'approve-once' })
         : (request, invocation) =>
             this.requestPermission(invocation.sessionId, request),
       onUserInputRequest: (request, invocation) =>
@@ -2960,7 +2996,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             model: runtime?.model,
             contextTier: runtime?.contextTier,
             onPermissionRequest: stored.runtime?.allowAllPermissions
-              ? async () => ({ kind: 'approve-once' })
+              ? async () => ({ kind: this.stopped ? 'user-not-available' : 'approve-once' })
               : (request, invocation) =>
                   this.requestPermission(invocation.sessionId, request),
             onUserInputRequest: (request, invocation) =>
@@ -3191,6 +3227,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     rawContent: string,
     enqueue = false,
+    acknowledgedFailure?: string,
+  ): Promise<SessionDetail> {
+    return this.admissions.run(sessionId, () =>
+      this.sendAdmittedMessage(sessionId, rawContent, enqueue, acknowledgedFailure))
+  }
+
+  private async sendAdmittedMessage(
+    sessionId: string,
+    rawContent: string,
+    enqueue: boolean,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
     const content = rawContent.trim()
@@ -3694,6 +3740,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     fromQueue = false,
     reservation?: QueuedPromptReservation,
   ): Promise<SessionDetail> {
+    return this.admissions.run(sessionId, () =>
+      this.startAdmittedMessage(sessionId, content, fromQueue, reservation))
+  }
+
+  private async startAdmittedMessage(
+    sessionId: string,
+    content: string,
+    fromQueue: boolean,
+    reservation?: QueuedPromptReservation,
+  ): Promise<SessionDetail> {
     // Anything already waiting goes first. A resume whose drain failed leaves
     // the prompt back on the queue, and a message written afterwards would
     // otherwise start straight away and run ahead of one written before it.
@@ -3714,8 +3770,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         (fromQueue || !this.drainingSessions.has(sessionId)),
       reservation,
     )
+    if (reservation) {
+      this.pendingSdkQueueAdmissions.set(sessionId, { assistantId: assistantMessageId, started: false })
+    }
+    if (this.stopped || this.deletingSessions.has(sessionId) || this.suspendingSessions.has(sessionId) ||
+        this.activePrompts.has(sessionId)) {
+      if (reservation) await this.settleQueueAdmission(sessionId)
+      else await this.store.cancelPromptAdmission(
+        sessionId, assistantMessageId, () => !this.activePrompts.has(sessionId),
+      )
+      throw Object.assign(new Error(this.stopped
+        ? 'The session service stopped before provider dispatch; the prompt was retained'
+        : 'The session changed before provider dispatch; the prompt was retained'),
+      { statusCode: this.stopped ? 503 : 409 })
+    }
     this.activePrompts.set(sessionId, { assistantMessageId })
-    this.publish(updated)
+    const admission = this.pendingSdkQueueAdmissions.get(sessionId)
+    if (admission?.assistantId === assistantMessageId) admission.started = true
 
     // runPrompt writes to the store from its own catch and finally paths, so a
     // failure there would escape this fire-and-forget call as an unhandled
@@ -3725,10 +3796,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.publishError(sessionId, error)
       },
     )
+    this.publish(updated)
+    if (reservation) await this.settleQueueAdmission(sessionId)
     return updated
   }
 
   async listCommands(sessionId: string): Promise<SlashCommand[]> {
+    return this.admissions.run(sessionId, () => this.listAdmittedCommands(sessionId))
+  }
+
+  private async listAdmittedCommands(sessionId: string): Promise<SlashCommand[]> {
     const commands = await this.commandCatalog(sessionId)
     return commands.map((command) => ({
       name: command.name,
@@ -3856,6 +3933,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     rawCommand: string,
     enqueue = false,
+    acknowledgedFailure?: string,
+  ): Promise<SessionDetail> {
+    return this.admissions.run(sessionId, () =>
+      this.executeAdmittedCommand(sessionId, rawCommand, enqueue, acknowledgedFailure))
+  }
+
+  private async executeAdmittedCommand(
+    sessionId: string,
+    rawCommand: string,
+    enqueue: boolean,
     acknowledgedFailure?: string,
   ): Promise<SessionDetail> {
     const command = rawCommand.trim()
@@ -4317,6 +4404,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     forgetSessionEvents(sessionId)
     let completed = false
     try {
+      await this.admissions.wait(sessionId)
       await Promise.allSettled(this.sdkReplyWrites(sessionId))
       await this.activeSessionStopper(sessionId)
       const active = this.sessions.get(sessionId)
@@ -4359,6 +4447,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }
       await this.store.remove(sessionId)
+      this.pendingSdkQueueAdmissions.delete(sessionId)
       this.forgetSdkReplies(sessionId)
       this.hydratedSessions.delete(sessionId)
       this.loadingSessions.delete(sessionId)
@@ -4433,6 +4522,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ), { statusCode: 409 })
     }
     if (accepted.completion) return accepted.completion
+    let settled = false
     const completion = this.store.clearPendingRequest(
       sessionId,
       choice.kind === 'permission' ? 'pendingPermission' : 'pendingUserInput',
@@ -4452,6 +4542,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       },
     ).then((updated) => {
+      settled = true
       if (this.acceptedSdkReplies.get(requestId) === accepted) {
         this.acceptedSdkReplies.delete(requestId)
       }
@@ -4468,6 +4559,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ), { statusCode: 503 })
     }).finally(() => {
       accepted.completion = undefined
+      if (settled) this.wakeSdkQueue(sessionId)
     })
     accepted.completion = completion
     return completion
@@ -4860,7 +4952,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       return await loading
     } finally {
-      this.loadingSessions.delete(sessionId)
+      if (this.loadingSessions.get(sessionId) === loading) this.loadingSessions.delete(sessionId)
     }
   }
 
@@ -4875,7 +4967,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         workingDirectory: stored.cwd,
         streaming: true,
         onPermissionRequest: stored.runtime?.allowAllPermissions
-          ? async () => ({ kind: 'approve-once' })
+          ? async () => ({ kind: this.stopped ? 'user-not-available' : 'approve-once' })
           : (request, invocation) =>
               this.requestPermission(invocation.sessionId, request),
         onUserInputRequest: (request, invocation) =>
@@ -4884,7 +4976,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         suppressResumeEvent: true,
       })
     } catch (error) {
-      if (stored.messages.length > 0 || !isMissingSessionError(error)) {
+      if (this.stopped || stored.messages.length > 0 || !isMissingSessionError(error)) {
         throw error
       }
       sdkSession = await this.client.createSession({
@@ -4892,7 +4984,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         workingDirectory: stored.cwd,
         streaming: true,
         onPermissionRequest: stored.runtime?.allowAllPermissions
-          ? async () => ({ kind: 'approve-once' })
+          ? async () => ({ kind: this.stopped ? 'user-not-available' : 'approve-once' })
           : (request, invocation) =>
               this.requestPermission(invocation.sessionId, request),
         onUserInputRequest: (request, invocation) =>
@@ -4903,6 +4995,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId)) {
       await sdkSession.disconnect()
       throw new Error('Session is no longer available')
+    }
+    const current = this.sessions.get(sessionId)
+    if (current && current !== sdkSession) {
+      await sdkSession.disconnect()
+      return current
     }
     this.sessions.set(sessionId, sdkSession)
     this.attachSession(sdkSession, sessionId)
@@ -6015,11 +6112,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<void> {
     const sessionId = sdkSession.sessionId
     try {
+      if (this.stopped) return
       const response = await sdkSession.sendAndWait(content, 60 * 60 * 1000)
       if (response?.timestamp) {
         this.liveTranscriptWatermarks.set(sessionId, response.timestamp)
       }
-      if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       if (response?.data.content) {
@@ -6030,7 +6128,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
       }
       await this.store.finishMessage(sessionId, assistantMessageId)
-      const updated = await this.store.update(sessionId, (session) => {
+      const updated = await this.store.updateIf(sessionId, (session) => {
+        if (this.activePrompts.get(sessionId)?.assistantMessageId !== assistantMessageId) return false
         for (const message of session.messages) {
           if (
             message.role === 'activity' &&
@@ -6041,14 +6140,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         session.status = 'idle'
         session.activity = undefined
+        return true
       })
-      this.publish(updated)
+      if (updated) this.publish(updated)
     } catch (error) {
-      if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
-      const updated = await this.store.update(sessionId, (session) => {
+      const updated = await this.store.updateIf(sessionId, (session) => {
+        if (this.activePrompts.get(sessionId)?.assistantMessageId !== assistantMessageId) return false
         for (const entry of session.messages) {
           if (
             entry.role === 'activity' &&
@@ -6069,19 +6170,58 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         session.status = 'error'
         session.activity = undefined
+        return true
       })
-      this.publish(updated)
-      this.emit('event', { type: 'error', sessionId, message })
+      if (updated) {
+        this.publish(updated)
+        this.publishError(sessionId, new Error(message))
+      }
     } finally {
-      this.activePrompts.delete(sessionId)
-      await this.drainSdkQueue(sessionId)
+      if (this.activePrompts.get(sessionId)?.assistantMessageId === assistantMessageId) {
+        this.activePrompts.delete(sessionId)
+        this.wakeSdkQueue(sessionId)
+      }
     }
   }
 
+  private async settleQueueAdmission(sessionId: string): Promise<SessionDetail | undefined> {
+    const pending = this.pendingSdkQueueAdmissions.get(sessionId)
+    if (!pending) return
+    if (pending.completion) return pending.completion
+    const completion = this.store.settleSdkQueueAdmission(
+      sessionId, pending.assistantId, pending.started, () => !this.activePrompts.has(sessionId),
+    ).then((session) => {
+      if (this.pendingSdkQueueAdmissions.get(sessionId) === pending) {
+        this.pendingSdkQueueAdmissions.delete(sessionId)
+      }
+      this.publish(session)
+      return session
+    }).finally(() => { pending.completion = undefined })
+    pending.completion = completion
+    return completion
+  }
+
+  private wakeSdkQueue(sessionId: string): void {
+    if (this.stopped || this.deletingSessions.has(sessionId)) return
+    this.sdkDrainRequested.add(sessionId)
+    if (this.drainingSessions.has(sessionId) || this.sdkQueueWakeups.has(sessionId)) return
+    const waking = Promise.resolve().then(async () => {
+      if (!this.stopped) await this.drainSdkQueue(sessionId)
+    }).catch((error: unknown) => this.publishError(sessionId, error)).finally(() => {
+      this.sdkQueueWakeups.delete(sessionId)
+      if (this.sdkDrainRequested.has(sessionId)) this.wakeSdkQueue(sessionId)
+    })
+    this.sdkQueueWakeups.set(sessionId, waking)
+  }
+
   private async drainSdkQueue(sessionId: string): Promise<void> {
+    if (this.stopped || this.deletingSessions.has(sessionId)) return
+    if (this.drainingSessions.has(sessionId)) {
+      this.sdkDrainRequested.add(sessionId)
+      return
+    }
+    this.sdkDrainRequested.delete(sessionId)
     if (
-      this.stopped ||
-      this.drainingSessions.has(sessionId) ||
       this.store.get(sessionId)?.failedPrompt ||
       this.store.terminalQueueDispatch(sessionId)
     ) {
@@ -6097,7 +6237,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.drainingSessions.add(sessionId)
     try {
-      if (!this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
+      await this.admissions.run(sessionId, async () => {
+        await this.settleQueueAdmission(sessionId)
+        if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) return
+        const current = await this.store.readAfterWrites(sessionId)
+        if (current.suspended || this.suspendingSessions.has(sessionId) ||
+            current.pendingPermission || current.pendingUserInput || current.failedPrompt ||
+            this.activePrompts.has(sessionId) ||
+            (current.status !== 'idle' && current.status !== 'error')) return
         const { session: queued, reservation } = await this.serializeQueue(
           sessionId,
           () => this.store.reserveQueuedPrompt(
@@ -6108,17 +6255,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
         this.publish(queued)
         if (reservation) {
-          try {
-            await this.startMessage(sessionId, reservation.prompt.content, true, reservation)
-          } catch (error) {
-            this.publishError(sessionId, error)
-          }
+          await this.startMessage(sessionId, reservation.prompt.content, true, reservation)
         }
-      }
+      })
     } catch (error) {
-      this.publishError(sessionId, error)
+      if (error instanceof StaleQueuedPromptReservationError) this.sdkDrainRequested.add(sessionId)
+      else {
+        this.sdkDrainRequested.delete(sessionId)
+        this.publishError(sessionId, error)
+      }
     } finally {
       this.drainingSessions.delete(sessionId)
+      if (this.sdkDrainRequested.has(sessionId)) this.wakeSdkQueue(sessionId)
     }
   }
 
@@ -6330,6 +6478,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
+    if (this.stopped) throw new Error('The session service is stopping')
     const previous = this.queueOperations.get(sessionId) || Promise.resolve()
     const current = previous.catch(() => undefined).then(operation)
     this.queueOperations.set(sessionId, current)
@@ -6477,10 +6626,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private publish(session: SessionDetail): void {
+    if (this.stopped) return
     this.emit('event', { type: 'session.upserted', session })
   }
 
   private publishError(sessionId: string, error: unknown): void {
+    if (this.stopped) return
     this.emit('event', {
       type: 'error',
       sessionId,

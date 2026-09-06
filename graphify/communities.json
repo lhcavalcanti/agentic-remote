@@ -2888,7 +2888,7 @@
       "server_session_knowledge_routes_replacementevidence",
       "server_session_knowledge_routes_sessionknowledgelifecycle",
       "server_session_knowledge_routes_sessionknowledgelifecycle_deletesession",
-      "server_session_knowledge_routes_sessionknowledgelifecycle_removecomputer",
+      "server_session_knowledge_routes_sessionknowledgelifecycle_removedcomputercleanup",
       "server_session_knowledge_routes_sessionknowledgelifecycle_replacementcarrier",
       "server_session_knowledge_routes_sessionknowledgelifecycle_rootremoved",
       "server_session_knowledge_routes_sessionparams",

@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `1bcbdd2c13eade014a3c1401ec439d13920ac92a37c8d9239cd230e63bcb97c2`
+Snapshot: `804b20e43d0218dee2638eedbcea4d40f850856f861e078992a7f13f94947c3c`
 
-Source checkout: `c310964c3416310a282cbbd772ab9df433040460`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `e7140b21261e45c9c94c82ba0995c294234a4e7e`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -12,12 +12,12 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 
 
 ## Corpus Check
-- 161 files · ~311,730 words
+- 161 files · ~311,955 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
 - 2698 nodes · 7111 edges · 111 communities (81 shown, 17 thin omitted)
-- Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 482 edges (avg confidence: 0.8)
+- Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 483 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -475,7 +475,7 @@ Nodes (3): directories, exec, publicationFixture()
 
 ## Knowledge Gaps
 - **512 isolated node(s):** `$schema`, `graphify/vendor/**`, `graphify/.venv/**`, `graphify/.cache/**`, `typescript` (+507 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 780 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 781 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **17 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions

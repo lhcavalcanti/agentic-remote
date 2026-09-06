@@ -39,7 +39,7 @@ interface RegistrationGeneration {
 export interface SessionKnowledgeLifecycle {
   replacementCarrier(computerId: string): (previousSessionId: string, session: ManagedSession) => Promise<void>
   deleteSession(computerId: string, sessionId: string): Promise<void>
-  removeComputer(computerId: string): Promise<void>
+  removedComputerCleanup(computerId: string): () => Promise<void>
   rootRemoved(rootId: string): Promise<void>
 }
 
@@ -51,6 +51,7 @@ export async function registerSessionKnowledgeRoutes(
 ): Promise<SessionKnowledgeLifecycle> {
   const generations = new Map<string, RegistrationGeneration>()
   const background = new Set<Promise<void>>()
+  const computerRemovals = new Map<string, Promise<void>>()
 
   function generationFor(computerId: string): RegistrationGeneration {
     if (!manager.listComputers().some((computer) => computer.id === computerId)) {
@@ -211,7 +212,9 @@ export async function registerSessionKnowledgeRoutes(
   const onEvent = (event: HubEvent): void => {
     if (event.type === 'computer.removed') {
       generations.delete(event.computerId)
-      observe(store.removeComputer(event.computerId), event.computerId)
+      const cleanup = store.removeComputer(event.computerId)
+      computerRemovals.set(event.computerId, cleanup)
+      observe(cleanup, event.computerId)
       return
     }
     try {
@@ -352,12 +355,19 @@ export async function registerSessionKnowledgeRoutes(
       markRemoved(generation, sessionId)
       await store.removeSession(computerId, sessionId, validate)
     },
-    async removeComputer(computerId) {
-      await store.removeComputer(computerId)
-      const roots = store.listBindings()
-        .filter((binding) => binding.root?.computerId === computerId && binding.rootId !== null)
-        .map((binding) => binding.rootId!)
-      await store.refreshAvailability(roots)
+    removedComputerCleanup(computerId) {
+      const cleanup = computerRemovals.get(computerId)
+      if (!cleanup) throw new Error('Computer removal did not queue Knowledge cleanup')
+      computerRemovals.delete(computerId)
+      // Capture the event's queued cleanup before the route awaits catalog
+      // persistence. A later unscoped removal could erase a re-paired owner.
+      return async () => {
+        await cleanup
+        const roots = store.listBindings()
+          .filter((binding) => binding.root?.computerId === computerId && binding.rootId !== null)
+          .map((binding) => binding.rootId!)
+        await store.refreshAvailability(roots)
+      }
     },
     rootRemoved(rootId) {
       return store.refreshAvailability([rootId])

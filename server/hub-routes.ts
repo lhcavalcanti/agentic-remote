@@ -284,11 +284,12 @@ export async function registerHubRoutes(
     '/api/computers/:computerId',
     async (request, reply) => {
       await manager.removeComputer(request.params.computerId)
+      const finishKnowledgeRemoval = sessionKnowledgeLifecycle?.removedComputerCleanup(request.params.computerId)
       // A knowledge root is a computer and a path. Unpairing the computer
       // leaves the root able to answer nothing but "not found", so it goes
       // with it rather than staying in the list offering to try.
       await knowledge.removeRootsForComputer(request.params.computerId)
-      await sessionKnowledgeLifecycle?.removeComputer(request.params.computerId)
+      await finishKnowledgeRemoval?.()
       return reply.code(204).send()
     },
   )

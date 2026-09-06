@@ -836,6 +836,46 @@ describe('session Knowledge routes', () => {
     expect((await get('library', 'one')).statusCode).toBe(404)
   })
 
+  it('does not let an old unpair request erase a new pairing binding after catalog cleanup waits', async () => {
+    const { app, manager, knowledge, root, secondRoot, put, get, store, directory } = await fixture()
+    const owner = manager.computers.find((computer) => computer.id === 'worker')
+    if (!owner) throw new Error('The fixture worker is missing')
+    await knowledge.addRoot({
+      computerId: owner.id, computerName: owner.name, name: 'Worker notes', path: '/worker/notes',
+    })
+    expect((await put(root.id, 0, 'worker', 'one')).statusCode).toBe(200)
+    const cleanup = vi.spyOn(store, 'removeComputer')
+    const originalRemoval = knowledge.removeRootsForComputer.bind(knowledge)
+    const held = gate()
+    vi.spyOn(knowledge, 'removeRootsForComputer').mockImplementationOnce(async (computerId) => {
+      held.start()
+      await held.wait
+      return originalRemoval(computerId)
+    })
+    const removing = app.inject({
+      method: 'DELETE', url: '/api/computers/worker', headers: trusted,
+    }).then((response) => response)
+    await held.started
+    await vi.waitFor(() => expect(store.get('worker', 'one').revision).toBe(0))
+    manager.computers.push(owner)
+    manager.sessions.push(session('worker', 'one'))
+    manager.rePair('worker')
+    const created = await put(secondRoot.id, 0, 'worker', 'one')
+    expect(created.statusCode).toBe(200)
+    expect(created.json().binding).toMatchObject({ rootId: secondRoot.id, revision: 1 })
+    held.finish()
+    expect((await removing).statusCode).toBe(204)
+    expect(cleanup).toHaveBeenCalledTimes(1)
+    expect((await get('worker', 'one')).json().binding).toMatchObject({
+      rootId: secondRoot.id, revision: 1, available: true,
+    })
+    const reloaded = new SessionKnowledgeStore(directory, knowledge)
+    await reloaded.initialize()
+    expect(reloaded.get('worker', 'one')).toMatchObject({
+      rootId: secondRoot.id, revision: 1, available: true,
+    })
+  })
+
   it('does not resurrect an association when its session owner is unpaired during persistence', async () => {
     const { app, manager, put, root, store, updates } = await fixture()
     const held = holdWrite()

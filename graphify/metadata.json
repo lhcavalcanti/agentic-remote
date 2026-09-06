@@ -120,9 +120,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 100,
+  "communities": 101,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5866,
+  "edges": 5868,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -155,7 +155,7 @@
     "config/agentic-remote-promotion.env.example": "40ea12d0422c22d22704b9f49a7633860dac23606a66eabfe0ec8b37aa515429",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
     "docs/app-spec.md": "46c5d7509878c73c9b7adbbde5e3936d9e20593654c459470b552ec7982c843b",
-    "docs/architecture.md": "e35bb74c0aef0158f25a2c8833afe2f3a7b070f4240b977f96821a2bd6f9cd3a",
+    "docs/architecture.md": "451c8985bfd0e66e895c079e23a0be6b3650be19420a6388f5800ad77d370d18",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
@@ -180,8 +180,8 @@
     "server/active-sessions.test.ts": "68cb7a2338036dddaf72ae263f4803d4bd5819aa38381d5bfb80a80b903236f8",
     "server/active-sessions.ts": "872f54657ac39271fb18b7b44fc01db06c693c101641e4147a16797fe16941fc",
     "server/activity-spacing.test.ts": "b6446956cba3c708e2c4ff4a47016528851f6d69519e5e548c14ae062f9a03ca",
-    "server/agent-service.test.ts": "8f552c94c9353e9c0816262d1bdea703b0447de19e2a702c5125839335177907",
-    "server/agent-service.ts": "19504537e96fd10ae53bf7bfa57340bdb859fc3d678871549e1c443282f3d3a1",
+    "server/agent-service.test.ts": "182accc9dbe74a1f767fb8cabd5326f468e86bd3639da0af83c32b03b941921f",
+    "server/agent-service.ts": "a0c3fa83c6c5f490ab7cc83a85bc47d3931592f6ffb6e851d54412bbde606e4d",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "e98adc8f9c5e58e398a6b2e04105967c5d9f8300ee042b77fae9329823b9de72",
@@ -347,34 +347,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "feb02e65a062a35cb7f11dd508bf50811db93678adf07a1c6d8e23b97b86a2a8",
-    "communities.json": "9312fced07fd8ee44718c71d63f4ce5833242c6a6efe1a17fc496d2455d92478",
-    "graph.html": "a112d3bca4572197f74b102f207eb05c039e817486d54638f158812b321bc094",
-    "graph.json": "61f187e2cbc243bd0115a4f448a80fd80ff9af9ecfb44e3cd40d7ebe869bc6a3"
+    "GRAPH_REPORT.md": "d5a25c589f4840e5d394a6ebe303d70978dc97f9ec845d629ad82e8a7c7db3d5",
+    "communities.json": "92ac273033a1c551d6d38071099f36c44f61098a9b5d1f3aeb44fb17a196c175",
+    "graph.html": "89e77538e88da4364897324776c50961b4ad3f7125f1ffa4102f4e996b361a37",
+    "graph.json": "9a2995d68109ce4f0dc5df1b717c4f724f76fc4ab323089e0b5d4eede8d34c9b"
   },
   "schema_version": 1,
-  "source_commit": "c027f62f61e221d9323ed6e3f000f9e552120627",
-  "source_fingerprint": "475446491e079c82e9313031aa39aabfb2fa11b90242c0d5a78bfd286b2c3ebf",
+  "source_commit": "8f9e876b3ad1b07163db7619ac5a10663d02eb7f",
+  "source_fingerprint": "d3a8b0eba1115a0c4f81188690c35060c7863108f061e3714a6335c655a008d9",
   "working_tree_changes": [
-    "README.md",
-    "bin/agentic-remote-promotion-monitor",
-    "docs/app-spec.md",
     "docs/architecture.md",
-    "docs/deployment-promotion.md",
     "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/claude-agent-service.ts",
-    "server/multi-node.test.ts",
-    "server/promotion-monitor.test.ts",
-    "server/remote-node-client.test.ts",
-    "server/remote-node-client.ts",
-    "server/session-store-durability.test.ts",
-    "server/session-store-providers.test.ts",
-    "server/session-store.test.ts",
-    "server/session-store.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "server/agent-service.ts"
   ]
 }

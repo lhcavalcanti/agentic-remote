@@ -2047,7 +2047,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async openSession(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
-    if (this.externalSessionIds.has(id)) {
+    if (
+      this.externalSessionIds.has(id) ||
+      (this.startupRecoveryPending && this.store.backend(id) === 'terminal')
+    ) {
       return stored
     }
     if (this.hydratedSessions.has(id)) {
@@ -2079,6 +2082,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async activateSession(id: string): Promise<SessionDetail> {
+    this.assertTerminalQueueSettled(id)
     const session = await this.openSession(id)
     const opened = await this.store.setOpen(id, true, true)
     this.publish(opened)
@@ -5006,6 +5010,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async attachSdkSession(sessionId: string): Promise<CopilotSessionLike> {
+    this.assertTerminalQueueSettled(sessionId)
     const stored = this.store.get(sessionId)
     if (!stored) {
       throw new Error('Session not found')

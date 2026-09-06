@@ -155,6 +155,9 @@ An indeterminate terminal discovery at cold start is reported without replacing
 the last stored session view or preventing the HTTP runtime from starting.
 Recovery and terminal admission wait for a successful discovery rather than
 treating an unreadable or differently namespaced tmux server as absent. The
+session read route returns the last committed view during that wait; opening a
+read-only view must not close the retained identity or cancel boot recovery.
+Explicit activation waits for ownership confirmation. The
 existing discovery poll completes deferred recovery under per-session lifecycle
 ownership. Destructive operations retain their strict absence checks; state
 validation, persistence and SDK startup failures are not swallowed by this

@@ -98,6 +98,101 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
+describe('Durable terminal queue claims', () => {
+  async function ready() {
+    const setup = await fixture()
+    await setup.store.clearFailedPrompt('session')
+    return setup
+  }
+
+  it('keeps an unstamped legacy recovery visible', async () => {
+    const { store, directory, contents } = await fixture()
+    const state = JSON.parse(await contents())
+    delete state.sessions.session.failedPrompt.failedAt
+    await disk.writeFile(path.join(directory, 'state.json'), JSON.stringify(state))
+    await store.initialize()
+    expect(store.get('session')?.failedPrompt?.content).toBe('Earlier failure')
+  })
+
+  it('holds the exact head privately until the claim commits', async () => {
+    const { store, contents } = await ready()
+    const before = store.get('session')
+    const gate = holdWrite()
+    const claiming = store.claimTerminalQueuedPrompt('session', prompt('first'), () => true)
+    await gate.started
+    expect(store.get('session')).toEqual(before)
+    expect(store.terminalQueueDispatch('session')).toBeUndefined()
+    gate.finish()
+    const { session: claimed, dispatch } = await claiming
+    expect(claimed).not.toHaveProperty('terminalQueueDispatch')
+    expect(claimed.failedPrompt).toBeUndefined()
+    expect(claimed).toMatchObject({ status: 'running', queuedPrompts: [prompt('second')], queuedCount: 1 })
+    expect(store.terminalQueueDispatch('session')).toEqual(dispatch)
+    expect(JSON.parse(await contents()).sessions.session).toMatchObject({
+      terminalQueueDispatch: dispatch,
+      failedPrompt: { content: 'first', failedAt: dispatch.startedAt, uncertain: true },
+    })
+  })
+
+  it.each(['identity', 'content', 'command', 'time', 'owner'] as const)(
+    'does not claim a stale queue %s',
+    async (changed) => {
+      const { store } = await ready()
+      const expected = {
+        ...prompt('first'),
+        ...(changed === 'identity' ? { id: 'second' } : {}),
+        ...(changed === 'content' ? { content: 'Changed' } : {}),
+        ...(changed === 'command' ? { command: true } : {}),
+        ...(changed === 'time' ? { createdAt: '2026-09-05T00:00:00.000Z' } : {}),
+      }
+      await expect(store.claimTerminalQueuedPrompt('session', expected, () => changed !== 'owner'))
+        .rejects.toThrow('nothing was sent')
+      expect(store.get('session')?.queuedCount).toBe(2)
+    },
+  )
+
+  it('prevents generic recovery operations from consuming an active claim', async () => {
+    const { store } = await ready()
+    const { dispatch } = await store.claimTerminalQueuedPrompt('session', prompt('first'), () => true)
+    await expect(store.clearFailedPrompt('session')).rejects.toMatchObject({ statusCode: 409 })
+    await expect(store.enqueueAnsweringPrompt('session', prompt('retry'), dispatch.startedAt))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(store.setFailedPrompt('session', 'second', 'Overwrite')).rejects.toMatchObject({ statusCode: 409 })
+    expect(store.terminalQueueDispatch('session')).toEqual(dispatch)
+    expect(store.get('session')?.queuedPrompts).toEqual([prompt('second')])
+  })
+
+  it('keeps newer native permission state when settling a delivered turn', async () => {
+    const { store } = await ready()
+    const { dispatch } = await store.claimTerminalQueuedPrompt('session', prompt('first'), () => true)
+    await store.update('session', (session) => {
+      session.status = 'waiting'
+      session.pendingPermission = {
+        requestId: 'permission', title: 'Native permission', kind: 'shell', options: [],
+      }
+      session.activity = 'Native permission'
+    })
+    const settled = await store.settleTerminalQueuedPrompt('session', dispatch.id, { kind: 'accepted', startedTurn: true })
+    expect(settled).toMatchObject({
+      status: 'waiting', activity: 'Native permission', pendingPermission: { requestId: 'permission' },
+    })
+    expect(settled.failedPrompt).toBeUndefined()
+  })
+
+  it('does not resurrect recovery settled by an older runtime', async () => {
+    const { store, directory, contents } = await ready()
+    await store.claimTerminalQueuedPrompt('session', prompt('first'), () => true)
+    const state = JSON.parse(await contents())
+    delete state.sessions.session.failedPrompt
+    await disk.writeFile(path.join(directory, 'state.json'), JSON.stringify(state))
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.terminalQueueDispatch('session')).toBeUndefined()
+    expect(reloaded.get('session')?.failedPrompt).toBeUndefined()
+    expect(reloaded.get('session')?.queuedPrompts).toEqual([prompt('second')])
+  })
+})
+
 describe('SessionStore durability', () => {
   const changes: [string, (store: SessionStore) => Promise<unknown>][] = [
     ['reorder', (store) => store.update('session', (stored) => {

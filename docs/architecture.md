@@ -161,6 +161,22 @@ one store transaction. Reorder operations use this same boundary and must not
 add per-operation rollback. External provider delivery is not part of the
 filesystem transaction.
 
+Terminal queue delivery first atomically claims the exact FIFO head, moving its
+content into the existing uncertain-recovery record before any keystrokes are
+sent. A private `terminalQueueDispatch` identity hides that provisional recovery
+from the public snapshot while delivery is in flight. Completion clears the
+claim and records command feedback together. If completion persistence fails,
+the service retries only that write, with bounded backoff on its existing poll;
+it never repeats the terminal action. New delivery cannot consume an unresolved
+claim or overlap an admitted direct dispatch. A refused pre-delivery claim is
+retried even when no new terminal event arrives. If a delivered command's pane
+cannot be read, observation is retried rather than assuming a turn started;
+overlay closure is observed before continuing the FIFO. On restart an orphan
+claim becomes visible uncertain recovery, not a
+retryable queue item. Older runtimes also retain the existing recovery record.
+Settlement preserves a newer native completion or permission state instead of
+restoring the claim's obsolete running state.
+
 ### Durable identity retirement
 
 Version-1 state can include an identifier-only `retiredSessionIds` ledger.

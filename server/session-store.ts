@@ -20,6 +20,15 @@ export interface DiscoveredSession {
   updatedAt: string
 }
 
+export interface TerminalQueueDispatch {
+  id: string
+  startedAt: string
+}
+
+export type TerminalQueueOutcome =
+  | { kind: 'accepted'; startedTurn: boolean; notice?: string }
+  | { kind: 'failed'; uncertain: boolean }
+
 export class SessionReplacementCleanupError extends Error {
   constructor(readonly replacement: SessionDetail, cause: unknown) {
     super('Conversation cleared, but previous uploads could not be removed.', { cause })
@@ -40,6 +49,7 @@ interface StoredSession extends SessionDetail {
   queueDispatchAt?: string
   contextCwd?: boolean
   workspaceTitle?: boolean
+  terminalQueueDispatch?: TerminalQueueDispatch
 }
 
 interface PendingMutation {
@@ -89,11 +99,15 @@ function cloneSession(session: StoredSession): SessionDetail {
     backend,
     customTitle: _customTitle,
     queueDispatchAt: _queueDispatchAt,
+    terminalQueueDispatch,
     contextCwd: _contextCwd,
     workspaceTitle: _workspaceTitle,
     executionMode: _executionMode,
     ...detail
   } = structuredClone(session)
+  if (terminalQueueDispatch && terminalQueueDispatch.startedAt === detail.failedPrompt?.failedAt) {
+    detail.failedPrompt = undefined
+  }
   return {
     ...detail,
     executionMode: backend === 'terminal' ? 'tmux' : 'sdk',
@@ -112,6 +126,7 @@ export class SessionStore {
   private liveMutableSessions = new WeakSet<StoredSession>()
   private readonly streamTargets = new WeakMap<ChatMessage[], Map<string, ChatMessage>>()
   private readonly retirementCache = new WeakMap<string[], ReadonlySet<string>>()
+  private lastTerminalQueueDispatchAt = 0
 
   constructor(
     directory = resolveDataDirectory(),
@@ -122,6 +137,7 @@ export class SessionStore {
 
   async initialize(): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
+    let loaded: StoredState
     try {
       const raw = await readFile(this.statePath, 'utf8')
       const parsed = JSON.parse(raw) as StoredState
@@ -137,17 +153,18 @@ export class SessionStore {
       ) {
         throw new Error('Unsupported Agentic Remote state format')
       }
-      this.state = parsed
+      loaded = parsed
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
       if (code !== 'ENOENT') {
         throw error
       }
       await this.persist()
+      loaded = structuredClone(this.state)
     }
 
     const legacyRetirements: string[] = []
-    for (const session of Object.values(this.state.sessions)) {
+    for (const session of Object.values(loaded.sessions)) {
       if (session.replacedSessionIds !== undefined) {
         if (!isSessionIdList(session.replacedSessionIds)) {
           throw new Error('Invalid session retirement metadata')
@@ -160,6 +177,19 @@ export class SessionStore {
       session.queuedPrompts ??= []
       session.queuedCount = session.queuedPrompts.length
       session.pendingUserInput = undefined
+      const dispatch = session.terminalQueueDispatch
+      if (dispatch !== undefined) {
+        if (
+          !dispatch || typeof dispatch !== 'object' || Array.isArray(dispatch) ||
+          typeof dispatch.id !== 'string' || !dispatch.id ||
+          typeof dispatch.startedAt !== 'string' || !Number.isFinite(Date.parse(dispatch.startedAt))
+        ) throw new Error('Invalid terminal queue dispatch metadata')
+        if (session.failedPrompt?.failedAt === dispatch.startedAt) {
+          session.failedPrompt.uncertain = true
+        }
+        if (session.queueDispatchAt === dispatch.startedAt) session.queueDispatchAt = undefined
+        session.terminalQueueDispatch = undefined
+      }
       if (session.queueDispatchAt) {
         session.status = 'running'
         session.activity = 'Sent queued prompt'
@@ -179,8 +209,9 @@ export class SessionStore {
         }
       }
     }
-    this.retire(this.state, legacyRetirements)
-    this.checkpoint = this.state
+    this.retire(loaded, legacyRetirements)
+    this.state = loaded
+    this.checkpoint = loaded
     this.liveMutableSessions = new WeakSet()
   }
 
@@ -269,8 +300,12 @@ export class SessionStore {
     }, retired.length > 0)
   }
 
-  async syncDiscovered(sessions: DiscoveredSession[]): Promise<void> {
+  async syncDiscovered(
+    sessions: DiscoveredSession[],
+    isCurrent?: () => boolean,
+  ): Promise<void> {
     return this.change((state) => {
+      if (isCurrent && !isCurrent()) return () => undefined
       for (const discovered of sessions) {
         if (this.retiredIds(state).has(discovered.id)) continue
         const previous = state.sessions[discovered.id]
@@ -359,9 +394,10 @@ export class SessionStore {
     })
   }
 
-  async syncOpen(sessionIds: string[]): Promise<void> {
+  async syncOpen(sessionIds: string[], isCurrent?: () => boolean): Promise<void> {
     const active = new Set(sessionIds)
     return this.change((state) => {
+      if (isCurrent && !isCurrent()) return () => undefined
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         state.sessions[session.id] = {
@@ -383,10 +419,12 @@ export class SessionStore {
   async syncBackends(
     terminalSessionIds: string[],
     sdkSessionIds: string[],
+    isCurrent?: () => boolean,
   ): Promise<void> {
     const activeTerminal = new Set(terminalSessionIds)
     const knownSdk = new Set(sdkSessionIds)
     return this.change((state) => {
+      if (isCurrent && !isCurrent()) return () => undefined
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
@@ -522,7 +560,8 @@ export class SessionStore {
       }
     }, (session) =>
       metadata.cwd !== session.cwd ||
-      Boolean(metadata.title && metadata.title !== session.title),
+      Boolean(metadata.title && metadata.title !== session.title) ||
+      Boolean(metadata.updatedAt && metadata.updatedAt > session.updatedAt),
     )
   }
 
@@ -536,6 +575,7 @@ export class SessionStore {
       session.queuedPrompts = []
       session.queuedCount = 0
       session.queueDispatchAt = undefined
+      session.terminalQueueDispatch = undefined
       if (session.runtime) {
         session.runtime.contextTokens = undefined
         session.runtime.contextEstimated = undefined
@@ -583,6 +623,7 @@ export class SessionStore {
         queuedPrompts: [],
         queuedCount: 0,
         queueDispatchAt: undefined,
+        terminalQueueDispatch: undefined,
         updatedAt: new Date().toISOString(),
         runtime: existing.runtime
           ? {
@@ -613,6 +654,81 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
+    })
+  }
+
+  terminalQueueDispatch(sessionId: string): TerminalQueueDispatch | undefined {
+    const dispatch = this.state.sessions[sessionId]?.terminalQueueDispatch
+    return !this.isRetiredSession(sessionId) && dispatch ? { ...dispatch } : undefined
+  }
+
+  async claimTerminalQueuedPrompt(
+    sessionId: string,
+    expected: QueuedPrompt,
+    isCurrent: () => boolean,
+  ): Promise<{ session: SessionDetail; dispatch: TerminalQueueDispatch }> {
+    this.lastTerminalQueueDispatchAt = Math.max(Date.now(), this.lastTerminalQueueDispatchAt + 1)
+    const dispatch = { id: randomUUID(), startedAt: new Date(this.lastTerminalQueueDispatchAt).toISOString() }
+    const session = await this.mutate(sessionId, (stored) => {
+      const head = stored.queuedPrompts?.[0]
+      if (
+        !isCurrent() || stored.suspended || stored.status !== 'idle' ||
+        stored.pendingPermission || stored.pendingUserInput ||
+        stored.terminalQueueDispatch || stored.failedPrompt ||
+        !head || head.id !== expected.id || head.content !== expected.content ||
+        head.createdAt !== expected.createdAt || head.command !== expected.command
+      ) {
+        throw Object.assign(new Error('The queued prompt changed before delivery; nothing was sent'), { statusCode: 409 })
+      }
+      stored.queuedPrompts = stored.queuedPrompts!.slice(1)
+      stored.queuedCount = stored.queuedPrompts.length
+      // Existing recovery state also protects against automatic replay by older runtimes.
+      stored.failedPrompt = { content: head.content, failedAt: dispatch.startedAt, uncertain: true }
+      stored.terminalQueueDispatch = dispatch
+      stored.queueDispatchAt = dispatch.startedAt
+      stored.status = 'running'
+      stored.activity = 'Dispatching queued prompt'
+    })
+    return { session, dispatch }
+  }
+
+  async settleTerminalQueuedPrompt(
+    sessionId: string,
+    dispatchId: string,
+    outcome: TerminalQueueOutcome,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (stored) => {
+      const dispatch = stored.terminalQueueDispatch
+      if (
+        dispatch?.id !== dispatchId ||
+        stored.failedPrompt?.failedAt !== dispatch.startedAt
+      ) {
+        throw Object.assign(new Error('The terminal queue dispatch no longer owns this recovery'), { statusCode: 409 })
+      }
+      stored.terminalQueueDispatch = undefined
+      if (outcome.kind === 'accepted') {
+        stored.failedPrompt = undefined
+        if (outcome.notice) {
+          const createdAt = new Date().toISOString()
+          stored.messages.push({
+            id: `terminal-command:${dispatch.id}`,
+            role: 'notice',
+            content: outcome.notice,
+            createdAt,
+          })
+          stored.updatedAt = createdAt
+        }
+      } else {
+        stored.failedPrompt.uncertain = outcome.uncertain || undefined
+      }
+      if (stored.queueDispatchAt !== dispatch.startedAt) return
+      if (outcome.kind === 'accepted' && outcome.startedTurn) {
+        if (stored.status === 'running') stored.activity = 'Sent queued prompt'
+        return
+      }
+      stored.queueDispatchAt = undefined
+      stored.status = stored.pendingPermission || stored.pendingUserInput ? 'waiting' : 'idle'
+      stored.activity = stored.pendingPermission?.title || stored.pendingUserInput?.question
     })
   }
 
@@ -647,6 +763,9 @@ export class SessionStore {
     uncertain = false,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
+      if (stored.terminalQueueDispatch) {
+        throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
+      }
       const queue = stored.queuedPrompts || []
       stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
       stored.queuedCount = stored.queuedPrompts.length
@@ -671,6 +790,9 @@ export class SessionStore {
     answers: string | undefined,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
+      if (session.terminalQueueDispatch) {
+        throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
+      }
       const queue = session.queuedPrompts || []
       session.queuedPrompts = [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
@@ -685,6 +807,9 @@ export class SessionStore {
 
   async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
+      if (stored.terminalQueueDispatch) {
+        throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
+      }
       stored.failedPrompt = undefined
     })
   }

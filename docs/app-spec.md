@@ -266,6 +266,12 @@ The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not
 required to be individually editable.
 
+An app-queued terminal prompt MUST be durably removed from automatic retry
+before delivery begins. A failed completion write MUST NOT resend the prompt;
+the service MUST retain the delivery outcome and retry only persistence. After
+restart, an unresolved delivery MUST expose its text as uncertain recovery and
+hold later queued work until the reader explicitly deals with it.
+
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
 

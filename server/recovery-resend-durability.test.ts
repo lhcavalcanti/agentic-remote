@@ -1644,6 +1644,88 @@ describe('Review 5125727881 runtime boundaries', () => {
     },
   )
 
+  it.each([
+    ['message', 'message', true], ['message', 'command', true],
+    ['message', 'message', false], ['message', 'command', false],
+    ['command', 'message', true], ['command', 'command', true],
+  ] as const)(
+    'matches the independent one-shot receipt repro: %s → %s (refuse first accepted write=%s)',
+    async (firstKind, followerKind, refuseFirst) => {
+      const context = await fixture()
+      await context.service.store.update(sessionId, (session) => {
+        session.status = 'idle'
+        session.failedPrompt = { content: 'Recover me', failedAt: 'original', uncertain: true }
+      })
+      let ownsStartup = true
+      Object.assign(context.terminal, {
+        ownsStartupPrompt: () => ownsStartup,
+        resolveStartupPrompt: async () => { ownsStartup = false; return true },
+        capture: async () => '╻▄▄▄▄\n┃ \n╹▀▀▀▀\n / commands',
+        inputReady: async () => true,
+      })
+      const io: Array<{ operation: 'write' | 'refused' | 'rename'; accepted?: boolean }> = []
+      let refusals = 0
+      vi.mocked(writeFile).mockImplementation(async (...args) => {
+        if (args[0] === `${context.statePath}.tmp`) {
+          const candidate = JSON.parse(String(args[1])).sessions[sessionId]
+          const accepted = candidate?.recoveryResend?.accepted === true
+          io.push({ operation: 'write', accepted })
+          if (refuseFirst && accepted && refusals === 0) {
+            refusals += 1
+            const persisted = (await context.persisted()).sessions[sessionId]
+            expect(persisted.recoveryResend.accepted).toBe(false)
+            expect(persisted.failedPrompt.failedAt).toMatch(/^resend:/)
+            io.push({ operation: 'refused' })
+            throw storageError
+          }
+        }
+        return disk.writeFile(...args)
+      })
+      vi.mocked(rename).mockImplementation(async (...args) => {
+        if (args[0] === `${context.statePath}.tmp`) {
+          const candidate = JSON.parse(await disk.readFile(String(args[0]), 'utf8')).sessions[sessionId]
+          io.push({ operation: 'rename', accepted: candidate?.recoveryResend?.accepted === true })
+        }
+        return disk.rename(...args)
+      })
+      const held = gate()
+      context.terminal.send.mockImplementationOnce(async (_id, content) => {
+        context.pastes.push(content)
+        held.opened()
+        await held.pending
+        return true
+      })
+      const firstText = firstKind === 'message' ? 'First recovery' : '/usage first'
+      const first = firstKind === 'message'
+        ? context.service.sendMessage(sessionId, firstText, false, 'original')
+        : context.service.executeCommand(sessionId, firstText, false, 'original')
+      await held.started
+      const firstAdmission = context.service['terminalAdmissionOperations'].get(sessionId)
+      const follower = followerKind === 'message'
+        ? context.service.sendMessage(sessionId, 'Independent follower')
+        : context.service.executeCommand(sessionId, '/usage independent follower')
+      const results = Promise.allSettled([first, follower])
+      await vi.waitFor(() => expect(context.service['terminalAdmissionOperations'].get(sessionId)).not.toBe(firstAdmission))
+      held.release()
+      const [initial, following] = await results
+      if (refuseFirst) {
+        expect(initial).toMatchObject({
+          status: 'rejected', reason: { statusCode: 409, submission: { accepted: true } },
+        })
+        const refused = io.findIndex((event) => event.operation === 'refused')
+        expect(refused).toBeGreaterThan(0)
+        expect(io[refused + 1]?.operation).not.toBe('rename')
+      } else {
+        expect(initial.status).toBe('fulfilled')
+      }
+      expect(refusals).toBe(refuseFirst ? 1 : 0)
+      expect(io.some((event) => event.operation === 'rename' && event.accepted)).toBe(true)
+      expect(following).toMatchObject({ status: 'rejected', reason: { statusCode: 409 } })
+      expect(context.pastes).toEqual([firstText])
+      expect((await context.persisted()).sessions[sessionId].failedPrompt).toBeUndefined()
+    },
+  )
+
   it('marks the shared in-memory recovery claim accepted before acknowledgement failure', async () => {
     const context = await fixture()
     context.withEvents()

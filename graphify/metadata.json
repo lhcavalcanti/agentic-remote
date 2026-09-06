@@ -116,9 +116,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 94,
+  "communities": 99,
   "community_algorithm": "louvain-seed-42",
-  "edges": 5384,
+  "edges": 5387,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -182,8 +182,8 @@
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "e98adc8f9c5e58e398a6b2e04105967c5d9f8300ee042b77fae9329823b9de72",
     "server/background-task-adapter.test.ts": "95a73c1c7a1f3ddb127816d8d52dd9af5a8e91d9fb89f4594c0085c1d08454e0",
-    "server/background-task-adapter.ts": "f1a9a8e54928a21047d10b7efdedbd71294e4ed938818822a22f8dab400efcff",
-    "server/background-task-stop.test.ts": "32e90ca54b479e12e5be77cab1571b100b61bb39303e0d87797d4d36707958b5",
+    "server/background-task-adapter.ts": "530b04c48f5e75c4320af7a139d1fd2f7de59ecbaf1bef4b09a94d017fe0cf76",
+    "server/background-task-stop.test.ts": "410c34801fca1f67c42775687822ce18bb8407fc6371bf06d19fd0aab62d6e73",
     "server/background-task-tracker.test.ts": "50154bcfeb4996dd6a4129fc16c10696da63ff73b439249f28d6aa1864c63137",
     "server/background-task-tracker.ts": "47f0fd9ebf4164c3347376c09aaca797738caeab49eb09312fda5b6ff1d5fdc0",
     "server/claude-agent-service.test.ts": "812d6dc4269d5bd004e6bd61348f198c107495905579b83e03cd49f9f0798bce",
@@ -287,7 +287,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2119,
+  "nodes": 2120,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -339,14 +339,14 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5520edcd3dd50219a7aeeef33c36bdea33afbc4ed3a33e1363c712d489732b17",
-    "communities.json": "c424a79335269911f120ae4a880ee4959c28a3e53e01aaac0bca376a4b764ac9",
-    "graph.html": "799f5ca2aab65681f9af630595fe8a041223747cb4dfdc096160fe2944000940",
-    "graph.json": "34c2a87f3e9fd37b6da4e152b49f5b3304b9081853e2b941ccf6637b1a3e1a60"
+    "GRAPH_REPORT.md": "8b87775ee45ec0658b58b5c189c818d7f50dba1eff3b437e7e2b130bb0e54a9a",
+    "communities.json": "fb09fb95a90319653375cc9e6146e5058ea01c12f888e232f009baa6ff77c9d8",
+    "graph.html": "c2a8aa45a770ccaa0b5ee4d8fb84bdeff022b3343d3c77206265b02d2703e6fd",
+    "graph.json": "2560e078c74846a1b2312595557552acbf47ae6dff98a73ab6476c7c162101bb"
   },
   "schema_version": 1,
-  "source_commit": "7b64b6a32fc3ce7669630b95f0635e7953053c76",
-  "source_fingerprint": "ccc70f085dfef2b805fe5fee5399a2792ee88e4633541f85dacce426617e566e",
+  "source_commit": "f308c567a9b6c1c2604bf8db33b668ed6faa5e86",
+  "source_fingerprint": "deb7a5c01eb76f20109b544dbecab4b6cb943b575ec9146a883431e4a9f3e416",
   "working_tree_changes": [
     "server/background-task-adapter.ts",
     "server/background-task-stop.test.ts"

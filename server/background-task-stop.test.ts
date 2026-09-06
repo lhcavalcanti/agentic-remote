@@ -336,6 +336,45 @@ describe('background shell stop reconciliation', () => {
     expect(result.tasks[0]).toMatchObject({ status: 'running', description: 'Current shell metadata' })
   })
 
+  it.each(['completed', 'failed', 'cancelled'])('rejects older inventory replacing a newer %s execution', (status) => {
+    const current = reportedShell('42', '2026-09-01T08:00:04.000Z', 6, {
+      status, completedAt: '2026-09-01T08:00:05.000Z',
+      error: status === 'failed' ? 'New failure' : undefined,
+      result: 'New final result',
+    })
+    const before = snapshot([current])
+    const after = snapshot([
+      current,
+      reportedShell('42', '2026-09-01T08:00:00.000Z', 7, {
+        description: 'Old execution', result: 'Old result',
+      }),
+    ])
+    expect(after).toEqual(before)
+  })
+
+  it('does not let older inventory detach a stop from the newer running execution', () => {
+    const result = snapshot([
+      ...launched('42', 'async', false, 'new-launch', 4),
+      started('stop', 'stop_bash', { shellId: '42' }, 6),
+      reportedShell('42', '2026-09-01T08:00:00.000Z', 7),
+      completed('stop', stopAcknowledgement('42'), 8),
+    ])
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks[0]).toMatchObject({
+      status: 'cancelled', startedAt: '2026-09-01T08:00:04.000Z',
+    })
+  })
+
+  it('compares execution start instants rather than timestamp spellings', () => {
+    const current = reportedShell('42', '2026-09-01T08:00:04.000Z', 6, {
+      status: 'completed', completedAt: '2026-09-01T08:00:05.000Z', result: 'New final result',
+    })
+    expect(snapshot([
+      current,
+      reportedShell('42', '2026-09-01T09:00:00.000+01:00', 7),
+    ])).toEqual(snapshot([current]))
+  })
+
   it.each(['running', 'queued'])('does not revive a stopped shell from late %s metadata', (status) => {
     const events = launched('42')
     const acknowledgement = completed('stop', stopAcknowledgement('42'), 3)
@@ -499,6 +538,77 @@ describe('background shell stop reconciliation', () => {
       status: 'running', startedAt: '2026-09-01T08:00:04.000Z',
     })
     expect(result.tasks.find((task) => task.id === 'caller-name')?.status).toBe('cancelled')
+  })
+
+  it.each(['completed', 'failed', 'cancelled'])('does not let an older correlated handoff replace a newer %s outcome', (status) => {
+    const events = [
+      ...launched('caller-name', 'async', false, 'old-launch'),
+      reportedShell('42', '2026-09-01T08:00:04.000Z', 6, {
+        status, completedAt: '2026-09-01T08:00:05.000Z',
+        error: status === 'failed' ? 'New failure' : undefined,
+        result: 'New final result',
+      }),
+    ]
+    expect(snapshot([
+      ...events,
+      nativeStart('42', 'old-launch', 8),
+    ])).toEqual(snapshot(events))
+  })
+
+  it('lets a genuinely newer correlated handoff reuse an older completed slot', () => {
+    const result = snapshot([
+      reportedShell('42', '2026-09-01T08:00:00.000Z', 2, {
+        status: 'completed', completedAt: '2026-09-01T08:00:01.000Z',
+      }),
+      ...launched('caller-name', 'async', false, 'new-launch', 4),
+      nativeStart('42', 'new-launch', 6),
+    ])
+    expect(result.runningCount).toBe(1)
+    expect(result.tasks).toEqual([expect.objectContaining({
+      id: '42', status: 'running', startedAt: '2026-09-01T08:00:04.000Z',
+    })])
+  })
+
+  it.each(['completed', 'failed', 'cancelled'])('does not let an older tool handoff replace a newer %s outcome', (status) => {
+    const current = reportedShell('42', '2026-09-01T08:00:04.000Z', 6, {
+      status, completedAt: '2026-09-01T08:00:05.000Z',
+      error: status === 'failed' ? 'New failure' : undefined,
+      result: 'New final result',
+    })
+    const result = snapshot([
+      ...launched('caller-name', 'async', false, 'old-launch'),
+      current,
+      completed('old-launch', {
+        result: { content: '<command started in background with shellId: 42>' },
+      }, 8),
+    ])
+    expect(result.tasks.find((task) => task.id === '42')).toEqual(snapshot([current]).tasks[0])
+    expect(result.tasks.find((task) => task.id === 'caller-name')?.status).toBe('running')
+  })
+
+  it.each(['completed', 'failed', 'cancelled'])('rejects an older uncorrelated start over a newer %s execution', (status) => {
+    const current = reportedShell('42', '2026-09-01T08:00:04.000Z', 6, {
+      status, completedAt: '2026-09-01T08:00:05.000Z',
+      error: status === 'failed' ? 'New failure' : undefined,
+      result: 'New final result',
+    })
+    expect(snapshot([
+      current,
+      nativeStart('42', undefined, 8, 'shell_started', '2026-09-01T08:00:00.000Z'),
+    ])).toEqual(snapshot([current]))
+  })
+
+  it('does not let an older uncorrelated start steal a newer pending stop target', () => {
+    const result = snapshot([
+      ...launched('42', 'async', false, 'new-launch', 4),
+      started('stop', 'stop_bash', { shellId: '42' }, 6),
+      nativeStart('42', undefined, 7, 'shell_started', '2026-09-01T08:00:00.000Z'),
+      completed('stop', stopAcknowledgement('42'), 8),
+    ])
+    expect(result.runningCount).toBe(0)
+    expect(result.tasks[0]).toMatchObject({
+      status: 'cancelled', startedAt: '2026-09-01T08:00:04.000Z',
+    })
   })
 
   it('allows a genuine new native launch to reuse a stopped shell ID', () => {

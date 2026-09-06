@@ -719,7 +719,10 @@ function rekeyTask(
   const from = current.id
   if (tasks.get(from) !== current) return undefined
   const destination = tasks.get(to)
-  if (destination && destination !== current && isLiveTaskStatus(destination.status)) {
+  if (
+    destination && destination !== current &&
+    (isLiveTaskStatus(destination.status) || isOlderExecution(current.startedAt, destination))
+  ) {
     return undefined
   }
   const ownsAlias = taskIdAlias(aliases, from) === from
@@ -877,6 +880,10 @@ function isTerminalTaskStatus(status: BackgroundTaskStatus): boolean {
   return (
     status === 'completed' || status === 'failed' || status === 'cancelled'
   )
+}
+
+function isOlderExecution(startedAt: string, current: BackgroundTask): boolean {
+  return Date.parse(startedAt) < Date.parse(current.startedAt)
 }
 
 /**
@@ -1234,6 +1241,10 @@ export function backgroundTasksFromEvents(
     for (const listedTask of listedTasks) {
       const previous = tasks.get(listedTask.id)
       const reported = normalizeBackgroundTask(listedTask, undefined, false)
+      if (
+        previous?.type === 'shell' && reported.type === 'shell' &&
+        isOlderExecution(reported.startedAt, previous)
+      ) continue
       const sameExecution =
         previous?.type === 'shell' &&
         reported.type === 'shell' &&
@@ -1303,7 +1314,10 @@ export function backgroundTasksFromEvents(
                 destination !== known &&
                 shellInstances.get(destination) !== knownIdentity &&
                 isLiveTaskStatus(destination.status)
-              if (!stealsLiveSlot) {
+              const replacesNewerExecution =
+                destination !== undefined && destination !== known &&
+                isOlderExecution(known.startedAt, destination)
+              if (!stealsLiveSlot && !replacesNewerExecution) {
                 const moved =
                   known.id === shellId
                     ? known
@@ -1333,6 +1347,10 @@ export function backgroundTasksFromEvents(
           } else {
             const destination = tasks.get(shellId)
             const reportedStartedAt = eventString(kind, 'startedAt')
+            if (
+              destination && reportedStartedAt &&
+              isOlderExecution(reportedStartedAt, destination)
+            ) continue
             const sameExecution =
               !startedBy && destination?.type === 'shell' &&
               reportedStartedAt !== undefined &&

@@ -492,6 +492,7 @@ describe('Claude unregistered query recovery', () => {
       query: {} as Query,
       abortController: new AbortController(),
       resourceOwner: Symbol(),
+      resourceReads: runtime.claude['resourceReads'],
       done: Promise.resolve(),
       finish: () => {},
     }

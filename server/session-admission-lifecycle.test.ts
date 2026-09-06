@@ -364,6 +364,7 @@ describe('Session admission and queue lifecycle', () => {
             runtime.service['active'].set(id, {
               abortController: new AbortController(), query: {} as Query,
               resourceOwner: Symbol(),
+              resourceReads: runtime.service['resourceReads'],
               done: Promise.resolve(), finish: () => {},
             })
           }
@@ -526,6 +527,7 @@ describe('Session admission and queue lifecycle', () => {
     const newer = {
       abortController: new AbortController(), query: {} as Query,
       resourceOwner: Symbol(),
+      resourceReads: runtime.service['resourceReads'],
       done: Promise.resolve(), finish: () => {},
     }
     runtime.service['active'].set(id, newer)

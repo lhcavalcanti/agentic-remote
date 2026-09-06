@@ -128,6 +128,7 @@ function ownPrompt(service: AgentService | ClaudeAgentService) {
     abortController: new AbortController(),
     query: (async function* () {})() as unknown as Query,
     resourceOwner: Symbol(),
+    resourceReads: service['resourceReads'],
     done: Promise.resolve(),
     finish: () => {},
   }

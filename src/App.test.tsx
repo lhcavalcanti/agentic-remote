@@ -1511,6 +1511,63 @@ describe('App', () => {
     expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
   })
 
+  it.each(['cwd', 'executionMode', 'suspended', 'cwd-round-trip'] as const)(
+    'retires resource ownership on %s while ignoring a late response',
+    async (change) => {
+      const target = resourceSession()
+      let resolveOld!: (value: ManagedSessionSkillsSnapshot) => void
+      vi.mocked(listSessionSkills).mockImplementationOnce(() =>
+        new Promise((resolve) => { resolveOld = resolve }),
+      )
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+      fireEvent.click(screen.getByRole('button', { name: 'View session skills' }))
+      await waitFor(() => expect(listSessionSkills).toHaveBeenCalledOnce())
+      const signal = vi.mocked(listSessionSkills).mock.calls[0][3]
+      const changed: ManagedSession = {
+        ...target,
+        ...(change.startsWith('cwd') ? { cwd: '/fixture/other' }
+          : change === 'executionMode' ? { executionMode: 'tmux' } : { suspended: true }),
+      }
+      await act(async () => {
+        for (const next of change === 'cwd-round-trip' ? [changed, target] : [changed]) {
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({ type: 'session.upserted', session: next }),
+          } as MessageEvent)
+        }
+      })
+      expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+      expect(signal?.aborted).toBe(true)
+      await act(async () => resolveOld({
+        computerId: target.computerId, sessionId: target.id, provider: 'copilot',
+        scope: 'session', capturedAt: target.updatedAt, skills: [{ name: 'retired-owner-skill' }],
+      }))
+      expect(screen.queryByText('retired-owner-skill')).not.toBeInTheDocument()
+    },
+  )
+
+  it('retires resource ownership on a same-ID re-pair but not ordinary computer updates', async () => {
+    resourceSession()
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View session skills' }))
+    await screen.findByRole('heading', { name: 'review-code' })
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, name: 'Renamed computer' } }),
+      } as MessageEvent)
+    })
+    expect(screen.getByRole('dialog', { name: 'Skills and MCP servers' })).toBeInTheDocument()
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, registrationId: 'new-pairing' } }),
+      } as MessageEvent)
+    })
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+  })
+
   it('makes a diagram the block, not something inside a code block', async () => {
     // Overriding only `code` leaves React Markdown's own `<pre>` wrapped round
     // the result, which boxes the diagram in a code block and gives the source

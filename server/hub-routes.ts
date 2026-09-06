@@ -5,7 +5,7 @@ import { ComputerManager } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
-import { isSessionResourceRoute } from './session-resources.js'
+import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 
 const addComputerSchema = z.object({
   baseUrl: z.string().trim().url().max(2048),
@@ -250,6 +250,7 @@ export async function registerHubRoutes(
   sessionKnowledge?: SessionKnowledgeStore,
 ): Promise<void> {
   const policy = originPolicy()
+  const readResource = resourceRequestHandler(app)
   app.addHook('onRequest', async (request, reply) => {
     if (isSessionResourceRoute(request.routeOptions.url)) reply.header('cache-control', 'no-store')
     const origin = request.headers.origin
@@ -496,7 +497,8 @@ export async function registerHubRoutes(
     '/api/computers/:computerId/sessions/:sessionId/skills',
     async (request, reply) => {
       reply.header('cache-control', 'no-store')
-      return manager.listSkills(request.params.computerId, request.params.sessionId)
+      return readResource(request, reply, (signal) =>
+        manager.listSkills(request.params.computerId, request.params.sessionId, signal))
     },
   )
 
@@ -504,7 +506,8 @@ export async function registerHubRoutes(
     '/api/computers/:computerId/sessions/:sessionId/mcp',
     async (request, reply) => {
       reply.header('cache-control', 'no-store')
-      return manager.listMcpServers(request.params.computerId, request.params.sessionId)
+      return readResource(request, reply, (signal) =>
+        manager.listMcpServers(request.params.computerId, request.params.sessionId, signal))
     },
   )
 

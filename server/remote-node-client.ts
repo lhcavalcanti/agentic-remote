@@ -1,5 +1,6 @@
 import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import type {
   AgentProvider,
@@ -38,6 +39,7 @@ import {
   sanitizeSkillsSnapshot,
   sanitizeMcpSnapshot,
   SessionResourceError,
+  ResourceReads,
 } from './session-resources.js'
 
 /**
@@ -75,6 +77,9 @@ export function normalizeNodeUrl(value: string): string {
 }
 
 export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
+  readonly registrationId = randomUUID()
+  private readonly resourceReads = new ResourceReads()
+  private readonly resourceLifetime = new AbortController()
   private socket?: WebSocket
   private reconnectTimer?: NodeJS.Timeout
   private reconnectDelay = 1_000
@@ -104,11 +109,11 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
-  async getInfo(): Promise<NodeInfo> {
+  async getInfo(signal?: AbortSignal): Promise<NodeInfo> {
     const info = await this.request<NodeInfo>(
       '/node-api/info',
-      {},
-      15_000,
+      { signal: signal ? AbortSignal.any([signal, this.resourceLifetime.signal]) : undefined },
+      signal ? 0 : 15_000,
       false,
     )
     this._providers = info.providers
@@ -123,9 +128,11 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.sessions
   }
 
-  async listHistory(): Promise<SessionDetail[]> {
+  async listHistory(signal?: AbortSignal): Promise<SessionDetail[]> {
     const response = await this.request<{ sessions: SessionDetail[] }>(
       '/node-api/history',
+      { signal: signal ? AbortSignal.any([signal, this.resourceLifetime.signal]) : undefined },
+      signal ? 0 : 15_000,
     )
     return response.sessions
   }
@@ -213,12 +220,14 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     sessionId: string,
     endpoint: 'skills' | 'mcp',
     normalize: (raw: unknown) => T,
+    signal: AbortSignal,
   ): Promise<T> {
     if (this.stopped) throw new SessionResourceError('stopped')
     try {
       const raw = await this.request<unknown>(
         `/node-api/sessions/${encodeURIComponent(sessionId)}/${endpoint}`,
-        { cache: 'no-store' },
+        { cache: 'no-store', signal },
+        0,
       )
       if (this.stopped) throw new SessionResourceError('stopped')
       return normalize(raw)
@@ -228,21 +237,25 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         throw new SessionResourceError(
           error.statusCode === 404 ? 'missing' :
             error.statusCode === 409 ? 'changed' :
-              error.statusCode === 503 ? 'stopped' : 'failed',
+              error.statusCode === 503 ? 'stopped' :
+                error.statusCode === 504 ? 'timeout' :
+                  error.statusCode === 499 ? 'cancelled' : 'failed',
         )
       }
       throw safeResourceError(error)
     }
   }
 
-  listSkills(sessionId: string, provider: AgentProvider): Promise<SessionSkillsSnapshot> {
-    return this.readResource(sessionId, 'skills', (raw) =>
-      sanitizeSkillsSnapshot(raw, sessionId, provider))
+  listSkills(sessionId: string, provider: AgentProvider, signal?: AbortSignal): Promise<SessionSkillsSnapshot> {
+    return this.resourceReads.run(signal, (request) =>
+      this.readResource(sessionId, 'skills', (raw) =>
+        sanitizeSkillsSnapshot(raw, sessionId, provider), request.signal))
   }
 
-  listMcpServers(sessionId: string, provider: AgentProvider): Promise<SessionMcpServersSnapshot> {
-    return this.readResource(sessionId, 'mcp', (raw) =>
-      sanitizeMcpSnapshot(raw, sessionId, provider))
+  listMcpServers(sessionId: string, provider: AgentProvider, signal?: AbortSignal): Promise<SessionMcpServersSnapshot> {
+    return this.resourceReads.run(signal, (request) =>
+      this.readResource(sessionId, 'mcp', (raw) =>
+        sanitizeMcpSnapshot(raw, sessionId, provider), request.signal))
   }
 
   async createSession(input: CreateSessionInput): Promise<SessionDetail> {
@@ -609,6 +622,8 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   }
 
   stop(): void {
+    this.resourceReads.stop()
+    this.resourceLifetime.abort(new SessionResourceError('stopped'))
     this.stopped = true
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -638,7 +653,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         ...init,
         redirect: 'manual',
         headers,
-        signal: init.signal
+        signal: timeoutMs === 0 ? init.signal : init.signal
           ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
           : AbortSignal.timeout(timeoutMs),
       })

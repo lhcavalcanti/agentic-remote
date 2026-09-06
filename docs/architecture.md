@@ -69,6 +69,32 @@ TypeScript Agent SDK, local Claude session persistence, and the owning host's
 existing Claude authentication; Agentic Remote never transports that
 authentication to the hub or another node.
 
+### Read-only resource requests
+
+Skills/MCP reads carry cancellation through the browser request, hub forwarding,
+provider router and owning service. Each entry point has a ten-second deadline;
+HTTP disconnect, shutdown and ownership changes cancel the same read. Completion
+and failure remove every request-owned listener and timer. Provider readers must
+settle their underlying work on cancellation, not race an uncancellable promise.
+
+Copilot's generated RPC wrappers currently provide no per-request cancellation.
+The adapter uses a distinct request ID on the already-owned stdio transport,
+the SDK's shared serialized message writer, and its own bounded response reader.
+Cancellation withdraws that request and removes its reader without adding a
+permanent waiter to the SDK's response map or closing another request's channel.
+Claude uses its existing control request's signal-aware cancellation; skill
+descriptions are observed once from normal initialization and command updates.
+These narrow SDK transport adapters are capability-guarded and covered against
+the installed SDK implementations. Unsupported shapes fail closed instead of
+starting/resuming a session or invoking an uncancellable wrapper.
+
+Computer summaries expose a non-secret, in-memory registration ID so a browser
+can distinguish same-ID re-pairings (and a new hub runtime) from ordinary status
+or name updates. The resource view also owns its session, provider, cwd, execution
+mode and suspension state. Event-time invalidation prevents a batched
+change-and-revert from reviving an old catalog. Registration IDs and resource
+observations are not written to stored session or pairing state.
+
 ## Failure behavior
 
 - A failed node request marks that computer offline.

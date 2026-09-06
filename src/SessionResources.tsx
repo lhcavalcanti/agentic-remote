@@ -11,7 +11,7 @@ import type {
 } from '../shared/contracts'
 import { listSessionMcpServers, listSessionSkills } from './api'
 import { providerName, shortPath } from './session-presentation'
-import type { SessionResourceTab } from './session-resource-commands'
+import { sessionResourceOwner, type SessionResourceTab } from './session-resource-commands'
 
 type Catalog =
   | { kind: 'skills'; snapshot: ManagedSessionSkillsSnapshot }
@@ -302,8 +302,7 @@ export function SessionResources({
     tabs.current[next]?.focus()
   }
   const requestKey = JSON.stringify([
-    session.computerId, session.id, session.provider || 'copilot',
-    session.cwd, tab, online, supported, refresh,
+    sessionResourceOwner(session), tab, online, supported, refresh,
   ])
   return (
     <div className="session-resources">

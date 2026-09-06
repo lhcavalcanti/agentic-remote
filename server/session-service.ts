@@ -88,8 +88,9 @@ export interface SessionService {
     acknowledgesFailure?: string,
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
-  listSkills?(sessionId: string): Promise<SessionSkillsSnapshot>
-  listMcpServers?(sessionId: string): Promise<SessionMcpServersSnapshot>
+  /** Resource readers must settle and release their own work on cancellation. */
+  listSkills?(sessionId: string, signal?: AbortSignal): Promise<SessionSkillsSnapshot>
+  listMcpServers?(sessionId: string, signal?: AbortSignal): Promise<SessionMcpServersSnapshot>
   executeCommand(
     sessionId: string,
     command: string,

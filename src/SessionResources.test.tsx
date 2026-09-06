@@ -198,6 +198,40 @@ describe('session resources', () => {
     expect(screen.getByText('Failed')).toBeInTheDocument()
   })
 
+  it.each(['executionMode', 'suspended'] as const)('abandons old metadata after %s changes', async (change) => {
+    let resolveOld!: (value: ManagedSessionSkillsSnapshot) => void
+    vi.mocked(listSessionSkills).mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+    const view = render(<SessionResources session={session} online supported initialTab="skills" />)
+    const signal = vi.mocked(listSessionSkills).mock.calls[0][3]
+    const changed: ManagedSession = {
+      ...session, ...(change === 'executionMode' ? { executionMode: 'tmux' } : { suspended: true }),
+    }
+    vi.mocked(listSessionSkills).mockResolvedValueOnce({
+      ...skills, scope: 'workspace', skills: [{ name: 'configured-new-owner' }],
+    })
+    view.rerender(<SessionResources session={changed} online supported initialTab="skills" />)
+    await screen.findByRole('heading', { name: 'configured-new-owner' })
+    expect(signal?.aborted).toBe(true)
+    await act(async () => resolveOld(skills))
+    expect(screen.queryByRole('heading', { name: 'code-review' })).not.toBeInTheDocument()
+  })
+
+  it('aborts a hung browser request and offers a working refresh', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    vi.mocked(listSessionSkills).mockImplementationOnce((_computer, _session, _provider, signal) =>
+      new Promise((_resolve, reject) => {
+        signal!.addEventListener('abort', () => reject(signal!.reason), { once: true })
+      }),
+    )
+    render(<SessionResources session={session} online supported initialTab="skills" />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_001) })
+    expect(screen.getByRole('alert')).toHaveTextContent('timed out')
+    expect(screen.getByRole('button', { name: 'Refresh skills' })).toBeEnabled()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Refresh skills' })))
+    expect(screen.getByRole('heading', { name: 'code-review' })).toBeInTheDocument()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('renders metadata as text and never renders extra configuration fields', async () => {
     const description = '<img src="https://example.invalid/leak" onerror="alert(1)">'
     vi.mocked(listSessionSkills).mockResolvedValue({

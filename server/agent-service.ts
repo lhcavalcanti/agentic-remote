@@ -113,10 +113,12 @@ import {
   mcpSnapshot,
   safeResourceError,
   SessionResourceError,
+  ResourceReads,
   skillsSnapshot,
   unavailableMcp,
   unavailableSkills,
 } from './session-resources.js'
+import { readCopilotResource, type CopilotResourceClient } from './session-resource-transport.js'
 import {
   composerHoldsText,
   isTerminalAgentWorking,
@@ -222,7 +224,7 @@ export interface CopilotSessionLike {
   }
 }
 
-export interface CopilotClientLike {
+export interface CopilotClientLike extends CopilotResourceClient {
   start(): Promise<void>
   stop(): Promise<Error[]>
   createSession(config: SessionConfig): Promise<CopilotSessionLike>
@@ -1613,6 +1615,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly terminalQueueWakeups = new Map<string, Promise<void>>()
   private readonly pendingSdkQueueAdmissions = new Map<string, PendingQueueAdmission>()
   private resourceEpoch = 0
+  private readonly resourceReads = new ResourceReads()
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly terminalAdmissionOperations = new Map<
     string,
@@ -1848,6 +1851,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return Promise.reject(Object.assign(new Error('The session service is stopping'), { statusCode: 503 }))
     }
     if (this.startTask) return this.startTask
+    this.resourceReads.start()
     this.resourceEpoch += 1
     const starting = this.admissions.run('@startup', () => this.startAdmitted())
     this.startTask = starting
@@ -1965,6 +1969,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   stop(): Promise<void> {
+    this.resourceReads.stop()
     this.resourceEpoch += 1
     this.stopped = true
     this.stopTask ??= this.stopSettled()
@@ -4491,12 +4496,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return { stored, live, assertCurrent }
   }
 
-  async listSkills(sessionId: string): Promise<SessionSkillsSnapshot> {
+  listSkills(sessionId: string, signal?: AbortSignal): Promise<SessionSkillsSnapshot> {
+    return this.resourceReads.run(signal, (request) => this.readSkills(sessionId, request.signal))
+  }
+
+  private async readSkills(sessionId: string, signal: AbortSignal): Promise<SessionSkillsSnapshot> {
     const { stored, live, assertCurrent } = this.resourceOwner(sessionId)
     try {
       if (live?.rpc.skills?.list) {
         try {
-          const result = await live.rpc.skills.list()
+          const result = await readCopilotResource<Awaited<ReturnType<NonNullable<typeof live.rpc.skills>['list']>>>(
+            this.client, 'session.skills.list', { sessionId }, signal, live,
+          )
           assertCurrent()
           return skillsSnapshot(sessionId, 'copilot', 'session', copilotSkills(result))
         } catch (error) {
@@ -4507,7 +4518,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.client.rpc.skills?.discover) {
         try {
           assertCurrent()
-          const result = await this.client.rpc.skills.discover({ projectPaths: [stored.cwd] })
+          const result = await readCopilotResource<Awaited<ReturnType<CopilotClient['rpc']['skills']['discover']>>>(
+            this.client, 'skills.discover', { projectPaths: [stored.cwd] }, signal,
+          )
           assertCurrent()
           return skillsSnapshot(sessionId, 'copilot', 'workspace', copilotSkills(result))
         } catch (error) {
@@ -4521,12 +4534,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async listMcpServers(sessionId: string): Promise<SessionMcpServersSnapshot> {
+  listMcpServers(sessionId: string, signal?: AbortSignal): Promise<SessionMcpServersSnapshot> {
+    return this.resourceReads.run(signal, (request) => this.readMcpServers(sessionId, request.signal))
+  }
+
+  private async readMcpServers(sessionId: string, signal: AbortSignal): Promise<SessionMcpServersSnapshot> {
     const { stored, live, assertCurrent } = this.resourceOwner(sessionId)
     try {
       if (live?.rpc.mcp?.list) {
         try {
-          const result = await live.rpc.mcp.list()
+          const result = await readCopilotResource<Awaited<ReturnType<NonNullable<typeof live.rpc.mcp>['list']>>>(
+            this.client, 'session.mcp.list', { sessionId }, signal, live,
+          )
           assertCurrent()
           return mcpSnapshot(sessionId, 'copilot', 'session', copilotMcp(result))
         } catch (error) {
@@ -4537,7 +4556,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.client.rpc.mcp?.discover) {
         try {
           assertCurrent()
-          const result = await this.client.rpc.mcp.discover({ workingDirectory: stored.cwd })
+          const result = await readCopilotResource<Awaited<ReturnType<CopilotClient['rpc']['mcp']['discover']>>>(
+            this.client, 'mcp.discover', { workingDirectory: stored.cwd }, signal,
+          )
           assertCurrent()
           return mcpSnapshot(sessionId, 'copilot', 'workspace', copilotWorkspaceMcp(result))
         } catch (error) {

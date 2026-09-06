@@ -10,7 +10,7 @@ import {
 } from './file-upload-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import type { SessionService } from './session-service.js'
-import { isSessionResourceRoute, readSessionSkills, readSessionMcpServers, safeResourceError } from './session-resources.js'
+import { isSessionResourceRoute, readSessionSkills, readSessionMcpServers, resourceRequestHandler } from './session-resources.js'
 import {
   MAX_AUDIO_BYTES,
   TranscriptionError,
@@ -147,6 +147,7 @@ export async function registerNodeRoutes(
 ): Promise<void> {
   await app.register(
     async (node) => {
+      const readResource = resourceRequestHandler(node)
       node.addContentTypeParser(
         'application/octet-stream',
         {
@@ -253,9 +254,7 @@ export async function registerNodeRoutes(
         '/sessions/:sessionId/skills',
         async (request, reply) => {
           reply.header('cache-control', 'no-store')
-          return readSessionSkills(service, request.params.sessionId).catch((error: unknown) => {
-            throw safeResourceError(error)
-          })
+          return readResource(request, reply, (signal) => readSessionSkills(service, request.params.sessionId, signal))
         },
       )
 
@@ -263,9 +262,7 @@ export async function registerNodeRoutes(
         '/sessions/:sessionId/mcp',
         async (request, reply) => {
           reply.header('cache-control', 'no-store')
-          return readSessionMcpServers(service, request.params.sessionId).catch((error: unknown) => {
-            throw safeResourceError(error)
-          })
+          return readResource(request, reply, (signal) => readSessionMcpServers(service, request.params.sessionId, signal))
         },
       )
 

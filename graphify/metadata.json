@@ -276,8 +276,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "a32afaca3aac03cc2d95d656edacf2583154afa371fcd22e15f7638ca75341b3",
-    "src/App.tsx": "6379638e75799515d0d623737693b64bbe26ceb9338b9d3a0d1aeb56f8ea9e3c",
+    "src/App.test.tsx": "a4251581cedc02778a1611a6c608076fd3f7f749252f52cd76524186d6ac36b4",
+    "src/App.tsx": "ea238a7e212c1528f7b0aab3fe568db0c48b9d80979e9b280e48e02d7099d3b6",
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
     "src/MermaidDiagram.test.tsx": "db09c107f11b4c5f22c69cc6f8d50ae6bcc25944ec5601a535986122f5dc1281",
     "src/MermaidDiagram.tsx": "98849de396761797dad407e96ea609fe233756b156462b349150fbb6f69f16a2",
@@ -361,17 +361,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "63ae21729ad4bf75594b3f8c61985c71c7da3394a1484913fdfdb9db2e5bac5d",
+    "GRAPH_REPORT.md": "ab777b138495adf51f7e06344505fcaecb574db9b68be4c7d3e2b2df47bfce6e",
     "communities.json": "b71ba86627a0c5c246c5d30ad6be91286221fa08bd84a1188e35d2f45f48db85",
-    "graph.html": "fa0dc619954d33f626181821fd1b5b91c3c86c43bf43c2b98cc5fcb18ff4a50e",
-    "graph.json": "8e34d07bb1607c01b093281f18c4ea59ae73162ca49a3c3b120929d014ee5d8e"
+    "graph.html": "2196ee8222a6a70ab453c6b6a2826a02e554e6b46831a4006ab54611c1e0ea18",
+    "graph.json": "c4385e56c31b937caa5a6135a9fabb1aa13fbd96fe3dfb115415667eccc259ea"
   },
   "schema_version": 1,
-  "source_commit": "f8a2fd3887fcd20f0c37da9f83d98edcc5fc14d5",
-  "source_fingerprint": "56b26a12b99cb27f37190a4f049a23c5423e04fd8b080660f223117a21b5cf39",
+  "source_commit": "f477dcca70d78e3dcd406837c2a9332575300630",
+  "source_fingerprint": "04f85b329e55407f6761ad8ae589caa1f2ceb1f4f4774bd57b1c96af25c327ec",
   "working_tree_changes": [
-    "server/remote-node-client.test.ts",
-    "src/api.test.ts",
-    "src/api.ts"
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

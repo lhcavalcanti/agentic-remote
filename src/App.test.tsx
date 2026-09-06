@@ -6951,6 +6951,75 @@ describe('App', () => {
     )
   })
 
+  it.each([
+    { outcome: 'accepted', newer: false },
+    { outcome: 'accepted', newer: true },
+    { outcome: 'refused', newer: false },
+    { outcome: 'refused', newer: true },
+  ])('settles queued-save ownership after two clear replacements ($outcome, newer=$newer)', async ({ outcome, newer }) => {
+    const foreignKey = 'computer-2:session-1'
+    localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+      [foreignKey]: 'Other computer writing',
+    }))
+    const { textarea, queuedSession, prompts } = await openTargetedQueueEditor()
+    fireEvent.change(textarea, { target: { value: 'Submitted queue rewrite' } })
+    const changed = { ...prompts[1], content: 'Submitted queue rewrite' }
+    let settleSave: () => void = () => { throw new Error('The save has not started') }
+    vi.mocked(updateQueuedPrompt).mockImplementationOnce(() => new Promise((resolve, reject) => {
+      settleSave = () => outcome === 'accepted'
+        ? resolve({
+            session: { ...queuedSession, queuedPrompts: [prompts[0], changed, prompts[2]] },
+            prompt: changed,
+          })
+        : reject(new Error('The queued save was refused'))
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+    await waitFor(() => expect(updateQueuedPrompt).toHaveBeenCalledOnce())
+
+    const middle = { ...queuedSession, id: 'queue-replacement-b', queuedPrompts: [], queuedCount: 0, messages: [] }
+    const final = {
+      ...middle, id: 'queue-replacement-c',
+      replacedSessionIds: [queuedSession.id, middle.id],
+    }
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      id === queuedSession.id ? queuedSession : final,
+    )
+    await act(async () => {
+      for (const [from, to] of [[queuedSession.id, middle.id], [middle.id, final.id]]) {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.removed', computerId: computer.id, sessionId: from, replacedBy: to,
+          }),
+        } as MessageEvent)
+      }
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: final }),
+      } as MessageEvent)
+    })
+    await waitFor(() => expect(window.location.search).toContain(`session=${final.id}`))
+    expect(textarea).toHaveValue('Submitted queue rewrite')
+    if (newer) fireEvent.change(textarea, { target: { value: 'New replacement writing\n' } })
+    await act(async () => { settleSave() })
+
+    await waitFor(() => expect(document.querySelector('.queued-edit-banner')).toBeNull())
+    const remainingText = newer
+      ? 'New replacement writing\n'
+      : outcome === 'accepted' ? '' : 'Submitted queue rewrite'
+    expect(textarea).toHaveValue(remainingText)
+    const savedDrafts = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts') || '{}')
+    expect(savedDrafts[foreignKey]).toBe('Other computer writing')
+    expect(savedDrafts[`${computer.id}:${final.id}`] || '').toBe(remainingText)
+    expect(savedDrafts[`${computer.id}:${queuedSession.id}`]).toBeUndefined()
+    expect(localStorage.getItem('agentic-remote:queued-edit')).toBeNull()
+    expect(window.location.search).toContain(`session=${final.id}`)
+    vi.mocked(sendMessage).mockResolvedValueOnce(final)
+    fireEvent.change(textarea, { target: { value: 'A new message after the save settled' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledExactlyOnceWith(computer.id, final.id, {
+      content: 'A new message after the save settled', enqueue: false,
+    }))
+  })
+
   it('stays in edit mode when the writing moved on while the save was in flight', async () => {
     // Two rewrites in a row: the first is still being written back when the
     // second is typed. Leaving edit mode on the first would leave that second

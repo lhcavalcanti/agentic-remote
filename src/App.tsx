@@ -11730,7 +11730,7 @@ function App() {
       }
       return next
     })
-  }, [editingQueuedPrompts, unconfirmedQueuedPrompts, sessions])
+  }, [editingQueuedPrompts, unconfirmedQueuedPrompts, sessions, queueActionId])
 
   /** Applies a session to the list, and to what this turn can read back. */
   // `setSessions` schedules; `sessionsRef` is what anything already running
@@ -11893,21 +11893,23 @@ function App() {
       // clearing it regardless threw away anything typed meanwhile -- and
       // reading the live composer cleared the wrong session's draft when the
       // reader moved on before the answer came back.
+      // A clear moves both the draft and its admission lock to the replacement.
+      const liveKey = followReplacementsRef.current(savedKey)
       updateComposerDrafts([], (drafts) => {
         // Exactly what was submitted. Comparing trimmed values threw away a
         // newline typed while the request was in flight, which on a phone is
         // what Enter puts there.
-        const current = drafts[savedKey]
+        const current = drafts[liveKey]
         if (!current || current.queuedEdit?.promptId !== promptId) return drafts
-        const durable = durableComposerDraft(savedKey, current)
+        const durable = durableComposerDraft(liveKey, current)
         if (
           durable.text !== submitted.text ||
           JSON.stringify(durable.pastes) !== JSON.stringify(submitted.pastes)
         ) {
           return drafts
         }
-        resetComposerHistory(savedKey)
-        const { [savedKey]: _saved, ...rest } = drafts
+        resetComposerHistory(liveKey)
+        const { [liveKey]: _saved, ...rest } = drafts
         return rest
       })
       return true
@@ -11941,6 +11943,7 @@ function App() {
       return false
     } finally {
       submissionsInFlight.current.delete(savedKey)
+      submissionsInFlight.current.delete(followReplacementsRef.current(savedKey))
       setQueueActionId(undefined)
     }
   }

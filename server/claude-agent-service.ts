@@ -153,6 +153,15 @@ interface PendingClaudeInput {
   resolve: (result: PermissionResult) => void
 }
 
+interface PendingClaudeReply {
+  sessionId: string
+  kind: 'pendingPermission' | 'pendingUserInput'
+  answer: string
+  question?: ClaudeQuestion
+  accepted: boolean
+  completion?: Promise<SessionDetail>
+}
+
 export class ClaudeAgentService
   extends EventEmitter<ClaudeAgentServiceEvents>
   implements SessionService
@@ -229,6 +238,8 @@ export class ClaudeAgentService
   private readonly drainingSessions = new Set<string>()
   private readonly permissions = new Map<string, PendingClaudePermission>()
   private readonly userInputs = new Map<string, PendingClaudeInput>()
+  private readonly pendingReplies = new Map<string, PendingClaudeReply>()
+  private stopped = false
 
   constructor(
     readonly store: SessionStore,
@@ -287,6 +298,7 @@ export class ClaudeAgentService
   }
 
   async stop(): Promise<void> {
+    this.stopped = true
     for (const active of this.active.values()) {
       active.abortController.abort()
     }
@@ -305,6 +317,9 @@ export class ClaudeAgentService
       })
     }
     this.userInputs.clear()
+    await Promise.allSettled(this.claudeReplyWrites())
+    this.pendingReplies.clear()
+    await this.store.flush()
   }
 
   listSessions(): SessionDetail[] {
@@ -485,40 +500,74 @@ export class ClaudeAgentService
     requestId: string,
     input: UserInputReplyInput,
   ): Promise<SessionDetail> {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      throw new Error('Session is no longer available')
+    }
+    const replying = this.pendingReplies.get(requestId)
+    if (replying) {
+      if (replying.kind !== 'pendingUserInput' || !replying.question) {
+        throw new Error('User input request is no longer pending')
+      }
+      return this.retryClaudeReply(
+        sessionId, requestId, 'pendingUserInput',
+        this.resolveAnswer(replying.question, input),
+      )
+    }
     const pending = this.userInputs.get(requestId)
-    if (!pending || pending.sessionId !== sessionId) {
+    if (!pending || pending.sessionId !== sessionId ||
+        this.store.get(sessionId)?.pendingUserInput?.requestId !== requestId) {
       throw new Error('User input request is no longer pending')
     }
     const question = pending.questions[pending.index]
     if (!question) {
       throw new Error('User input request is invalid')
     }
-    pending.answers[question.question] = this.resolveAnswer(question, input)
-    this.userInputs.delete(requestId)
-    pending.index += 1
-    if (pending.index < pending.questions.length) {
-      pending.requestId = `claude-input:${randomUUID()}`
-      this.userInputs.set(pending.requestId, pending)
-      const updated = await this.store.update(sessionId, (session) => {
-        session.pendingUserInput = this.pendingInput(pending)
-        session.status = 'waiting'
-        session.activity = session.pendingUserInput.question
-      })
-      this.publish(updated)
-      return updated
+    const answer = this.resolveAnswer(question, input)
+    const answers = { ...pending.answers, [question.question]: answer }
+    const replyingNext: PendingClaudeReply = {
+      sessionId, kind: 'pendingUserInput', answer, question, accepted: false,
     }
+    if (pending.index + 1 < pending.questions.length) {
+      const next: PendingClaudeInput = {
+        ...pending,
+        index: pending.index + 1,
+        requestId: `claude-input:${randomUUID()}`,
+        answers,
+      }
+      return this.persistClaudeReply(requestId, replyingNext, async () => {
+        const updated = await this.store.updateIf(sessionId, (session) => {
+          if (this.stopped || this.deletingSessions.has(sessionId) ||
+              this.userInputs.get(requestId) !== pending ||
+              session.pendingUserInput?.requestId !== requestId) {
+            return false
+          }
+          session.pendingUserInput = this.pendingInput(next)
+          session.status = 'waiting'
+          session.activity = session.pendingPermission?.title || session.pendingUserInput.question
+          return true
+        })
+        if (!updated || this.stopped || this.deletingSessions.has(sessionId) ||
+            this.userInputs.get(requestId) !== pending ||
+            this.store.get(sessionId)?.pendingUserInput?.requestId !== next.requestId) {
+          throw new Error('User input request is no longer pending')
+        }
+        // Keep the visible old key and its answers until the next card commits.
+        this.userInputs.delete(requestId)
+        this.userInputs.set(next.requestId, next)
+        return updated
+      })
+    }
+    replyingNext.accepted = true
+    this.pendingReplies.set(requestId, replyingNext)
+    this.userInputs.delete(requestId)
     pending.resolve({
       behavior: 'allow',
       updatedInput: {
         ...pending.input,
-        answers: pending.answers,
+        answers,
       },
     })
-    const updated = await this.store.clearPendingRequest(
-      sessionId, 'pendingUserInput', requestId, { status: 'running', activity: 'Continuing' },
-    )
-    this.publish(updated)
-    return updated
+    return this.completeClaudeReply(requestId, replyingNext)
   }
 
   async clearConversation(id: string): Promise<SessionDetail> {
@@ -549,6 +598,7 @@ export class ClaudeAgentService
       cleared = error.replacement
       cleanupErrors.push(error)
     }
+    this.forgetClaudeReplies(id)
     this.emit('event', {
       type: 'session.removed',
       sessionId: id,
@@ -970,6 +1020,7 @@ export class ClaudeAgentService
     // was on its way out.
     this.deletingSessions.add(sessionId)
     try {
+      await Promise.allSettled(this.claudeReplyWrites(sessionId))
       await this.deleteClaimed(sessionId, session)
     } finally {
       this.deletingSessions.delete(sessionId)
@@ -1012,10 +1063,79 @@ export class ClaudeAgentService
       }
     }
     await this.store.remove(sessionId)
+    this.forgetClaudeReplies(sessionId)
     this.emit('event', { type: 'session.removed', sessionId })
     if (cleanupError) {
       throw cleanupError
     }
+  }
+
+  private claudeReplyWrites(sessionId?: string): Promise<SessionDetail>[] {
+    return [...this.pendingReplies.values()].flatMap((reply) =>
+      reply.completion && (!sessionId || reply.sessionId === sessionId)
+        ? [reply.completion]
+        : [],
+    )
+  }
+
+  private forgetClaudeReplies(sessionId: string): void {
+    for (const [requestId, reply] of this.pendingReplies) {
+      if (reply.sessionId === sessionId) this.pendingReplies.delete(requestId)
+    }
+  }
+
+  private persistClaudeReply(
+    requestId: string,
+    reply: PendingClaudeReply,
+    persist: () => Promise<SessionDetail>,
+  ): Promise<SessionDetail> {
+    this.pendingReplies.set(requestId, reply)
+    const completion = persist().then((updated) => {
+      if (this.pendingReplies.get(requestId) === reply) this.pendingReplies.delete(requestId)
+      if (!this.stopped && !this.deletingSessions.has(reply.sessionId) && this.store.get(reply.sessionId)) {
+        this.publish(updated)
+      }
+      return updated
+    }, (error: unknown) => {
+      if (!reply.accepted) {
+        if (this.pendingReplies.get(requestId) === reply) this.pendingReplies.delete(requestId)
+        throw error
+      }
+      throw Object.assign(new Error(
+        `The reply was accepted, but its confirmation could not be saved: ${
+          error instanceof Error ? error.message : String(error)
+        }. Retry the same reply; it will not be sent to the agent again.`,
+        { cause: error },
+      ), { statusCode: 503 })
+    }).finally(() => {
+      reply.completion = undefined
+    })
+    reply.completion = completion
+    return completion
+  }
+
+  private completeClaudeReply(
+    requestId: string,
+    reply: PendingClaudeReply,
+  ): Promise<SessionDetail> {
+    return this.persistClaudeReply(requestId, reply, () => this.store.clearPendingRequest(
+      reply.sessionId, reply.kind, requestId, { status: 'running', activity: 'Continuing' },
+    ))
+  }
+
+  private retryClaudeReply(
+    sessionId: string,
+    requestId: string,
+    kind: PendingClaudeReply['kind'],
+    answer: string,
+  ): Promise<SessionDetail> {
+    const reply = this.pendingReplies.get(requestId)!
+    if (reply.sessionId !== sessionId || reply.kind !== kind || reply.answer !== answer) {
+      throw Object.assign(new Error(
+        'A different reply is already being processed or was accepted. Retry the original reply.',
+      ), { statusCode: 409 })
+    }
+    return reply.completion || this.completeClaudeReply(requestId, reply)
   }
 
   async replyPermission(
@@ -1023,21 +1143,31 @@ export class ClaudeAgentService
     requestId: string,
     optionId: string,
   ): Promise<SessionDetail> {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      throw new Error('Session is no longer available')
+    }
+    if (this.pendingReplies.has(requestId)) {
+      return this.retryClaudeReply(sessionId, requestId, 'pendingPermission', optionId)
+    }
     const pending = this.permissions.get(requestId)
-    if (!pending || pending.sessionId !== sessionId) {
+    if (!pending || pending.sessionId !== sessionId ||
+        this.store.get(sessionId)?.pendingPermission?.requestId !== requestId) {
       throw new Error('Permission request is no longer pending')
     }
+    if (!['allow-once', 'deny'].includes(optionId)) {
+      throw new Error('The selected permission option is not available')
+    }
+    const reply: PendingClaudeReply = {
+      sessionId, kind: 'pendingPermission', answer: optionId, accepted: true,
+    }
+    this.pendingReplies.set(requestId, reply)
     this.permissions.delete(requestId)
     pending.resolve(
       optionId === 'allow-once'
         ? { behavior: 'allow', updatedInput: pending.input }
         : { behavior: 'deny', message: 'User denied this tool request' },
     )
-    const updated = await this.store.clearPendingRequest(
-      sessionId, 'pendingPermission', requestId, { status: 'running', activity: 'Continuing' },
-    )
-    this.publish(updated)
-    return updated
+    return this.completeClaudeReply(requestId, reply)
   }
 
   listDirectories(path?: string, scope?: DirectoryScope) {
@@ -1423,6 +1553,9 @@ export class ClaudeAgentService
     toolName: string,
     input: Record<string, unknown>,
   ): Promise<PermissionResult> {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      return Promise.resolve({ behavior: 'deny', message: 'Session is no longer available' })
+    }
     if (toolName === 'AskUserQuestion') {
       return this.requestUserInput(sessionId, input)
     }
@@ -1431,9 +1564,14 @@ export class ClaudeAgentService
     }
     const requestId = `claude-permission:${randomUUID()}`
     return new Promise((resolve) => {
-      this.permissions.set(requestId, { sessionId, input, resolve })
+      const pending = { sessionId, input, resolve }
+      this.permissions.set(requestId, pending)
       void this.store
         .update(sessionId, (session) => {
+          if (this.stopped || this.deletingSessions.has(sessionId) ||
+              this.permissions.get(requestId) !== pending) {
+            throw new Error('Permission request is no longer pending')
+          }
           session.pendingPermission = {
             requestId,
             title: this.permissionTitle(toolName, input),
@@ -1446,10 +1584,13 @@ export class ClaudeAgentService
           session.status = 'waiting'
           session.activity = session.pendingPermission.title
         })
-        .then((session) => this.publish(session))
+        .then((session) => {
+          if (this.permissions.get(requestId) === pending) this.publish(session)
+        })
         .catch((error: unknown) => {
+          if (this.permissions.get(requestId) !== pending) return
           this.permissions.delete(requestId)
-          resolve({
+          pending.resolve({
             behavior: 'deny',
             message: error instanceof Error ? error.message : String(error),
           })
@@ -1461,6 +1602,9 @@ export class ClaudeAgentService
     sessionId: string,
     input: Record<string, unknown>,
   ): Promise<PermissionResult> {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      return Promise.resolve({ behavior: 'deny', message: 'Session is no longer available' })
+    }
     const questions = this.claudeQuestions(input)
     if (questions.length === 0) {
       return Promise.resolve({
@@ -1482,14 +1626,21 @@ export class ClaudeAgentService
       this.userInputs.set(requestId, pending)
       void this.store
         .update(sessionId, (session) => {
+          if (this.stopped || this.deletingSessions.has(sessionId) ||
+              this.userInputs.get(requestId) !== pending) {
+            throw new Error('User input request is no longer pending')
+          }
           session.pendingUserInput = this.pendingInput(pending)
           session.status = 'waiting'
           session.activity = session.pendingUserInput.question
         })
-        .then((session) => this.publish(session))
+        .then((session) => {
+          if (this.userInputs.get(requestId) === pending) this.publish(session)
+        })
         .catch((error: unknown) => {
+          if (this.userInputs.get(requestId) !== pending) return
           this.userInputs.delete(requestId)
-          resolve({
+          pending.resolve({
             behavior: 'deny',
             message: error instanceof Error ? error.message : String(error),
           })
@@ -1532,6 +1683,9 @@ export class ClaudeAgentService
     question: ClaudeQuestion,
     input: UserInputReplyInput,
   ): string {
+    if (input.action && input.action !== 'accept') {
+      throw Object.assign(new Error('This user input request cannot be dismissed'), { statusCode: 409 })
+    }
     if (!question.multiSelect) {
       return input.answer
     }

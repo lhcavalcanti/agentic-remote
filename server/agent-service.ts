@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
+import { isDeepStrictEqual } from 'node:util'
 import {
   CopilotClient,
   RuntimeConnection,
@@ -127,6 +128,21 @@ interface PendingSdkUserInput {
 interface PendingSdkElicitation {
   sessionId: string
   resolve: (response: ElicitationResult) => void
+}
+
+type SdkReplyChoice =
+  | { kind: 'permission'; optionId: string }
+  | {
+      kind: 'input'
+      action: NonNullable<UserInputReplyInput['action']>
+      response: UserInputResponse
+    }
+  | { kind: 'elicitation'; response: ElicitationResult }
+
+interface AcceptedSdkReply {
+  sessionId: string
+  choice: SdkReplyChoice
+  completion?: Promise<SessionDetail>
 }
 
 export interface CopilotSessionLike {
@@ -1535,6 +1551,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly backgroundTaskResyncNeeded = new Set<string>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
+  private readonly acceptedSdkReplies = new Map<string, AcceptedSdkReply>()
   private readonly terminalUserInputChecks = new Map<string, number>()
   private readonly terminalUpdateChecks = new Map<string, number>()
   private readonly answeredTerminalPermissions = new Map<
@@ -1809,6 +1826,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       elicitation.resolve({ action: 'cancel' })
     }
     this.elicitations.clear()
+    await Promise.allSettled(this.sdkReplyWrites())
+    this.acceptedSdkReplies.clear()
     this.terminalUserInputChecks.clear()
     this.terminalUpdateChecks.clear()
     this.answeredTerminalPermissions.clear()
@@ -2974,6 +2993,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (!cleared) throw new Error('Conversation replacement was not committed')
       this.deletedSessionIds.delete(replacementId)
+      this.forgetSdkReplies(id)
       for (const [requestId, permission] of this.permissions) {
         if (permission.sessionId === id) {
           permission.resolve({ kind: 'user-not-available' })
@@ -4297,6 +4317,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     forgetSessionEvents(sessionId)
     let completed = false
     try {
+      await Promise.allSettled(this.sdkReplyWrites(sessionId))
       await this.activeSessionStopper(sessionId)
       const active = this.sessions.get(sessionId)
       if (active) {
@@ -4338,6 +4359,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }
       await this.store.remove(sessionId)
+      this.forgetSdkReplies(sessionId)
       this.hydratedSessions.delete(sessionId)
       this.loadingSessions.delete(sessionId)
       this.hydratingSessions.delete(sessionId)
@@ -4364,11 +4386,106 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  private sdkReplyWrites(sessionId?: string): Promise<SessionDetail>[] {
+    return [...this.acceptedSdkReplies.values()].flatMap((reply) =>
+      reply.completion && (!sessionId || reply.sessionId === sessionId)
+        ? [reply.completion]
+        : [],
+    )
+  }
+
+  private forgetSdkReplies(sessionId: string): void {
+    for (const [requestId, reply] of this.acceptedSdkReplies) {
+      if (reply.sessionId === sessionId) {
+        this.acceptedSdkReplies.delete(requestId)
+      }
+    }
+  }
+
+  private sdkInputChoice(
+    input: UserInputReplyInput,
+    kind: 'input' | 'elicitation',
+  ): SdkReplyChoice {
+    const action = input.action || 'accept'
+    return kind === 'elicitation'
+      ? {
+          kind,
+          response: action === 'accept'
+            ? { action, content: input.values }
+            : { action },
+        }
+      : {
+          kind,
+          action,
+          response: { answer: input.answer.trim(), wasFreeform: input.wasFreeform },
+        }
+  }
+
+  private settleSdkReply(
+    sessionId: string,
+    requestId: string,
+    choice: SdkReplyChoice,
+  ): Promise<SessionDetail> {
+    const accepted = this.acceptedSdkReplies.get(requestId)!
+    if (accepted.sessionId !== sessionId || !isDeepStrictEqual(accepted.choice, choice)) {
+      throw Object.assign(new Error(
+        'A different reply was already accepted. Retry the original reply to finish saving it.',
+      ), { statusCode: 409 })
+    }
+    if (accepted.completion) return accepted.completion
+    const completion = this.store.clearPendingRequest(
+      sessionId,
+      choice.kind === 'permission' ? 'pendingPermission' : 'pendingUserInput',
+      requestId,
+      { status: 'running', activity: 'Continuing' },
+    ).then((updated) => {
+      if (this.acceptedSdkReplies.get(requestId) === accepted) {
+        this.acceptedSdkReplies.delete(requestId)
+      }
+      if (!this.stopped && !this.deletingSessions.has(sessionId) && this.store.get(sessionId)) {
+        this.publish(updated)
+      }
+      return updated
+    }, (error: unknown) => {
+      throw Object.assign(new Error(
+        `The reply was accepted, but its confirmation could not be saved: ${
+          error instanceof Error ? error.message : String(error)
+        }. Retry the same reply; it will not be sent to the agent again.`,
+        { cause: error },
+      ), { statusCode: 503 })
+    }).finally(() => {
+      accepted.completion = undefined
+    })
+    accepted.completion = completion
+    return completion
+  }
+
+  private acceptSdkReply(
+    sessionId: string,
+    requestId: string,
+    choice: SdkReplyChoice,
+    resolve: () => void,
+  ): Promise<SessionDetail> {
+    // A provider resolution cannot be rolled back with a refused state write.
+    this.acceptedSdkReplies.set(requestId, {
+      sessionId,
+      choice: structuredClone(choice),
+    })
+    resolve()
+    return this.settleSdkReply(sessionId, requestId, choice)
+  }
+
   async replyPermission(
     sessionId: string,
     requestId: string,
     optionId: string,
   ): Promise<SessionDetail> {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      throw new Error('Session is no longer available')
+    }
+    if (this.acceptedSdkReplies.has(requestId)) {
+      return this.settleSdkReply(sessionId, requestId, { kind: 'permission', optionId })
+    }
     const stored = this.store.get(sessionId)
     const request = stored?.pendingPermission
     if (!stored || !request || request.requestId !== requestId) {
@@ -4388,7 +4505,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           ? { kind: 'approve-once' }
           : { kind: 'reject', feedback: 'Rejected from Agentic Remote' }
       this.permissions.delete(requestId)
-      sdkPending.resolve(result)
+      return this.acceptSdkReply(
+        sessionId, requestId, { kind: 'permission', optionId },
+        () => sdkPending.resolve(result),
+      )
     } else {
       if (
         !requestId.startsWith('terminal-permission:') ||
@@ -4439,6 +4559,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     requestId: string,
     input: UserInputReplyInput,
   ): Promise<SessionDetail> {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+      throw new Error('Session is no longer available')
+    }
+    const accepted = this.acceptedSdkReplies.get(requestId)
+    if (accepted) {
+      if (accepted.choice.kind === 'permission') {
+        throw new Error('User input request is no longer pending')
+      }
+      return this.settleSdkReply(
+        sessionId, requestId, this.sdkInputChoice(input, accepted.choice.kind),
+      )
+    }
     const stored = this.store.get(sessionId)
     const request = stored?.pendingUserInput
     if (!stored || !request || request.requestId !== requestId) {
@@ -4455,16 +4587,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw new Error('Structured elicitation values are required')
         }
         validateUserInputForm(request.form, input.values)
-        sdkElicitation.resolve({ action, content: input.values })
-      } else {
-        sdkElicitation.resolve({ action })
       }
       this.elicitations.delete(requestId)
-      const updated = await this.store.clearPendingRequest(
-        sessionId, 'pendingUserInput', requestId, { status: 'running', activity: 'Continuing' },
+      return this.acceptSdkReply(
+        sessionId, requestId, this.sdkInputChoice(input, 'elicitation'),
+        () => sdkElicitation.resolve(action === 'accept'
+          ? { action, content: input.values }
+          : { action }),
       )
-      this.publish(updated)
-      return updated
     }
     if (action !== 'accept') {
       if (requestId.startsWith('persisted-user-input:')) {
@@ -4533,7 +4663,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error('User input request belongs to another session')
       }
       this.userInputs.delete(requestId)
-      sdkPending.resolve({ answer, wasFreeform: input.wasFreeform })
+      return this.acceptSdkReply(
+        sessionId, requestId, this.sdkInputChoice(input, 'input'),
+        () => sdkPending.resolve({ answer, wasFreeform: input.wasFreeform }),
+      )
     } else if (requestId.startsWith('persisted-user-input:')) {
       this.answeredPersistedInputs.set(sessionId, {
         requestId,
@@ -6181,7 +6314,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     request: PermissionRequest,
   ): Promise<PermissionRequestResult> {
-    if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
       return Promise.resolve({ kind: 'user-not-available' })
     }
     const requestId = randomUUID()
@@ -6196,17 +6329,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     return new Promise<PermissionRequestResult>((resolve) => {
-      this.permissions.set(requestId, { sessionId, resolve })
+      const pending = { sessionId, resolve }
+      this.permissions.set(requestId, pending)
       void this.store
         .update(sessionId, (session) => {
+          if (this.stopped || this.deletingSessions.has(sessionId) ||
+              this.permissions.get(requestId) !== pending) {
+            throw new Error('Permission request is no longer pending')
+          }
           session.pendingPermission = permission
           session.status = 'waiting'
           session.activity = permission.title
         })
-        .then((session) => this.publish(session))
+        .then((session) => {
+          if (this.permissions.get(requestId) === pending) this.publish(session)
+        })
         .catch((error: unknown) => {
+          if (this.permissions.get(requestId) !== pending) return
           this.permissions.delete(requestId)
-          resolve({ kind: 'user-not-available' })
+          pending.resolve({ kind: 'user-not-available' })
           this.publishError(sessionId, error)
         })
     })
@@ -6216,7 +6357,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     context: ElicitationContext,
   ): Promise<ElicitationResult> {
     const sessionId = context.sessionId
-    if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
         return Promise.resolve({ action: 'cancel' })
     }
     if (context.mode === 'url') {
@@ -6240,17 +6381,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         form,
     }
     return new Promise<ElicitationResult>((resolve) => {
-        this.elicitations.set(requestId, { sessionId, resolve })
+        const owner = { sessionId, resolve }
+        this.elicitations.set(requestId, owner)
         void this.store
           .update(sessionId, (session) => {
+            if (this.stopped || this.deletingSessions.has(sessionId) ||
+                this.elicitations.get(requestId) !== owner) {
+              throw new Error('Elicitation request is no longer pending')
+            }
             session.pendingUserInput = pending
             session.status = 'waiting'
             session.activity = pending.question
           })
-          .then((session) => this.publish(session))
+          .then((session) => {
+            if (this.elicitations.get(requestId) === owner) this.publish(session)
+          })
           .catch((error: unknown) => {
+            if (this.elicitations.get(requestId) !== owner) return
             this.elicitations.delete(requestId)
-            resolve({ action: 'cancel' })
+            owner.resolve({ action: 'cancel' })
             this.publishError(sessionId, error)
           })
     })
@@ -6260,7 +6409,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     request: UserInputRequest,
   ): Promise<UserInputResponse> {
-    if (this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
+    if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
       return Promise.resolve({ answer: '', wasFreeform: true })
     }
     const requestId = randomUUID()
@@ -6271,17 +6420,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       allowFreeform: request.allowFreeform ?? true,
     }
     return new Promise<UserInputResponse>((resolve) => {
-      this.userInputs.set(requestId, { sessionId, resolve })
+      const owner = { sessionId, resolve }
+      this.userInputs.set(requestId, owner)
       void this.store
         .update(sessionId, (session) => {
+          if (this.stopped || this.deletingSessions.has(sessionId) ||
+              this.userInputs.get(requestId) !== owner) {
+            throw new Error('User input request is no longer pending')
+          }
           session.pendingUserInput = pending
           session.status = 'waiting'
           session.activity = pending.question
         })
-        .then((session) => this.publish(session))
+        .then((session) => {
+          if (this.userInputs.get(requestId) === owner) this.publish(session)
+        })
         .catch((error: unknown) => {
+          if (this.userInputs.get(requestId) !== owner) return
           this.userInputs.delete(requestId)
-          resolve({ answer: '', wasFreeform: true })
+          owner.resolve({ answer: '', wasFreeform: true })
           this.publishError(sessionId, error)
         })
     })

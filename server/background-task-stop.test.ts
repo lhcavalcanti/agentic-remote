@@ -1315,6 +1315,287 @@ describe('background shell stop reconciliation', () => {
     ], { assumeBackground })).toEqual([])
   })
 
+  describe.each([true, false])('ordinary synchronous launch completion (success=%s)', (success) => {
+    const launch = started('sync-launch', 'bash', {
+      shellId: '42', mode: 'sync', command: 'printf fixture',
+    })
+    const finish = completed('sync-launch', {
+      success,
+      ...(success ? {} : { error: { message: 'Foreground command failed' } }),
+      result: { content: 'Final foreground output' },
+    }, 3)
+    const terminal = {
+      status: success ? 'completed' : 'failed',
+      completedAt: finish.timestamp,
+      ...(success ? {} : { error: 'Foreground command failed' }),
+      progress: { type: 'shell', recentOutput: 'Final foreground output' },
+    }
+
+    it.each([true, false])('stays unprojected without observers (assumeBackground=%s)', (assumeBackground) => {
+      expect(backgroundTasksFromEvents([launch, finish], { assumeBackground })).toEqual([])
+    })
+
+    describe.each([1, 4])('observer requested at second %s', (requestSecond) => {
+      it.each([
+        { tool: 'read_bash', outcome: 'progress', observerSuccess: true },
+        { tool: 'read_shell', outcome: 'exit', observerSuccess: true },
+        { tool: 'stop_bash', outcome: 'stop', observerSuccess: true },
+        { tool: 'stop_shell', outcome: 'stop', observerSuccess: true },
+        { tool: 'read_bash', outcome: 'inventory-running', observerSuccess: true },
+        { tool: 'read_shell', outcome: 'inventory-failed', observerSuccess: true },
+        { tool: 'read_bash', outcome: 'progress', observerSuccess: false },
+        { tool: 'read_shell', outcome: 'exit', observerSuccess: false },
+        { tool: 'stop_bash', outcome: 'stop', observerSuccess: false },
+      ])('ignores delayed $tool $outcome (observerSuccess=$observerSuccess) after the owning launch ended', ({
+        tool, outcome, observerSuccess,
+      }) => {
+        const request = started('observer', tool, { shellId: '42' }, requestSecond)
+        const metadata = reportedShell('42', launch.timestamp, 5, {
+          status: outcome === 'inventory-failed' ? 'failed' : 'running',
+          error: 'Stale observer error', result: 'Stale observer result',
+        })
+        const response = outcome.startsWith('inventory')
+          ? { ...metadata, data: { ...metadata.data, toolCallId: 'observer' } }
+          : completed('observer', {
+              ...(outcome === 'stop'
+                ? stopAcknowledgement('42', tool === 'stop_bash')
+                : { result: { content: outcome === 'exit'
+                    ? '<shellId: 42 completed with exit code 7>'
+                    : 'Stale observer progress' } }),
+              success: observerSuccess,
+            }, 5)
+        const events = requestSecond < 3
+          ? [launch, request, finish]
+          : [launch, finish, request]
+        expect(snapshot(events).tasks).toEqual([])
+        expect(snapshot([...events, response])).toEqual(snapshot(events))
+
+        const exposed = [
+          ...events, response,
+          nativeStart('99', 'sync-launch', 6, 'shell_detached_started'),
+        ]
+        const before = snapshot(exposed)
+        expect(before.runningCount).toBe(0)
+        expect(before.tasks).toEqual([expect.objectContaining({
+          ...terminal, id: '99', executionMode: 'background', attachmentMode: 'detached',
+        })])
+        expect(before.tasks[0].error).toBe(terminal.error)
+        expect(before.tasks[0].result).toBeUndefined()
+        expect(snapshot([...exposed, response])).toEqual(before)
+      })
+    })
+
+    it.each(['native-handoff', 'tool-handoff', 'native-completion', 'inventory'])(
+      'exposes retained completion only when a late %s materializes it',
+      (source) => {
+        const late = source === 'native-handoff'
+          ? nativeStart('99', 'sync-launch', 6, 'shell_detached_started')
+          : source === 'tool-handoff'
+            ? completed('sync-launch', {
+                result: { content: '<command started in detached background with shellId: 99>' },
+              }, 6)
+            : source === 'native-completion'
+              ? nativeComplete('99', { toolCallId: 'sync-launch' }, 6, success ? 7 : 0)
+              : reportedShell('42', launch.timestamp, 6, {
+                  status: 'running', error: 'Stale inventory error', result: 'Stale inventory result',
+                })
+        const events = [launch, finish]
+        expect(snapshot(events).tasks).toEqual([])
+        const result = snapshot([...events, late])
+        expect(result.runningCount).toBe(0)
+        expect(result.tasks).toEqual([expect.objectContaining({
+          ...terminal, id: source === 'inventory' ? '42' : '99', executionMode: 'background',
+        })])
+        expect(result.tasks[0].error).toBe(terminal.error)
+        expect(result.tasks[0].result).toBeUndefined()
+      },
+    )
+
+    it.each(['read_bash', 'read_shell'])('closes a sync row already materialized by %s progress', (tool) => {
+      const events = [
+        launch,
+        started('read', tool, { shellId: '42' }, 1),
+        completed('read', { result: { content: 'Current progress' } }, 2),
+      ]
+      expect(snapshot(events).tasks[0]).toMatchObject({
+        status: 'running', executionMode: 'sync', progress: { recentOutput: 'Current progress' },
+      })
+      const result = snapshot([...events, finish])
+      expect(result.runningCount).toBe(0)
+      expect(result.tasks).toEqual([expect.objectContaining({
+        ...terminal, id: '42', executionMode: 'sync',
+      })])
+      expect(result.tasks[0].error).toBe(terminal.error)
+    })
+
+    it('fills missing final inventory diagnostics without replacing the retained completion', () => {
+      const result = snapshot([
+        launch, finish,
+        reportedShell('42', launch.timestamp, 6, {
+          status: terminal.status, completedAt: '2026-09-01T08:00:05.000Z',
+          result: 'Final inventory result', activeTimeMs: 3000,
+          ...(success ? {} : { error: 'Different inventory error' }),
+        }),
+      ])
+      expect(result.runningCount).toBe(0)
+      expect(result.tasks).toEqual([expect.objectContaining({
+        ...terminal, id: '42', result: 'Final inventory result', activeTimeMs: 3000,
+      })])
+      expect(result.tasks[0].error).toBe(terminal.error)
+    })
+
+    it.each(['stop', 'exit'])('preserves observer-first %s evidence when the owning launch finishes', (outcome) => {
+      const response = completed('observer', outcome === 'stop'
+        ? stopAcknowledgement('42')
+        : { result: { content: 'Observed output\n<shellId: 42 completed with exit code 7>' } }, 2)
+      const events = [
+        launch,
+        started('observer', outcome === 'stop' ? 'stop_bash' : 'read_bash', { shellId: '42' }, 1),
+        response,
+      ]
+      const before = snapshot(events)
+      expect(before.tasks[0]).toMatchObject({
+        status: outcome === 'stop' ? 'cancelled' : 'failed', executionMode: 'sync',
+        completedAt: response.timestamp,
+      })
+      expect(snapshot([...events, finish])).toEqual(before)
+    })
+
+    it('does not reclaim an ID reused after its unprojected completion', () => {
+      const events = [
+        launch, finish,
+        ...launched('42', 'async', false, 'replacement', 4),
+      ]
+      expect(snapshot([
+        ...events,
+        nativeStart('99', 'sync-launch', 6),
+        reportedShell('42', launch.timestamp, 7),
+      ])).toEqual(snapshot(events))
+    })
+  })
+
+  describe('historical shell inventory aliases', () => {
+    describe.each([
+      { startedAt: '2026-09-01T08:00:00.000Z', refreshedAt: '2026-09-01T08:00:00.000Z' },
+      { startedAt: '2026-09-01T08:00:00.000Z', refreshedAt: '2026-09-01T09:00:00.000+01:00' },
+      { startedAt: 'opaque-start', refreshedAt: 'opaque-start' },
+    ])('indexed start $startedAt refreshed as $refreshedAt', ({ startedAt, refreshedAt }) => {
+      it.each(['running', 'cancelled'])('refreshes the current ID of a rekeyed %s execution', (status) => {
+        const launch = launched('caller-name', 'async', true, 'original')
+        launch[0] = { ...launch[0], timestamp: startedAt }
+        const events = [...launch, nativeStart('42', 'original', 2)]
+        if (status === 'cancelled') {
+          events.push(
+            started('stop', 'stop_bash', { shellId: '42' }, 3),
+            completed('stop', stopAcknowledgement('42'), 4),
+          )
+        }
+        const before = snapshot(events)
+        const refreshed = [
+          ...events,
+          started('pending-stop', 'stop_bash', { shellId: '42' }, 5),
+          reportedShell('caller-name', refreshedAt, 6, {
+            description: 'Refreshed original', result: 'Stale result', error: 'Stale error',
+          }),
+        ]
+        const result = snapshot(refreshed)
+        expect(result.runningCount).toBe(status === 'running' ? 1 : 0)
+        expect(result.tasks).toHaveLength(1)
+        expect(result.tasks[0]).toMatchObject({
+          id: '42', status, command: 'node fixture-server.js', attachmentMode: 'detached',
+        })
+        if (status === 'cancelled') {
+          expect(result).toEqual(before)
+        } else {
+          expect(result.tasks[0].description).toBe('Refreshed original')
+          expect(snapshot([
+            ...refreshed, completed('pending-stop', stopAcknowledgement('42'), 7),
+          ]).tasks[0].status).toBe('cancelled')
+        }
+      })
+    })
+
+    describe.each(['async', 'sync'])('historical alias reused by a new %s launch', (mode) => {
+      it.each(['running', 'cancelled'])('refreshes only the original %s execution', (status) => {
+        const events = [
+          ...launched('caller-name', 'async', true, 'original'),
+          nativeStart('42', 'original', 2),
+        ]
+        if (status === 'cancelled') {
+          events.push(
+            started('stop-original', 'stop_bash', { shellId: '42' }, 3),
+            completed('stop-original', stopAcknowledgement('42'), 4),
+          )
+        }
+        events.push(started('replacement', 'bash', {
+          shellId: 'caller-name', mode, command: 'node replacement.js', description: 'Replacement',
+        }, 5))
+        const replacementBefore = snapshot(events).tasks.find((task) => task.id === 'caller-name')
+        const inventory = reportedShell('caller-name', '2026-09-01T09:00:00.000+01:00', 6, {
+          status, description: 'Refreshed original', result: 'Original final result',
+        })
+        const refreshed = snapshot([...events, inventory])
+        expect(refreshed.tasks.find((task) => task.id === '42')).toMatchObject({
+          status, result: 'Original final result', command: 'node fixture-server.js',
+        })
+        expect(refreshed.tasks.find((task) => task.id === 'caller-name')).toEqual(replacementBefore)
+        const result = snapshot([
+          ...events, inventory,
+          started('stop-replacement', 'stop_bash', { shellId: 'caller-name' }, 7),
+          nativeStart('caller-name', 'replacement', 8),
+          completed('stop-replacement', stopAcknowledgement('caller-name'), 9),
+        ])
+        expect(result.tasks).toHaveLength(2)
+        expect(result.tasks.find((task) => task.id === '42')).toEqual(
+          refreshed.tasks.find((task) => task.id === '42'),
+        )
+        expect(result.tasks.find((task) => task.id === 'caller-name')).toMatchObject({
+          status: 'cancelled', command: 'node replacement.js', startedAt: events.at(-1)?.timestamp,
+        })
+      })
+    })
+
+    it.each([true, false])('does not re-materialize a retired identity (alias reused=%s)', (reuseAlias) => {
+      const events = [
+        ...launched('caller-name', 'async', false, 'original'),
+        nativeStart('42', 'original', 2),
+        ...launched('42', 'async', false, 'replacement', 4),
+        ...(reuseAlias ? launched('caller-name', 'async', false, 'alias-replacement', 6) : []),
+      ]
+      expect(snapshot([
+        ...events, reportedShell('caller-name', '2026-09-01T09:00:00.000+01:00', 8),
+      ])).toEqual(snapshot(events))
+    })
+
+    it('rejects tied historical provenance instead of choosing either execution', () => {
+      const events = [
+        ...launched('caller-name', 'async', false, 'original'),
+        nativeStart('42', 'original', 2),
+        ...launched('caller-name', 'async', false, 'replacement'),
+      ]
+      expect(snapshot([
+        ...events,
+        reportedShell('caller-name', '2026-09-01T09:00:00.000+01:00', 5, {
+          status: 'failed', error: 'Ambiguous failure',
+        }),
+      ])).toEqual(snapshot(events))
+    })
+
+    it('does not bypass a newer unmaterialized owner at the resolved current ID', () => {
+      const events = [
+        ...launched('caller-name', 'async', false, 'original'),
+        nativeStart('42', 'original', 2),
+        started('replacement', 'bash', { shellId: '42', mode: 'sync', command: 'node replacement.js' }, 4),
+      ]
+      expect(snapshot([
+        ...events,
+        reportedShell('caller-name', '2026-09-01T08:00:00.000Z', 5, {
+          status: 'failed', error: 'Old failure',
+        }),
+      ])).toEqual(snapshot(events))
+    })
+  })
+
   describe('native completion provenance', () => {
     it.each([
       { provenance: { startedAt: '2026-09-01T08:00:04.000Z' }, accepted: true },

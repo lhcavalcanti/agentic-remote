@@ -1096,6 +1096,7 @@ export function backgroundTasksFromEvents(
       mode?: ReturnType<typeof shellTaskMode>
     }
     materialized: boolean
+    completion?: Pick<BackgroundTask, 'status' | 'completedAt' | 'error' | 'progress'>
     ids: Set<string>
   }
   // A per-execution handle that stays with a shell through metadata refreshes,
@@ -1206,7 +1207,10 @@ export function backgroundTasksFromEvents(
       destinationIdentity && destinationIdentity !== identity &&
       !(Date.parse(identity.startedAt) > Date.parse(destinationIdentity.startedAt))
     ) return undefined
-    const current = shellTask(id, start.timestamp, start.data, mode)
+    const current = {
+      ...shellTask(id, start.timestamp, start.data, mode),
+      ...identity.completion,
+    }
     bindShellIdentity(current, identity)
     tasks.set(id, current)
     aliases.set(start.id, id)
@@ -1278,6 +1282,7 @@ export function backgroundTasksFromEvents(
       if (!moved) return
       current = moved
     }
+    if (identity?.completion) return
     const exitCode = numberValue(data.exitCode)
     current.status =
       data.cancelled === true
@@ -1322,6 +1327,7 @@ export function backgroundTasksFromEvents(
         const identity = observerTarget?.identity || completingIdentity
         if (
           !identity || reported.type !== 'shell' || data.success !== true ||
+          (observerTarget && identity.completion) ||
           !sameExecutionStart(identity.startedAt, reported.startedAt) ||
           (observerTarget && reported.id !== observerTarget.requestedId && !identity.ids.has(reported.id))
         ) continue
@@ -1333,11 +1339,18 @@ export function backgroundTasksFromEvents(
         // Bound metadata refreshes the captured execution at its current id,
         // not a replacement now occupying the requested alias.
         reported.id = previous.id
-      } else if (
-        reported.type === 'shell' &&
-        isStaleUnboundShellStart(reported.id, reported.startedAt)
-      ) {
-        continue
+      } else if (reported.type === 'shell') {
+        const identity = shellIdentitiesByStart.get(reported.id)?.get(startKey(reported.startedAt))
+        if (identity === null) continue
+        if (identity?.materialized) {
+          // Inventory may still name a historical alias after a provider
+          // rekey. Refresh the indexed execution at its current id, never
+          // reclaim that alias or re-create an execution that was replaced.
+          previous = shellByIdentity(identity)
+          if (!previous) continue
+          reported.id = previous.id
+        }
+        if (isStaleUnboundShellStart(reported.id, reported.startedAt)) continue
       }
       if (
         previous?.type === 'shell' && reported.type === 'shell' &&
@@ -1362,12 +1375,11 @@ export function backgroundTasksFromEvents(
           pending?.start && !pending.materialized &&
           sameExecutionStart(pending.startedAt, reported.startedAt)
         ) {
-          current = mergeShellRefresh(
-            shellTask(reported.id, pending.startedAt, pending.start.data, {
-              executionMode: 'background', attachmentMode: reported.attachmentMode, assumed: false,
-            }),
-            reported,
-          )
+          const materialized = materializeShell(pending, reported.id, {
+            executionMode: 'background', attachmentMode: reported.attachmentMode, assumed: false,
+          })
+          if (!materialized) continue
+          current = mergeShellRefresh(materialized, reported)
           bindShellIdentity(current, pending)
         } else {
           shellIdentityOf(current)
@@ -1762,6 +1774,7 @@ export function backgroundTasksFromEvents(
       if (ownedIdentity?.materialized && !current) continue
       const target = shellObserverTargets.get(toolCallId)
       if (isShellStopTool(toolName) && data.success !== true) continue
+      if (target?.identity?.completion) continue
       if (target?.identity?.start && !target.identity.materialized) {
         const start = target.identity.start
         const matchesTarget = !namedShellId ||
@@ -1840,6 +1853,17 @@ export function backgroundTasksFromEvents(
           handoffMode,
         )
       }
+      if (!current && ownedIdentity?.start && !handoffMode) {
+        // Ordinary foreground completion is retained on the identity, not in
+        // the task map. A later observer cannot expose it as still running;
+        // an actual handoff can expose the already terminal execution.
+        current = {
+          ...shellTask(ownedIdentity.start.id, ownedIdentity.startedAt, ownedIdentity.start.data, {
+            executionMode: 'sync', attachmentMode: 'attached', assumed: false,
+          }),
+          ...ownedIdentity.completion,
+        }
+      }
       if (current?.type === 'shell') {
         if (handoffMode) {
           // The task already exists when a session projects every tool as
@@ -1906,6 +1930,14 @@ export function backgroundTasksFromEvents(
         }
         if (!shellExit && (!handoffMode || !current.progress?.recentOutput)) {
           shellTaskOutput(current, data.result)
+        }
+        if (ownedIdentity && current.executionMode === 'sync' && isTerminalTaskStatus(current.status)) {
+          ownedIdentity.completion = {
+            status: current.status,
+            completedAt: current.completedAt,
+            error: current.error,
+            progress: current.progress,
+          }
         }
         continue
       }

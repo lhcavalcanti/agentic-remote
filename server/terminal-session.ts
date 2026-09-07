@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { TERMINAL_STARTUP_TIMEOUT_MS } from '../shared/terminal-timing.js'
 import { readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -37,6 +38,10 @@ export interface TerminalFormIdentity {
   fields: string[]
 }
 
+export interface TerminalSendOptions {
+  allowDuringAgentExecution?: boolean
+}
+
 export interface TerminalSessionController {
   create?(
     sessionId: string,
@@ -56,7 +61,7 @@ export interface TerminalSessionController {
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
   /** Ends the window running a session without forgetting the session. */
@@ -107,9 +112,22 @@ export interface TerminalSessionController {
     form: TerminalFormIdentity,
   ): Promise<boolean>
   has(sessionId: string): Promise<boolean>
-  send(sessionId: string, content: string, enqueue: boolean): Promise<boolean>
+  send(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    options?: TerminalSendOptions,
+  ): Promise<boolean>
+  sendWhenIdle?(sessionId: string, content: string): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
+  canHandleStartupPrompt?(
+    sessionId: string,
+    pane: string,
+  ): Promise<boolean>
+  ownsStartupPrompt?(sessionId: string): boolean
+  inputReady?(sessionId: string): Promise<boolean>
+  resolveStartupPrompt?(sessionId: string): Promise<boolean>
   /**
    * Whether a prompt is already inside the controller for this session.
    *
@@ -120,10 +138,24 @@ export interface TerminalSessionController {
   sending?(sessionId: string): boolean
 }
 
+interface TerminalOwner {
+  pid: number
+  target: string
+  rootPid: number
+}
+
 export class TmuxTerminalSessionController
   implements TerminalSessionController
 {
   private readonly operations = new Map<string, Promise<unknown>>()
+  private readonly inputReadySessions = new Map<
+    string,
+    { pid: number; target: string }
+  >()
+  private readonly automaticStartupSessions = new Map<
+    string,
+    { pid: number; target: string }
+  >()
   private creationQueue: Promise<void> = Promise.resolve()
   private activeProcessCache?: {
     expiresAt: number
@@ -154,12 +186,14 @@ export class TmuxTerminalSessionController
   }
 
   async has(sessionId: string): Promise<boolean> {
-    return Boolean(await this.target(sessionId))
+    return Boolean(
+      (await this.target(sessionId)) ?? (await this.target(sessionId, true)),
+    )
   }
 
   async rename(sessionId: string, title: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const target = await this.target(sessionId)
+      const target = await this.boundTarget(sessionId)
       if (!target) {
         return false
       }
@@ -199,13 +233,15 @@ export class TmuxTerminalSessionController
       if (!(await stat(resolvedCwd)).isDirectory()) {
         throw new Error('Terminal working directory is not a folder')
       }
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
       const originalCommand = await processCommand(owner.pid)
       const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, sessionId, input)
+      this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
       try {
         await execFileAsync('tmux', [
           'respawn-pane',
@@ -216,7 +252,15 @@ export class TmuxTerminalSessionController
           resolvedCwd,
           ...command,
         ])
-        await this.waitForNewOwner(sessionId, owner.pid)
+        const nextOwner = await this.waitForNewOwner(
+          sessionId,
+          owner.pid,
+          owner.target,
+        )
+        this.automaticStartupSessions.set(sessionId, {
+          pid: nextOwner.pid,
+          target: nextOwner.target,
+        })
       } catch (error) {
         try {
           await execFileAsync('tmux', [
@@ -228,7 +272,15 @@ export class TmuxTerminalSessionController
             originalCwd,
             ...originalCommand,
           ])
-          await this.waitForNewOwner(sessionId, owner.pid)
+          const restoredOwner = await this.waitForNewOwner(
+            sessionId,
+            owner.pid,
+            owner.target,
+          )
+          this.automaticStartupSessions.set(sessionId, {
+            pid: restoredOwner.pid,
+            target: restoredOwner.target,
+          })
         } catch (rollbackError) {
           throw new AggregateError(
             [error, rollbackError],
@@ -246,45 +298,74 @@ export class TmuxTerminalSessionController
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const resolvedCwd = await realpath(cwd)
+      if (!(await stat(resolvedCwd)).isDirectory()) {
+        throw new Error('Terminal working directory is not a folder')
+      }
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
       const originalCommand = await processCommand(owner.pid)
+      const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, replacementId, input)
-      await execFileAsync('tmux', [
-        'respawn-pane',
-        '-k',
-        '-t',
-        owner.target,
-        '/usr/bin/sleep',
-        '300',
-      ])
+      this.inputReadySessions.delete(sessionId)
+      this.inputReadySessions.delete(replacementId)
+      this.automaticStartupSessions.delete(sessionId)
+      this.automaticStartupSessions.delete(replacementId)
       try {
-        await clearState()
         await execFileAsync('tmux', [
           'respawn-pane',
           '-k',
           '-t',
           owner.target,
           '-c',
-          cwd,
+          resolvedCwd,
           ...command,
         ])
-        await this.waitForNewOwner(replacementId, owner.pid)
-      } catch (error) {
-        await execFileAsync('tmux', [
-          'respawn-pane',
-          '-k',
-          '-t',
+        const nextOwner = await this.waitForNewOwner(
+          replacementId,
+          owner.pid,
           owner.target,
-          '-c',
-          cwd,
-          ...originalCommand,
-        ]).catch(() => undefined)
+        )
+        // The old provider history must still exist until this commit accepts
+        // the replacement; otherwise the original command cannot recover it.
+        await commitReplacement()
+        this.automaticStartupSessions.set(replacementId, {
+          pid: nextOwner.pid,
+          target: nextOwner.target,
+        })
+      } catch (error) {
+        this.inputReadySessions.delete(replacementId)
+        this.automaticStartupSessions.delete(replacementId)
+        try {
+          await execFileAsync('tmux', [
+            'respawn-pane',
+            '-k',
+            '-t',
+            owner.target,
+            '-c',
+            originalCwd,
+            ...originalCommand,
+          ])
+          const restoredOwner = await this.waitForNewOwner(
+            sessionId,
+            owner.pid,
+            owner.target,
+          )
+          this.automaticStartupSessions.set(sessionId, {
+            pid: restoredOwner.pid,
+            target: restoredOwner.target,
+          })
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            'Conversation clear failed and the original terminal session could not be restored',
+          )
+        }
         throw error
       }
       return true
@@ -296,8 +377,10 @@ export class TmuxTerminalSessionController
     confirm?: () => void | Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
+        this.inputReadySessions.delete(sessionId)
+        this.automaticStartupSessions.delete(sessionId)
         // Already gone: the caller wanted nothing running for this session,
         // and nothing is.
         //
@@ -355,6 +438,8 @@ export class TmuxTerminalSessionController
       // that somebody else's work was ended.
       for (let attempt = 0; attempt < 50; attempt += 1) {
         if (await this.paneStopped(owner)) {
+          this.inputReadySessions.delete(sessionId)
+          this.automaticStartupSessions.delete(sessionId)
           return true
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
@@ -392,11 +477,13 @@ export class TmuxTerminalSessionController
 
   async restart(sessionId: string, cwd: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
       const command = await processCommand(owner.pid)
+      this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
       await execFileAsync('tmux', [
         'respawn-pane',
         '-k',
@@ -406,7 +493,15 @@ export class TmuxTerminalSessionController
         cwd,
         ...command,
       ])
-      await this.waitForNewOwner(sessionId, owner.pid)
+      const nextOwner = await this.waitForNewOwner(
+        sessionId,
+        owner.pid,
+        owner.target,
+      )
+      this.automaticStartupSessions.set(sessionId, {
+        pid: nextOwner.pid,
+        target: nextOwner.target,
+      })
       return true
     })
   }
@@ -414,13 +509,14 @@ export class TmuxTerminalSessionController
   async pendingUserInput(
     sessionId: string,
   ): Promise<PendingUserInput | undefined> {
-    const target = await this.target(sessionId)
+    const target = await this.boundTarget(sessionId)
     if (!target) {
       return undefined
     }
     const pane = (
       await execFileAsync('tmux', [
         'capture-pane',
+        '-J',
         '-p',
         '-t',
         target,
@@ -434,13 +530,14 @@ export class TmuxTerminalSessionController
   async pendingPermission(
     sessionId: string,
   ): Promise<PendingPermission | undefined> {
-    const target = await this.target(sessionId)
+    const target = await this.boundTarget(sessionId)
     if (!target) {
       return undefined
     }
     const pane = (
       await execFileAsync('tmux', [
         'capture-pane',
+        '-J',
         '-p',
         '-t',
         target,
@@ -452,7 +549,7 @@ export class TmuxTerminalSessionController
   }
 
   async updateNotice(sessionId: string): Promise<string | undefined> {
-    const target = await this.target(sessionId)
+    const target = await this.boundTarget(sessionId)
     if (!target) {
       return undefined
     }
@@ -468,14 +565,16 @@ export class TmuxTerminalSessionController
     sessionId: string,
     request: PendingPermission,
     optionId: string,
-  ): Promise<boolean> {    return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+  ): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
       const pane = (
         await execFileAsync('tmux', [
           'capture-pane',
+          '-J',
           '-p',
           '-t',
           owner.target,
@@ -491,12 +590,22 @@ export class TmuxTerminalSessionController
         await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Escape'])
         return true
       }
-      if (optionId !== 'terminal:allow') {
+      const choiceIndex =
+        optionId === 'terminal:allow' || optionId === 'terminal:trust-once'
+          ? 0
+          : optionId === 'terminal:trust-always'
+            ? 1
+            : undefined
+      if (choiceIndex === undefined) {
         throw new Error('The selected permission option is not available')
       }
       for (let index = 0; index < (current.choiceCount || 2); index += 1) {
         await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Up'])
         await new Promise((resolve) => setTimeout(resolve, 30))
+      }
+      for (let index = 0; index < choiceIndex; index += 1) {
+        await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Down'])
+        await new Promise((resolve) => setTimeout(resolve, 40))
       }
       await execFileAsync('tmux', ['send-keys', '-t', owner.target, 'Enter'])
       return true
@@ -510,13 +619,14 @@ export class TmuxTerminalSessionController
     wasFreeform: boolean,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
       const pane = (
         await execFileAsync('tmux', [
           'capture-pane',
+          '-J',
           '-p',
           '-t',
           owner.target,
@@ -571,7 +681,14 @@ export class TmuxTerminalSessionController
   }
 
   async capture(sessionId: string): Promise<string | undefined> {
-    const target = await this.target(sessionId)
+    const readyOwner = this.inputReadySessions.get(sessionId)
+    const automaticOwner = this.automaticStartupSessions.get(sessionId)
+    const expectedTarget = readyOwner?.target ?? automaticOwner?.target
+    const owner = expectedTarget
+      ? await this.owner(sessionId, expectedTarget)
+      : undefined
+    const target =
+      owner?.target ?? (expectedTarget ? undefined : await this.target(sessionId))
     if (!target) {
       return undefined
     }
@@ -579,6 +696,7 @@ export class TmuxTerminalSessionController
       return (
         await execFileAsync('tmux', [
           'capture-pane',
+          '-J',
           '-p',
           '-t',
           target,
@@ -591,13 +709,103 @@ export class TmuxTerminalSessionController
     }
   }
 
+  async canHandleStartupPrompt(
+    sessionId: string,
+    pane: string,
+  ): Promise<boolean> {
+    const automaticOwner = this.automaticStartupSessions.get(sessionId)
+    const owner = await this.owner(sessionId, automaticOwner?.target)
+    return (
+      owner !== undefined &&
+      automaticOwner?.pid === owner.pid &&
+      automaticOwner.target === owner.target &&
+      isTerminalDesktopInstallPrompt(pane)
+    )
+  }
+
+  ownsStartupPrompt(sessionId: string): boolean {
+    return this.automaticStartupSessions.has(sessionId)
+  }
+
+  async inputReady(sessionId: string): Promise<boolean> {
+    const owner = await this.boundOwner(sessionId, true)
+    if (!owner) {
+      return false
+    }
+    const pane = await capturePane(owner.target)
+    return terminalInputReady(pane)
+  }
+
+  async resolveStartupPrompt(sessionId: string): Promise<boolean> {
+    return this.serialize(sessionId, async () => {
+      const readyOwner = this.inputReadySessions.get(sessionId)
+      const automaticOwner = this.automaticStartupSessions.get(sessionId)
+      const expectedTarget = automaticOwner?.target ?? readyOwner?.target
+      const owner = await this.owner(sessionId, expectedTarget)
+      if (
+        owner &&
+        readyOwner?.pid === owner.pid &&
+        readyOwner.target === owner.target
+      ) {
+        return true
+      }
+      if (
+        !owner &&
+        expectedTarget &&
+        (await this.owner(sessionId, undefined, true))
+      ) {
+        this.inputReadySessions.delete(sessionId)
+        this.automaticStartupSessions.delete(sessionId)
+        throw Object.assign(
+          new Error(
+            'The terminal session reopened in a different pane. Check it there before continuing startup.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      if (
+        !owner ||
+        automaticOwner?.pid !== owner.pid ||
+        automaticOwner.target !== owner.target
+      ) {
+        return false
+      }
+      const validateOwner = async () => {
+        const current = await this.owner(sessionId, owner.target, true)
+        if (!current || current.pid !== owner.pid) {
+          throw Object.assign(
+            new Error(
+              'The terminal owner changed while its startup prompt was being resolved.',
+            ),
+            { statusCode: 409 },
+          )
+        }
+      }
+      const startup = await waitForTerminalStartup(
+        owner.target,
+        true,
+        validateOwner,
+      )
+      if (startup !== 'ready') {
+        return false
+      }
+      await validateOwner()
+      this.inputReadySessions.set(sessionId, {
+        pid: owner.pid,
+        target: owner.target,
+      })
+      this.automaticStartupSessions.delete(sessionId)
+      return true
+    })
+  }
+
   async fillUserInputForm(
     sessionId: string,
     steps: TerminalFormStep[],
     form: TerminalFormIdentity,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (
         !owner ||
         steps.length === 0 ||
@@ -612,6 +820,7 @@ export class TmuxTerminalSessionController
         (
           await execFileAsync('tmux', [
             'capture-pane',
+            '-J',
             '-p',
             '-t',
             owner.target,
@@ -785,7 +994,7 @@ export class TmuxTerminalSessionController
     action: 'cancel' | 'decline' = 'cancel',
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const owner = await this.owner(sessionId)
+      const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
@@ -793,6 +1002,7 @@ export class TmuxTerminalSessionController
         const pane = (
           await execFileAsync('tmux', [
             'capture-pane',
+            '-J',
             '-p',
             '-t',
             owner.target,
@@ -819,7 +1029,7 @@ export class TmuxTerminalSessionController
 
   async cancel(sessionId: string): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const target = await this.target(sessionId)
+      const target = await this.boundTarget(sessionId)
       if (!target) {
         return false
       }
@@ -832,17 +1042,97 @@ export class TmuxTerminalSessionController
     sessionId: string,
     content: string,
     enqueue: boolean,
+    options: TerminalSendOptions = {},
+  ): Promise<boolean> {
+    return this.sendInternal(sessionId, content, enqueue, false, options)
+  }
+
+  async sendWhenIdle(sessionId: string, content: string): Promise<boolean> {
+    return this.sendInternal(sessionId, content, false, true)
+  }
+
+  private async sendInternal(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    idleOnly: boolean,
+    options: TerminalSendOptions = {},
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
-      const target = await this.target(sessionId)
-      if (!target) {
+      const readyOwner = this.inputReadySessions.get(sessionId)
+      const automaticOwner = this.automaticStartupSessions.get(sessionId)
+      const expectedTarget = readyOwner?.target ?? automaticOwner?.target
+      const owner = await this.owner(
+        sessionId,
+        expectedTarget,
+      )
+      if (!owner) {
+        this.inputReadySessions.delete(sessionId)
+        this.automaticStartupSessions.delete(sessionId)
+        if (expectedTarget && (await this.owner(sessionId, undefined, true))) {
+          throw Object.assign(
+            new Error(
+              'The terminal session reopened in a different pane. Check it there before sending another message.',
+            ),
+            { statusCode: 409 },
+          )
+        }
         return false
+      }
+      if (
+        readyOwner?.pid === owner.pid &&
+        readyOwner.target === owner.target
+      ) {
+        const pane = await capturePane(owner.target)
+        if (
+          isTerminalOverlay(pane) ||
+          parseTerminalPermission(pane) ||
+          parseTerminalUserInput(pane) ||
+          parseTerminalFormPrompt(pane)
+        ) {
+          throw Object.assign(
+            new Error(
+              isTerminalSessionInUsePrompt(pane)
+                ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
+                : 'The terminal is waiting for user input. Answer it before sending a message.',
+            ),
+            { statusCode: 409 },
+          )
+        }
+      } else {
+        const startup = await waitForTerminalStartup(
+          owner.target,
+          automaticOwner?.pid === owner.pid &&
+            automaticOwner.target === owner.target,
+          async () => {
+            const current = await this.owner(sessionId, owner.target, true)
+            if (!current || current.pid !== owner.pid) {
+              throw Object.assign(
+                new Error(
+                  'The terminal owner changed while it was becoming ready.',
+                ),
+                { statusCode: 409 },
+              )
+            }
+          },
+        )
+        if (startup !== 'ready') {
+          const pane = await capturePane(owner.target)
+          throw Object.assign(
+            new Error(
+              isTerminalSessionInUsePrompt(pane)
+                ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
+                : 'The terminal is waiting for user input. Answer it before sending a message.',
+            ),
+            { statusCode: 409 },
+          )
+        }
       }
       // What the pane already holds is not evidence that this message
       // arrived: the same text may have been sent before, and an earlier
       // large paste leaves a placeholder of its own.
       const confirmation = content.split('\n').at(-1) || content
-      let paneBeforePaste = await capturePane(target)
+      let paneBeforePaste = await capturePane(owner.target)
       // The previous submitted/queued prompt may still be awaiting repaint.
       // Wait briefly without typing, but never overwrite a draft that remains.
       for (
@@ -853,8 +1143,20 @@ export class TmuxTerminalSessionController
         attempt += 1
       ) {
         await new Promise((resolve) => setTimeout(resolve, 50))
-        paneBeforePaste = await capturePane(target)
+        paneBeforePaste = await capturePane(owner.target)
       }
+      const currentOwner = await this.owner(sessionId, owner.target, true)
+      if (!currentOwner || currentOwner.pid !== owner.pid) {
+        this.inputReadySessions.delete(sessionId)
+        this.automaticStartupSessions.delete(sessionId)
+        throw Object.assign(
+          new Error(
+            'The terminal owner changed while it was becoming ready. Check the terminal before sending this message again.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      paneBeforePaste = await capturePane(currentOwner.target)
       if (isTerminalSessionInUsePrompt(paneBeforePaste)) {
         throw Object.assign(
           new Error(
@@ -882,6 +1184,27 @@ export class TmuxTerminalSessionController
           { statusCode: 409 },
         )
       }
+      if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
+        throw Object.assign(new Error('The terminal started working before queued delivery; nothing was sent'), { statusCode: 409 })
+      }
+      const allowWorking =
+        !idleOnly &&
+        (enqueue ||
+          (options.allowDuringAgentExecution === true &&
+            /^\/\S/u.test(content.trimStart())))
+      if (!terminalInputReady(paneBeforePaste, allowWorking)) {
+        throw Object.assign(
+          new Error(
+            'The terminal is not ready for this input. Wait for its composer, or queue the message while the agent is working.',
+          ),
+          { statusCode: 409 },
+        )
+      }
+      this.inputReadySessions.set(sessionId, {
+        pid: currentOwner.pid,
+        target: currentOwner.target,
+      })
+      this.automaticStartupSessions.delete(sessionId)
       const buffer = `agentic-remote-${randomUUID()}`
       await execFileAsync('tmux', [
         'set-buffer',
@@ -890,29 +1213,34 @@ export class TmuxTerminalSessionController
         '--',
         content,
       ])
-      await execFileAsync('tmux', [
-        'paste-buffer',
-        '-p',
-        '-d',
-        '-b',
-        buffer,
-        '-t',
-        target,
-      ])
-      // From here on tmux has the text. Anything that goes wrong afterwards --
-      // reading the pane, the tty, the terminal settings, or the Enter itself
-      // -- leaves a send that may well have arrived, so it is reported as
-      // uncertain rather than as a plain failure the reader should simply
-      // retry.
+      // The paste can reach the pane even if its acknowledgement is lost.
+      // Preflight and buffer preparation above have not changed native input.
+      let pasteAcknowledged = false
       try {
+        await execFileAsync('tmux', [
+          'paste-buffer',
+          '-p',
+          '-d',
+          '-b',
+          buffer,
+          '-t',
+          owner.target,
+        ])
+        pasteAcknowledged = true
         return await this.finishSend(
-          target,
+          owner.target,
           content,
           confirmation,
           paneBeforePaste,
           enqueue,
+          idleOnly,
         )
       } catch (error) {
+        if (!pasteAcknowledged && error && typeof error === 'object' &&
+            'syscall' in error && typeof error.syscall === 'string' &&
+            /^spawn(?: |$)/.test(error.syscall)) {
+          throw error
+        }
         if (
           error &&
           typeof error === 'object' &&
@@ -936,6 +1264,7 @@ export class TmuxTerminalSessionController
     confirmation: string,
     paneBeforePaste: string,
     enqueue: boolean,
+    idleOnly = false,
   ): Promise<boolean> {
       if (
         !(await waitForComposerPaste(
@@ -1001,6 +1330,12 @@ export class TmuxTerminalSessionController
         }
       }
       try {
+        if (idleOnly) {
+          const current = await capturePane(target)
+          if (isTerminalAgentWorking(current) || isTerminalOverlay(current)) {
+            throw new Error('The terminal changed before queued submission')
+          }
+        }
         await execFileAsync(
           'tmux',
           enqueue
@@ -1015,8 +1350,11 @@ export class TmuxTerminalSessionController
       return true
   }
 
-  private async target(sessionId: string): Promise<string | undefined> {
-    return (await this.owner(sessionId))?.target
+  private async target(
+    sessionId: string,
+    fresh = false,
+  ): Promise<string | undefined> {
+    return (await this.owner(sessionId, undefined, fresh))?.target
   }
 
   /**
@@ -1063,22 +1401,66 @@ export class TmuxTerminalSessionController
 
   private async owner(
     sessionId: string,
-  ): Promise<{ pid: number; target: string; rootPid: number } | undefined> {
-    const processInfo = (await this.activeProcesses()).find(
+    expectedTarget?: string,
+    fresh = false,
+  ): Promise<TerminalOwner | undefined> {
+    const candidates = (await this.activeProcesses(fresh)).filter(
       (candidate) => candidate.sessionId === sessionId,
     )
-    if (!processInfo) {
-      return undefined
+    for (const processInfo of candidates) {
+      const pane = await tmuxTargetForPid(processInfo.pid)
+      if (pane && (!expectedTarget || pane.target === expectedTarget)) {
+        return {
+          pid: processInfo.pid,
+          target: pane.target,
+          rootPid: pane.rootPid,
+        }
+      }
     }
-    const pane = await tmuxTargetForPid(processInfo.pid)
-    return pane
-      ? { pid: processInfo.pid, target: pane.target, rootPid: pane.rootPid }
-      : undefined
+    return undefined
   }
 
-  private activeProcesses(): ReturnType<typeof findActiveCopilotProcesses> {
+  private async boundOwner(
+    sessionId: string,
+    fresh = false,
+  ): Promise<TerminalOwner | undefined> {
+    const ready = this.inputReadySessions.get(sessionId)
+    const automatic = this.automaticStartupSessions.get(sessionId)
+    const expectedTarget = ready?.target ?? automatic?.target
+    const owner = await this.owner(
+      sessionId,
+      expectedTarget,
+      fresh,
+    )
+    if (owner || !expectedTarget) {
+      return owner
+    }
+    if (await this.owner(sessionId, undefined, true)) {
+      // The session moved to a pane this controller did not authorize. Refuse
+      // the operation that observed the move, but release the dead binding so
+      // a later operation can deliberately rediscover the replacement.
+      this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
+    }
+    return undefined
+  }
+
+  private async boundTarget(
+    sessionId: string,
+    fresh = false,
+  ): Promise<string | undefined> {
+    return (await this.boundOwner(sessionId, fresh))?.target
+  }
+
+  private activeProcesses(
+    fresh = false,
+  ): ReturnType<typeof findActiveCopilotProcesses> {
     const now = Date.now()
-    if (this.activeProcessCache && this.activeProcessCache.expiresAt > now) {
+    if (
+      !fresh &&
+      this.activeProcessCache &&
+      this.activeProcessCache.expiresAt > now
+    ) {
       return this.activeProcessCache.processes
     }
     const processes = findActiveCopilotProcesses()
@@ -1092,11 +1474,12 @@ export class TmuxTerminalSessionController
   private async waitForNewOwner(
     sessionId: string,
     previousPid: number,
-  ): Promise<void> {
+    expectedTarget: string,
+  ): Promise<TerminalOwner> {
     for (let attempt = 0; attempt < 150; attempt += 1) {
-      const owner = await this.owner(sessionId)
+      const owner = await this.owner(sessionId, expectedTarget)
       if (owner && owner.pid !== previousPid) {
-        return
+        return owner
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
@@ -1178,9 +1561,62 @@ export class TmuxTerminalSessionController
       'automatic-rename',
       'off',
     ])
+    const expectedTarget = (
+      await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        windowId,
+        '#{pane_id}',
+      ])
+    ).stdout.trim()
+    if (!expectedTarget) {
+      await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
+        () => undefined,
+      )
+      throw new Error('tmux did not return the created pane')
+    }
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      if (await this.target(sessionId)) {
-        return { sessionName, windowId }
+      const owner = await this.owner(sessionId, expectedTarget)
+      if (owner) {
+        try {
+          const startup = await waitForTerminalStartup(
+            owner.target,
+            true,
+            async () => {
+              const current = await this.owner(
+                sessionId,
+                owner.target,
+                true,
+              )
+              if (!current || current.pid !== owner.pid) {
+                throw new Error(
+                  'The terminal owner changed during startup',
+                )
+              }
+            },
+          )
+          if (startup === 'ready') {
+            this.inputReadySessions.set(sessionId, {
+              pid: owner.pid,
+              target: owner.target,
+            })
+            this.automaticStartupSessions.delete(sessionId)
+          } else {
+            this.automaticStartupSessions.set(sessionId, {
+              pid: owner.pid,
+              target: owner.target,
+            })
+          }
+          return { sessionName, windowId }
+        } catch (error) {
+          this.inputReadySessions.delete(sessionId)
+          this.automaticStartupSessions.delete(sessionId)
+          await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
+            () => undefined,
+          )
+          throw error
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
@@ -1219,6 +1655,256 @@ interface TmuxSessionInfo {
 
 export function isTerminalSessionInUsePrompt(pane: string): boolean {
   return Boolean(parseTerminalSessionInUse(pane))
+}
+
+export function isTerminalDesktopInstallPrompt(pane: string): boolean {
+  const lines = pane.split('\n')
+  const cleaned = lines.map(cleanDialogLine)
+  const prompt = cleaned.findLastIndex((line) =>
+    /^Install it now\?$/i.test(line),
+  )
+  const frame = activeBottomFrame(lines, prompt)
+  if (!frame) {
+    return false
+  }
+  const activeLines = cleaned.slice(frame.start, frame.end + 1)
+  const activeView = activeLines.join(' ').replace(/\s+/gu, ' ')
+  return (
+    activeLines.some((line) => /^THE GITHUB COPILOT APP$/i.test(line)) &&
+    /Now generally available!/i.test(activeView) &&
+    // The panel always draws a marker against whichever choice is selected.
+    // Text that merely says the same words -- pasted into the composer, or
+    // recalled into it -- carries no selection, and answering that would send
+    // Enter or `n` into somebody's draft. Without the marker this is not a
+    // panel being shown, whatever else the frame says.
+    activeLines.some((line) =>
+      /(?:^|\s)[>❯]\s*(?:Yes,\s*install|No,\s*thanks)/i.test(line),
+    ) &&
+    /Yes,\s*install/i.test(activeView) &&
+    /No,\s*thanks/i.test(activeView) &&
+    /←\/→\s+(?:to\s+)?choose/i.test(activeView) &&
+    /Enter\s+(?:to\s+)?select/i.test(activeView) &&
+    /Y\s*\/\s*N/i.test(activeView)
+  )
+}
+
+function desktopInstallPromptIdentity(pane: string): string | undefined {
+  if (!isTerminalDesktopInstallPrompt(pane)) return undefined
+  const lines = pane.split('\n')
+  const cleaned = lines.map(cleanDialogLine)
+  const prompt = cleaned.findLastIndex((line) => /^Install it now\?$/i.test(line))
+  const frame = activeBottomFrame(lines, prompt)
+  return frame ? cleaned.slice(frame.start, frame.end + 1).join('\n') : undefined
+}
+
+function hasComposerAfter(lines: string[], index: number): boolean {
+  return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
+}
+
+function activeBottomFrame(
+  lines: string[],
+  marker: number,
+): { start: number; end: number } | undefined {
+  if (marker < 0) {
+    return undefined
+  }
+  const frames: number[] = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^\s*╭[\u2500-\u257f]*╮?\s*$/u.test(lines[index])) {
+      frames.push(index)
+      continue
+    }
+    if (!/^\s*╰[\u2500-\u257f]*╯?\s*$/u.test(lines[index])) {
+      continue
+    }
+    const start = frames.pop()
+    if (
+      start !== undefined &&
+      start < marker &&
+      marker < index &&
+      lines.slice(index + 1).every((line) => !line.trim())
+    ) {
+      const rawContent = lines.slice(start + 1, index)
+      if (rawContent.some((line) => /^\s*┃/u.test(line))) {
+        continue
+      }
+      if (
+        containsCopiedInteractiveFrame(
+          rawContent.map(stripOuterFrameEdge),
+        )
+      ) {
+        continue
+      }
+      const content = rawContent.map(cleanDialogLine)
+      const firstContent = content.find(Boolean)
+      if (firstContent && /^[>❯](?:\s|$)/u.test(firstContent)) {
+        continue
+      }
+      return { start, end: index }
+    }
+  }
+  return undefined
+}
+
+function stripOuterFrameEdge(line: string): string {
+  return line
+    .trim()
+    .replace(/^│\s?/u, '')
+    .replace(/\s?│$/u, '')
+    .trim()
+}
+
+function containsCopiedInteractiveFrame(lines: string[]): boolean {
+  const frames: number[] = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^╭[\u2500-\u257f]*╮?$/u.test(lines[index])) {
+      frames.push(index)
+      continue
+    }
+    if (!/^╰[\u2500-\u257f]*╯?$/u.test(lines[index])) {
+      continue
+    }
+    const start = frames.pop()
+    if (start === undefined) {
+      continue
+    }
+    const copiedLines = lines.slice(start + 1, index)
+    const copied = copiedLines.join('\n')
+    const normalized = copiedLines
+      .map(cleanDialogLine)
+      .join(' ')
+      .replace(/\s+/gu, ' ')
+    const hasSelect = /enter\s+(?:to\s+)?select/i.test(normalized)
+    const copiedDesktop =
+      /Install it now\?/i.test(normalized) && /Y\s*\/\s*N/i.test(normalized)
+    const copiedCancelable =
+      /(Session in use|Do you trust the files in this folder\?)/i.test(
+        normalized,
+      ) && /esc\s+(?:to\s+)?cancel/i.test(normalized)
+    const copiedCommand =
+      /Do you want to run this command\?/i.test(normalized) &&
+      /esc\s+(?:to\s+)?cancel/i.test(normalized)
+    const copiedQuestion =
+      /\bQuestion\b/i.test(copied) &&
+      /enter\s+(?:to\s+)?(?:confirm|submit)/i.test(normalized) &&
+      /esc\s+(?:to\s+)?cancel/i.test(normalized)
+    if (
+      (hasSelect && (copiedDesktop || copiedCancelable || copiedCommand)) ||
+      copiedQuestion
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+async function clearAutomaticStartupPrompts(
+  target: string,
+  validateOwner: () => Promise<void>,
+  deadline: number,
+): Promise<void> {
+  const capture = async () =>
+    (
+      await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target], {
+        timeout: Math.max(1, deadline - Date.now()),
+      })
+    ).stdout
+
+  const waitUntilClosed = async (
+    isOpen: (pane: string) => boolean,
+  ): Promise<void> => {
+    for (let attempt = 0; attempt < 100 && Date.now() < deadline; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      if (!isOpen(await capture())) {
+        return
+      }
+    }
+    throw new Error('Copilot startup prompt did not close')
+  }
+
+  // More than one known prompt can appear in sequence. Handle each once, then
+  // re-read the screen to decide whether another distinct prompt followed it.
+  for (let prompt = 0; prompt < 10 && Date.now() < deadline; prompt += 1) {
+    const pane = await capture()
+    if (
+      hasTerminalCommandPermissionQuestion(pane) ||
+      parseTerminalPermission(pane) ||
+      parseTerminalUserInput(pane) ||
+      parseTerminalFormPrompt(pane)
+    ) {
+      return
+    }
+    if (isTerminalDesktopInstallPrompt(pane)) {
+      // Agentic Remote already supplies the remote supervision UI. Opening a
+      // browser to install a separate desktop app cannot help this headless
+      // terminal and keeps the first real prompt from reaching the composer.
+      const identity = desktopInstallPromptIdentity(pane)
+      await validateOwner()
+      const current = await capture()
+      if (
+        identity === undefined ||
+        hasTerminalCommandPermissionQuestion(current) ||
+        parseTerminalPermission(current) ||
+        parseTerminalUserInput(current) ||
+        parseTerminalFormPrompt(current) ||
+        desktopInstallPromptIdentity(current) !== identity
+      ) {
+        return
+      }
+      await execFileAsync('tmux', ['send-keys', '-t', target, 'n'])
+      await waitUntilClosed(isTerminalDesktopInstallPrompt)
+    } else {
+      return
+    }
+  }
+  throw new Error('Too many Copilot startup prompts appeared in sequence')
+}
+
+async function waitForTerminalStartup(
+  target: string,
+  handleAutomaticPrompts = true,
+  validateOwner: () => Promise<void> = async () => undefined,
+): Promise<'ready' | 'action-required'> {
+  const deadline = Date.now() + TERMINAL_STARTUP_TIMEOUT_MS
+  let readyFrames = 0
+  while (Date.now() < deadline) {
+    const pane = await capturePane(target, Math.max(1, deadline - Date.now()))
+    if (
+      hasTerminalCommandPermissionQuestion(pane) ||
+      parseTerminalPermission(pane) ||
+      parseTerminalUserInput(pane) ||
+      parseTerminalFormPrompt(pane)
+    ) {
+      return 'action-required'
+    }
+    if (isTerminalDesktopInstallPrompt(pane)) {
+      if (!handleAutomaticPrompts) {
+        return 'action-required'
+      }
+      await clearAutomaticStartupPrompts(target, validateOwner, deadline)
+      readyFrames = 0
+      continue
+    }
+    if (isTerminalOverlay(pane)) {
+      return 'action-required'
+    }
+    if (hasLiveTerminalComposer(pane)) {
+      // Copilot briefly paints an empty composer before opening delayed
+      // startup prompts such as the desktop-app promotion. Returning on that
+      // first frame lets the first message be pasted into the prompt that
+      // replaces it. Require the composer to remain available long enough for
+      // those startup prompts to appear and be handled.
+      readyFrames += 1
+      if (readyFrames >= 30) {
+        await validateOwner()
+        return 'ready'
+      }
+    } else {
+      readyFrames = 0
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error('Copilot did not become ready for terminal input')
 }
 
 function cleanDialogLine(line: string): string {
@@ -1292,6 +1978,68 @@ function isTerminalChrome(line: string): boolean {
 // border of the composer marks where it begins.
 const COMPOSER_TOP = /^\s*[╻╭][\u2580-\u259f\u2500-\u257f]*\s*$/u
 
+function isTerminalContextFooter(line: string): boolean {
+  const parts = line.trim().split('·').map((part) => part.trim())
+  return (
+    parts.length >= 2 &&
+    parts.every(Boolean) &&
+    /^\d+(?:,\d{3})*(?:\.\d+)?[kKmMgG]?\s+context\s*\(\d+(?:\.\d+)?%\)$/u
+      .test(parts.at(-1) ?? '')
+  )
+}
+
+function hasLiveTerminalComposer(pane: string): boolean {
+  const lines = pane.split('\n')
+  const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
+  if (top < 0) {
+    return false
+  }
+  const bottom = lines.findIndex(
+    (line, index) => index > top && COMPOSER_EDGE.test(line),
+  )
+  const heavy = lines[top].trimStart().startsWith('╻')
+  if (
+    bottom < 0 ||
+    !lines[bottom].trimStart().startsWith(heavy ? '╹' : '╰') ||
+    !lines.slice(top + 1, bottom).some((line) => /^\s*[│┃╽╿]/u.test(line))
+  ) {
+    return false
+  }
+  if (!heavy) {
+    // Rounded frames also surround dialog fields. Only the legacy prompt
+    // marker or its exact placeholder identifies one as a composer.
+    const text = composerText(pane) || ''
+    if (
+      !/^[>❯](?:\s|$)/u.test(text) &&
+      !COMPOSER_PLACEHOLDERS.some((placeholder) => placeholder.test(text))
+    ) {
+      return false
+    }
+  }
+  return lines.slice(bottom + 1).every(
+    (line) =>
+      isTerminalChrome(line) ||
+      isTerminalContextFooter(line) ||
+      /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
+      /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
+      /\besc\s+interrupt\b/i.test(line) ||
+      (/\/update\b/u.test(line) && /\b\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),
+  )
+}
+
+function terminalInputReady(pane: string, allowWorking = false): boolean {
+  return (
+    hasLiveTerminalComposer(pane) &&
+    (allowWorking || !isTerminalAgentWorking(pane)) &&
+    !isTerminalOverlay(pane) &&
+    !isTerminalSessionInUsePrompt(pane) &&
+    !isTerminalDesktopInstallPrompt(pane) &&
+    !parseTerminalPermission(pane) &&
+    !parseTerminalUserInput(pane) &&
+    !parseTerminalFormPrompt(pane)
+  )
+}
+
 function stripTerminalStatus(pane: string): string[] {
   const lines = pane.split('\n').map((line) => line.trimEnd())
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -1312,7 +2060,10 @@ function terminalControlLines(pane: string): string[] {
   const composer = lines.findLastIndex((line) =>
     /^\s*╹[\u2580-\u259f\u2500-\u257f]*\s*$/u.test(line),
   )
-  return lines.slice(composer + 1)
+  const repaint = lines.findLastIndex((line) =>
+    /^\s*╻[\u2580-\u259f\u2500-\u257f]*\s*$/u.test(line),
+  )
+  return lines.slice(Math.max(composer, repaint) + 1)
 }
 
 // A full-screen view replaces the transcript and is driven by keystrokes, so
@@ -1339,7 +2090,7 @@ export function isTerminalOverlay(pane: string): boolean {
 // The CLI only offers to interrupt while the agent is working, so this marks
 // the frames whose new lines belong to a turn rather than to a command.
 export function isTerminalAgentWorking(pane: string): boolean {
-  return /esc\s+interrupt/i.test(pane.split('\n').slice(-6).join(' '))
+  return /esc\s+interrupt/i.test(terminalControlLines(pane).slice(-6).join(' '))
 }
 
 /**
@@ -1443,16 +2194,24 @@ export async function submitTerminalForm(
 }
 
 export function parseTerminalFormPrompt(pane: string): boolean {
-  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  const rawLines = terminalControlLines(pane)
+  const lines = rawLines.map(cleanDialogLine)
   const header = lines.findLastIndex((line) =>
     /^Copilot needs information\.?$/i.test(line),
   )
   if (header < 0) {
     return false
   }
-  return lines
-    .slice(header)
-    .some((line) => /enter accept/i.test(line) && /cancel/i.test(line))
+  const footer = lines.findLastIndex(
+    (line, index) =>
+      index > header &&
+      /cancel/i.test(line) &&
+      /(?:esc|ctrl\+|enter)/i.test(line),
+  )
+  if (footer < 0 || hasComposerAfter(rawLines, footer)) {
+    return false
+  }
+  return /enter accept/i.test(lines.slice(header, footer + 1).join(' '))
 }
 
 function terminalFormQuestionEnd(
@@ -1464,22 +2223,20 @@ function terminalFormQuestionEnd(
   if (!expected) {
     return header
   }
-  let offset = 0
+  const questionLines: string[] = []
   for (let index = header + 1; index < lines.length; index += 1) {
     const line = lines[index].replace(/\s+/gu, ' ').trim()
     if (!line) {
       continue
     }
-    // Wrapping may split at whitespace or inside a word. Only the break is
-    // flexible; spaces within each rendered line remain part of its identity.
-    if (expected[offset] === ' ') {
-      offset += 1
-    }
-    if (!expected.startsWith(line, offset)) {
+    // Form reads use tmux -J for real soft wraps. Remaining line boundaries
+    // are whitespace, never permission to concatenate different identifiers.
+    questionLines.push(line)
+    const observed = questionLines.join(' ')
+    if (!expected.startsWith(observed)) {
       return -1
     }
-    offset += line.length
-    if (offset === expected.length) {
+    if (observed === expected) {
       return index
     }
   }
@@ -1620,16 +2377,27 @@ export function parseTerminalFormActiveField(
 export function parseTerminalUserInput(
   pane: string,
 ): PendingUserInput | undefined {
-  const lines = pane.split('\n').map(cleanDialogLine)
+  const rawLines = pane.split('\n')
+  const lines = rawLines.map(cleanDialogLine)
   const questionHeader = lines.findLastIndex((line) => line === 'Question')
   if (questionHeader < 0) {
+    return undefined
+  }
+  const frame = activeBottomFrame(rawLines, questionHeader)
+  if (!frame) {
+    return undefined
+  }
+  const activeLines = lines.slice(frame.start, frame.end + 1)
+  const activeHeader = activeLines.findIndex((line) => line === 'Question')
+  if (activeHeader < 0) {
     return undefined
   }
 
   const questionLines: string[] = []
   const choices: string[] = []
   let allowFreeform = false
-  for (const line of lines.slice(questionHeader + 1)) {
+  let hasFooter = false
+  for (const line of activeLines.slice(activeHeader + 1)) {
     if (!line || /^[─━]+$/u.test(line)) {
       continue
     }
@@ -1648,7 +2416,11 @@ export function parseTerminalUserInput(
       continue
     }
     if (choices.length > 0 || allowFreeform) {
-      if (/select|confirm|cancel/i.test(line)) {
+      if (
+        /select|confirm|cancel|submit/i.test(line) &&
+        /enter|esc|↑|↓/i.test(line)
+      ) {
+        hasFooter = true
         break
       }
       continue
@@ -1656,7 +2428,11 @@ export function parseTerminalUserInput(
     questionLines.push(line)
   }
   const question = questionLines.join(' ').trim()
-  if (!question || (choices.length === 0 && !allowFreeform)) {
+  if (
+    !question ||
+    !hasFooter ||
+    (choices.length === 0 && !allowFreeform)
+  ) {
     return undefined
   }
   const fingerprint = createHash('sha256')
@@ -1682,14 +2458,43 @@ export function parseTerminalPermission(
   if (folderTrust) {
     return folderTrust
   }
-  const lines = pane.split('\n').map(cleanDialogLine)
-  const questionIndex = lines.findLastIndex((line) =>
-    /^Do you want to run this command\?/i.test(line),
+  const rawLines = terminalControlLines(pane)
+  const lines = rawLines.map(cleanDialogLine)
+  const commandQuestion = findTerminalWrappedText(
+    lines,
+    'Do you want to run this command?',
   )
-  if (questionIndex < 0) {
+  if (!commandQuestion) {
     return undefined
   }
-  const nonemptyBeforeQuestion = lines
+  const commandFrame = activeBottomFrame(rawLines, commandQuestion.start)
+  if (!commandFrame) {
+    const footer = lines.findIndex(
+      (line, index) =>
+        index > commandQuestion.end &&
+        /to navigate/i.test(line) &&
+        /enter to select/i.test(line) &&
+        /esc to cancel/i.test(line),
+    )
+    if (
+      footer < 0 ||
+      lines.slice(footer + 1).some((line) => Boolean(line))
+    ) {
+      return undefined
+    }
+  }
+  const commandLines = commandFrame
+    ? lines.slice(commandFrame.start, commandFrame.end + 1)
+    : lines
+  const framedQuestion = findTerminalWrappedText(
+    commandLines,
+    'Do you want to run this command?',
+  )
+  if (!framedQuestion) {
+    return undefined
+  }
+  const questionIndex = framedQuestion.start
+  const nonemptyBeforeQuestion = commandLines
     .slice(Math.max(0, questionIndex - 40), questionIndex)
     .flatMap((line, offset) =>
       line ? [{ line, index: Math.max(0, questionIndex - 40) + offset }] : [],
@@ -1715,13 +2520,8 @@ export function parseTerminalPermission(
   if (!title) {
     return undefined
   }
-  const dialog = lines.slice(dialogStart)
-  const choices = dialog.flatMap((line) => {
-    const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
-    return choice
-      ? [{ index: Number.parseInt(choice[1], 10), label: choice[2].trim() }]
-      : []
-  })
+  const dialog = commandLines.slice(dialogStart)
+  const choices = terminalDialogChoices(dialog)
   const hasYes = choices.some(
     (choice) => choice.index === 1 && /^Yes\b/i.test(choice.label),
   )
@@ -1756,19 +2556,106 @@ export function parseTerminalPermission(
   }
 }
 
+function hasTerminalCommandPermissionQuestion(pane: string): boolean {
+  const rawLines = pane.split('\n')
+  const lines = rawLines.map(cleanDialogLine)
+  const question = findTerminalWrappedText(
+    lines,
+    'Do you want to run this command?',
+  )
+  return Boolean(question && activeBottomFrame(rawLines, question.start))
+}
+
+function terminalDialogChoices(
+  lines: string[],
+): Array<{ index: number; label: string }> {
+  const choices: Array<{ index: number; label: string }> = []
+  let current: { index: number; label: string } | undefined
+  for (const line of lines) {
+    const choice = line.match(/^(?:❯\s*)?(\d+)\.\s+(.+)$/u)
+    if (choice) {
+      current = {
+        index: Number.parseInt(choice[1], 10),
+        label: choice[2].trim(),
+      }
+      choices.push(current)
+      continue
+    }
+    if (!current || !line) {
+      continue
+    }
+    if (
+      /(?:navigate|select|confirm|cancel|decline|toggle)/i.test(line) &&
+      /(?:enter|esc|↑|↓|←|→|tab|ctrl)/i.test(line)
+    ) {
+      break
+    }
+    current.label = `${current.label} ${line}`.replace(/\s+/gu, ' ').trim()
+  }
+  return choices
+}
+
+function findTerminalWrappedText(
+  lines: string[],
+  expected: string,
+): { start: number; end: number } | undefined {
+  const normalizedExpected = expected.replace(/\s+/gu, ' ').trim()
+  let found: { start: number; end: number } | undefined
+  for (let start = 0; start < lines.length; start += 1) {
+    if (!lines[start]) {
+      continue
+    }
+    for (
+      let end = start;
+      end < Math.min(lines.length, start + 5);
+      end += 1
+    ) {
+      const candidate = lines
+        .slice(start, end + 1)
+        .join(' ')
+        .replace(/\s+/gu, ' ')
+        .trim()
+      if (candidate === normalizedExpected) {
+        found = { start, end }
+      }
+      if (candidate.length > normalizedExpected.length) {
+        break
+      }
+    }
+  }
+  return found
+}
+
 function parseTerminalSessionInUse(pane: string): PendingPermission | undefined {
-  const lines = terminalControlLines(pane).map(cleanDialogLine)
+  if (hasTerminalCommandPermissionQuestion(pane)) return undefined
+  const rawLines = terminalControlLines(pane)
+  const lines = rawLines.map(cleanDialogLine)
   const header = lines.findLastIndex((line) => line === 'Session in use')
   if (header < 0) {
     return undefined
   }
-  const dialog = lines.slice(header + 1)
+  const frame = activeBottomFrame(rawLines, header)
+  if (!frame && lines.slice(0, header).some((line) => !isTerminalChrome(line))) {
+    return undefined
+  }
+  const dialog = lines.slice(header + 1, frame ? frame.end + 1 : undefined)
+  const footer = dialog.findIndex((line) => /^↑\/↓/u.test(line))
+  const footerText = dialog.slice(footer).filter(
+    (line) => line && !/^[\u2500-\u257f\u2580-\u259f\s]+$/u.test(line),
+  ).join(' ').replace(/\s+/gu, ' ').trim()
+  if (
+    footer < 0 ||
+    !/^↑\/↓\s+(?:to\s+)?navigate\s*·\s*enter\s+(?:to\s+)?select\s*·\s*esc\s+(?:to\s+)?cancel$/iu.test(footerText) ||
+    !dialog.some((line) => /^[>❯]\s*(?:1\.\s+Resume anyway|2\.\s+Go back)/i.test(line))
+  ) {
+    return undefined
+  }
   const choices = dialog.flatMap((line) => {
     const choice = /^(?:❯\s*)?(\d+)\.\s+(.+)$/u.exec(line)
     return choice ? [{ index: Number(choice[1]), label: choice[2] }] : []
   })
   if (
-    !/in use by another CLI or application/.test(dialog.join(' ')) ||
+    (!frame && !/in use by another CLI or application/.test(dialog.join(' '))) ||
     choices.length !== 2 ||
     choices[0].index !== 1 || choices[0].label !== 'Resume anyway' ||
     choices[1].index !== 2 || choices[1].label !== 'Go back (Esc)'
@@ -1794,17 +2681,33 @@ function parseTerminalSessionInUse(pane: string): PendingPermission | undefined 
 }
 
 function parseTerminalFolderTrust(pane: string): PendingPermission | undefined {
-  const lines = terminalControlLines(pane).map(cleanDialogLine)
-  const header = lines.findLastIndex((line) => line === 'Confirm folder trust')
-  const question = lines.findIndex(
-    (line, index) => index > header && line === 'Do you trust the files in this folder?',
+  const rawLines = terminalControlLines(pane)
+  const cleaned = rawLines.map(cleanDialogLine)
+  const trustQuestion = findTerminalWrappedText(
+    cleaned,
+    'Do you trust the files in this folder?',
   )
-  if (header < 0 || question < 0) {
+  const frame = trustQuestion && activeBottomFrame(rawLines, trustQuestion.start)
+  if (!frame) {
+    return undefined
+  }
+  const lines = cleaned.slice(frame.start, frame.end + 1)
+  // A command may quote the entire trust dialog, even across wrapped lines.
+  // Never treat that command's confirmation as permission to trust a folder.
+  if (findTerminalWrappedText(lines, 'Do you want to run this command?')) {
+    return undefined
+  }
+  const header = lines.findLastIndex((line) => line === 'Confirm folder trust')
+  const question = findTerminalWrappedText(
+    lines,
+    'Do you trust the files in this folder?',
+  )
+  if (header < 0 || !question || question.start <= header) {
     return undefined
   }
   const folderStart = lines.findIndex(
     (line, index) =>
-      index > header && index < question && /^(?:\/|[a-z]:[\\/]|\\\\)/i.test(line),
+      index > header && index < question.start && /^(?:\/|[a-z]:[\\/]|\\\\)/i.test(line),
   )
   if (folderStart < 0) {
     return undefined
@@ -1812,15 +2715,18 @@ function parseTerminalFolderTrust(pane: string): PendingPermission | undefined {
   const folderEnd = lines.findIndex(
     (line, index) => index > folderStart && /^[─━]+$/u.test(line),
   )
-  if (folderEnd < 0 || folderEnd >= question) {
+  if (folderEnd < 0 || folderEnd >= question.start) {
     return undefined
   }
   const folder = lines.slice(folderStart, folderEnd).join('\n')
-  const choices = lines.slice(question + 1).flatMap((line) => {
-    const choice = /^(?:❯\s*)?(\d+)\.\s+(.+)$/u.exec(line)
-    return choice ? [{ index: Number(choice[1]), label: choice[2] }] : []
-  })
+  const dialog = lines.slice(question.end + 1)
+  const choices = terminalDialogChoices(dialog)
+  const normalizedDialog = dialog.join(' ').replace(/\s+/gu, ' ')
   if (
+    !dialog.some((line) => /^[>❯]\s*\d+\.\s/u.test(line)) ||
+    !/↑\/↓\s+(?:to\s+)?navigate/i.test(normalizedDialog) ||
+    !/enter\s+(?:to\s+)?select/i.test(normalizedDialog) ||
+    !/esc\s+(?:to\s+)?cancel/i.test(normalizedDialog) ||
     choices.length !== 3 ||
     choices[0].index !== 1 || choices[0].label !== 'Yes' ||
     choices[1].index !== 2 || choices[1].label !== 'Yes, and remember this folder for future sessions' ||
@@ -2156,7 +3062,9 @@ function qualifyingPasteCount(text: string, pasted: string): number {
     pasted.trim().split('\n').length,
   ])
   return [...text.matchAll(PASTED_PLACEHOLDERS)].filter(
-    (match) => match[1] === undefined || lineCounts.has(Number(match[1])),
+    (match) => match[1] === undefined
+      ? pasted.length > PASTE_ECHO_LIMIT
+      : lineCounts.has(Number(match[1])),
   ).length
 }
 
@@ -2212,9 +3120,17 @@ export function composerHoldsText(pane: string): boolean {
   return !COMPOSER_PLACEHOLDERS.some((pattern) => pattern.test(bare))
 }
 
-async function capturePane(target: string): Promise<string> {
+async function capturePane(target: string, timeout?: number): Promise<string> {
   return (
-    await execFileAsync('tmux', ['capture-pane', '-p', '-t', target, '-S', '-30'])
+    await execFileAsync('tmux', [
+      'capture-pane',
+      '-J',
+      '-p',
+      '-t',
+      target,
+      '-S',
+      '-30',
+    ], { timeout })
   ).stdout
 }
 
@@ -2244,6 +3160,19 @@ export function composerTookPaste(
     // No composer to read. Not every pane draws one -- an agent mid-dialog, or
     // something that is not the CLI at all -- and the pane itself is then the
     // only evidence there is.
+    const compactAfter = compact(paneAfter)
+    const compactBefore = compact(paneBefore)
+    const allAdded =
+      pastedPlaceholderCount(compactAfter) -
+      pastedPlaceholderCount(compactBefore)
+    if (allAdded > 0) {
+      return (
+        allAdded === 1 &&
+        qualifyingPasteCount(compactAfter, pasted) -
+          qualifyingPasteCount(compactBefore, pasted) ===
+          1
+      )
+    }
     return (
       paneEvidenceCount(paneAfter, expected, pasted) >
       paneEvidenceCount(paneBefore, expected, pasted)

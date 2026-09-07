@@ -139,7 +139,7 @@
   "inputs": {
     ".github/copilot-instructions.md": "15a3fe1c5de27c9cc24a3b26697b794876c6b7dda4fbe08ab1cc4523eaa1a2fe",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "d155de40cee020b624b152189585e877ea21c0b65fdf577411702aa6ddf1b0dd",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "9f6c03f60d51fd27f97b485561dbb743e8a24a0ab4ba16c7630b6407b0c847cd",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -369,17 +369,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d43af7d8fc1271ffa36aa141eeacd3c5232de026cda88574342471f8c70cb78c",
+    "GRAPH_REPORT.md": "3ebddbf3931a440dd7acdc755aebd403086486814f359b9aece4e64a3b398598",
     "communities.json": "c0ea701af6fddd697cd7a5852e15876403c587bac8c6ee795039eb4b8aa55539",
-    "graph.html": "90151d37302a87f96a6de0bb52a333606b3121c6cba86c6977ebba6102564286",
-    "graph.json": "9fa1dacfa834132f1f7013da077efcee02c8ae8c73bd89772f4e1e4f02d0b96d"
+    "graph.html": "8c76a3f0e86dfd22b7951dd4971e0572c5b582367402b08fb4303d27e381826f",
+    "graph.json": "ecbde7ca70b60cc33823a0f0686046e735cfe3dd197b4044193f13ceb50e0509"
   },
   "schema_version": 1,
-  "source_commit": "3267c181d64631cc5dabae5c63fbed6060516b33",
-  "source_fingerprint": "f740644cc0576bb222354a7b30bec38276a9a9e1590c1e74d2094a5f29761228",
+  "source_commit": "1239728c9df7041578d1b0a224788bdf46f94a53",
+  "source_fingerprint": "0c69e35c154f0a26c92d9b712780731e83fce6fecc044c8b24703eddbe027a68",
   "working_tree_changes": [
-    "docs/architecture.md",
-    "server/agent-service.ts",
-    "server/terminal-startup-queue.test.ts"
+    ".github/skills/agentic-remote-navigation/SKILL.md"
   ]
 }

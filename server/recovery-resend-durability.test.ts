@@ -217,6 +217,41 @@ async function sdkFixture(kind: SendKind = 'message') {
 }
 
 describe('Durable recovery resend ownership', () => {
+  it.each(['receipt', 'dispatch marker'] as const)(
+    'holds FIFO after a startup %s write fails and its admission finishes',
+    async (failure) => {
+      const context = await fixture()
+      context.withEvents()
+      let ownsStartup = true
+      Object.assign(context.terminal, {
+        ownsStartupPrompt: () => ownsStartup,
+        resolveStartupPrompt: async () => { ownsStartup = false; return true },
+        capture: async () => '╻▄▄▄▄\n┃ \n╹▀▀▀▀\n / commands',
+        inputReady: async () => true,
+      })
+      await context.service.store.enqueuePrompt(sessionId, {
+        id: 'follower', content: 'Must wait for the accepted recovery', createdAt: originalToken,
+      })
+      const method = failure === 'receipt' ? 'acceptRecoveryResend' : 'markTerminalPromptDispatched'
+      vi.spyOn(context.service.store, method).mockRejectedValueOnce(storageError)
+
+      await expect(context.send(context.service)).rejects.toMatchObject({
+        submission: { accepted: true },
+      })
+      expect(context.service['terminalAdmissionOperations'].size).toBe(0)
+      await vi.waitFor(() => expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined())
+      await context.service.refreshTranscripts()
+      await context.service['drainTerminalQueue'](sessionId)
+      await context.service.refreshTranscripts()
+
+      expect(context.pastes).toEqual([context.submitted])
+      expect(context.service.store.queueDispatchAt(sessionId)).toBeDefined()
+      expect(context.service.store.get(sessionId)?.status).toBe('running')
+      expect(context.service.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.id))
+        .toEqual(['follower'])
+    },
+  )
+
   it('integration: joins confirmed delivery and token acknowledgement before provider teardown', async () => {
     const context = await fixture()
     const held = gate()

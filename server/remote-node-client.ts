@@ -27,6 +27,7 @@ import type {
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
 import { parseSubmissionReceipt, SubmissionError, type SubmissionReceipt } from '../shared/submission-error.js'
+import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -381,7 +382,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         method: 'POST',
         body: '{}',
       },
-      30_000,
+      TERMINAL_REQUEST_TIMEOUT_MS,
     )
     return response.session
   }
@@ -534,7 +535,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   private async request<TResult = unknown>(
     path: string,
     init: RequestInit = {},
-    timeoutMs = 15_000,
+    timeoutMs = init.method && init.method !== 'GET' && path.startsWith('/node-api/sessions')
+      ? TERMINAL_REQUEST_TIMEOUT_MS
+      : 15_000,
     markOnline = true,
   ): Promise<TResult> {
     const headers = new Headers(init.headers)

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { TERMINAL_STARTUP_TIMEOUT_MS } from '../shared/terminal-timing.js'
 import { readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -1800,16 +1801,19 @@ function containsCopiedInteractiveFrame(lines: string[]): boolean {
 async function clearAutomaticStartupPrompts(
   target: string,
   validateOwner: () => Promise<void>,
+  deadline: number,
 ): Promise<void> {
   const capture = async () =>
     (
-      await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target])
+      await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target], {
+        timeout: Math.max(1, deadline - Date.now()),
+      })
     ).stdout
 
   const waitUntilClosed = async (
     isOpen: (pane: string) => boolean,
   ): Promise<void> => {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    for (let attempt = 0; attempt < 100 && Date.now() < deadline; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100))
       if (!isOpen(await capture())) {
         return
@@ -1820,7 +1824,7 @@ async function clearAutomaticStartupPrompts(
 
   // More than one known prompt can appear in sequence. Handle each once, then
   // re-read the screen to decide whether another distinct prompt followed it.
-  for (let prompt = 0; prompt < 10; prompt += 1) {
+  for (let prompt = 0; prompt < 10 && Date.now() < deadline; prompt += 1) {
     const pane = await capture()
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
@@ -1861,9 +1865,10 @@ async function waitForTerminalStartup(
   handleAutomaticPrompts = true,
   validateOwner: () => Promise<void> = async () => undefined,
 ): Promise<'ready' | 'action-required'> {
+  const deadline = Date.now() + TERMINAL_STARTUP_TIMEOUT_MS
   let readyFrames = 0
-  for (let attempt = 0; attempt < 900; attempt += 1) {
-    const pane = await capturePane(target)
+  while (Date.now() < deadline) {
+    const pane = await capturePane(target, Math.max(1, deadline - Date.now()))
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
       parseTerminalPermission(pane) ||
@@ -1876,7 +1881,7 @@ async function waitForTerminalStartup(
       if (!handleAutomaticPrompts) {
         return 'action-required'
       }
-      await clearAutomaticStartupPrompts(target, validateOwner)
+      await clearAutomaticStartupPrompts(target, validateOwner, deadline)
       readyFrames = 0
       continue
     }
@@ -3107,7 +3112,7 @@ export function composerHoldsText(pane: string): boolean {
   return !COMPOSER_PLACEHOLDERS.some((pattern) => pattern.test(bare))
 }
 
-async function capturePane(target: string): Promise<string> {
+async function capturePane(target: string, timeout?: number): Promise<string> {
   return (
     await execFileAsync('tmux', [
       'capture-pane',
@@ -3117,7 +3122,7 @@ async function capturePane(target: string): Promise<string> {
       target,
       '-S',
       '-30',
-    ])
+    ], { timeout })
   ).stdout
 }
 

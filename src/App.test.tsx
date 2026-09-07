@@ -11509,6 +11509,31 @@ describe('App', () => {
     }
   })
 
+  it('does not report automatic order reconciliation as a failed user reorder', async () => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    const original = Storage.prototype.setItem
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage, key: string, value: string,
+    ) {
+      if (
+        key === 'agentic-remote:computer-order' ||
+        key === 'agentic-remote:session-order'
+      ) {
+        throw new DOMException('Storage access denied', 'SecurityError')
+      }
+      original.call(this, key, value)
+    })
+    try {
+      render(<App />)
+      await screen.findByLabelText('Message')
+      expect(screen.queryByText(/Could not save the (computer|session) order/))
+        .not.toBeInTheDocument()
+    } finally {
+      save.mockRestore()
+    }
+  })
+
   it.each(['computer', 'session'])('reports a refused custom %s order without losing the draft', async (kind) => {
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])

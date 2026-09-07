@@ -19,7 +19,7 @@ history is not transferred between providers.
 | Interactive/plan/autonomous mode | Native Copilot modes | Claude permission-mode mapping | Partial; labels are shared but semantics differ |
 | Permission prompts | SDK and terminal prompts | Agent SDK `canUseTool` | Compatible through the shared approval card |
 | Clarifying questions | Copilot user-input request and structured elicitation form | Claude `AskUserQuestion`, including `multiSelect` | Compatible through the shared question/form card; structured answers preserve field values |
-| Editable Agentic Remote queue | Supported | Supported | Compatible |
+| Editable Agentic Remote queue | Supported, including waiting behind tracked SDK background agents | Supported | Compatible |
 | Cancel | SDK abort or terminal interrupt | Agent SDK abort controller | Compatible |
 | Background task monitoring | Experimental SDK task RPC; tmux `/tasks` event projection includes detached shells | Not exposed | Copilot-only |
 | Slash commands | Copilot command catalog plus web commands | Web commands only | Provider-specific |

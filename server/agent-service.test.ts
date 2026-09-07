@@ -1341,6 +1341,64 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('holds an SDK queue behind a running background agent', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const backgroundAgent = {
+      type: 'agent' as const,
+      id: 'task-queue',
+      description: 'Review the repository',
+      status: 'running' as const,
+      startedAt: '2026-09-07T20:00:00.000Z',
+      agentType: 'general-purpose',
+      executionMode: 'background' as const,
+    }
+    client.session.backgroundTasks.push(backgroundAgent)
+    await service.listBackgroundTasks(created.id)
+
+    const queued = await service.sendMessage(
+      created.id,
+      'Continue after the review',
+      true,
+    )
+    expect(queued.queuedPrompts).toEqual([
+      expect.objectContaining({ content: 'Continue after the review' }),
+    ])
+    expect(client.session.sentPrompts).toEqual([])
+
+    Object.assign(backgroundAgent, {
+      status: 'completed',
+      completedAt: '2026-09-07T20:01:00.000Z',
+    })
+    client.session.emit({
+      type: 'session.background_tasks_changed',
+      id: 'tasks-changed',
+      parentId: null,
+      timestamp: '2026-09-07T20:01:00.000Z',
+      data: {},
+    } as SessionEvent)
+
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toEqual([
+        'Continue after the review',
+      ]),
+    )
+    expect(service.store.get(created.id)?.queuedCount).toBe(0)
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
   it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
     directories.push(directory)

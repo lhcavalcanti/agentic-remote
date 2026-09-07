@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { SubmissionError } from '../shared/submission-error.js'
+import { hasRunningBackgroundAgent } from '../shared/background-tasks.js'
 import { isDeepStrictEqual } from 'node:util'
 import {
   CopilotClient,
@@ -4054,14 +4055,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(untracked)
       return untracked
     }
+    const sdkBackgroundAgentRunning =
+      !terminalBacked &&
+      hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId))
+    if (
+      enqueue &&
+      (this.activePrompts.has(sessionId) ||
+        this.drainingSessions.has(sessionId) ||
+        sdkBackgroundAgentRunning)
+    ) {
+      return this.enqueuePrompt(sessionId, content, false, answers, delivery)
+    }
     if (
       this.activePrompts.has(sessionId) ||
       this.drainingSessions.has(sessionId)
     ) {
-      if (!enqueue) {
-        throw new Error('This session is already responding')
-      }
-      return this.enqueuePrompt(sessionId, content, false, answers, delivery)
+      throw new Error('This session is already responding')
     }
 
     return this.startMessage(sessionId, content, false, undefined, answers, delivery)
@@ -6854,6 +6863,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           task.canCancel ? { ...task, canCancel: false } : task,
         )
       : tasks
+    const previous = this.backgroundTaskTracker.get(sessionId)
     const update = this.backgroundTaskTracker.replace(
       sessionId,
       owned,
@@ -6866,6 +6876,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         ...snapshot,
       })
+    }
+    if (
+      !this.externalSessionIds.has(sessionId) &&
+      hasRunningBackgroundAgent(previous) &&
+      !hasRunningBackgroundAgent(update.snapshot)
+    ) {
+      this.wakeSdkQueue(sessionId)
     }
     return update.snapshot
   }
@@ -7353,6 +7370,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (current.suspended || this.suspendingSessions.has(sessionId) ||
             current.pendingPermission || current.pendingUserInput || current.failedPrompt ||
             this.activePrompts.has(sessionId) ||
+            hasRunningBackgroundAgent(this.backgroundTaskTracker.get(sessionId)) ||
             (current.status !== 'idle' && current.status !== 'error')) return
         const assertIdle = (session: SessionDetail) => {
           if (

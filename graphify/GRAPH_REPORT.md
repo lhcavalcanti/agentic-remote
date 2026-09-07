@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `cb114ac37192714a2105d18aca627b259bc576963147506e3a1294a5d781f4ed`
+Snapshot: `32ab25d747bc8d3a483582129e96be0608edcaa078654de4bec2d053b7fb9a77`
 
-Source checkout: `f4f148b79145dcffee12ae07f47c1e689fe6a4fc`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `e28d809ba3c7c97a5f8dd999dbdfbfae37d13d65`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -495,6 +495,7 @@ _Questions this graph is uniquely positioned to answer:_
 - `docs/mockups/activity-view.html`
 - `docs/native-shell.md`
 - `docs/provider-compatibility.md`
+- `docs/sdk-architecture-roadmap.md`
 - `docs/slash-command-feedback.md`
 - `index.html`
 - `public/apple-touch-icon-precomposed.png`

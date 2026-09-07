@@ -21,6 +21,8 @@ import type {
   KnowledgeRoot,
   ManagedSession,
   SessionKnowledgeBinding,
+  ManagedSessionMcpServersSnapshot,
+  ManagedSessionSkillsSnapshot,
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
@@ -58,6 +60,8 @@ import {
   addKnowledgeRoot,
   deleteKnowledgeRoot,
   listSessions,
+  listSessionSkills,
+  listSessionMcpServers,
   listSessionListing,
   listWorkspace,
   validateSessionDirectory,
@@ -153,6 +157,8 @@ vi.mock('./api', async (importOriginal) => ({
   getSessionKnowledgeRoot: vi.fn(),
   updateSessionKnowledgeRoot: vi.fn(),
   listCommands: vi.fn(),
+  listSessionSkills: vi.fn(),
+  listSessionMcpServers: vi.fn(),
   addComputer: vi.fn(),
   removeComputer: vi.fn(),
   createSession: vi.fn(),
@@ -1184,6 +1190,16 @@ describe('App', () => {
       async (_computerId, path) => path,
     )
     vi.mocked(getSession).mockResolvedValue(session)
+    vi.mocked(listSessionSkills).mockImplementation(async (computerId, sessionId, provider) => ({
+      computerId, sessionId, provider, scope: 'session',
+      capturedAt: '2026-09-05T00:00:00.000Z',
+      skills: [{ name: 'review-code', description: 'Review the current code', enabled: true, source: 'project' }],
+    }))
+    vi.mocked(listSessionMcpServers).mockImplementation(async (computerId, sessionId, provider) => ({
+      computerId, sessionId, provider, scope: 'session',
+      capturedAt: '2026-09-05T00:00:00.000Z',
+      servers: [{ name: 'project-tools', status: 'connected', source: 'project' }],
+    }))
     vi.mocked(createSession).mockResolvedValue(session)
     vi.mocked(getRuntimeOptions).mockResolvedValue({
       current: {
@@ -1319,6 +1335,274 @@ describe('App', () => {
 
   afterEach(() => {
     cleanup()
+  })
+
+  function resourceSession(overrides: Partial<ManagedSession> = {}) {
+    const target: ManagedSession = { ...session, provider: 'copilot', executionMode: 'sdk', ...overrides }
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...computer,
+      providers: computer.providers?.map((provider) => ({ ...provider, supportsSessionResources: true })),
+    }])
+    vi.mocked(listSessions).mockResolvedValue([target, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => id === secondSession.id ? secondSession : target)
+    return target
+  }
+
+  it('opens read-only skills and MCP views from the selected session menu', async () => {
+    resourceSession()
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View session skills' }))
+    await screen.findByRole('dialog', { name: 'Skills and MCP servers' })
+    await screen.findByRole('heading', { name: 'review-code' })
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP servers' }))
+    await screen.findByRole('heading', { name: 'project-tools' })
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Session actions' })).toHaveFocus()
+  })
+
+  it.each([
+    ['/skill', 'Open skills', 'review-code', ''],
+    ['/skills review', 'Open skills', 'review-code', 'review'],
+    ['/mcp project', 'Open MCP servers', 'project-tools', 'project'],
+  ])('opens %s as a read-only resource view without sending or queueing a prompt', async (command, action, resource, filter) => {
+    resourceSession()
+    render(<App />)
+    const editor = await screen.findByLabelText('Message')
+    fireEvent.change(editor, { target: { value: command } })
+    fireEvent.click(screen.getByRole('button', { name: action }))
+    await screen.findByRole('heading', { name: resource })
+    expect(screen.getByRole('searchbox', {
+      name: action === 'Open skills' ? 'Filter skills' : 'Filter MCP servers',
+    })).toHaveValue(filter)
+    expect(editor).toHaveValue('')
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+    expect(updateQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('opens the singular /skill alias with one desktop Enter', async () => {
+    resourceSession()
+    render(<App />)
+    const editor = await screen.findByLabelText('Message')
+    await waitFor(() => expect(listCommands).toHaveBeenCalled())
+    fireEvent.change(editor, { target: { value: '/skill' } })
+    fireEvent.keyDown(editor, { key: 'Enter', code: 'Enter' })
+    await screen.findByRole('heading', { name: 'review-code' })
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+  })
+
+  it('uses browser views instead of an advertised native MCP configuration command', async () => {
+    resourceSession()
+    vi.mocked(listCommands).mockResolvedValue([{
+      name: 'mcp', description: 'Reconfigure native MCP servers', allowDuringAgentExecution: false,
+    }])
+    render(<App />)
+    const editor = await screen.findByLabelText('Message')
+    await waitFor(() => expect(listCommands).toHaveBeenCalled())
+    fireEvent.change(editor, { target: { value: '/mcp' } })
+    expect(screen.queryByText('Reconfigure native MCP servers')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open MCP servers' }))
+    await screen.findByRole('heading', { name: 'project-tools' })
+    expect(executeCommand).not.toHaveBeenCalled()
+  })
+
+  it('allows a suspended session to inspect configured resources without resuming it', async () => {
+    const target = resourceSession({ suspended: true })
+    const snapshot: ManagedSessionMcpServersSnapshot = {
+      computerId: target.computerId, sessionId: target.id, provider: 'copilot',
+      capturedAt: '2026-09-05T00:00:00.000Z', scope: 'workspace',
+      servers: [{ name: 'configured-tools', status: 'unknown', enabled: true }],
+    }
+    vi.mocked(listSessionMcpServers).mockResolvedValue(snapshot)
+    render(<App />)
+    const editor = await screen.findByLabelText('Message')
+    fireEvent.change(editor, { target: { value: '/mcp' } })
+    expect(screen.getByRole('button', { name: 'Open MCP servers' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Open MCP servers' }))
+    await screen.findByRole('heading', { name: 'configured-tools' })
+    expect(screen.getByText('Configured for this folder')).toBeInTheDocument()
+    expect(listCommands).not.toHaveBeenCalled()
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+  })
+
+  it('keeps the hidden pasted draft when a history preview opens resources', async () => {
+    resourceSession({ messages: [{ ...session.messages[0], content: '/skills' }] })
+    render(<App />)
+    const editor = await screen.findByLabelText('Message')
+    const pasted = Array.from({ length: 21 }, (_, index) => `Keep line ${index}`).join('\n')
+    fireEvent.paste(editor, { clipboardData: { getData: () => pasted } })
+    expect(editor).toHaveValue('[Paste #1 - 21 lines]')
+    fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+    expect(editor).toHaveValue('/skills')
+    fireEvent.click(screen.getByRole('button', { name: 'Open skills' }))
+    await screen.findByRole('heading', { name: 'review-code' })
+    expect(editor).toHaveValue('[Paste #1 - 21 lines]')
+    expect(sendMessage).not.toHaveBeenCalled()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      computer.id, session.id, expect.objectContaining({ content: pasted, enqueue: false }),
+    ))
+  })
+
+  it('does not use a queued rewrite as a resource-view command', async () => {
+    resourceSession({
+      status: 'running', queuedCount: 1,
+      queuedPrompts: [{ id: 'queued-resource', content: 'Queued original', createdAt: session.updatedAt }],
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 1' }))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: '/mcp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+    await screen.findAllByText(/answered by this app/)
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+    expect(listSessionMcpServers).not.toHaveBeenCalled()
+    expect(updateQueuedPrompt).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+  })
+
+  it('closes resources on session navigation and ignores the old pending response', async () => {
+    const target = resourceSession()
+    let resolveOld: (value: ManagedSessionSkillsSnapshot) => void = () => {}
+    vi.mocked(listSessionSkills).mockImplementationOnce(() =>
+      new Promise((resolve) => { resolveOld = resolve }),
+    )
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View session skills' }))
+    await waitFor(() => expect(listSessionSkills).toHaveBeenCalledOnce())
+    await act(async () => {
+      window.history.pushState({}, '', `/?computer=${computer.id}&session=${secondSession.id}`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument())
+    await act(async () => resolveOld({
+      computerId: target.computerId, sessionId: target.id, provider: 'copilot',
+      scope: 'session', capturedAt: target.updatedAt, skills: [{ name: 'late-old-skill' }],
+    }))
+    await act(async () => {
+      window.history.pushState({}, '', `/?computer=${computer.id}&session=${target.id}`)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+    expect(screen.queryByText('late-old-skill')).not.toBeInTheDocument()
+  })
+
+  it('retires an open resource view when its computer pairing is removed', async () => {
+    resourceSession()
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View session MCP servers' }))
+    await screen.findByRole('heading', { name: 'project-tools' })
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.removed', computerId: computer.id }),
+      } as MessageEvent)
+    })
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+  })
+
+  it.each(['cwd', 'executionMode', 'suspended', 'cwd-round-trip'] as const)(
+    'retires resource ownership on %s while ignoring a late response',
+    async (change) => {
+      const target = resourceSession()
+      let resolveOld!: (value: ManagedSessionSkillsSnapshot) => void
+      vi.mocked(listSessionSkills).mockImplementationOnce(() =>
+        new Promise((resolve) => { resolveOld = resolve }),
+      )
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+      fireEvent.click(screen.getByRole('button', { name: 'View session skills' }))
+      await waitFor(() => expect(listSessionSkills).toHaveBeenCalledOnce())
+      const signal = vi.mocked(listSessionSkills).mock.calls[0][3]
+      const changed: ManagedSession = {
+        ...target,
+        ...(change.startsWith('cwd') ? { cwd: '/fixture/other' }
+          : change === 'executionMode' ? { executionMode: 'tmux' } : { suspended: true }),
+      }
+      await act(async () => {
+        for (const next of change === 'cwd-round-trip' ? [changed, target] : [changed]) {
+          MockWebSocket.instances[0]?.onmessage?.({
+            data: JSON.stringify({ type: 'session.upserted', session: next }),
+          } as MessageEvent)
+        }
+      })
+      expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+      expect(signal?.aborted).toBe(true)
+      await act(async () => resolveOld({
+        computerId: target.computerId, sessionId: target.id, provider: 'copilot',
+        scope: 'session', capturedAt: target.updatedAt, skills: [{ name: 'retired-owner-skill' }],
+      }))
+      expect(screen.queryByText('retired-owner-skill')).not.toBeInTheDocument()
+    },
+  )
+
+  it('retires resource ownership on a same-ID re-pair but not ordinary computer updates', async () => {
+    resourceSession()
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View session skills' }))
+    await screen.findByRole('heading', { name: 'review-code' })
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, name: 'Renamed computer' } }),
+      } as MessageEvent)
+    })
+    expect(screen.getByRole('dialog', { name: 'Skills and MCP servers' })).toBeInTheDocument()
+    await act(async () => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, registrationId: 'new-pairing' } }),
+      } as MessageEvent)
+    })
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+  })
+
+  it.each(['skills', 'mcp'] as const)('closes the retired %s resource modal on committed-clear websocket events despite a cleanup warning', async (kind) => {
+    const target = resourceSession()
+    const replacement = { ...target, id: 'committed-replacement', replacedSessionIds: [target.id], messages: [] }
+    let resolveOld!: (value: ManagedSessionSkillsSnapshot | ManagedSessionMcpServersSnapshot) => void
+    const pending = new Promise<ManagedSessionSkillsSnapshot | ManagedSessionMcpServersSnapshot>((resolve) => { resolveOld = resolve })
+    if (kind === 'skills') vi.mocked(listSessionSkills).mockReturnValueOnce(pending as Promise<ManagedSessionSkillsSnapshot>)
+    else vi.mocked(listSessionMcpServers).mockReturnValueOnce(pending as Promise<ManagedSessionMcpServersSnapshot>)
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: kind === 'skills' ? 'View session skills' : 'View session MCP servers' }))
+    const call = kind === 'skills' ? vi.mocked(listSessionSkills) : vi.mocked(listSessionMcpServers)
+    await waitFor(() => expect(call).toHaveBeenCalledOnce())
+    const signal = call.mock.calls[0][3]
+    vi.mocked(getSession).mockResolvedValue(replacement)
+    await act(async () => {
+      for (const event of [
+        { type: 'session.removed', computerId: target.computerId, sessionId: target.id, replacedBy: replacement.id },
+        { type: 'session.upserted', session: replacement },
+        { type: 'error', computerId: target.computerId, sessionId: replacement.id, message: 'Conversation cleared, but previous uploads could not be removed.' },
+      ]) MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent)
+    })
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
+    expect(signal?.aborted).toBe(true)
+    await act(async () => resolveOld({
+      computerId: target.computerId, sessionId: target.id, provider: 'copilot',
+      scope: 'session', capturedAt: target.updatedAt,
+      ...(kind === 'skills' ? { skills: [{ name: 'retired-resource' }] } : { servers: [{ name: 'retired-resource', status: 'connected' }] }),
+    } as ManagedSessionSkillsSnapshot | ManagedSessionMcpServersSnapshot))
+    expect(screen.queryByText('retired-resource')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
   })
 
   it('makes a diagram the block, not something inside a code block', async () => {

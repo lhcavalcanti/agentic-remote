@@ -1,5 +1,6 @@
 import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import type {
   AddComputerInput,
   AgentProvider,
@@ -12,6 +13,8 @@ import type {
   ExecuteCommandInput,
   HubEvent,
   ManagedSession,
+  ManagedSessionSkillsSnapshot,
+  ManagedSessionMcpServersSnapshot,
   ManagedRemovedQueuedPrompt,
   ManagedQueuedPromptDispatchResult,
   PermissionReplyInput,
@@ -35,6 +38,20 @@ import {
 import { NodeIdentityStore } from './node-identity.js'
 import { normalizeNodeUrl, RemoteNodeClient } from './remote-node-client.js'
 import type { SessionService } from './session-service.js'
+import {
+  readSessionSkills,
+  readSessionMcpServers,
+  resourceMessages,
+  safeResourceError,
+  sameResourceOwner,
+  sanitizeSkillsSnapshot,
+  sanitizeMcpSnapshot,
+  SessionResourceError,
+  ResourceReads,
+  type ResourceRead,
+  unavailableSkills,
+  unavailableMcp,
+} from './session-resources.js'
 
 interface ComputerManagerEvents {
   event: [event: HubEvent]
@@ -92,6 +109,10 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   private readonly snapshotTokens = new Map<string, symbol>()
   private readonly remoteResyncs = new Map<string, RemoteResync>()
   private readonly metadataClients = new Map<string, RemoteNodeClient>()
+  private resourcesStopped = false
+  private resourceEpoch = 0
+  private readonly resourceReads = new ResourceReads()
+  private readonly localRegistrationId = randomUUID()
 
   constructor(
     private readonly localService: SessionService,
@@ -102,6 +123,9 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   }
 
   async initialize(): Promise<void> {
+    this.resourceReads.start()
+    this.resourceEpoch += 1
+    this.resourcesStopped = false
     await this.registry.initialize()
     this.localService.on('event', (event) => {
       this.emitNodeEvent(this.localComputer(), event)
@@ -112,6 +136,9 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   }
 
   stop(): void {
+    this.resourceReads.stop()
+    this.resourceEpoch += 1
+    this.resourcesStopped = true
     const clients = [...this.clients.values()]
     this.clients.clear()
     this.sessionReads.clear()
@@ -126,14 +153,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
   listComputers(): ComputerSummary[] {
     return [
       this.localComputer(),
-      ...this.registry.list().map((computer) => ({
-        id: computer.id,
-        name: computer.name,
-        isLocal: false,
-        online: this.clients.get(computer.id)?.online ?? false,
-        baseUrl: computer.baseUrl,
-        providers: this.clients.get(computer.id)?.providers,
-      })),
+      ...this.registry.list().map((computer) => this.computerSummary(computer)),
     ]
   }
 
@@ -415,6 +435,113 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return computerId === this.identity.info.id
       ? this.localService.listCommands(sessionId)
       : this.requireClient(computerId).listCommands(sessionId)
+  }
+
+  async listSkills(computerId: string, sessionId: string, signal?: AbortSignal): Promise<ManagedSessionSkillsSnapshot> {
+    const snapshot = await this.resourceReads.run(signal, (request) => this.readResources(computerId, sessionId, request, {
+      local: readSessionSkills,
+      remote: (client, provider) => client.listSkills(sessionId, provider, request.signal),
+      normalize: sanitizeSkillsSnapshot,
+      unavailable: unavailableSkills,
+    }))
+    return { ...snapshot, computerId }
+  }
+
+  async listMcpServers(computerId: string, sessionId: string, signal?: AbortSignal): Promise<ManagedSessionMcpServersSnapshot> {
+    const snapshot = await this.resourceReads.run(signal, (request) => this.readResources(computerId, sessionId, request, {
+      local: readSessionMcpServers,
+      remote: (client, provider) => client.listMcpServers(sessionId, provider, request.signal),
+      normalize: sanitizeMcpSnapshot,
+      unavailable: unavailableMcp,
+    }))
+    return { ...snapshot, computerId }
+  }
+
+  private async readResources<T>(
+    computerId: string,
+    sessionId: string,
+    request: ResourceRead,
+    readers: {
+      local: (service: SessionService, sessionId: string, signal: AbortSignal) => Promise<T>
+      remote: (client: RemoteNodeClient, provider: AgentProvider) => Promise<T>
+      normalize: (raw: unknown, sessionId: string, provider: AgentProvider) => T
+      unavailable: (sessionId: string, provider: AgentProvider, message: string) => T
+    },
+  ): Promise<T> {
+    if (this.resourcesStopped) throw new SessionResourceError('stopped')
+    if (!this.listComputers().some((computer) => computer.id === computerId)) {
+      throw new SessionResourceError('computer')
+    }
+    const epoch = this.resourceEpoch
+    const registrationIsCurrent = this.captureComputerRegistration(computerId)
+    const assertRegistration = () => {
+      if (this.resourcesStopped || this.resourceEpoch !== epoch) throw new SessionResourceError('stopped')
+      if (!registrationIsCurrent()) {
+        throw new SessionResourceError(
+          this.listComputers().some((computer) => computer.id === computerId) ? 'pairing' : 'computer',
+        )
+      }
+    }
+    try {
+      if (computerId === this.identity.info.id) {
+        const session = this.localService.getSession(sessionId)
+        if (!session) throw new SessionResourceError('missing')
+        const result = await readers.local(this.localService, sessionId, request.signal)
+        assertRegistration()
+        return readers.normalize(result, sessionId, session.provider ?? 'copilot')
+      }
+      const client = this.requireClient(computerId)
+      let owner: SessionDetail | undefined
+      let lastEvent: SessionDetail | undefined
+      const listener = (event: ServerEvent) => {
+        if (event.type === 'session.removed' && event.sessionId === sessionId) request.cancel(new SessionResourceError('changed'))
+        if (event.type === 'session.upserted' && event.session.id === sessionId) {
+          lastEvent = event.session
+          if (owner && !sameResourceOwner(owner, event.session)) request.cancel(new SessionResourceError('changed'))
+        }
+      }
+      const assertCurrent = () => {
+        assertRegistration()
+        request.assertActive()
+      }
+      client.on('event', listener)
+      try {
+        const info = await client.getInfo(request.signal)
+        assertCurrent()
+        if (info.id !== computerId) throw new SessionResourceError('pairing')
+        // The session detail route hydrates/opens an SDK session. History is a
+        // pure identity read and also includes suspended and closed sessions.
+        const history = await client.listHistory(request.signal)
+        assertCurrent()
+        if (!Array.isArray(history)) throw new SessionResourceError('invalid')
+        owner = history.find((session) => session?.id === sessionId)
+        if (!owner) throw new SessionResourceError('missing')
+        if (lastEvent && !sameResourceOwner(owner, lastEvent)) throw new SessionResourceError('changed')
+        const provider = owner.provider ?? 'copilot'
+        if (provider !== 'copilot' && provider !== 'claude') throw new SessionResourceError('invalid')
+        const supported = Array.isArray(info.providers) && info.providers.some((entry) =>
+          entry.id === provider && entry.supportsSessionResources === true)
+        const result = supported
+          ? await readers.remote(client, provider)
+          : readers.unavailable(sessionId, provider, resourceMessages.update)
+        assertCurrent()
+        const currentHistory = await client.listHistory(request.signal)
+        assertCurrent()
+        if (!Array.isArray(currentHistory)) throw new SessionResourceError('invalid')
+        if (!sameResourceOwner(owner, currentHistory.find((session) => session?.id === sessionId))) {
+          throw new SessionResourceError('changed')
+        }
+        return readers.normalize(result, sessionId, provider)
+      } catch (error) {
+        assertCurrent()
+        throw error
+      } finally {
+        client.off('event', listener)
+      }
+    } catch (error) {
+      assertRegistration()
+      throw safeResourceError(error)
+    }
   }
 
   async createSession(
@@ -1056,6 +1183,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       name: this.identity.info.name,
       isLocal: true,
       online: true,
+      registrationId: this.localRegistrationId,
       providers: this.localService.providers(),
     }
   }
@@ -1067,6 +1195,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       isLocal: false,
       online: this.clients.get(computer.id)?.online ?? false,
       baseUrl: computer.baseUrl,
+      registrationId: this.clients.get(computer.id)?.registrationId,
       providers: this.clients.get(computer.id)?.providers,
     }
   }

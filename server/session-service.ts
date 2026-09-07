@@ -17,6 +17,8 @@ import type {
   QueuedPromptDispatchResult,
   ServerEvent,
   SessionDetail,
+  SessionSkillsSnapshot,
+  SessionMcpServersSnapshot,
   SlashCommand,
 } from '../shared/contracts.js'
 
@@ -86,6 +88,9 @@ export interface SessionService {
     acknowledgesFailure?: string,
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
+  /** Resource readers must settle and release their own work on cancellation. */
+  listSkills?(sessionId: string, signal?: AbortSignal): Promise<SessionSkillsSnapshot>
+  listMcpServers?(sessionId: string, signal?: AbortSignal): Promise<SessionMcpServersSnapshot>
   executeCommand(
     sessionId: string,
     command: string,

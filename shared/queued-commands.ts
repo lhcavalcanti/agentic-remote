@@ -1,4 +1,4 @@
-const appOnlyNames = new Set(['cwd', 'statusline', 'footer', 'clear', 'restart'])
+const appOnlyNames = new Set(['cwd', 'statusline', 'footer', 'clear', 'restart', 'skill', 'skills', 'mcp'])
 
 export function isAppOnlyQueuedCommand(content: string): boolean {
   return content.startsWith('/') &&

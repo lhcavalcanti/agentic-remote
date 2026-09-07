@@ -20,6 +20,13 @@ export interface DiscoveredSession {
   updatedAt: string
 }
 
+export class SessionReplacementCleanupError extends Error {
+  constructor(readonly replacement: SessionDetail, cause: unknown) {
+    super('Conversation cleared, but previous uploads could not be removed.', { cause })
+    this.name = 'SessionReplacementCleanupError'
+  }
+}
+
 interface StoredState {
   version: 1
   sessions: Record<string, StoredSession>
@@ -99,6 +106,7 @@ export class SessionStore {
   private writingState?: StoredState
   private liveMutableSessions = new WeakSet<StoredSession>()
   private readonly streamTargets = new WeakMap<ChatMessage[], Map<string, ChatMessage>>()
+  private readonly observationOwners = new Map<string, symbol>()
 
   constructor(
     directory = resolveDataDirectory(),
@@ -108,6 +116,7 @@ export class SessionStore {
   }
 
   async initialize(): Promise<void> {
+    this.observationOwners.clear()
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
     try {
       const raw = await readFile(this.statePath, 'utf8')
@@ -168,6 +177,15 @@ export class SessionStore {
     return session ? cloneSession(session) : undefined
   }
 
+  /** An in-memory lifetime, independent of streaming revisions and persistence. */
+  captureOwnership(id: string): () => boolean {
+    if (this.closed || !Object.hasOwn(this.state.sessions, id)) return () => false
+    const owner = this.observationOwners.get(id) ?? Symbol()
+    this.observationOwners.set(id, owner)
+    return () => !this.closed && this.observationOwners.get(id) === owner &&
+      Object.hasOwn(this.state.sessions, id)
+  }
+
   /** Queue a read behind admitted mutations before making a provider-side decision. */
   async readAfterWrites(sessionId: string): Promise<SessionDetail> {
     return this.change((state) => {
@@ -201,12 +219,16 @@ export class SessionStore {
         executionMode: undefined,
         backend: options.backend,
       }
-      return () => this.requireSession(session.id)
+      return () => {
+        this.observationOwners.delete(session.id)
+        return this.requireSession(session.id)
+      }
     })
   }
 
   async syncDiscovered(sessions: DiscoveredSession[]): Promise<void> {
     return this.change((state) => {
+      const changedOwners: string[] = []
       for (const discovered of sessions) {
         const previous = state.sessions[discovered.id]
         if (previous) {
@@ -215,6 +237,7 @@ export class SessionStore {
             revision: (previous.revision ?? 0) + 1,
           }
           if (!existing.contextCwd) {
+            if (existing.cwd !== discovered.cwd) changedOwners.push(discovered.id)
             existing.cwd = discovered.cwd
           }
           if (!existing.customTitle && !existing.workspaceTitle) {
@@ -236,7 +259,9 @@ export class SessionStore {
           messages: [],
         }
       }
-      return () => undefined
+      return () => {
+        for (const id of changedOwners) this.observationOwners.delete(id)
+      }
     })
   }
 
@@ -473,7 +498,7 @@ export class SessionStore {
         session.runtime.contextEstimated = undefined
       }
       session.updatedAt = new Date().toISOString()
-    })
+    }, undefined, true)
   }
 
   async replaceWithClearedSession(
@@ -518,9 +543,17 @@ export class SessionStore {
           : undefined,
       }
       delete state.sessions[sessionId]
-      return () => this.requireSession(replacementId)
+      return () => {
+        this.observationOwners.delete(sessionId)
+        this.observationOwners.delete(replacementId)
+        return this.requireSession(replacementId)
+      }
     }, true)
-    await this.removeUploads(sessionId)
+    try {
+      await this.removeUploads(sessionId)
+    } catch (error) {
+      throw new SessionReplacementCleanupError(replacement, error)
+    }
     return replacement
   }
 
@@ -745,7 +778,7 @@ export class SessionStore {
   async remove(sessionId: string): Promise<void> {
     await this.change((state) => {
       delete state.sessions[sessionId]
-      return () => undefined
+      return () => { this.observationOwners.delete(sessionId) }
     }, true)
     await this.removeUploads(sessionId)
   }
@@ -1096,6 +1129,7 @@ export class SessionStore {
     sessionId: string,
     mutation: (session: StoredSession) => void,
     condition?: (session: StoredSession) => boolean,
+    replaceOwner = false,
   ): Promise<SessionDetail> {
     return this.change((state) => {
       const existing = state.sessions[sessionId]
@@ -1109,7 +1143,13 @@ export class SessionStore {
       mutation(session)
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
       state.sessions[sessionId] = session
-      return () => this.requireSession(sessionId)
+      const ownerChanged = replaceOwner || existing.cwd !== session.cwd ||
+        existing.provider !== session.provider || existing.backend !== session.backend ||
+        Boolean(existing.suspended) !== Boolean(session.suspended)
+      return () => {
+        if (ownerChanged) this.observationOwners.delete(sessionId)
+        return this.requireSession(sessionId)
+      }
     })
   }
 

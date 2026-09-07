@@ -1,7 +1,9 @@
 import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import type {
+  AgentProvider,
   AudioTranscription,
   CreateSessionInput,
   ConfigureRuntimeInput,
@@ -19,6 +21,8 @@ import type {
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
+  SessionSkillsSnapshot,
+  SessionMcpServersSnapshot,
   SlashCommand,
   UserInputReplyInput,
   WorkspaceFile,
@@ -27,12 +31,21 @@ import type {
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
+import { RemoteNodeRedirectError, RemoteNodeRequestError } from './remote-node-errors.js'
+import {
+  safeResourceError,
+  sanitizeSkillsSnapshot,
+  sanitizeMcpSnapshot,
+  SessionResourceError,
+  ResourceReads,
+} from './session-resources.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
  * computer, so the caller waits slightly longer than their sum before giving up.
  */
 const TRANSCRIPTION_TIMEOUT_MS = 13 * 60_000
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 const DEFINITE_DISPATCH_REFUSALS = new Set([
   400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 429,
@@ -45,16 +58,6 @@ function headerSafe(value: string): string {
 interface RemoteNodeClientEvents {
   event: [event: ServerEvent]
   status: [online: boolean]
-}
-
-class RemoteNodeRequestError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode: number,
-  ) {
-    super(message)
-    this.name = 'RemoteNodeRequestError'
-  }
 }
 
 export function normalizeNodeUrl(value: string): string {
@@ -72,6 +75,9 @@ export function normalizeNodeUrl(value: string): string {
 }
 
 export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
+  readonly registrationId = randomUUID()
+  private readonly resourceReads = new ResourceReads()
+  private readonly resourceLifetime = new AbortController()
   private socket?: WebSocket
   private reconnectTimer?: NodeJS.Timeout
   private reconnectDelay = 1_000
@@ -101,11 +107,11 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
-  async getInfo(): Promise<NodeInfo> {
+  async getInfo(signal?: AbortSignal): Promise<NodeInfo> {
     const info = await this.request<NodeInfo>(
       '/node-api/info',
-      {},
-      15_000,
+      { signal: signal ? AbortSignal.any([signal, this.resourceLifetime.signal]) : undefined },
+      signal ? 0 : 15_000,
       false,
     )
     this._providers = info.providers
@@ -120,9 +126,11 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.sessions
   }
 
-  async listHistory(): Promise<SessionDetail[]> {
+  async listHistory(signal?: AbortSignal): Promise<SessionDetail[]> {
     const response = await this.request<{ sessions: SessionDetail[] }>(
       '/node-api/history',
+      { signal: signal ? AbortSignal.any([signal, this.resourceLifetime.signal]) : undefined },
+      signal ? 0 : 15_000,
     )
     return response.sessions
   }
@@ -204,6 +212,48 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       `/node-api/sessions/${encodeURIComponent(sessionId)}/commands`,
     )
     return response.commands
+  }
+
+  private async readResource<T>(
+    sessionId: string,
+    endpoint: 'skills' | 'mcp',
+    normalize: (raw: unknown) => T,
+    signal: AbortSignal,
+  ): Promise<T> {
+    if (this.stopped) throw new SessionResourceError('stopped')
+    try {
+      const raw = await this.request<unknown>(
+        `/node-api/sessions/${encodeURIComponent(sessionId)}/${endpoint}`,
+        { cache: 'no-store', signal },
+        0,
+      )
+      if (this.stopped) throw new SessionResourceError('stopped')
+      return normalize(raw)
+    } catch (error) {
+      if (error instanceof RemoteNodeRedirectError) throw error
+      if (error instanceof RemoteNodeRequestError) {
+        throw new SessionResourceError(
+          error.statusCode === 404 ? 'missing' :
+            error.statusCode === 409 ? 'changed' :
+              error.statusCode === 503 ? 'stopped' :
+                error.statusCode === 504 ? 'timeout' :
+                  error.statusCode === 499 ? 'cancelled' : 'failed',
+        )
+      }
+      throw safeResourceError(error)
+    }
+  }
+
+  listSkills(sessionId: string, provider: AgentProvider, signal?: AbortSignal): Promise<SessionSkillsSnapshot> {
+    return this.resourceReads.run(signal, (request) =>
+      this.readResource(sessionId, 'skills', (raw) =>
+        sanitizeSkillsSnapshot(raw, sessionId, provider), request.signal))
+  }
+
+  listMcpServers(sessionId: string, provider: AgentProvider, signal?: AbortSignal): Promise<SessionMcpServersSnapshot> {
+    return this.resourceReads.run(signal, (request) =>
+      this.readResource(sessionId, 'mcp', (raw) =>
+        sanitizeMcpSnapshot(raw, sessionId, provider), request.signal))
   }
 
   async createSession(input: CreateSessionInput): Promise<SessionDetail> {
@@ -570,6 +620,8 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   }
 
   stop(): void {
+    this.resourceReads.stop()
+    this.resourceLifetime.abort(new SessionResourceError('stopped'))
     this.stopped = true
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -595,12 +647,22 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     try {
       response = await fetch(`${this.computer.baseUrl}${path}`, {
         ...init,
-        redirect: 'error',
+        redirect: 'manual',
         headers,
-        signal: init.signal
+        signal: timeoutMs === 0 ? init.signal : init.signal
           ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
           : AbortSignal.timeout(timeoutMs),
       })
+      if (REDIRECT_STATUSES.has(response.status)) {
+        const refusal = new RemoteNodeRedirectError(this.computer.name, response.status)
+        try {
+          await response.body?.cancel()
+        } catch (error) {
+          // Keep the actionable refusal primary without hiding cleanup failure.
+          throw Object.assign(refusal, { cause: error })
+        }
+        throw refusal
+      }
     } catch (error) {
       // A poll that must not flap the online state, and a request the caller
       // abandoned, are both failures that say nothing about the node.

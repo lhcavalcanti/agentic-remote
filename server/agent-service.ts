@@ -33,6 +33,8 @@ import type {
   ServerEvent,
   SessionDetail,
   SessionFileUpload,
+  SessionSkillsSnapshot,
+  SessionMcpServersSnapshot,
   SessionRuntimeInfo,
   UserInputReplyInput,
   UserInputField,
@@ -69,7 +71,7 @@ import {
   type CopilotTasksApi,
 } from './background-task-adapter.js'
 import { BackgroundTaskTracker } from './background-task-tracker.js'
-import { SessionStore, type DiscoveredSession } from './session-store.js'
+import { SessionReplacementCleanupError, SessionStore, type DiscoveredSession } from './session-store.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
@@ -93,6 +95,20 @@ import {
   readWorkspaceFile,
   searchWorkspace,
 } from './workspace-browser.js'
+import {
+  copilotSkills,
+  copilotMcp,
+  copilotWorkspaceMcp,
+  isResourceMethodUnavailable,
+  mcpSnapshot,
+  safeResourceError,
+  SessionResourceError,
+  ResourceReads,
+  skillsSnapshot,
+  unavailableMcp,
+  unavailableSkills,
+} from './session-resources.js'
+import { readCopilotResource, type CopilotResourceClient } from './session-resource-transport.js'
 import {
   isTerminalAgentWorking,
   isTerminalOverlay,
@@ -145,13 +161,15 @@ export interface CopilotSessionLike {
       'list' | 'invoke' | 'enqueue'
     >
     tasks?: CopilotTasksApi
+    skills?: Pick<CopilotSession['rpc']['skills'], 'list'>
+    mcp?: Pick<CopilotSession['rpc']['mcp'], 'list'>
     name: Pick<CopilotSession['rpc']['name'], 'set'>
     model: Pick<CopilotSession['rpc']['model'], 'getCurrent' | 'switchTo'>
     mode: Pick<CopilotSession['rpc']['mode'], 'set'>
   }
 }
 
-export interface CopilotClientLike {
+export interface CopilotClientLike extends CopilotResourceClient {
   start(): Promise<void>
   stop(): Promise<Error[]>
   createSession(config: SessionConfig): Promise<CopilotSessionLike>
@@ -163,6 +181,8 @@ export interface CopilotClientLike {
   deleteSession(sessionId: string): Promise<void>
   rpc: Pick<CopilotClient['rpc'], 'commands'> & {
     models: Pick<CopilotClient['rpc']['models'], 'list'>
+    skills?: Pick<CopilotClient['rpc']['skills'], 'discover'>
+    mcp?: Pick<CopilotClient['rpc']['mcp'], 'discover'>
   }
 }
 
@@ -1525,6 +1545,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingAcknowledgements = new Map<string, Promise<void>>()
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
+  private resourceEpoch = 0
+  private readonly resourceReads = new ResourceReads()
   private readonly queueOperations = new Map<string, Promise<unknown>>()
   private readonly terminalAdmissionOperations = new Map<
     string,
@@ -1748,11 +1770,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsTmuxMigration: true,
         supportsBackgroundTasks: true,
         supportsQueuedPromptDispatch: true,
+        supportsSessionResources: true,
       },
     ]
   }
 
   async start(): Promise<void> {
+    this.resourceReads.start()
+    this.resourceEpoch += 1
     this.stopped = false
     await this.store.initialize()
     await this.client.start()
@@ -1793,6 +1818,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async stop(): Promise<void> {
+    this.resourceReads.stop()
+    this.resourceEpoch += 1
     this.stopped = true
     for (const stop of this.queuedPromptStops.values()) stop()
     for (const timer of this.acknowledgementTimers) {
@@ -2901,6 +2928,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let fresh: CopilotSessionLike | undefined
     let original: CopilotSessionLike | undefined
     let committed = false
+    const cleanupErrors: unknown[] = []
     const terminalBacked = this.externalSessionIds.has(id)
     try {
       if (terminalBacked) {
@@ -2971,10 +2999,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             )
         }
       }
-      const cleared = await this.store.replaceWithClearedSession(
-        id,
-        replacementId,
-      )
+      let cleared: SessionDetail
+      try {
+        cleared = await this.store.replaceWithClearedSession(id, replacementId)
+      } catch (error) {
+        if (!(error instanceof SessionReplacementCleanupError)) throw error
+        cleared = error.replacement
+        cleanupErrors.push(error)
+      }
       committed = true
       this.deletedSessionIds.delete(replacementId)
       for (const [requestId, permission] of this.permissions) {
@@ -3021,9 +3053,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           await this.disposeSdkIdentity(id, original)
           await removeCopilotSessionFiles(id)
         } catch (error) {
-          this.publishError(replacementId, error)
+          cleanupErrors.push(error)
         }
       }
+      for (const error of cleanupErrors) this.publishError(replacementId, error)
       return cleared
     } catch (error) {
       if (!committed && !terminalBacked) {
@@ -4028,6 +4061,106 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       inputRequired: command.input?.required,
       allowDuringAgentExecution: command.allowDuringAgentExecution,
     }))
+  }
+
+  private resourceOwner(sessionId: string) {
+    if (this.stopped) throw new SessionResourceError('stopped')
+    const stored = this.store.get(sessionId)
+    if (!stored) throw new SessionResourceError('missing')
+    if ((stored.provider ?? 'copilot') !== 'copilot') throw new SessionResourceError('changed')
+    const epoch = this.resourceEpoch
+    const ownsSession = this.store.captureOwnership(sessionId)
+    const loaded = this.sessions.get(sessionId)
+    if (loaded && loaded.sessionId !== sessionId) throw new SessionResourceError('changed')
+    const terminal = this.externalSessionIds.has(sessionId)
+    const assertCurrent = () => {
+      if (this.stopped || epoch !== this.resourceEpoch) throw new SessionResourceError('stopped')
+      if (!ownsSession() || this.sessions.get(sessionId) !== loaded ||
+        this.externalSessionIds.has(sessionId) !== terminal ||
+        this.lifecycleLocks.has(sessionId) || this.deletingSessions.has(sessionId) ||
+        this.deletedSessionIds.has(sessionId) || this.suspendingSessions.has(sessionId)) {
+        throw new SessionResourceError('changed')
+      }
+    }
+    assertCurrent()
+    const live = !stored.suspended && stored.executionMode !== 'tmux' && !terminal ? loaded : undefined
+    return { stored, live, assertCurrent }
+  }
+
+  listSkills(sessionId: string, signal?: AbortSignal): Promise<SessionSkillsSnapshot> {
+    return this.resourceReads.run(signal, (request) => this.readSkills(sessionId, request.signal))
+  }
+
+  private async readSkills(sessionId: string, signal: AbortSignal): Promise<SessionSkillsSnapshot> {
+    const { stored, live, assertCurrent } = this.resourceOwner(sessionId)
+    try {
+      if (live?.rpc.skills?.list) {
+        try {
+          const result = await readCopilotResource<Awaited<ReturnType<NonNullable<typeof live.rpc.skills>['list']>>>(
+            this.client, 'session.skills.list', { sessionId }, signal, live,
+          )
+          assertCurrent()
+          return skillsSnapshot(sessionId, 'copilot', 'session', copilotSkills(result))
+        } catch (error) {
+          assertCurrent()
+          if (!isResourceMethodUnavailable(error)) throw error
+        }
+      }
+      if (this.client.rpc.skills?.discover) {
+        try {
+          assertCurrent()
+          const result = await readCopilotResource<Awaited<ReturnType<CopilotClient['rpc']['skills']['discover']>>>(
+            this.client, 'skills.discover', { projectPaths: [stored.cwd] }, signal,
+          )
+          assertCurrent()
+          return skillsSnapshot(sessionId, 'copilot', 'workspace', copilotSkills(result))
+        } catch (error) {
+          assertCurrent()
+          if (!isResourceMethodUnavailable(error)) throw error
+        }
+      }
+      return unavailableSkills(sessionId, 'copilot')
+    } catch (error) {
+      throw safeResourceError(error)
+    }
+  }
+
+  listMcpServers(sessionId: string, signal?: AbortSignal): Promise<SessionMcpServersSnapshot> {
+    return this.resourceReads.run(signal, (request) => this.readMcpServers(sessionId, request.signal))
+  }
+
+  private async readMcpServers(sessionId: string, signal: AbortSignal): Promise<SessionMcpServersSnapshot> {
+    const { stored, live, assertCurrent } = this.resourceOwner(sessionId)
+    try {
+      if (live?.rpc.mcp?.list) {
+        try {
+          const result = await readCopilotResource<Awaited<ReturnType<NonNullable<typeof live.rpc.mcp>['list']>>>(
+            this.client, 'session.mcp.list', { sessionId }, signal, live,
+          )
+          assertCurrent()
+          return mcpSnapshot(sessionId, 'copilot', 'session', copilotMcp(result))
+        } catch (error) {
+          assertCurrent()
+          if (!isResourceMethodUnavailable(error)) throw error
+        }
+      }
+      if (this.client.rpc.mcp?.discover) {
+        try {
+          assertCurrent()
+          const result = await readCopilotResource<Awaited<ReturnType<CopilotClient['rpc']['mcp']['discover']>>>(
+            this.client, 'mcp.discover', { workingDirectory: stored.cwd }, signal,
+          )
+          assertCurrent()
+          return mcpSnapshot(sessionId, 'copilot', 'workspace', copilotWorkspaceMcp(result))
+        } catch (error) {
+          assertCurrent()
+          if (!isResourceMethodUnavailable(error)) throw error
+        }
+      }
+      return unavailableMcp(sessionId, 'copilot')
+    } catch (error) {
+      throw safeResourceError(error)
+    }
   }
 
   private async commandCatalog(sessionId: string) {

@@ -254,13 +254,35 @@ directly to `main`.**
    ```
 
    Use `Refs #11` for a partial slice that should leave the issue open.
-5. **Merge the PR**, then delete the branch.
+5. **Merge only after Supervisor `APPROVE` for the current head.** Follow the
+   review loop below; delete the branch after graduation.
 6. **Deploy and verify on development**, then follow the promotion policy in
    `.github/copilot-instructions.md` (see Rolling out).
 7. **Close issues with evidence.** If a PR did not auto-close them, close each
    one with what changed, how it was verified, and any deliberate deviation
    from the issue's suggested fix. Record measurements where the issue was
    about performance.
+
+### PR review loop
+
+- Prefer small, single-purpose PRs. Split unrelated fixes into separate PRs.
+- Merge only after an explicit Supervisor `APPROVE` for the current PR head.
+  A signed verdict counts even when GitHub labels the review `COMMENTED`;
+  passing checks, local-agent reviews, and other comments are not substitutes.
+  Do not request GitHub Copilot as a reviewer.
+- Keep fix comments minimal: one or two short sentences naming the actual fix
+  and affected behavior. Do not paste long logs, review transcripts, or repeated
+  status reports. For example: `Fixed startup queue recovery; pending messages
+  now resume once after restart.`
+- For user-visible changes, include current screenshots with synthetic or
+  redacted data. For nonvisual changes, concise reproduction or validation
+  evidence is enough. Keep detailed evidence in artifacts, not long comments.
+- Iterate quickly: address related findings together, validate the affected
+  behavior, and push promptly for Supervisor re-review. If a finding is no
+  longer valid, explain why briefly with evidence. Once approved and merge
+  prerequisites pass, merge promptly in dependency order without another
+  approval loop. Preserve the existing development-first rollout and rollback
+  rules.
 
 Notes:
 

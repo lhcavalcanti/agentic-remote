@@ -255,6 +255,50 @@ The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not
 required to be individually editable.
 
+Editing a queued prompt MUST leave the original in place until a save or
+dispatch is accepted. Desktop Enter and Save to queue update that exact item
+without moving it. When the owning provider advertises targeted dispatch,
+the explicit Send action MUST send the named item and its rewritten contents,
+not the queue head or a newly appended copy. Without that capability the UI
+MUST offer an explicitly labelled save, not pretend to send immediately.
+History previews MUST NOT be saved or dispatched as queued rewrites. Command
+validation MUST use the owning session's current catalog and expanded paste
+contents; app-only commands MUST NOT run as a side effect of editing.
+
+An unclaimed missing queue row MUST NOT turn a queued rewrite into an ordinary
+sendable draft. Older runtimes can publish that absence while provider loading
+is still pending and restore the original after refusal; capability metadata,
+elapsed time, and matching transcript text are not delivery receipts. The edit
+identity MUST survive reload and navigation. The UI MUST explain the uncertainty,
+allow checking the owning queue, and require an explicit provider-check
+confirmation before keeping the rewrite as a new draft or discarding it.
+An accepted owned operation or explicit Clear may release the corresponding
+identity; Clear MUST still preserve in-flight save and uncertain-dispatch
+ownership until the appropriate completion or explicit resolution.
+
+Absence of targeted-dispatch support MUST NOT hide Save-only editing where the
+owning runtime implements it. A missing or refused editing route MUST preserve
+the rewrite and explain that the runtime may need updating; it MUST NOT silently
+fall back to sending a new message. Queue-operation errors MUST remain scoped
+to the owning computer and session rather than appearing on a different selection.
+
+Targeted queue delivery MUST be admitted only while the session is available
+and idle. Its claim MUST be durable before provider invocation, preserve the
+original item and queue position in public snapshots, and exclude that item
+from automatic draining. A definitive refusal MUST restore the original,
+unchanged item. An accepted receipt settles delivery independently of turn
+completion. Missing receipts, transport timeouts, and failed outcome writes
+MUST remain visibly unconfirmed and MUST NOT trigger automatic retry.
+Discarding an unconfirmed claim MUST require explicit confirmation and its
+exact attempt identity; discarding MUST neither resend nor cancel provider work.
+
+Claims MUST remain safe across restart and rollback. The attempted item is
+removed from the persisted runnable queue and retained in the existing
+uncertain failed-prompt recovery format, with the original item recorded in
+claim metadata for current readers. An older runtime therefore sees recovery
+work, not an automatically runnable duplicate. The app does not claim an
+atomic transaction with an external provider.
+
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
 Recalling history MUST preserve the unsent draft durably; a reload restores that
@@ -275,6 +319,15 @@ sending or queuing it. When delivery cannot be confirmed, the composer MUST warn
 that the message may already have been sent or queued. Matching transcript text
 or the absence of a previous failure marker MUST NOT be treated as acceptance of
 an unconfirmed request.
+
+Queued-edit identity and pending-dispatch state MUST be stored with the
+versioned composer draft, including collapsed-paste payloads. Starting a
+targeted send MUST move its text into an owned pending submission, leaving new
+writing independent. Acceptance uses the same durable receipt rules as an
+ordinary send. A reload with unconfirmed queued delivery MUST keep the rewrite
+attached to its target and block resending even if a later snapshot has an empty
+queue. Compatibility text MUST not outlive the ownership protecting it during
+partial browser writes.
 
 A failure to save composer state MUST leave the current text editable and warn
 that the saved copy may be out of date. Message and queue admission MUST require

@@ -13,6 +13,7 @@ import type {
   PushSettings,
   ProviderRuntimeOptions,
   ManagedRemovedQueuedPrompt,
+  ManagedQueuedPromptDispatchResult,
   PermissionReplyInput,
   RenameSessionInput,
   RuntimeOptions,
@@ -241,9 +242,11 @@ export async function searchWorkspace(
 export async function getSession(
   computerId: string,
   sessionId: string,
+  signal?: AbortSignal,
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     sessionPath(computerId, sessionId),
+    signal ? { signal, cache: 'no-store' } : undefined,
   )
   return response.session
 }
@@ -315,11 +318,117 @@ export async function removeQueuedPrompt(
   computerId: string,
   sessionId: string,
   promptId: string,
+  acknowledgesDispatch?: string,
 ): Promise<ManagedRemovedQueuedPrompt> {
   return request<ManagedRemovedQueuedPrompt>(
     `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}`,
-    { method: 'DELETE' },
+    {
+      method: 'DELETE',
+      ...(acknowledgesDispatch ? { body: JSON.stringify({ acknowledgesDispatch }) } : {}),
+    },
   )
+}
+
+export async function dispatchQueuedPrompt(
+  computerId: string,
+  sessionId: string,
+  promptId: string,
+  content: string,
+): Promise<ManagedQueuedPromptDispatchResult> {
+  let response: Response
+  try {
+    response = await fetch(
+      `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}/dispatch`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content }),
+        signal: AbortSignal.timeout(35_000),
+      },
+    )
+  } catch {
+    throw Object.assign(new Error(
+      'Dispatch could not be confirmed. Your rewrite is still here; check the queue and provider before trying again.',
+    ), { uncertainDelivery: true })
+  }
+  if (!response.ok) {
+    throw Object.assign(await responseError(response), {
+      // Only explicit request/admission refusals release the pending identity.
+      uncertainDelivery: ![400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 429].includes(response.status),
+    })
+  }
+  const result: unknown = await response.json().catch(() => null)
+  if (!isQueuedDispatchResult(result, computerId, sessionId, promptId)) {
+    throw Object.assign(new Error('The server returned no valid dispatch confirmation. Do not resend without checking the session.'), {
+      uncertainDelivery: true,
+    })
+  }
+  return result
+}
+
+function isQueuedDispatchResult(
+  result: unknown,
+  computerId: string,
+  sessionId: string,
+  promptId: string,
+): result is ManagedQueuedPromptDispatchResult {
+  if (
+    !result || typeof result !== 'object' ||
+    !('promptId' in result) || result.promptId !== promptId ||
+    !('outcome' in result) || typeof result.outcome !== 'string' ||
+    !['sent', 'refused', 'uncertain'].includes(result.outcome) ||
+    ('message' in result && typeof result.message !== 'string') ||
+    (result.outcome === 'refused' && (!('restored' in result) || typeof result.restored !== 'boolean')) ||
+    (result.outcome === 'uncertain' && (!('delivery' in result) ||
+      (result.delivery !== 'accepted' && result.delivery !== 'unknown')))
+  ) return false
+  const attemptId = 'attemptId' in result ? result.attemptId : undefined
+  if (attemptId === undefined) {
+    if (result.outcome !== 'uncertain' || !('delivery' in result) || result.delivery !== 'unknown') {
+      return false
+    }
+  } else if (typeof attemptId !== 'string' || !attemptId) {
+    return false
+  }
+  if (!('session' in result) || result.session === undefined) return result.outcome !== 'sent'
+  const session = result.session
+  return Boolean(
+    session && typeof session === 'object' &&
+    'id' in session && session.id === sessionId &&
+    'computerId' in session && session.computerId === computerId &&
+    'computerName' in session && typeof session.computerName === 'string' &&
+    'title' in session && typeof session.title === 'string' &&
+    'cwd' in session && typeof session.cwd === 'string' &&
+    'updatedAt' in session && typeof session.updatedAt === 'string' &&
+    'isOpen' in session && typeof session.isOpen === 'boolean' &&
+    'status' in session && typeof session.status === 'string' &&
+    ['idle', 'running', 'waiting', 'error'].includes(session.status) &&
+    'messages' in session && Array.isArray(session.messages),
+  )
+}
+
+export async function updateQueuedPrompt(
+  computerId: string,
+  sessionId: string,
+  promptId: string,
+  content: string,
+): Promise<ManagedRemovedQueuedPrompt> {
+  return request<ManagedRemovedQueuedPrompt>(
+    `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}`,
+    { method: 'PATCH', body: JSON.stringify({ content }) },
+  )
+}
+
+export async function reorderQueuedPrompts(
+  computerId: string,
+  sessionId: string,
+  order: string[],
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/queue`,
+    { method: 'PUT', body: JSON.stringify({ order }) },
+  )
+  return response.session
 }
 
 export async function getRuntimeOptions(

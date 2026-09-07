@@ -154,7 +154,7 @@
     ".gitignore": "73cbd7f059c7549275afc2891ae3325a91d36789557ded2a6364ddea86447d2b",
     ".oxlintrc.json": "07c58c79b4cf22b23a6f2b8179b11b19c52ac01e0045111dec7a66522e6428b5",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
-    "README.md": "25d542c10e9be4212023d0cdacf30e04ffc8b6bf1e918f22d38ef6d87e14b0e6",
+    "README.md": "bf5ef6e1a872ae06c135a05ee2df47b850dd9288e5201ba4bbd48e4f31f7e566",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "4c4f4848a3fd0ad75ccf9af685275eeefd3817288123790b6022a8c2ca62a941",
     "bin/agentic-remote-promotion-monitor": "e97fab6fca3a8c3783f262d274e0e72256c15ef75137c68fbc42a106d51ca936",
@@ -169,8 +169,9 @@
     "docs/background-tasks.md": "abf445416b911d739f60c295fc40ebc13b1a3de1f3fdebd81deb18e4df47ee45",
     "docs/deployment-promotion.md": "80cfc3bc69185e961bb9ccda2f0b148e99f3e45cfad98bea3166b33290704a4f",
     "docs/mockups/activity-view.html": "dcc846f3925d4489c193780b53a6cf0100b458ec23b692efe10b07d168985b82",
-    "docs/native-shell.md": "951770f7fd4498b8083c4d640de429629bf954b65bc2dda2676be845fba7aded",
+    "docs/native-shell.md": "bc434b4a881ec432c84c6744ab0ab0f73d8d023ceff73d0baffd60c6bccc7a9f",
     "docs/provider-compatibility.md": "054d4ce1d94a3df1a84255aba6c3811e099808e5400409a9d7d9cbf6602f47d6",
+    "docs/sdk-architecture-roadmap.md": "f3d65fb83bed8aa9f6fe95e49ba8df5490737ff55891744265e515f9e144e45b",
     "docs/slash-command-feedback.md": "49df532a01a5ed60ead540fe349cc80e1b2cc737ff710b77ad984e09156b082e",
     "index.html": "dd40370c1e575f22efc5df1845898b7183087b9b0696bc52de52fcd13442335a",
     "package.json": "97e25d96604660f30fbbab50924ce436d8474c6056d9b62490e199dd4d5488a7",
@@ -345,6 +346,7 @@
     "docs/mockups/activity-view.html",
     "docs/native-shell.md",
     "docs/provider-compatibility.md",
+    "docs/sdk-architecture-roadmap.md",
     "docs/slash-command-feedback.md",
     "index.html",
     "public/apple-touch-icon-precomposed.png",
@@ -361,13 +363,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5ed69e01357c6a481a0f4c4ab4b7febd3ecb76300cf8701e035db7b743ad2abe",
+    "GRAPH_REPORT.md": "610e10a82aec3643887e1c15221158465bd87f6dd8a9b8fa576f2e06c43d9e20",
     "communities.json": "13dc3b80db357a42c1d0c73a7acb6d9b3d24f1e8dd0dfd194f588fffd71385d0",
-    "graph.html": "d74559e4e850f86a8885eeac043a020affd241dc6e52aa32f10c0774da59f92f",
-    "graph.json": "e0378b4ece09d4a5265c71dbd7184c585d1061b92c160acfdafd365e0481ac80"
+    "graph.html": "0d0390c84389904af411061910d9feacf1cebde2ef3f16f96294e2f39c8e999e",
+    "graph.json": "912cdcc5814a8edbf65872c56b7113c9f7b806c55eae27328f7299891e696036"
   },
   "schema_version": 1,
-  "source_commit": "c5a98ada9b24aea28ace2a49d6ac9409d87323ef",
-  "source_fingerprint": "6607adc0539b9f5b901afc200f5287ad3d866d9640ff333c15bfdf7f2dfea5f4",
-  "working_tree_changes": []
+  "source_commit": "29a32e2b4eb21db83a67ce26d1f83a777990617c",
+  "source_fingerprint": "099fc870a5fb3fc42aa6be9aaf62e142fb5f5ace19bc9dd30862519e3b8d0a25",
+  "working_tree_changes": [
+    "README.md",
+    "docs/native-shell.md",
+    "docs/sdk-architecture-roadmap.md"
+  ]
 }

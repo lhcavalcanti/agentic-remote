@@ -381,6 +381,10 @@ Knowledge are unaffected, and naming the hub's own computer matches the default.
 - [Multi-computer architecture](docs/architecture.md) — routing and ownership
 - [Provider compatibility](docs/provider-compatibility.md) — Copilot/Claude
   differences
+- [SDK and architecture roadmap](docs/sdk-architecture-roadmap.md) — proposed
+  small-PR sequence, compatibility gates, and performance work
+- [Native shell plan](docs/native-shell.md) — Tauri decision, alternatives,
+  and the iPhone readiness gate
 - [Background tasks](docs/background-tasks.md) — SDK review, UI gaps, and
   visual states
 - [Slash command feedback](docs/slash-command-feedback.md) — what terminal-backed

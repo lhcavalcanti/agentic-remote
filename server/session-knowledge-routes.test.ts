@@ -974,16 +974,6 @@ describe('session Knowledge routes', () => {
         expect(event.type).toBe('computer.removed')
         resolve()
       })
-
-      it('settles overlapping unpair cleanups for the same computer independently', async () => {
-        const { app } = await fixture()
-        const [first, second] = await Promise.all([
-          app.inject({ method: 'DELETE', url: '/api/computers/worker', headers: trusted }),
-          app.inject({ method: 'DELETE', url: '/api/computers/worker', headers: trusted }),
-        ])
-        expect(first.statusCode).toBe(204)
-        expect(second.statusCode).toBe(204)
-      })
     })
     const removing = app.inject({
       method: 'DELETE', url: '/api/computers/worker', headers: trusted,
@@ -994,5 +984,15 @@ describe('session Knowledge routes', () => {
     expect((await removing).statusCode).toBe(204)
     expect(store.get('worker', 'one').revision).toBe(0)
     expect(updates).toEqual([])
+  })
+
+  it('settles overlapping unpair cleanups for the same computer independently', async () => {
+    const { app } = await fixture()
+    const [first, second] = await Promise.all([
+      app.inject({ method: 'DELETE', url: '/api/computers/worker', headers: trusted }),
+      app.inject({ method: 'DELETE', url: '/api/computers/worker', headers: trusted }),
+    ])
+    expect(first.statusCode).toBe(204)
+    expect(second.statusCode).toBe(204)
   })
 })

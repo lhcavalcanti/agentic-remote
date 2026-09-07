@@ -18,6 +18,7 @@
     "server/app.ts",
     "server/background-task-adapter.test.ts",
     "server/background-task-adapter.ts",
+    "server/background-task-stop.test.ts",
     "server/background-task-tracker.test.ts",
     "server/background-task-tracker.ts",
     "server/claude-agent-service.test.ts",
@@ -136,9 +137,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 120,
+  "communities": 115,
   "community_algorithm": "louvain-seed-42",
-  "edges": 6703,
+  "edges": 6754,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -204,7 +205,8 @@
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "4d5c4a8d4ecbc0f3ff637d56458caae8ac08abb73c27e641b70ad6a6f8a00562",
     "server/background-task-adapter.test.ts": "95a73c1c7a1f3ddb127816d8d52dd9af5a8e91d9fb89f4594c0085c1d08454e0",
-    "server/background-task-adapter.ts": "55cef21afa45a220dbc052aab796535ad9a7cc35d38ba09dc2f79b1104b46fc5",
+    "server/background-task-adapter.ts": "984ff246bb9b4871264a2e74e2b681428575f465b5a2a1d37a0411dedbb7269b",
+    "server/background-task-stop.test.ts": "737c6bba771904456ac14c34b3acc53daf76e34fc589713908ec6839c416ae2b",
     "server/background-task-tracker.test.ts": "50154bcfeb4996dd6a4129fc16c10696da63ff73b439249f28d6aa1864c63137",
     "server/background-task-tracker.ts": "47f0fd9ebf4164c3347376c09aaca797738caeab49eb09312fda5b6ff1d5fdc0",
     "server/claude-agent-service.test.ts": "82a075ab98b113b241b5dcd67c02e4e0551f09665cd2215e43d7c47413b84933",
@@ -328,7 +330,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 2497,
+  "nodes": 2519,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -381,13 +383,16 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "2318a36ead3f3e059ecbb91af97ac6de7b9bff27e2d0769881941ebe337f63fc",
-    "communities.json": "8d24803fc5764890041f653aa84f2736c97fb1eb592ffaa2f37d9a821dff5666",
-    "graph.html": "e2eab7a54aaf664bfa3caee59a1a7e67a8326f2e81513527cf75b21344044a2a",
-    "graph.json": "8389dc844f11c6ad1cf4c4231e2ceaf8324d6fcb5718d114d5101db058f7307e"
+    "GRAPH_REPORT.md": "bd7b43c32d9bf263b83e981c454b784e1d36fd52cf1215b9b7f4d2a42374d11e",
+    "communities.json": "2ddc931a1997dde02da39648406f2b56b6e13752bfa38a355cb52df550a2e787",
+    "graph.html": "acdf5c7e812397513487aa5372a8e3670edf101a338b47c22ce35e9851ec281f",
+    "graph.json": "32b60da59185ee517863277b50ba981f5298589778f195055a6d14564b49da1f"
   },
   "schema_version": 1,
-  "source_commit": "99f22c2f6f473385ea40a077e98163ed2ebaedcd",
-  "source_fingerprint": "8cda2c67d0323a0d5883d79b93159a0beffa7bea8a44a3ed2ad0ac46e27cc6bb",
-  "working_tree_changes": []
+  "source_commit": "9a981e4f2441e604b4203e09115c8366198cc685",
+  "source_fingerprint": "b5ac7a2850da994771f7a3897124316474f7aeecf6980b57adcfcebc0fba7624",
+  "working_tree_changes": [
+    "server/background-task-adapter.ts",
+    "server/background-task-stop.test.ts"
+  ]
 }

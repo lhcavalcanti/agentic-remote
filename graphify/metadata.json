@@ -135,7 +135,7 @@
   "inputs": {
     ".github/copilot-instructions.md": "15a3fe1c5de27c9cc24a3b26697b794876c6b7dda4fbe08ab1cc4523eaa1a2fe",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "d155de40cee020b624b152189585e877ea21c0b65fdf577411702aa6ddf1b0dd",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "3774863a5dd6134af0818b6ce57f3257f8dee694ec7bdc33b3f306185af1bb34",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -361,19 +361,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d675a26740375ee1fb278a9d32fcb12d6e94a5dac5fd983c44696951c77a7e3f",
+    "GRAPH_REPORT.md": "7e03f73267cd464ff7cddf2378e2e1cec6cc115f340558ca118c2cb38251465a",
     "communities.json": "13dc3b80db357a42c1d0c73a7acb6d9b3d24f1e8dd0dfd194f588fffd71385d0",
-    "graph.html": "48a24e03a44ca3f1e1387fd75bdc9f2f262b1f236dbd0650f873b01cb26564ac",
-    "graph.json": "02ea3623368ebeaee8485b0cb2f61a36400276557538ed7e6ac06feae8834502"
+    "graph.html": "cff88c594ce2fb1185cf3c3a9caa0faff7348f53f5e93e1814406c9d1b03341b",
+    "graph.json": "a877f1efd636d8a2a0725de547760eb60929215d73b670f24affac2f6ef6eb5b"
   },
   "schema_version": 1,
-  "source_commit": "5ea2fa97f646c90b010ebeedf4986c7dd304c47b",
-  "source_fingerprint": "ad196a893bfdf8f6ffe74bb8d27394d610f9d7f4c53173e729d79a3f85ad6bb3",
+  "source_commit": "4a1efb4010935089585443a93ff2281f53341a39",
+  "source_fingerprint": "bd2ca06281331f7af439327f64d968177cbaf1fc8679bb329c70a314e1ca0399",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "server/agent-service.ts",
-    "server/session-store.ts",
-    "server/terminal-startup-queue.test.ts"
+    ".github/skills/agentic-remote-navigation/SKILL.md"
   ]
 }

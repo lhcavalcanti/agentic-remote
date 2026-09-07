@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -27,6 +27,48 @@ afterEach(async () => {
 })
 
 describe('SessionStore', () => {
+  it('keeps the usable store when later legacy-lineage validation rejects a document', async () => {
+    const { directory, store } = await createStore()
+    await store.create({
+      id: 'kept', title: 'Keep this session', cwd: '/project',
+      updatedAt: '2026-09-05T00:00:00.000Z', status: 'idle', messages: [],
+    })
+    const before = store.list()
+    const invalid = JSON.stringify({
+      version: 1,
+      retiredSessionIds: ['kept'],
+      sessions: {
+        first: { id: 'first', messages: [], replacedSessionIds: ['older'] },
+        malformed: { id: 'malformed', messages: [], replacedSessionIds: [null] },
+      },
+    })
+    const filename = path.join(directory, 'state.json')
+    await writeFile(filename, invalid)
+    await expect(store.initialize()).rejects.toThrow('Invalid session retirement metadata')
+    expect(store.list()).toEqual(before)
+    expect(store.isRetiredSession('kept')).toBe(false)
+    expect(store.isRetiredSession('older')).toBe(false)
+    expect(await readFile(filename, 'utf8')).toBe(invalid)
+    await store.renameSession('kept', 'Still usable')
+    expect(JSON.parse(await readFile(filename, 'utf8')).sessions.kept.title).toBe('Still usable')
+  })
+
+  it.each([
+    { name: 'null document', value: null },
+    { name: 'array document', value: [] },
+    { name: 'null sessions', value: { version: 1, sessions: null } },
+    { name: 'array sessions', value: { version: 1, sessions: [] } },
+    { name: 'populated array sessions', value: { version: 1, sessions: [{}] } },
+  ])('rejects a $name without installing or rewriting it', async ({ value }) => {
+    const { directory, store } = await createStore()
+    const filename = path.join(directory, 'state.json')
+    const contents = JSON.stringify(value)
+    await writeFile(filename, contents)
+    await expect(store.initialize()).rejects.toThrow('Unsupported Agentic Remote state format')
+    expect(store.list()).toEqual([])
+    expect(await readFile(filename, 'utf8')).toBe(contents)
+  })
+
   it('keeps a suspended session in the list when nothing is running for it', async () => {
     const { store } = await createStore()
     await store.create(
@@ -365,7 +407,7 @@ describe('SessionStore', () => {
       status: 'running',
       activity: 'Sent to terminal',
     })
-    expect(updated.revision).toBeGreaterThan(before?.revision || 0)
+    expect(updated!.revision).toBeGreaterThan(before?.revision || 0)
   })
 
   it('does not clear a newer terminal dispatch with an older completion', async () => {

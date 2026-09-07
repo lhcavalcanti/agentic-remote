@@ -1,7 +1,8 @@
 import { once } from 'node:events'
 import { createServer, type RequestListener, type Server } from 'node:http'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RemoteNodeClient } from './remote-node-client.js'
+import { TERMINAL_REQUEST_TIMEOUT_MS, TERMINAL_STARTUP_TIMEOUT_MS } from '../shared/terminal-timing.js'
 
 const servers: Server[] = []
 const session = {
@@ -26,6 +27,7 @@ function client(baseUrl: string): RemoteNodeClient {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(servers.splice(0).map((server) => {
     const closed = new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve())
@@ -36,6 +38,31 @@ afterEach(async () => {
 })
 
 describe('paired-node redirect isolation', () => {
+  it('keeps startup-capable mutations alive for both readiness budgets without extending polls', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ session, sessions: [] }), {
+        headers: { 'content-type': 'application/json' },
+      }))
+    const remote = client('http://fixture.invalid')
+    for (const operation of [
+      () => remote.createSession({ cwd: '/fixture', provider: 'copilot', terminalBacked: true }),
+      () => remote.activateSession('fixture'),
+      () => remote.clearConversation('fixture'),
+      () => remote.resumeSession('fixture'),
+      () => remote.restartSession('fixture'),
+      () => remote.moveToTerminal('fixture'),
+      () => remote.sendMessage('fixture', { content: 'Startup admission' }),
+      () => remote.executeCommand('fixture', { command: '/usage' }),
+    ]) {
+      await operation()
+      expect(timeout).toHaveBeenLastCalledWith(TERMINAL_REQUEST_TIMEOUT_MS)
+    }
+    expect(TERMINAL_REQUEST_TIMEOUT_MS).toBeGreaterThan(2 * TERMINAL_STARTUP_TIMEOUT_MS)
+    await remote.listSessions()
+    expect(timeout).toHaveBeenLastCalledWith(15_000)
+  })
+
   it.each([307, 308])('does not replay a POST into a hub-local route after HTTP %i', async (status) => {
     const mutations: { url?: string; body: string }[] = []
     const target = await listen((request, response) => {
@@ -60,12 +87,17 @@ describe('paired-node redirect isolation', () => {
     const remote = client(node)
     const input = { content: 'This belongs only to the paired node', enqueue: false }
     const result = await remote.sendMessage('remote-session', input).then(
-      () => 'accepted',
-      () => 'refused',
+      () => undefined,
+      (error: unknown) => error,
     )
 
     expect(mutations).toEqual([])
-    expect(result).toBe('refused')
+    expect(result).toMatchObject({
+      name: 'RemoteNodeRedirectError',
+      statusCode: 502,
+      message: expect.stringContaining(`HTTP ${status} redirect`),
+    })
+    expect(String(result)).toContain('final node URL')
     expect(nodeRequests).toEqual([{
       path: '/node-api/sessions/remote-session/messages', body: JSON.stringify(input),
     }])
@@ -93,12 +125,16 @@ describe('paired-node redirect isolation', () => {
     })
     const bytes = Buffer.from('Synthetic private attachment')
     const result = await client(node).uploadFile('remote-session', 'fixture.txt', bytes).then(
-      () => 'accepted',
-      () => 'refused',
+      () => undefined,
+      (error: unknown) => error,
     )
 
     expect(leaked).toEqual([])
-    expect(result).toBe('refused')
+    expect(result).toMatchObject({
+      name: 'RemoteNodeRedirectError',
+      statusCode: 502,
+      message: expect.stringContaining(`HTTP ${status} redirect`),
+    })
     expect(Buffer.concat(received)).toEqual(bytes)
     expect(requests).toBe(1)
   })
@@ -116,8 +152,54 @@ describe('paired-node redirect isolation', () => {
       }
     })
 
-    await expect(client(node).getInfo()).rejects.toThrow()
+    await expect(client(node).getInfo()).rejects.toMatchObject({
+      name: 'RemoteNodeRedirectError',
+      statusCode: 502,
+      message: expect.stringContaining(`HTTP ${status} redirect`),
+    })
     expect(requests).toEqual(['/node-api/info'])
+  })
+
+  it('reports a redirect even when its Location header is missing', async () => {
+    const node = await listen((_request, response) => {
+      response.writeHead(307)
+      response.end('A redirect without a destination')
+    })
+    await expect(client(node).getInfo()).rejects.toMatchObject({
+      name: 'RemoteNodeRedirectError',
+      statusCode: 502,
+      message: expect.stringContaining('HTTP 307 redirect'),
+    })
+  })
+
+  it('keeps the redirect reason when cancelling its unread body fails', async () => {
+    const cleanupError = new Error('Synthetic body cancellation failure')
+    const cancel = vi.fn(async () => { throw cleanupError })
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"error":"Untrusted redirect body"}'))
+        controller.close()
+      },
+      cancel,
+    }), { status: 308, headers: { location: 'https://example.invalid/private?secret=do-not-display' } })
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response)
+    const result = await client('http://fixture.invalid').getInfo().then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    expect(result).toMatchObject({
+      name: 'RemoteNodeRedirectError',
+      statusCode: 502,
+      message: expect.stringContaining('HTTP 308 redirect'),
+      cause: cleanupError,
+    })
+    expect(String(result)).not.toContain('do-not-display')
+    expect(String(result)).not.toContain('Untrusted redirect body')
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledWith(
+      'http://fixture.invalid/node-api/info',
+      expect.objectContaining({ redirect: 'manual' }),
+    )
   })
 
   it('preserves direct authenticated requests without redirecting or retrying', async () => {

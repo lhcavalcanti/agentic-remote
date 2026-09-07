@@ -575,6 +575,89 @@ describe('multi-node hub', () => {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
   })
 
+  it.each([307, 308])('surfaces HTTP %i redirects during pairing and established-node writes', async (redirectStatus) => {
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-redirect-hub'),
+      logger: false, role: 'hub', service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-redirect-node'),
+      logger: false, role: 'node', service: remoteService,
+    })
+    const manager = hub.manager
+    if (!manager) throw new Error('Redirect fixture requires a hub manager')
+    let redirectedRequests = 0
+    let redirectPath: string | undefined = '/node-api/info'
+    let location = ''
+    hub.app.all('/redirect-target', async () => {
+      redirectedRequests += 1
+      return { error: 'Redirect target must not be invoked' }
+    })
+    remote.app.addHook('onSend', async (request, reply, payload) => {
+      if (request.routeOptions.url === redirectPath) {
+        reply.code(redirectStatus).header('location', location)
+        return 'Untrusted redirect response'
+      }
+      return payload
+    })
+    try {
+      await hub.app.listen({ host: '127.0.0.1', port: 0 })
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const hubAddress = hub.app.server.address()
+      const remoteAddress = remote.app.server.address()
+      if (!hubAddress || typeof hubAddress === 'string' ||
+        !remoteAddress || typeof remoteAddress === 'string') {
+        throw new Error('Redirect fixture has no TCP address')
+      }
+      location = `http://127.0.0.1:${hubAddress.port}/redirect-target?secret=do-not-display`
+      const input = {
+        baseUrl: `http://127.0.0.1:${remoteAddress.port}`,
+        token: remote.identity.token,
+        name: 'redirecting-worker',
+      }
+      const refused = await hub.app.inject({
+        method: 'POST', url: '/api/computers', payload: input,
+      })
+      expect(refused.statusCode).toBe(502)
+      expect(refused.json().error).toContain(`HTTP ${redirectStatus} redirect`)
+      expect(refused.json().error).toContain('final node URL')
+      expect(refused.body).not.toContain('do-not-display')
+      expect((await hub.app.inject({ method: 'GET', url: '/api/computers' })).json().computers)
+        .toHaveLength(1)
+      expect(redirectedRequests).toBe(0)
+
+      redirectPath = undefined
+      expect((await hub.app.inject({
+        method: 'POST', url: '/api/computers', payload: input,
+      })).statusCode).toBe(201)
+      await vi.waitFor(async () => {
+        const computers = await manager.listComputers()
+        expect(computers.find((computer) => computer.id === remote.identity.info.id)?.online).toBe(true)
+      })
+
+      const before = localService.getSession('local-session')
+      const send = vi.spyOn(remoteService, 'sendMessage')
+      redirectPath = '/node-api/sessions/:sessionId/messages'
+      const unconfirmed = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remote.identity.info.id}/sessions/remote-session/messages`,
+        payload: { content: 'Intended only for the node', enqueue: true },
+      })
+      expect(unconfirmed.statusCode).toBe(502)
+      expect(unconfirmed.json().error).toContain(`HTTP ${redirectStatus} redirect`)
+      expect(unconfirmed.json().error).toContain('final node URL')
+      expect(unconfirmed.body).not.toContain('do-not-display')
+      expect(send).toHaveBeenCalledOnce()
+      expect(redirectedRequests).toBe(0)
+      expect(localService.getSession('local-session')).toEqual(before)
+    } finally {
+      await hub.app.close()
+      await remote.app.close()
+    }
+  })
+
   it('uses the application error handler for registered session routes', async () => {
     const service = new FakeSessionService(session('local-session', 'Local'))
     vi.spyOn(service, 'runtimeOptions').mockRejectedValue(

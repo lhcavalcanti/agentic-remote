@@ -24,14 +24,16 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResponse,
 } from '../shared/contracts'
+import { parseSubmissionReceipt, SubmissionError } from '../shared/submission-error'
+import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
 
 async function responseError(response: Response): Promise<Error> {
   const payload = (await response.json().catch(() => null)) as
-    | { error?: string; message?: string; statusCode?: number }
+    | { error?: string; message?: string; statusCode?: number; submission?: unknown }
     | null
   const fallback = `Request failed (${response.status})`
   if (!payload) {
-    return Object.assign(new Error(fallback), { statusCode: response.status })
+    return new SubmissionError(fallback, response.status)
   }
   // Fastify's built-in envelope carries a numeric `statusCode`, a generic
   // `error` label, and the real reason in `message`; the app's own handler
@@ -41,20 +43,20 @@ async function responseError(response: Response): Promise<Error> {
     typeof payload.statusCode === 'number' &&
     typeof payload.message === 'string'
   if (isDefaultEnvelope && response.status < 500) {
-    return Object.assign(
-      new Error(payload.message || payload.error || fallback),
-      { statusCode: response.status },
+    return new SubmissionError(
+      payload.message || payload.error || fallback,
+      response.status,
+      parseSubmissionReceipt(payload.submission),
     )
   }
-  return Object.assign(new Error(payload.error || fallback), {
-    statusCode: response.status,
-  })
+  return new SubmissionError(payload.error || fallback, response.status, parseSubmissionReceipt(payload.submission))
 }
 
 async function request<TResult>(
   path: string,
   init?: RequestInit,
 ): Promise<TResult> {
+  const startedAtSequence = currentSessionEventSequence()
   const headers = new Headers(init?.headers)
   if (
     init?.body != null &&
@@ -70,7 +72,7 @@ async function request<TResult>(
   if (!response.ok) {
     throw await responseError(response)
   }
-  return response.json() as Promise<TResult>
+  return rememberSessionResponse(await response.json() as TResult, startedAtSequence)
 }
 
 async function requestVoid(path: string, init: RequestInit): Promise<void> {

@@ -26,12 +26,15 @@ import type {
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
+import { parseSubmissionReceipt, SubmissionError, type SubmissionReceipt } from '../shared/submission-error.js'
+import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
  * computer, so the caller waits slightly longer than their sum before giving up.
  */
 const TRANSCRIPTION_TIMEOUT_MS = 13 * 60_000
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 function headerSafe(value: string): string {
   return value.replace(/[^\x20-\x7e]/g, '').slice(0, 200)
@@ -42,13 +45,24 @@ interface RemoteNodeClientEvents {
   status: [online: boolean]
 }
 
-class RemoteNodeRequestError extends Error {
+class RemoteNodeRequestError extends SubmissionError {
   constructor(
     message: string,
-    readonly statusCode: number,
+    statusCode: number,
+    submission?: SubmissionReceipt,
   ) {
-    super(message)
+    super(message, statusCode, submission)
     this.name = 'RemoteNodeRequestError'
+  }
+}
+
+class RemoteNodeRedirectError extends RemoteNodeRequestError {
+  constructor(computerName: string, status: number) {
+    super(
+      `${computerName} returned an HTTP ${status} redirect. Configure the final node URL; redirects are not followed.`,
+      502,
+    )
+    this.name = 'RemoteNodeRedirectError'
   }
 }
 
@@ -368,7 +382,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         method: 'POST',
         body: '{}',
       },
-      30_000,
+      TERMINAL_REQUEST_TIMEOUT_MS,
     )
     return response.session
   }
@@ -521,7 +535,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   private async request<TResult = unknown>(
     path: string,
     init: RequestInit = {},
-    timeoutMs = 15_000,
+    timeoutMs = init.method && init.method !== 'GET' && path.startsWith('/node-api/sessions')
+      ? TERMINAL_REQUEST_TIMEOUT_MS
+      : 15_000,
     markOnline = true,
   ): Promise<TResult> {
     const headers = new Headers(init.headers)
@@ -533,12 +549,22 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     try {
       response = await fetch(`${this.computer.baseUrl}${path}`, {
         ...init,
-        redirect: 'error',
+        redirect: 'manual',
         headers,
         signal: init.signal
           ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
           : AbortSignal.timeout(timeoutMs),
       })
+      if (REDIRECT_STATUSES.has(response.status)) {
+        const refusal = new RemoteNodeRedirectError(this.computer.name, response.status)
+        try {
+          await response.body?.cancel()
+        } catch (error) {
+          // Keep the actionable refusal primary without hiding cleanup failure.
+          throw Object.assign(refusal, { cause: error })
+        }
+        throw refusal
+      }
     } catch (error) {
       // A poll that must not flap the online state, and a request the caller
       // abandoned, are both failures that say nothing about the node.
@@ -549,11 +575,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     }
     if (!response.ok) {
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string }
+        | { error?: string; submission?: unknown }
         | null
       throw new RemoteNodeRequestError(
         payload?.error || `${this.computer.name} request failed (${response.status})`,
         response.status,
+        parseSubmissionReceipt(payload?.submission),
       )
     }
     if (markOnline) {

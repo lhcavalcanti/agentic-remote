@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -68,6 +68,16 @@ const folderTrustPane = [
   '╰────────────────────────────────────────────────────────────────────────╯',
 ].join('\n')
 
+const desktopInstallPane = [
+  '╭───────────────────────────────────────────────╮',
+  'THE GITHUB COPILOT APP',
+  'Now generally available!',
+  'Install it now?',
+  '❯ Yes, install      No, thanks',
+  '←/→ to choose · Enter to select · Y / N',
+  '╰───────────────────────────────────────────────╯',
+].join('\n')
+
 function readyComposer(text = '', working = false): string {
   return [
     '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
@@ -80,7 +90,18 @@ function readyComposer(text = '', working = false): string {
 const shellReadyComposer =
   "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
 
-async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?: string) {
+function fixtureReceiptWriter(filename: string): string {
+  return `
+import { renameSync, writeFileSync } from 'node:fs'
+const receiptPath = ${JSON.stringify(filename)}
+const writeReceipt = (value) => {
+  writeFileSync(receiptPath + '.tmp', JSON.stringify(value))
+  renameSync(receiptPath + '.tmp', receiptPath)
+}
+`
+}
+
+async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?: string, footer = '') {
   const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
   directories.push(directory)
   const executable = path.join(directory, 'copilot-delivery.mjs')
@@ -88,12 +109,13 @@ async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?
   const sessionId = randomUUID()
   await writeFile(output, '')
   await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let input = ''
 let pasted
 const received = { pastes: [], submits: [] }
 const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
-const composer = ${readyComposer.toString()}
+const makeComposer = ${readyComposer.toString()}
+const composer = (text = '', working = false) => makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
 const repaint = ${JSON.stringify(repaintPane)}
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
@@ -108,12 +130,12 @@ process.stdin.on('data', (data) => {
     pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
     input = input.slice(end + 6)
     received.pastes.push(pasted)
-    writeFileSync(${JSON.stringify(output)}, JSON.stringify(received))
+    writeReceipt(received)
     draw(composer(pasted, ${working}))
   }
   if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
     received.submits.push(input.includes('\\x11') ? 'queue' : 'enter')
-    writeFileSync(${JSON.stringify(output)}, JSON.stringify(received))
+    writeReceipt(received)
     input = ''
     pasted = undefined
     draw(${JSON.stringify(nextPane)} ?? composer('', ${working}))
@@ -139,6 +161,88 @@ draw(composer('', ${working}))
   const controller = new TmuxTerminalSessionController()
   await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('╹')))
   return { controller, sessionId, output, directory, tmuxSession }
+}
+
+async function ownedStartupFixture(initialPane?: string, footer = '') {
+  const directory = await mkdtemp(path.join(tmpdir(), 'terminal-startup-consent-'))
+  directories.push(directory)
+  const executable = path.join(directory, 'copilot-startup.mjs')
+  const output = path.join(directory, 'received.json')
+  const replacementPath = path.join(directory, 'replacement-pane.txt')
+  await writeFile(output, JSON.stringify({ keys: '', pastes: [], submits: 0 }))
+  await writeFile(executable, `#!/usr/bin/env node
+${fixtureReceiptWriter(output)}
+import { readFileSync } from 'node:fs'
+const state = { keys: '', pastes: [], submits: 0 }
+const save = () => writeReceipt(state)
+const makeComposer = ${readyComposer.toString()}
+const composer = (text = '') => makeComposer(text) + ${JSON.stringify(footer ? `\n${footer}` : '')}
+const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
+let confirmed = ${initialPane === undefined}
+let desktop = ${initialPane === desktopInstallPane}
+let replaced = false
+let input = ''
+let pasted
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.on('SIGUSR2', () => {
+  const pane = readFileSync(${JSON.stringify(replacementPath)}, 'utf8')
+  replaced = true
+  desktop = pane.includes('THE GITHUB COPILOT APP') && pane.includes('Install it now?')
+  confirmed = pane.includes('╹')
+  draw(pane)
+})
+process.stdin.on('data', (data) => {
+  const text = data.toString()
+  if (replaced) {
+    state.keys += text
+    save()
+    if (desktop && text.includes('n')) {
+      desktop = false
+      confirmed = true
+      draw(composer())
+    } else if (confirmed) {
+      draw(composer(state.keys))
+    }
+    return
+  }
+  if (!confirmed) {
+    state.keys += text
+    save()
+    if (/[\\r\\n]/.test(text) || (desktop && text.includes('n'))) {
+      desktop = false
+      confirmed = true
+      draw(composer())
+    }
+    return
+  }
+  input += text
+  const end = input.indexOf('\\x1b[201~')
+  if (pasted === undefined && end >= 0) {
+    pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
+    input = input.slice(end + 6)
+    state.pastes.push(pasted)
+    save()
+    draw(composer(pasted))
+  }
+  if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
+    state.submits += 1
+    save()
+    pasted = undefined
+    input = ''
+    draw(composer())
+  }
+})
+draw(${JSON.stringify(initialPane)} ?? composer())
+`)
+  await chmod(executable, 0o755)
+  vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', '')
+  vi.stubEnv('COPILOT_BIN', executable)
+  vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+  const controller = new TmuxTerminalSessionController()
+  const sessionId = randomUUID()
+  await controller.create(sessionId, directory, 'Owned startup', false)
+  return { controller, sessionId, output, replacementPath }
 }
 
 beforeEach(async () => {
@@ -177,6 +281,231 @@ describe('tmux test isolation', () => {
 
 describe('TmuxTerminalSessionController', () => {
   it.each([
+    ['an empty composer', readyComposer()],
+    ['an existing draft', readyComposer('Keep this native draft')],
+    ['a different permission dialog', folderTrustPane],
+  ])('does not decline a desktop prompt replaced by %s during owner validation', async (_name, replacement) => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture(sessionInUsePane)
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{ pid: number; target: string } | undefined>
+    }
+    const owner = await inspectable.owner(sessionId, undefined, true)
+    expect(owner).toBeDefined()
+    await writeFile(replacementPath, desktopInstallPane)
+    process.kill(owner!.pid, 'SIGUSR2')
+    await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane && isTerminalDesktopInstallPrompt(pane)))
+    const originalOwner = inspectable.owner.bind(controller)
+    let initialOwnerRead = false
+    let replaced = false
+    const spy = vi.spyOn(inspectable, 'owner').mockImplementation(async (id, target, fresh) => {
+      const current = await originalOwner(id, target, fresh)
+      if (!fresh && current) initialOwnerRead = true
+      if (fresh && current && initialOwnerRead && !replaced) {
+        replaced = true
+        await writeFile(replacementPath, replacement)
+        process.kill(current.pid, 'SIGUSR2')
+        await eventually(
+          async () => (await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', current.target])).stdout,
+          (pane) => !isTerminalDesktopInstallPrompt(pane),
+        )
+      }
+      return current
+    })
+    try {
+      await controller.resolveStartupPrompt(sessionId)
+      expect(replaced).toBe(true)
+      expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: '', pastes: [], submits: 0 })
+      const pane = await controller.capture(sessionId)
+      if (replacement.includes('Keep this native draft')) expect(pane).toContain('Keep this native draft')
+      if (replacement === folderTrustPane) expect(pane).toContain('Confirm folder trust')
+    } finally {
+      spy.mockRestore()
+    }
+  }, 15000)
+
+  it('declines an unchanged live desktop prompt exactly once after owner validation', async () => {
+    const { controller, sessionId, output } = await ownedStartupFixture(desktopInstallPane)
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: 'n', pastes: [], submits: 0 })
+  }, 15000)
+
+  it.each([
+    ['Fixture Model · High · 1.1M context (0%)', false, false],
+    ['Fixture preview · 128k context (37%)', false, false],
+    ['Fixture Model · Medium · 262,144 context (100%)', false, false],
+    ['Fixture Model · High · 1.1M context (7.5%)', true, true],
+  ] as const)('admits a complete model/context footer: %s (working=%s, queue=%s)', async (footer, working, enqueue) => {
+    const { controller, sessionId, output } = await deliveryFixture(working, undefined, undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(!working)
+    await expect(controller.send(sessionId, 'One footer-aware message', enqueue)).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['One footer-aware message'], submits: [enqueue ? 'queue' : 'enter'],
+    })
+  }, 15_000)
+
+  it('returns a fresh owned session with the complete model/context footer', async () => {
+    const footer = 'Fixture Model · High · 1.1M context (0%)'
+    const { controller, sessionId } = await ownedStartupFixture(undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(true)
+  }, 15_000)
+
+  it.each([
+    [' Changes    +0 -0', false, false],
+    ['Changes +12 -3', false, false],
+    [' Changes    +0 -3\n Fixture Model · High · 1.1M context (7%)', false, false],
+    [' Changes    +12 -0\n Fixture Model · High · 1.1M context (0%)\n 0.0.999 available · /update', true, true],
+  ] as const)('admits an exact change-summary footer: %s (working=%s, queue=%s)', async (footer, working, enqueue) => {
+    const { controller, sessionId, output } = await deliveryFixture(working, undefined, undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(!working)
+    await expect(controller.send(sessionId, 'One change-summary message', enqueue)).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['One change-summary message'], submits: [enqueue ? 'queue' : 'enter'],
+    })
+  }, 15_000)
+
+  it.each(['Changes +0 -0', ' Changes    +12 -3'])(
+    'returns a fresh owned session with a change-summary footer: %s',
+    async (changes) => {
+      const footer = `${changes}\n Fixture Model · High · 1.1M context (0%)`
+      const { controller, sessionId, output } = await ownedStartupFixture(undefined, footer)
+      expect(await controller.capture(sessionId)).toContain(footer)
+      expect(await controller.inputReady(sessionId)).toBe(true)
+      await expect(controller.send(sessionId, 'First message after startup', false)).resolves.toBe(true)
+      const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+        JSON.parse(value).submits === 1,
+      )
+      expect(JSON.parse(received)).toEqual({
+        keys: '', pastes: ['First message after startup'], submits: 1,
+      })
+    },
+    15_000,
+  )
+
+  it.each([
+    'Changes +1 -2 and more',
+    'Summary: Changes +1 -2',
+    'Changes +1 -2 · Are you sure?',
+    'Changes +1 -2\nA different view is loading',
+    'Change +1 -2',
+    'changes +1 -2',
+    'Changes +1',
+    'Changes -1 +2',
+    'Changes +1 --2',
+    'Changes +1.5 -2',
+    'Changes +1 -2.5',
+    'Changes +1,000 -2',
+    'Changes +1e3 -2',
+  ])('rejects a change-summary near-match footer: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(false, `${readyComposer()}\n${footer}`)
+    await controller.send(sessionId, 'Warmup', true)
+    const before = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    await expect(controller.send(sessionId, 'Do not paste this', true))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await readFile(output, 'utf8')).toBe(before)
+  }, 15_000)
+
+  it('requires explicit consent for session-use confirmation in an owned startup', async () => {
+    const { controller, sessionId, output } = await ownedStartupFixture(sessionInUsePane)
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('')
+    const permission = await controller.pendingPermission(sessionId)
+    expect(permission).toMatchObject({
+      options: [
+        { optionId: 'terminal:allow', name: 'Resume anyway' },
+        { optionId: 'terminal:stop', name: 'Go back' },
+      ],
+    })
+    expect(await controller.canHandleStartupPrompt(sessionId, sessionInUsePane)).toBe(false)
+    expect(await controller.resolveStartupPrompt(sessionId)).toBe(false)
+    await expect(controller.send(sessionId, 'Do not consent for me', false))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: '', pastes: [], submits: 0 })
+    if (!permission) throw new Error('The startup fixture did not expose its permission')
+    expect(await controller.replyPermission(sessionId, permission, 'terminal:allow')).toBe(true)
+    expect(await controller.resolveStartupPrompt(sessionId)).toBe(true)
+    await controller.send(sessionId, 'Only after explicit consent', false)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      JSON.parse(value).submits === 1,
+    )
+    expect(JSON.parse(received)).toMatchObject({ pastes: ['Only after explicit consent'], submits: 1 })
+  }, 15_000)
+
+  async function clearFixture() {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-clear-test-'))
+    directories.push(directory)
+    const originalCwd = path.join(directory, 'original')
+    const replacementCwd = path.join(directory, 'replacement')
+    await mkdir(originalCwd)
+    await mkdir(replacementCwd)
+    const executable = path.join(directory, 'copilot-clear-fake')
+    await writeFile(executable, `#!/usr/bin/env bash\n${shellReadyComposer}\nsleep 60\n`)
+    await chmod(executable, 0o755)
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', '')
+    vi.stubEnv('COPILOT_BIN', executable)
+    vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+    const controller = new TmuxTerminalSessionController()
+    const sessionId = randomUUID()
+    const location = await controller.create(sessionId, originalCwd, 'Original conversation', false, {
+      model: 'original-model', contextTier: 'default', reasoningEffort: 'high', mode: 'plan',
+    })
+    const snapshot = async () => {
+      const pid = Number((await execFileAsync('tmux', [
+        'display-message', '-p', '-t', location.windowId, '#{pane_pid}',
+      ])).stdout.trim())
+      await waitForProcessCommand(pid, [executable])
+      return {
+        pid,
+        command: (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').filter(Boolean),
+        cwd: await readlink(`/proc/${pid}/cwd`),
+      }
+    }
+    return { controller, sessionId, replacementCwd, executable, snapshot, location }
+  }
+
+  it('restores the original terminal command and cwd when replacement commit rejects', async () => {
+    const { controller, sessionId, replacementCwd, snapshot } = await clearFixture()
+    const original = await snapshot()
+    const replacementId = randomUUID()
+    await expect(controller.reset(sessionId, replacementId, replacementCwd, {
+      model: 'replacement-model', contextTier: 'long_context', reasoningEffort: 'low', mode: 'autopilot',
+    }, async () => {
+      expect(await controller.has(replacementId)).toBe(true)
+      expect((await snapshot()).cwd).toBe(replacementCwd)
+      throw new Error('Replacement write refused')
+    })).rejects.toThrow('Replacement write refused')
+    const restored = await snapshot()
+    expect(restored.pid).not.toBe(original.pid)
+    expect(restored.command).toEqual(original.command)
+    expect(restored.cwd).toBe(original.cwd)
+    expect(await controller.has(sessionId)).toBe(true)
+    expect(await controller.has(replacementId)).toBe(false)
+  })
+
+  it('reports both the rejected replacement and a failed terminal restoration', async () => {
+    const { controller, sessionId, replacementCwd, location } = await clearFixture()
+    const failure = new Error('Replacement write refused')
+    await expect(controller.reset(sessionId, randomUUID(), replacementCwd, undefined, async () => {
+      await execFileAsync('tmux', ['kill-pane', '-t', location.windowId])
+      throw failure
+    })).rejects.toMatchObject({
+      name: 'AggregateError',
+      errors: [failure, expect.any(Error)],
+      message: 'Conversation clear failed and the original terminal session could not be restored',
+    })
+  }, 25_000)
+
+  it.each([
     ['current', 0, false],
     ['current', 2400, false],
     ['current', 0, true],
@@ -197,7 +526,7 @@ describe('TmuxTerminalSessionController', () => {
         : Array.from({ length: 32 }, (_, index) => `line ${index}`).join('\n')
     await writeFile(output, '')
     await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let input = ''
 let pasted
 let enters = 0
@@ -221,7 +550,7 @@ process.stdin.on('data', (data) => {
   }
   if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
     enters += 1
-    writeFileSync(${JSON.stringify(output)}, JSON.stringify({ content: pasted, enters, queued: input.includes('\\x11') }))
+    writeReceipt({ content: pasted, enters, queued: input.includes('\\x11') })
     input = ''
     draw('')
   }
@@ -288,6 +617,13 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
     ['a non-composer frame', '╭────────╮\n│        │\n╰────────╯', 'Queue this', true, undefined],
     ['an incomplete composer frame', '╻▄▄▄▄\n┃', 'Queue this', true, undefined],
     ['a replaced composer', `${readyComposer()}\nLoading a new view…`, '/usage', false, { allowDuringAgentExecution: true }],
+    ['a footer with unrelated output', `${readyComposer()}\nFixture Model · High · 1.1M context (0%)\nLoading a different view...`, 'Must not be pasted', false, undefined],
+    ['a change-summary footer over a working composer', `${readyComposer('', true)}\nChanges +12 -3`, 'Do not interrupt', false, undefined],
+    ['a change-summary footer over an existing draft', `${readyComposer('unfinished draft')}\nChanges +12 -3`, 'Queue this', true, undefined],
+    ['a change-summary footer over a settings overlay', `${readyComposer()}\nSettings\n↑/↓ navigate · enter edit · esc close\nChanges +12 -3`, 'Queue this', true, undefined],
+    ['a change-summary footer over a session-use confirmation', `${sessionInUsePane}\nChanges +12 -3`, 'Do not consent', false, undefined],
+    ['a change-summary footer over a folder-trust confirmation', `${folderTrustPane}\nChanges +12 -3`, 'Do not consent', false, undefined],
+    ['a change-summary footer over a non-composer frame', '╭────────╮\n│        │\n╰────────╯\nChanges +12 -3', 'Queue this', true, undefined],
     ['working hints without a composer', 'Working\nesc interrupt', 'Queue this', true, undefined],
   ] as const)('does not paste into %s after a previously ready send', async (_name, pane, content, enqueue, options) => {
     const { controller, sessionId, output } = await deliveryFixture(false, pane)
@@ -400,11 +736,11 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
       const sessionId = randomUUID()
       await writeFile(output, '')
       await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let selected = 1
 let pending = ''
 function finish(decision) {
-  writeFileSync(${JSON.stringify(output)}, JSON.stringify({ decision }))
+  writeReceipt({ decision })
   process.stdout.write('\\x1b[2J\\x1b[HReady\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
 }
 process.stdin.setRawMode(true)
@@ -524,12 +860,11 @@ process.stdout.write(${JSON.stringify(sessionInUsePane.replace('❯ 1.', '  1.')
     ]
     await writeFile(output, '')
     await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let selected = 0
 let pending = ''
 function finish(action) {
-  writeFileSync(${JSON.stringify(output)}, JSON.stringify(
-    action === 'accept' ? { accepted: selected === 0 } : { action }))
+  writeReceipt(action === 'accept' ? { accepted: selected === 0 } : { action })
   process.stdout.write('\\x1b[2J\\x1b[HFinished\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
 }
 function draw() {
@@ -1474,6 +1809,33 @@ Permission request (1 remaining)
     expect(existsSync(`${response}.extra`)).toBe(false)
   })
 
+  it('removes a newly created window when owner enumeration fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-owner-failure-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-window-fake')
+    await writeFile(executable, '#!/usr/bin/env bash\nsleep 60\n')
+    await chmod(executable, 0o755)
+    const ps = path.join(directory, 'ps')
+    await writeFile(ps, '#!/usr/bin/env bash\nexit 19\n')
+    await chmod(ps, 0o755)
+    const tmuxSession = `owner-failure-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxSession, 'sleep', '60'])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    vi.stubEnv('PATH', `${directory}:${process.env.PATH}`)
+
+    await expect(
+      new TmuxTerminalSessionController().create(
+        randomUUID(), directory, 'Owner failure', true,
+      ),
+    ).rejects.toThrow('Unable to list processes')
+    const windows = (
+      await execFileAsync('tmux', ['list-windows', '-t', tmuxSession, '-F', '#{window_id}'])
+    ).stdout.trim().split('\n')
+    expect(windows).toHaveLength(1)
+  })
+
   it('returns a recovered session that is already showing a structured form', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)
@@ -1586,6 +1948,7 @@ Permission request (1 remaining)
         '[[ "$answer" == n ]] || exit 2',
         shellReadyComposer,
         'IFS= read -r line',
+        'sleep 0.2',
         `printf '%s' "$line" >"${output}"`,
         shellReadyComposer,
         'sleep 60',
@@ -1641,8 +2004,15 @@ Permission request (1 remaining)
     )
 
     expect(delivered).toBe(true)
-    expect(await readFile(output, 'utf8')).toBe('arrives after both prompts')
-  })
+    const received = await eventually(
+      () => readFile(output, 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      }),
+      (value) => value === 'arrives after both prompts',
+    )
+    expect(received).toBe('arrives after both prompts')
+  }, 15_000)
 
   it('captures an owned startup prompt from its expected pane', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))

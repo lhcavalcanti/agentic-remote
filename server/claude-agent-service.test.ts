@@ -174,7 +174,7 @@ describe('ClaudeAgentService', () => {
       await Promise.resolve()
       expect(close).not.toHaveBeenCalled()
       await expect(service.sendMessage(sessionId, 'Not admitted during shutdown'))
-        .rejects.toThrow('shutting down')
+        .rejects.toThrow('The session service is stopping')
     } finally {
       finishTurn()
       await stopped
@@ -199,7 +199,8 @@ describe('ClaudeAgentService', () => {
     getSessionInfo.mockImplementationOnce(() =>
       new Promise((resolve) => { finishLookup = () => resolve(undefined) }),
     )
-    await service.sendMessage(created.id, 'Pending startup')
+    const sending = expect(service.sendMessage(created.id, 'Pending startup'))
+      .rejects.toThrow('The session service stopped before provider dispatch; the prompt was retained')
     await vi.waitFor(() => expect(getSessionInfo).toHaveBeenCalled())
     const close = vi.spyOn(service.store, 'close')
     const stopped = service.stop()
@@ -208,7 +209,7 @@ describe('ClaudeAgentService', () => {
       expect(close).not.toHaveBeenCalled()
     } finally {
       finishLookup()
-      await stopped
+      await Promise.all([sending, stopped])
     }
     expect(runs).toBe(0)
     const reloaded = new SessionStore(path.join(directory, 'state'))
@@ -718,17 +719,15 @@ describe('ClaudeAgentService', () => {
     const session = await service.createSession(directory, false, true, 'claude')
     const before = service.getSession(session.id)?.messages.length ?? 0
 
-    // Suspension takes hold between the two writes.
-    const addMessage = service.store.addMessage.bind(service.store)
-    let writes = 0
-    vi.spyOn(service.store, 'addMessage').mockImplementation(
-      async (id, message) => {
-        const result = await addMessage(id, message)
-        writes += 1
-        if (writes === 2) {
-          await service.store.setSuspended(id, true)
-        }
-        return result
+    // Suspension is admitted ahead of the atomic turn-record mutation.
+    const beginPrompt = service.store.beginPrompt.bind(service.store)
+    vi.spyOn(service.store, 'beginPrompt').mockImplementation(
+      async (...args) => {
+        const suspension = service.store.setSuspended(args[0], true)
+        const results = await Promise.allSettled([suspension, beginPrompt(...args)])
+        if (results[0].status === 'rejected') throw results[0].reason
+        if (results[1].status === 'rejected') throw results[1].reason
+        return results[1].value
       },
     )
 
@@ -833,23 +832,19 @@ describe('ClaudeAgentService', () => {
   })
 
   it('leaves a suspended session where it was when the send is refused', async () => {
-    // The list is ordered by `updatedAt`, and both writes advance it. Putting
-    // only the messages back left the session at the top of the list for a
-    // send that was refused -- the opposite of keeping the place it had.
+    // A refused admission must not change either the transcript or recency.
     const { directory, service } = await fixture(async function* () {})
     const session = await service.createSession(directory, false, true, 'claude')
     const before = service.getSession(session.id)?.updatedAt
 
-    const addMessage = service.store.addMessage.bind(service.store)
-    let writes = 0
-    vi.spyOn(service.store, 'addMessage').mockImplementation(
-      async (id, message) => {
-        const result = await addMessage(id, message)
-        writes += 1
-        if (writes === 2) {
-          await service.store.setSuspended(id, true)
-        }
-        return result
+    const beginPrompt = service.store.beginPrompt.bind(service.store)
+    vi.spyOn(service.store, 'beginPrompt').mockImplementation(
+      async (...args) => {
+        const suspension = service.store.setSuspended(args[0], true)
+        const results = await Promise.allSettled([suspension, beginPrompt(...args)])
+        if (results[0].status === 'rejected') throw results[0].reason
+        if (results[1].status === 'rejected') throw results[1].reason
+        return results[1].value
       },
     )
 

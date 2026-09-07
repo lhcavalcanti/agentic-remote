@@ -178,7 +178,7 @@ describe('hub routes', () => {
       expect(rejected.statusCode).toBe(409)
       expect(rejected.json().error).toContain('pairing changed while saving')
       expect([...roots.keys()]).toEqual(['fresh-root'])
-      expect(removeRoot).not.toHaveBeenCalled()
+      expect(removeRoot).toHaveBeenCalledExactlyOnceWith('old-root')
     } finally {
       release()
       await app.close()

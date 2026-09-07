@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { TERMINAL_STARTUP_TIMEOUT_MS } from '../shared/terminal-timing.js'
 import { readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -61,7 +62,7 @@ export interface TerminalSessionController {
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean>
   restart?(sessionId: string, cwd: string): Promise<boolean>
   /** Ends the window running a session without forgetting the session. */
@@ -118,6 +119,7 @@ export interface TerminalSessionController {
     enqueue: boolean,
     options?: TerminalSendOptions,
   ): Promise<boolean>
+  sendWhenIdle?(sessionId: string, content: string): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
   canHandleStartupPrompt?(
@@ -297,36 +299,32 @@ export class TmuxTerminalSessionController
     replacementId: string,
     cwd: string,
     input: ConfigureRuntimeInput | undefined,
-    clearState: () => Promise<void>,
+    commitReplacement: () => Promise<void>,
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      const resolvedCwd = await realpath(cwd)
+      if (!(await stat(resolvedCwd)).isDirectory()) {
+        throw new Error('Terminal working directory is not a folder')
+      }
       const owner = await this.boundOwner(sessionId)
       if (!owner) {
         return false
       }
       const originalCommand = await processCommand(owner.pid)
+      const originalCwd = await readlink(`/proc/${owner.pid}/cwd`)
       const command = await copilotCommand(owner.pid, replacementId, input)
       this.inputReadySessions.delete(sessionId)
       this.inputReadySessions.delete(replacementId)
       this.automaticStartupSessions.delete(sessionId)
       this.automaticStartupSessions.delete(replacementId)
-      await execFileAsync('tmux', [
-        'respawn-pane',
-        '-k',
-        '-t',
-        owner.target,
-        '/usr/bin/sleep',
-        '300',
-      ])
       try {
-        await clearState()
         await execFileAsync('tmux', [
           'respawn-pane',
           '-k',
           '-t',
           owner.target,
           '-c',
-          cwd,
+          resolvedCwd,
           ...command,
         ])
         const nextOwner = await this.waitForNewOwner(
@@ -334,11 +332,16 @@ export class TmuxTerminalSessionController
           owner.pid,
           owner.target,
         )
+        // The old provider history must still exist until this commit accepts
+        // the replacement; otherwise the original command cannot recover it.
+        await commitReplacement()
         this.automaticStartupSessions.set(replacementId, {
           pid: nextOwner.pid,
           target: nextOwner.target,
         })
       } catch (error) {
+        this.inputReadySessions.delete(replacementId)
+        this.automaticStartupSessions.delete(replacementId)
         try {
           await execFileAsync('tmux', [
             'respawn-pane',
@@ -346,7 +349,7 @@ export class TmuxTerminalSessionController
             '-t',
             owner.target,
             '-c',
-            cwd,
+            originalCwd,
             ...originalCommand,
           ])
           const restoredOwner = await this.waitForNewOwner(
@@ -361,7 +364,7 @@ export class TmuxTerminalSessionController
         } catch (rollbackError) {
           throw new AggregateError(
             [error, rollbackError],
-            'Conversation reset failed and the terminal session could not be restored',
+            'Conversation clear failed and the original terminal session could not be restored',
           )
         }
         throw error
@@ -717,8 +720,7 @@ export class TmuxTerminalSessionController
       owner !== undefined &&
       automaticOwner?.pid === owner.pid &&
       automaticOwner.target === owner.target &&
-      (isTerminalSessionInUsePrompt(pane) ||
-        isTerminalDesktopInstallPrompt(pane))
+      isTerminalDesktopInstallPrompt(pane)
     )
   }
 
@@ -1043,6 +1045,20 @@ export class TmuxTerminalSessionController
     enqueue: boolean,
     options: TerminalSendOptions = {},
   ): Promise<boolean> {
+    return this.sendInternal(sessionId, content, enqueue, false, options)
+  }
+
+  async sendWhenIdle(sessionId: string, content: string): Promise<boolean> {
+    return this.sendInternal(sessionId, content, false, true)
+  }
+
+  private async sendInternal(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    idleOnly: boolean,
+    options: TerminalSendOptions = {},
+  ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const readyOwner = this.inputReadySessions.get(sessionId)
       const automaticOwner = this.automaticStartupSessions.get(sessionId)
@@ -1169,10 +1185,14 @@ export class TmuxTerminalSessionController
           { statusCode: 409 },
         )
       }
+      if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
+        throw Object.assign(new Error('The terminal started working before queued delivery; nothing was sent'), { statusCode: 409 })
+      }
       const allowWorking =
-        enqueue ||
-        (options.allowDuringAgentExecution === true &&
-          /^\/\S/u.test(content.trimStart()))
+        !idleOnly &&
+        (enqueue ||
+          (options.allowDuringAgentExecution === true &&
+            /^\/\S/u.test(content.trimStart())))
       if (!terminalInputReady(paneBeforePaste, allowWorking)) {
         throw Object.assign(
           new Error(
@@ -1194,9 +1214,10 @@ export class TmuxTerminalSessionController
         '--',
         content,
       ])
+      // The paste can reach the pane even if its acknowledgement is lost.
+      // Preflight and buffer preparation above have not changed native input.
+      let pasteAcknowledged = false
       try {
-        // A paste can reach the server before its acknowledgement is lost.
-        // From this attempt onward, failure is not permission to resend.
         await execFileAsync('tmux', [
           'paste-buffer',
           '-p',
@@ -1206,14 +1227,21 @@ export class TmuxTerminalSessionController
           '-t',
           owner.target,
         ])
+        pasteAcknowledged = true
         return await this.finishSend(
           owner.target,
           content,
           confirmation,
           paneBeforePaste,
           enqueue,
+          idleOnly,
         )
       } catch (error) {
+        if (!pasteAcknowledged && error && typeof error === 'object' &&
+            'syscall' in error && typeof error.syscall === 'string' &&
+            /^spawn(?: |$)/.test(error.syscall)) {
+          throw error
+        }
         if (
           error &&
           typeof error === 'object' &&
@@ -1237,6 +1265,7 @@ export class TmuxTerminalSessionController
     confirmation: string,
     paneBeforePaste: string,
     enqueue: boolean,
+    idleOnly = false,
   ): Promise<boolean> {
       if (
         !(await waitForComposerPaste(
@@ -1302,6 +1331,12 @@ export class TmuxTerminalSessionController
         }
       }
       try {
+        if (idleOnly) {
+          const current = await capturePane(target)
+          if (isTerminalAgentWorking(current) || isTerminalOverlay(current)) {
+            throw new Error('The terminal changed before queued submission')
+          }
+        }
         await execFileAsync(
           'tmux',
           enqueue
@@ -1541,10 +1576,10 @@ export class TmuxTerminalSessionController
       )
       throw new Error('tmux did not return the created pane')
     }
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      const owner = await this.owner(sessionId, expectedTarget)
-      if (owner) {
-        try {
+    try {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const owner = await this.owner(sessionId, expectedTarget)
+        if (owner) {
           const startup = await waitForTerminalStartup(
             owner.target,
             true,
@@ -1574,21 +1609,18 @@ export class TmuxTerminalSessionController
             })
           }
           return { sessionName, windowId }
-        } catch (error) {
-          this.inputReadySessions.delete(sessionId)
-          this.automaticStartupSessions.delete(sessionId)
-          await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
-            () => undefined,
-          )
-          throw error
         }
+        await new Promise((resolve) => setTimeout(resolve, 100))
       }
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      throw new Error('Copilot did not start in the new tmux window')
+    } catch (error) {
+      this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
+      await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
+        () => undefined,
+      )
+      throw error
     }
-    await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
-      () => undefined,
-    )
-    throw new Error('Copilot did not start in the new tmux window')
   }
 
   sending(sessionId: string): boolean {
@@ -1651,6 +1683,15 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
     /Enter\s+(?:to\s+)?select/i.test(activeView) &&
     /Y\s*\/\s*N/i.test(activeView)
   )
+}
+
+function desktopInstallPromptIdentity(pane: string): string | undefined {
+  if (!isTerminalDesktopInstallPrompt(pane)) return undefined
+  const lines = pane.split('\n')
+  const cleaned = lines.map(cleanDialogLine)
+  const prompt = cleaned.findLastIndex((line) => /^Install it now\?$/i.test(line))
+  const frame = activeBottomFrame(lines, prompt)
+  return frame ? cleaned.slice(frame.start, frame.end + 1).join('\n') : undefined
 }
 
 function hasComposerAfter(lines: string[], index: number): boolean {
@@ -1757,16 +1798,19 @@ function containsCopiedInteractiveFrame(lines: string[]): boolean {
 async function clearAutomaticStartupPrompts(
   target: string,
   validateOwner: () => Promise<void>,
+  deadline: number,
 ): Promise<void> {
   const capture = async () =>
     (
-      await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target])
+      await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', target], {
+        timeout: Math.max(1, deadline - Date.now()),
+      })
     ).stdout
 
   const waitUntilClosed = async (
     isOpen: (pane: string) => boolean,
   ): Promise<void> => {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    for (let attempt = 0; attempt < 100 && Date.now() < deadline; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100))
       if (!isOpen(await capture())) {
         return
@@ -1777,32 +1821,33 @@ async function clearAutomaticStartupPrompts(
 
   // More than one known prompt can appear in sequence. Handle each once, then
   // re-read the screen to decide whether another distinct prompt followed it.
-  for (let prompt = 0; prompt < 10; prompt += 1) {
+  for (let prompt = 0; prompt < 10 && Date.now() < deadline; prompt += 1) {
     const pane = await capture()
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
-      (parseTerminalPermission(pane) && !isTerminalSessionInUsePrompt(pane)) ||
+      parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
       return
     }
-    if (isTerminalSessionInUsePrompt(pane)) {
-      // The terminal user can leave the cursor on "Go back". Normalize to the
-      // first row before accepting, rather than confirming whichever row they
-      // happened to leave selected.
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Up'])
-      await validateOwner()
-      await execFileAsync('tmux', ['send-keys', '-t', target, 'Enter'])
-      await waitUntilClosed(isTerminalSessionInUsePrompt)
-    } else if (isTerminalDesktopInstallPrompt(pane)) {
+    if (isTerminalDesktopInstallPrompt(pane)) {
       // Agentic Remote already supplies the remote supervision UI. Opening a
       // browser to install a separate desktop app cannot help this headless
       // terminal and keeps the first real prompt from reaching the composer.
+      const identity = desktopInstallPromptIdentity(pane)
       await validateOwner()
+      const current = await capture()
+      if (
+        identity === undefined ||
+        hasTerminalCommandPermissionQuestion(current) ||
+        parseTerminalPermission(current) ||
+        parseTerminalUserInput(current) ||
+        parseTerminalFormPrompt(current) ||
+        desktopInstallPromptIdentity(current) !== identity
+      ) {
+        return
+      }
       await execFileAsync('tmux', ['send-keys', '-t', target, 'n'])
       await waitUntilClosed(isTerminalDesktopInstallPrompt)
     } else {
@@ -1817,25 +1862,23 @@ async function waitForTerminalStartup(
   handleAutomaticPrompts = true,
   validateOwner: () => Promise<void> = async () => undefined,
 ): Promise<'ready' | 'action-required'> {
+  const deadline = Date.now() + TERMINAL_STARTUP_TIMEOUT_MS
   let readyFrames = 0
-  for (let attempt = 0; attempt < 900; attempt += 1) {
-    const pane = await capturePane(target)
+  while (Date.now() < deadline) {
+    const pane = await capturePane(target, Math.max(1, deadline - Date.now()))
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
-      (parseTerminalPermission(pane) && !isTerminalSessionInUsePrompt(pane)) ||
+      parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
     ) {
       return 'action-required'
     }
-    if (
-      isTerminalSessionInUsePrompt(pane) ||
-      isTerminalDesktopInstallPrompt(pane)
-    ) {
+    if (isTerminalDesktopInstallPrompt(pane)) {
       if (!handleAutomaticPrompts) {
         return 'action-required'
       }
-      await clearAutomaticStartupPrompts(target, validateOwner)
+      await clearAutomaticStartupPrompts(target, validateOwner, deadline)
       readyFrames = 0
       continue
     }
@@ -1932,6 +1975,16 @@ function isTerminalChrome(line: string): boolean {
 // border of the composer marks where it begins.
 const COMPOSER_TOP = /^\s*[╻╭][\u2580-\u259f\u2500-\u257f]*\s*$/u
 
+function isTerminalContextFooter(line: string): boolean {
+  const parts = line.trim().split('·').map((part) => part.trim())
+  return (
+    parts.length >= 2 &&
+    parts.every(Boolean) &&
+    /^\d+(?:,\d{3})*(?:\.\d+)?[kKmMgG]?\s+context\s*\(\d+(?:\.\d+)?%\)$/u
+      .test(parts.at(-1) ?? '')
+  )
+}
+
 function hasLiveTerminalComposer(pane: string): boolean {
   const lines = pane.split('\n')
   const top = lines.findLastIndex((line) => COMPOSER_TOP.test(line))
@@ -1963,6 +2016,8 @@ function hasLiveTerminalComposer(pane: string): boolean {
   return lines.slice(bottom + 1).every(
     (line) =>
       isTerminalChrome(line) ||
+      isTerminalContextFooter(line) ||
+      /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||
       (/\/update\b/u.test(line) && /\b\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),
@@ -2032,7 +2087,7 @@ export function isTerminalOverlay(pane: string): boolean {
 // The CLI only offers to interrupt while the agent is working, so this marks
 // the frames whose new lines belong to a turn rather than to a command.
 export function isTerminalAgentWorking(pane: string): boolean {
-  return /esc\s+interrupt/i.test(pane.trimEnd().split('\n').slice(-6).join(' '))
+  return /esc\s+interrupt/i.test(terminalControlLines(pane).slice(-6).join(' '))
 }
 
 /**
@@ -3054,7 +3109,7 @@ export function composerHoldsText(pane: string): boolean {
   return !COMPOSER_PLACEHOLDERS.some((pattern) => pattern.test(bare))
 }
 
-async function capturePane(target: string): Promise<string> {
+async function capturePane(target: string, timeout?: number): Promise<string> {
   return (
     await execFileAsync('tmux', [
       'capture-pane',
@@ -3064,7 +3119,7 @@ async function capturePane(target: string): Promise<string> {
       target,
       '-S',
       '-30',
-    ])
+    ], { timeout })
   ).stdout
 }
 

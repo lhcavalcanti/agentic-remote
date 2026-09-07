@@ -328,6 +328,7 @@ export async function registerHubRoutes(
       return reply.code(404).send({ error: 'Computer is not registered' })
     }
     if (!registrationIsCurrent()) {
+      await knowledge.removeRoot(root.id)
       return reply.code(409).send({
         error: 'Computer pairing changed while saving this folder. Choose the computer again.',
       })

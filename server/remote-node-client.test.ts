@@ -2,6 +2,7 @@ import { once } from 'node:events'
 import { createServer, type RequestListener, type Server } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RemoteNodeClient } from './remote-node-client.js'
+import { TERMINAL_REQUEST_TIMEOUT_MS, TERMINAL_STARTUP_TIMEOUT_MS } from '../shared/terminal-timing.js'
 
 const servers: Server[] = []
 const session = {
@@ -37,6 +38,31 @@ afterEach(async () => {
 })
 
 describe('paired-node redirect isolation', () => {
+  it('keeps startup-capable mutations alive for both readiness budgets without extending polls', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ session, sessions: [] }), {
+        headers: { 'content-type': 'application/json' },
+      }))
+    const remote = client('http://fixture.invalid')
+    for (const operation of [
+      () => remote.createSession({ cwd: '/fixture', provider: 'copilot', terminalBacked: true }),
+      () => remote.activateSession('fixture'),
+      () => remote.clearConversation('fixture'),
+      () => remote.resumeSession('fixture'),
+      () => remote.restartSession('fixture'),
+      () => remote.moveToTerminal('fixture'),
+      () => remote.sendMessage('fixture', { content: 'Startup admission' }),
+      () => remote.executeCommand('fixture', { command: '/usage' }),
+    ]) {
+      await operation()
+      expect(timeout).toHaveBeenLastCalledWith(TERMINAL_REQUEST_TIMEOUT_MS)
+    }
+    expect(TERMINAL_REQUEST_TIMEOUT_MS).toBeGreaterThan(2 * TERMINAL_STARTUP_TIMEOUT_MS)
+    await remote.listSessions()
+    expect(timeout).toHaveBeenLastCalledWith(15_000)
+  })
+
   it.each([307, 308])('does not replay a POST into a hub-local route after HTTP %i', async (status) => {
     const mutations: { url?: string; body: string }[] = []
     const target = await listen((request, response) => {

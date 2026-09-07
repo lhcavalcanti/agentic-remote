@@ -1572,6 +1572,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     Promise<unknown>
   >()
   private readonly terminalAdmissionDispatched = new Set<string>()
+  private readonly pendingTerminalPromptDispatches = new Map<string, string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
   private readonly backgroundTaskTracker = new BackgroundTaskTracker()
@@ -3883,19 +3884,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (startupLocked && !nativeEnqueue) {
         this.terminalAdmissionDispatched.add(sessionId)
       }
-      await this.recordDelivery(sessionId, answers, delivery)
       if (nativeEnqueue) {
+        await this.recordDelivery(sessionId, answers, delivery)
         const queued = await this.store.update(sessionId, (session) => {
           session.activity = 'Queued in terminal'
         })
         this.publish(queued)
         return queued
       }
-      const delivered = await this.store.markTerminalPromptDispatched(
-        sessionId,
-        dispatchedAt,
-        'Sent to terminal',
-      )
+      if (delivery) delivery.accepted = true
+      if (answers) {
+        const claim = this.recoveryClaims.get(answers)
+        if (claim) claim.accepted = true
+      }
+      // Receipt persistence may fail and release the recovery's FIFO. Install
+      // its independent post-send barrier first, retaining failures for retry.
+      this.pendingTerminalPromptDispatches.set(sessionId, dispatchedAt)
+      const accepted = this.store.get(sessionId)
+      if (accepted) this.publish(accepted)
+      const delivered = await this.persistTerminalPromptDispatch(sessionId, dispatchedAt)
+      await this.recordDelivery(sessionId, answers, delivery)
       this.publish(delivered)
       if (await this.waitForTerminalEventLog(sessionId)) {
         return this.store.get(sessionId) || delivered
@@ -4047,6 +4055,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
     return false
+  }
+
+  private async persistTerminalPromptDispatch(
+    sessionId: string,
+    dispatchedAt: string,
+  ): Promise<SessionDetail> {
+    const delivered = await this.store.markTerminalPromptDispatched(
+      sessionId, dispatchedAt, 'Sent to terminal',
+    )
+    if (this.pendingTerminalPromptDispatches.get(sessionId) === dispatchedAt) {
+      this.pendingTerminalPromptDispatches.delete(sessionId)
+    }
+    return delivered
   }
 
   private async reconcileUntrackedTerminalDispatches(): Promise<void> {
@@ -4261,6 +4282,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     // Only a durable acknowledgement can release the queue. Propagate a
     // rejected transaction rather than reporting the marker as cleared.
+    const pendingDispatchAt = this.pendingTerminalPromptDispatches.get(sessionId)
+    if (pendingDispatchAt) {
+      await this.persistTerminalPromptDispatch(sessionId, pendingDispatchAt)
+    }
     if (failed.failedAt) await this.store.acceptRecoveryResend(sessionId, failed.failedAt)
     const cleared = await this.store.clearFailedPrompt(sessionId, failed.failedAt)
     this.publish(cleared)
@@ -5707,11 +5732,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const sessionIds = new Set([
       ...this.externalSessionIds,
       ...this.sessions.keys(),
+      ...this.pendingTerminalPromptDispatches.keys(),
       ...this.pendingTerminalQueueSettlements.keys(),
       ...this.pendingTerminalQueueClaims.keys(),
     ])
     await Promise.all(
       [...sessionIds].map(async (sessionId) => {
+        const pendingDispatchAt = this.pendingTerminalPromptDispatches.get(sessionId)
+        if (pendingDispatchAt) {
+          const current = this.store.get(sessionId)
+          if (!current || current.suspended || this.deletedSessionIds.has(sessionId)) {
+            this.pendingTerminalPromptDispatches.delete(sessionId)
+          } else {
+            if (!this.admissions.canEnter(sessionId)) return
+            await this.admissions.run(sessionId, async () => {
+              const delivered = await this.persistTerminalPromptDispatch(sessionId, pendingDispatchAt)
+              this.publish(delivered)
+            })
+          }
+        }
         const retry = this.pendingTerminalQueueClaims.get(sessionId)
         if (
           this.pendingTerminalQueueSettlements.has(sessionId) ||
@@ -6877,7 +6916,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.pendingTerminalQueueClaims.delete(sessionId)
         return false
       }
-      if (!next || stored.failedPrompt || terminalDispatch) {
+      if (!next || stored.failedPrompt || terminalDispatch ||
+          this.pendingTerminalPromptDispatches.has(sessionId)) {
         this.pendingTerminalQueueClaims.delete(sessionId)
         // The acknowledgement's later wake still needs startup owner/composer/claim checks.
         if (!this.awaitingAcceptedStartupRecovery(sessionId, stored)) this.startupTerminalQueues.delete(sessionId)
@@ -6993,7 +7033,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.stopped) {
       throw new Error('The session service is stopping')
     }
-    if (this.store.terminalQueueDispatch(sessionId)) {
+    if (this.store.terminalQueueDispatch(sessionId) ||
+        this.pendingTerminalPromptDispatches.has(sessionId)) {
       throw Object.assign(
         new Error('A queued prompt is still awaiting durable delivery confirmation. Wait before sending more work.'),
         { statusCode: 409 },

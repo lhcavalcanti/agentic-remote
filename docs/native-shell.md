@@ -99,38 +99,61 @@ hub, the origin policy, the `/api/events` WebSocket, the Cloudflare Access
 cookie, relative fetches, the service worker, and the §12 update flow all behave
 exactly as they already do in Safari.
 
-### 2.3 Why Tauri rather than Electron
+### 2.3 Why Tauri, and when to reconsider
 
-| | Tauri v2 | Electron |
+**Retain Tauri v2 for the current product direction: one React interface with
+desktop and iOS clients.** This is a conditional engineering choice, not a
+claim that Tauri is the only cross-platform option or that the existing iOS
+shell is ready to ship.
+
+| Option | Fit for Agentic Remote | Tradeoff |
 | --- | --- | --- |
-| Bundle | ~3–6 MB | ~90–150 MB |
-| Idle memory | ~30–50 MB | ~150–300 MB |
-| Engine | System WKWebView | Bundled Chromium |
-| Self-hosted auto-update | Own ed25519 keys | Squirrel.Mac, **requires Apple code signing** |
-| Apple Developer Program for updates | Not required | Required ($99/yr) |
-| Toolchain | Rust + Node | Node only |
+| Tauri v2 | Reuses the React UI and existing `shell/` while supporting desktop and mobile targets. | Rust plus native Swift integrations where the mobile bridge/plugins do not cover the requirement. |
+| SwiftUI | Strong candidate if an Apple-native interface becomes the primary product. SwiftUI can share code across Apple platforms. | A native UI would replace, rather than directly reuse, the React views. A Swift webview wrapper would still need the same web/native lifecycle work. |
+| Capacitor | Credible alternative for a mobile-first, web-UI product targeting iOS and Android. | Replacing the existing shell requires another integration review, especially for the remote hub's authentication/origin model and the desktop requirements. |
+| Existing PWA | Lowest-maintenance way to supervise sessions from a phone today. | Remains the baseline; native-specific features must justify a separate signed application. |
 
-Three factors decide it:
+Tauri's documented support for existing frontend frameworks, desktop/mobile
+targets, and Swift mobile plugins matches this project's reuse goal. Its
+Apple webview also keeps the current WebKit-oriented UI relevant. The choice
+must not depend on unmeasured bundle-size or idle-memory comparisons.
 
-1. **Electron cannot target iOS at all.** Now that both a macOS and an iOS app
-   are wanted, this alone is decisive: Tauri is the only option that builds both
-   from one `src-tauri` and one web UI.
-2. **Auto-update without depending on Apple signing.** Tauri's updater verifies
-   with its own ed25519 keypair, while Electron's Squirrel.Mac updater only
-   works on a code-signed app. Signing is now available and will be used
-   (§5.1), but the update path does not *depend* on it.
-3. **WKWebView is the engine the PWA already targets.** The mobile-first CSS,
-   safe-area handling, and viewport work in `src/index.css` were written and
-   validated against WebKit — and on iOS, WKWebView is the only option anyway.
-   Electron would introduce a second rendering engine to regress against.
+Native code is not necessarily limited to a few Rust calls. APNs registration,
+notification actions, authentication handoff, and any future Live Activity
+extension can require Swift and platform-specific lifecycle work. Changing
+shell frameworks does not, by itself, remove those requirements.
 
-The cost is a Rust toolchain. It is bounded: the Rust here is window, tray,
-badge, and notification setup. All feature logic stays in TypeScript, driven
-from the existing React app.
+Before broad native implementation, complete a small signed-iPhone feasibility
+slice under #92:
 
-Rejected alternatives: **Electron** (no iOS, size, signing requirement);
-**Swift/SwiftUI** (would mean two separate native codebases and app logic in a
-third language); **Nativefier** (unmaintained, no controlled update path).
+1. Launch the existing shell against a configured HTTPS hub, complete the
+   actual identity-provider login, and exercise expiry/re-authentication and
+   app relaunch without exporting credentials.
+2. Background and resume the app, lose and restore connectivity, and confirm
+   that the session view catches up without duplicate sends or stale
+   permission actions. Do not depend on a continuously running webview socket.
+3. Prove one APNs notification from an isolated test sender while backgrounded,
+   then open the exact owning session from it. This spike does not require a
+   production push relay. Wire actions only with authenticated,
+   stale-request-safe handling; a notification is not authorization to execute
+   a command.
+4. Keep IPC restricted to the configured hub origin and the existing narrow
+   permission set. Do not broaden CORS, allow arbitrary remote origins, or
+   grant filesystem/shell access just to make the prototype connect.
+5. Record the native code/plugin maintenance needed and compare the resulting
+   experience with the PWA. If the bridge becomes the dominant implementation
+   burden, write a separate stack decision before a rewrite.
+
+This feasibility slice proves technology fit, not App Store acceptance.
+Distribution and review remain separate (§5.2). Keep the same repository and
+separate `shell/` package whichever client stack is eventually chosen.
+
+Primary references:
+
+- [Tauri platform and frontend support](https://v2.tauri.app/)
+- [Tauri mobile plugin development](https://v2.tauri.app/develop/plugins/develop-mobile/)
+- [SwiftUI across Apple platforms](https://developer.apple.com/swiftui/)
+- [Capacitor's web-native runtime](https://capacitorjs.com/docs)
 
 ### 2.4 Safari "Add to Dock" as the stopgap and the baseline
 

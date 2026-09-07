@@ -1051,6 +1051,33 @@ describe('promotion monitor', () => {
     expect(await readFile(path.join(context.root, 'state', 'promotion-state'), 'utf8')).toBe(record)
   })
 
+  it('excludes a rejected release before interrupted deletion can remove its failure marker', async () => {
+    const { context, previous, fallback, state } = await healthyReleaseFixture(true)
+    const realRm = (await run('sh', ['-c', 'command -v rm'])).stdout.trim()
+    await stub(path.join(context.root, 'bin'), 'rm', [
+      'target="${@: -1}"',
+      'if [[ -f "$target/.promotion-failed" ]]; then',
+      `  ${JSON.stringify(realRm)} -- "$target/.promotion-failed"`,
+      '  printf "interrupted cleanup\\n" > "$target/partial"',
+      '  kill -KILL "$PPID"',
+      '  exit 1',
+      'fi',
+      `exec ${JSON.stringify(realRm)} "$@"`,
+    ].join('\n'))
+
+    const result = await monitor(context, { FAIL_CANDIDATE_HEALTH: '1' })
+    expect(result.code).not.toBe(0)
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    const inventory = (await readdir(context.releases, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory()).map((entry) => path.join(context.releases, entry.name))
+    expect(inventory.sort()).toEqual([previous, fallback].sort())
+    const quarantined = await readdir(`${context.releases}.rejected`)
+    expect(quarantined).toHaveLength(1)
+    expect(await readFile(path.join(`${context.releases}.rejected`, quarantined[0], 'partial'), 'utf8'))
+      .toBe('interrupted cleanup\n')
+    expect(await readFile(path.join(context.root, 'state', 'last-graduated-commit'), 'utf8')).toBe(state)
+  })
+
   it.each([
     ['refused', { FAIL_PENDING_PHASE: 'prepared' }],
     ['interrupted', { KILL_PENDING_PHASE: 'prepared' }],

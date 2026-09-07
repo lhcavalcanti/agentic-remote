@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import ReaderWorkspace from './ReaderWorkspace'
 import type {
   CSSProperties,
   ChangeEvent,
@@ -176,7 +177,7 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
-import { applyAccentIcon } from './accent-icon'
+import { accentIconUrl, applyAccentIcon } from './accent-icon'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
   collapseKnowledgeFolder,
@@ -7552,6 +7553,12 @@ function App() {
     useState<DefaultSessionFolders>(readDefaultSessionFolders)
   const [accentTheme, setAccentTheme] =
     useState<AccentTheme>(readAccentTheme)
+  const brandIcon = useMemo(
+    () => accentIconUrl(
+      (accentThemes.find((theme) => theme.id === accentTheme) ?? accentThemes[0]).color,
+    ),
+    [accentTheme],
+  )
   const [error, setError] = useState<string>()
   const [computerOrder, setComputerOrder] = useState<string[]>(() =>
     readStoredOrder('agentic-remote:computer-order', []),
@@ -13186,9 +13193,13 @@ function App() {
       />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
         <div className="brand">
-          <span className="brand__mark">
-            <Bot size={19} />
-          </span>
+          <img
+            alt=""
+            className="brand__mark"
+            height={36}
+            src={brandIcon}
+            width={36}
+          />
           <div>
             <strong>Agentic Remote</strong>
             <span>Multi-computer agent hub</span>
@@ -13512,7 +13523,7 @@ function App() {
       ) : null}
 
 
-      <div className={`workspace workspace--${knowledgeMode}`}>
+      <ReaderWorkspace mode={knowledgeMode}>
       <main className="conversation" hidden={knowledgeMode === 'expanded'}>
         <header className="conversation-header">
           <button
@@ -14344,6 +14355,7 @@ function App() {
         aria-label="Session knowledge"
         className="knowledge-panel"
         hidden={knowledgeMode === 'hidden'}
+        id="knowledge-panel"
       >
         <header className="knowledge-panel__header">
           <BookOpen aria-hidden="true" size={16} />
@@ -14441,7 +14453,7 @@ function App() {
           </div>
         </div>
       </aside>
-      </div>
+      </ReaderWorkspace>
 
       <NewSessionDialog
         computers={computers}

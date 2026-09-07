@@ -26,6 +26,8 @@ import type {
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
+import { parseSubmissionReceipt, SubmissionError, type SubmissionReceipt } from '../shared/submission-error.js'
+import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -43,12 +45,13 @@ interface RemoteNodeClientEvents {
   status: [online: boolean]
 }
 
-class RemoteNodeRequestError extends Error {
+class RemoteNodeRequestError extends SubmissionError {
   constructor(
     message: string,
-    readonly statusCode: number,
+    statusCode: number,
+    submission?: SubmissionReceipt,
   ) {
-    super(message)
+    super(message, statusCode, submission)
     this.name = 'RemoteNodeRequestError'
   }
 }
@@ -379,7 +382,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         method: 'POST',
         body: '{}',
       },
-      30_000,
+      TERMINAL_REQUEST_TIMEOUT_MS,
     )
     return response.session
   }
@@ -532,7 +535,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   private async request<TResult = unknown>(
     path: string,
     init: RequestInit = {},
-    timeoutMs = 15_000,
+    timeoutMs = init.method && init.method !== 'GET' && path.startsWith('/node-api/sessions')
+      ? TERMINAL_REQUEST_TIMEOUT_MS
+      : 15_000,
     markOnline = true,
   ): Promise<TResult> {
     const headers = new Headers(init.headers)
@@ -570,11 +575,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     }
     if (!response.ok) {
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string }
+        | { error?: string; submission?: unknown }
         | null
       throw new RemoteNodeRequestError(
         payload?.error || `${this.computer.name} request failed (${response.status})`,
         response.status,
+        parseSubmissionReceipt(payload?.submission),
       )
     }
     if (markOnline) {

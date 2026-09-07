@@ -887,8 +887,13 @@ describe('Provider queue persistence boundaries', () => {
     expect(store.get('session')?.queuedCount).toBe(1)
   })
 
-  it('does not claim FIFO work while an immediate terminal send owns admission', async () => {
+  it('does not claim newly queued FIFO work while an immediate terminal send owns admission', async () => {
     const { store } = await fixture()
+    const waiting = store.get('session')!.queuedPrompts!
+    await store.update('session', (session) => {
+      session.queuedPrompts = []
+      session.queuedCount = 0
+    })
     const { service, terminal } = copilot(store, [])
     let enter = () => {}
     let finish = () => {}
@@ -901,7 +906,10 @@ describe('Provider queue persistence boundaries', () => {
       return true
     })
     const sending = service.sendMessage('session', 'Immediate prompt')
-    await entered
+    await Promise.race([entered, sending.then(() => {
+      throw new Error('The immediate send finished before its delivery gate')
+    })])
+    for (const prompt of waiting) await store.enqueuePrompt('session', prompt)
     await drainTerminal(service)
     expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', 'Immediate prompt', false)
     expect(store.terminalQueueDispatch('session')).toBeUndefined()

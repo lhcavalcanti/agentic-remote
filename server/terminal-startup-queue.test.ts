@@ -20,6 +20,9 @@ const exec = promisify(execFile)
 const services: AgentService[] = []
 const releases: Array<() => void> = []
 let root = ''
+// A retry discovering a fresh owner also waits for the controller's stable-composer window.
+const retryReadinessTimeout = 6_000
+const discoveryReadinessTimeout = 16_000
 
 function gate() {
   let finish = () => {}
@@ -198,6 +201,75 @@ draw(); save()
   }
 }
 
+async function drainWithCoalescedMetadata(
+  native: Awaited<ReturnType<typeof fixture>>,
+  runtime: ReturnType<Awaited<ReturnType<typeof fixture>>['connect']>,
+  refuse: boolean,
+) {
+  const marker = 'Rejected coalesced metadata candidate'
+  let refusals = 0
+  let mutation: Promise<unknown> | undefined
+  vi.mocked(writeFile).mockImplementation(async (...args) => {
+    if (refuse && String(args[0]) === path.join(native.stateDirectory, 'state.json.tmp') &&
+        JSON.parse(String(args[1])).sessions[native.id]?.activity === marker) {
+      refusals += 1
+      throw Object.assign(new Error('Coalesced metadata persistence refused'), { code: 'EACCES' })
+    }
+    return disk.writeFile(...args)
+  })
+  const read = runtime.store.readAfterWrites.bind(runtime.store)
+  vi.spyOn(runtime.store, 'readAfterWrites').mockImplementationOnce((id) => {
+    mutation = runtime.store.update(id, (session) => { session.activity = marker })
+      .then(() => ({ committed: true }), (error: unknown) => ({ error }))
+    return read(id)
+  })
+  await runtime.service['drainTerminalQueue'](native.id)
+  expect(mutation).toBeDefined()
+  expect(await mutation).toMatchObject(refuse ? { error: { code: 'EACCES' } } : { committed: true })
+  expect(refusals).toBe(refuse ? 1 : 0)
+}
+
+async function acceptedStartupRecovery(
+  readiness: 'ready' | 'unreadable' | 'no owner' = 'unreadable',
+  prepare?: (store: SessionStore, id: string) => Promise<unknown>,
+) {
+  const native = await fixture()
+  const accepted = 'Already accepted before restart; never resend'
+  const queued = 'FIFO behind accepted recovery'
+  const token = `resend:${randomUUID()}`
+  await native.seed([queued], async (store) => {
+    const failed = { content: accepted, failedAt: '2026-09-06T01:00:00.000Z', uncertain: true }
+    await store.update(native.id, (session) => { session.failedPrompt = failed })
+    await store.claimFailedPrompt(native.id, failed, accepted, token)
+    await store.acceptRecoveryResend(native.id, token)
+    await prepare?.(store, native.id)
+  })
+  const runtime = native.connect()
+  const acknowledging = gate()
+  const releaseAcknowledgement = gate()
+  const acknowledge = runtime.store.clearFailedPrompt.bind(runtime.store)
+  vi.spyOn(runtime.store, 'clearFailedPrompt').mockImplementationOnce(async (...args) => {
+    acknowledging.finish()
+    await releaseAcknowledgement.promise
+    return acknowledge(...args)
+  })
+  let readable = readiness !== 'unreadable'
+  const capture = runtime.terminal.capture.bind(runtime.terminal)
+  const captures = vi.spyOn(runtime.terminal, 'capture').mockImplementation((...args) =>
+    readable ? capture(...args) : Promise.resolve(undefined))
+  if (readiness === 'no owner') {
+    runtime.finder.mockResolvedValue([])
+    vi.spyOn(runtime.terminal, 'has').mockResolvedValue(false)
+  }
+  const claims = vi.spyOn(runtime.store, 'claimTerminalQueuedPrompt')
+  await runtime.service.start()
+  await acknowledging.promise
+  return {
+    native, runtime, accepted, queued, token, claims, captures, releaseAcknowledgement,
+    setReadable: () => { readable = true },
+  }
+}
+
 beforeEach(async () => {
   root = await createIsolatedTmuxRoot()
   vi.stubEnv('HOME', root)
@@ -368,7 +440,7 @@ describe('Persisted native queue startup', () => {
     expect((await native.persisted()).queuedPrompts).toHaveLength(1)
     expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
     await native.control('idle')
-    const delivered = await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 3_000)
+    const delivered = await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)
     expect(delivered.submits).toEqual(['Held for native readiness'])
     expect(runtime.creates).not.toHaveBeenCalled()
   }, 15_000)
@@ -385,8 +457,8 @@ describe('Persisted native queue startup', () => {
     expect((await native.receipt()).submits).toEqual([])
     expect((await native.persisted()).queuedPrompts).toHaveLength(1)
     expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
-    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 3_000)).submits)
-      .toEqual(['Retry after observation'])
+    const delivered = await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)
+    expect(delivered.submits).toEqual(['Retry after observation'])
   }, 15_000)
 
   it('keeps pending startup work after an inconclusive boot owner probe', async () => {
@@ -395,7 +467,7 @@ describe('Persisted native queue startup', () => {
     const runtime = native.connect()
     vi.spyOn(runtime.terminal, 'has').mockRejectedValueOnce(new Error('Transient owner probe failure'))
     await runtime.service.start()
-    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 3_000)).submits)
+    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)).submits)
       .toEqual(['Native owner survived'])
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
     expect(runtime.creates).not.toHaveBeenCalled()
@@ -410,7 +482,7 @@ describe('Persisted native queue startup', () => {
     await runtime.service.start()
     expect((await native.receipt()).submits).toEqual([])
     expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
-    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 13_000)).submits)
+    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, discoveryReadinessTimeout)).submits)
       .toEqual(['Await complete discovery'])
     expect(runtime.finder.mock.calls.length).toBeGreaterThan(1)
     expect(runtime.creates).not.toHaveBeenCalled()
@@ -437,7 +509,7 @@ describe('Persisted native queue startup', () => {
     expect(refused).toBe(true)
     expect((await native.receipt()).pastes).toEqual([])
     expect((await native.persisted()).queuedPrompts).toEqual(before.queuedPrompts)
-    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 3_000)).submits)
+    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)).submits)
       .toEqual(['Retry durable claim'])
     expect((await native.persisted()).queuedPrompts).toEqual([])
   }, 15_000)
@@ -463,7 +535,7 @@ describe('Persisted native queue startup', () => {
     expect((await native.receipt()).pastes).toEqual([])
     expect((await native.persisted()).queuedPrompts).toEqual(before.queuedPrompts)
     expect(runtime.service['nativeStartupDiscoveryReady']).toBe(false)
-    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 13_000)).submits)
+    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, discoveryReadinessTimeout)).submits)
       .toEqual(['Await durable discovery'])
     expect(runtime.creates).not.toHaveBeenCalled()
   }, 20_000)
@@ -528,7 +600,7 @@ describe('Persisted native queue startup', () => {
     const [, changed] = await Promise.all([starting, changing])
     if (action === 'clear' || action === 'suspend') {
       expect(changed).toMatchObject({ error: { statusCode: 409 } })
-      expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 3_000)).pastes)
+      expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)).pastes)
         .toEqual(['Do not outlive the owner'])
       expect(runtime.store.isRetiredSession(native.id)).toBe(false)
     } else {
@@ -542,5 +614,273 @@ describe('Persisted native queue startup', () => {
       await new Promise((resolve) => setTimeout(resolve, 80))
       expect(await readFile(path.join(native.stateDirectory, 'state.json'), 'utf8')).toBe(bytes)
     }
+  }, 15_000)
+})
+
+describe('PR162 startup pump composition', () => {
+  it.each(['message', 'command'] as const)(
+    'resumes an answering %s committed during stop once across coalesced wakes and Clear',
+    async (kind) => {
+      const native = await fixture()
+      const old = native.connect()
+      await old.service.start()
+      const content = kind === 'command' ? '/usage recovered before stop' : 'Recovered message before stop'
+      const token = '2026-09-06T01:00:00.000Z'
+      await old.store.update(native.id, (session) => {
+        session.failedPrompt = { content, failedAt: token, uncertain: true }
+      })
+      const writing = gate()
+      const releaseWrite = gate()
+      let held = false
+      vi.mocked(writeFile).mockImplementation(async (...args) => {
+        if (!held && String(args[0]) === path.join(native.stateDirectory, 'state.json.tmp') &&
+            JSON.parse(String(args[1])).sessions[native.id]?.queuedPrompts?.some(
+              (prompt: { content: string }) => prompt.content === content,
+            )) {
+          held = true
+          writing.finish()
+          await releaseWrite.promise
+        }
+        return disk.writeFile(...args)
+      })
+      const sending = kind === 'command'
+        ? old.service.executeCommand(native.id, content, true, token)
+        : old.service.sendMessage(native.id, content, true, token)
+      await writing.promise
+      const stopping = old.service.stop()
+      releaseWrite.finish()
+      await Promise.all([sending, stopping])
+      const before = await native.persisted()
+      expect(before.queuedPrompts.map((prompt: { content: string }) => prompt.content)).toEqual([content])
+      expect(before.failedPrompt).toBeUndefined()
+      expect(before.recoveryResend).toBeUndefined()
+      expect((await native.receipt()).pastes).toEqual([])
+      await rm(native.eventsFile)
+      forgetSessionEvents(native.id)
+
+      const restarted = native.connect()
+      const observing = gate()
+      const releaseObservation = gate()
+      const capture = restarted.terminal.capture.bind(restarted.terminal)
+      vi.spyOn(restarted.terminal, 'capture').mockImplementationOnce(async (...args) => {
+        observing.finish()
+        await releaseObservation.promise
+        return capture(...args)
+      })
+      const claims = vi.spyOn(restarted.store, 'claimTerminalQueuedPrompt')
+      const starting = restarted.service.start()
+      await observing.promise
+      expect(restarted.service.start()).toBe(starting)
+      restarted.service['wakeTerminalQueue'](native.id)
+      restarted.service['wakeTerminalQueue'](native.id)
+      restarted.service['wakeTerminalQueue'](native.id)
+      const clearing = restarted.service.clearConversation(native.id)
+        .then((value) => ({ value }), (error: unknown) => ({ error }))
+      releaseObservation.finish()
+      await starting
+      expect(await clearing).toMatchObject({ error: { statusCode: 409 } })
+      await vi.waitFor(() => expect(restarted.service['terminalQueueWakeups'].size).toBe(0))
+      expect((await native.receipt()).submits).toEqual([content])
+      expect((await native.receipt()).pastes).toEqual([content])
+      expect((await native.receipt()).pid).toBe(native.pid)
+      expect(claims).toHaveBeenCalledOnce()
+      expect(claims.mock.calls[0][3]).toBe(true)
+      expect((await native.persisted()).queuedPrompts).toEqual([])
+      expect(restarted.service['startupTerminalQueues'].has(native.id)).toBe(false)
+      await expect(kind === 'command'
+        ? restarted.service.executeCommand(native.id, content, true, token)
+        : restarted.service.sendMessage(native.id, content, true, token))
+        .rejects.toMatchObject({ statusCode: 409 })
+      expect(restarted.creates).not.toHaveBeenCalled()
+      expect(restarted.sdk.resumeSession).not.toHaveBeenCalled()
+    }, 15_000,
+  )
+
+  it.each([
+    { readiness: 'ready', coalescedBatch: 'none' },
+    { readiness: 'unreadable', coalescedBatch: 'none' },
+    { readiness: 'no owner', coalescedBatch: 'none' },
+    { readiness: 'unreadable', coalescedBatch: 'success' },
+    { readiness: 'unreadable', coalescedBatch: 'refusal' },
+  ] as const)(
+    'retains startup eligibility until an accepted recovery acknowledgement settles ($readiness/$coalescedBatch)',
+    async ({ readiness, coalescedBatch }) => {
+      const { native, runtime, accepted, queued, token, claims, releaseAcknowledgement, setReadable } =
+        await acceptedStartupRecovery(readiness)
+      expect(runtime.service.getSession(native.id)?.failedPrompt).toBeUndefined()
+      expect(runtime.store.recoveryResend(native.id)?.accepted).toBe(true)
+      expect((await native.receipt()).pastes).toEqual([])
+      expect.soft(runtime.service['startupTerminalQueues'].has(native.id)).toBe(true)
+      if (coalescedBatch !== 'none') {
+        await drainWithCoalescedMetadata(native, runtime, coalescedBatch === 'refusal')
+        expect.soft(runtime.service['startupTerminalQueues'].has(native.id)).toBe(true)
+        const persisted = await native.persisted()
+        expect(persisted.recoveryResend).toMatchObject({ failedAt: token, accepted: true })
+        expect(persisted.failedPrompt.failedAt).toBe(token)
+        expect((await native.receipt()).pastes).toEqual([])
+      }
+      releaseAcknowledgement.finish()
+      await vi.waitFor(() => expect(runtime.store.get(native.id)?.failedPrompt).toBeUndefined())
+      if (readiness !== 'ready') {
+        await vi.waitFor(() => expect(
+          runtime.service['pendingTerminalQueueClaims'].has(native.id) || claims.mock.calls.length > 0,
+        ).toBe(true))
+        expect(claims).not.toHaveBeenCalled()
+        expect((await native.receipt()).pastes).toEqual([])
+        expect((await native.persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content))
+          .toEqual([queued])
+        setReadable()
+      }
+      if (readiness !== 'no owner') {
+        expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)).submits)
+          .toEqual([queued])
+        expect(claims).toHaveBeenCalledOnce()
+        expect(claims.mock.calls[0][3]).toBe(true)
+        expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
+      }
+      await expect(runtime.service.sendMessage(native.id, accepted, false, token))
+        .rejects.toMatchObject({ statusCode: 409 })
+      expect((await native.receipt()).pastes).not.toContain(accepted)
+      expect(runtime.creates).not.toHaveBeenCalled()
+    }, 15_000,
+  )
+
+  it.each(['newer recovery', 'unknown attempt'] as const)(
+    'does not preserve the accepted exception for a %s after a coalesced refusal',
+    async (replacement) => {
+      const context = await acceptedStartupRecovery()
+      const { native, runtime, accepted, queued, token, claims } = context
+      const next = {
+        content: replacement === 'unknown attempt' ? accepted : 'Newer recovery text',
+        failedAt: `resend:${randomUUID()}`, uncertain: true,
+      }
+      await runtime.store.update(native.id, (session) => {
+        session.failedPrompt = next
+        if (replacement === 'unknown attempt') Object.assign(session, {
+          recoveryResend: { failedAt: next.failedAt, content: next.content, accepted: false },
+        })
+      })
+      expect(runtime.service['recoveryClaims'].get(token)?.accepted).toBe(true)
+      await drainWithCoalescedMetadata(native, runtime, true)
+      expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
+      expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(false)
+      const acknowledgement = [...runtime.service['pendingAcknowledgements'].values()]
+      context.releaseAcknowledgement.finish()
+      await Promise.all(acknowledgement)
+      context.setReadable()
+      await runtime.service.refreshTranscripts()
+      expect(runtime.service.getSession(native.id)?.failedPrompt).toEqual(next)
+      expect((await native.persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content))
+        .toEqual([queued])
+      expect(claims).not.toHaveBeenCalled()
+      expect((await native.receipt()).pastes).toEqual([])
+    }, 15_000,
+  )
+
+  it('backs off coalesced accepted-recovery reads without relaxing the startup guard', async () => {
+    const context = await acceptedStartupRecovery()
+    const { native, runtime, claims, captures } = context
+    await drainWithCoalescedMetadata(native, runtime, true)
+    expect(runtime.service['pendingTerminalQueueClaims'].get(native.id)?.retryDelay).toBe(1500)
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      runtime.service['retryTerminalQueueClaim'](native.id, true)
+    }
+    const retry = runtime.service['pendingTerminalQueueClaims'].get(native.id)
+    expect(retry?.retryDelay).toBe(60_000)
+    const captureCount = captures.mock.calls.length
+    for (let attempt = 0; attempt < 4; attempt += 1) await runtime.service.refreshTranscripts()
+    expect(runtime.service['pendingTerminalQueueClaims'].get(native.id)).toEqual(retry)
+    expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(true)
+    expect(captures).toHaveBeenCalledTimes(captureCount)
+    expect(claims).not.toHaveBeenCalled()
+    expect((await native.receipt()).pastes).toEqual([])
+    const stopping = runtime.service.stop()
+    context.releaseAcknowledgement.finish()
+    await stopping
+    expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(false)
+    expect((await native.receipt()).pastes).toEqual([])
+  }, 15_000)
+
+  it.each([
+    { lifecycle: 'stop', cleanup: 'retry' },
+    { lifecycle: 'suspend', cleanup: 'retry' },
+    { lifecycle: 'delete', cleanup: 'retry' },
+    { lifecycle: 'closed', cleanup: 'retry' },
+    { lifecycle: 'unmanaged', cleanup: 'retry' },
+    { lifecycle: 'backend changed', cleanup: 'retry' },
+    { lifecycle: 'closed', cleanup: 'normal drain' },
+    { lifecycle: 'unmanaged', cleanup: 'normal drain' },
+    { lifecycle: 'backend changed', cleanup: 'normal drain' },
+  ] as const)(
+    'retires startup intent and cancels its accepted-ack wake after $lifecycle ($cleanup)',
+    async ({ lifecycle, cleanup }) => {
+      const context = await acceptedStartupRecovery()
+      const { native, runtime, queued, claims } = context
+      let changing: Promise<unknown> | undefined
+      if (lifecycle === 'stop') changing = runtime.service.stop()
+      else if (lifecycle === 'suspend') {
+        changing = runtime.service.suspendSession(native.id)
+        await vi.waitFor(() => expect(runtime.service['suspendingSessions'].has(native.id)).toBe(true))
+      } else if (lifecycle === 'delete') {
+        changing = runtime.service.deleteSession(native.id)
+        await vi.waitFor(() => expect(runtime.service['deletingSessions'].has(native.id)).toBe(true))
+      } else if (lifecycle === 'closed') await runtime.store.setOpen(native.id, false, true)
+      else if (lifecycle === 'unmanaged') {
+        await runtime.store.update(native.id, (session) => { Object.assign(session, { managedOpen: false }) })
+      } else await runtime.store.setBackend(native.id, 'sdk')
+      if (cleanup === 'normal drain') await runtime.service['drainTerminalQueue'](native.id)
+      else runtime.service['retryTerminalQueueClaim'](native.id, true)
+      expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
+      expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(false)
+      const acknowledgement = [...runtime.service['pendingAcknowledgements'].values()]
+      context.setReadable()
+      context.releaseAcknowledgement.finish()
+      await Promise.all(acknowledgement)
+      await changing
+      await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+      expect(claims).not.toHaveBeenCalled()
+      expect((await native.receipt()).pastes).toEqual([])
+      if (lifecycle === 'delete') expect(runtime.store.get(native.id)).toBeUndefined()
+      else expect((await native.persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content))
+        .toEqual([queued])
+    }, 15_000,
+  )
+
+  it.each(['closed', 'unmanaged'] as const)(
+    'does not turn an initially %s accepted receipt into ordinary startup delivery',
+    async (lifecycle) => {
+      const context = await acceptedStartupRecovery('ready', (store, id) =>
+        lifecycle === 'closed' ? store.setOpen(id, false, true)
+          : store.update(id, (session) => { Object.assign(session, { managedOpen: false }) }))
+      const { native, runtime, queued, claims } = context
+      expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
+      const acknowledgement = [...runtime.service['pendingAcknowledgements'].values()]
+      context.releaseAcknowledgement.finish()
+      await Promise.all(acknowledgement)
+      await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+      expect(claims).not.toHaveBeenCalled()
+      expect((await native.receipt()).pastes).toEqual([])
+      expect((await native.persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content))
+        .toEqual([queued])
+    }, 15_000,
+  )
+
+  it('does not resurrect a cancelled acknowledgement wake when discovery reopens its metadata', async () => {
+    const context = await acceptedStartupRecovery('ready')
+    const { native, runtime, queued, claims } = context
+    await runtime.store.setOpen(native.id, false, true)
+    runtime.service['retryTerminalQueueClaim'](native.id, true)
+    expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(false)
+    await runtime.service.refreshDiscovery()
+    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    const acknowledgement = [...runtime.service['pendingAcknowledgements'].values()]
+    context.releaseAcknowledgement.finish()
+    await Promise.all(acknowledgement)
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+    expect(claims).not.toHaveBeenCalled()
+    expect((await native.receipt()).pastes).toEqual([])
+    expect((await native.persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content))
+      .toEqual([queued])
   }, 15_000)
 })

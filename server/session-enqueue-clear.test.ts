@@ -285,7 +285,10 @@ async function joinedEnqueue(options: EnqueueCase) {
   held.releaseResponse()
   const [accepted, clear] = await Promise.all([sending, clearing])
   if (options.publicationFailure) {
-    expect(accepted).toMatchObject({ error: { message: 'Synthetic publication failure after durable enqueue' } })
+    const cause = { message: 'Synthetic publication failure after durable enqueue' }
+    expect(accepted).toMatchObject({ error: options.provider === 'claude' ? cause : {
+      statusCode: 409, cause, submission: { sessionId: id, accepted: true },
+    } })
   } else {
     expect(accepted).toMatchObject({ value: { id } })
   }
@@ -571,7 +574,9 @@ describe('Clear joins committed enqueue admissions', () => {
     await runtime.endWarmup()
     releaseResult.finish()
     const [result, clear] = await Promise.all([sending, clearing])
-    if (refused) expect(result).toMatchObject({ error: { code: 'EISDIR' } })
+    if (refused) expect(result).toMatchObject({ error: {
+      statusCode: 409, cause: { code: 'EISDIR' }, submission: { sessionId: id, accepted: true },
+    } })
     else expect(result).toMatchObject({ value: { id } })
     expect(clear).toMatchObject({ error: { statusCode: 409 } })
     expect(runtime.calls).toEqual(['CLI-native queued A'])

@@ -204,9 +204,10 @@ Questions and permissions are the highest-priority UI state.
   path, an explicit one-session trust action, and Stop. The app MUST NOT
   silently trust folders or select persistent trust.
 - A CLI Session in use confirmation MUST expose Resume anyway and Go back in
-  a permission card, including its warning about concurrent clients. Sending
-  a message MUST NOT implicitly approve a takeover; an old confirmation in
-  scrollback MUST NOT block an active composer.
+  a permission card, including its warning about concurrent clients. Creating,
+  recovering, or restarting a terminal, sending a message, or running a command
+  MUST NOT implicitly approve a takeover. An old confirmation in scrollback
+  MUST NOT block an active composer.
 - Terminal replies MUST revalidate the exact live dialog before sending keys.
 - Question identity matching MUST tolerate terminal line wrapping, including
   breaks within words, while still requiring the complete question and field
@@ -239,6 +240,72 @@ Questions and permissions are the highest-priority UI state.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
   Such input MUST be left untouched with an actionable conflict, not cleared,
   duplicated, or submitted automatically.
+- A working terminal composer MUST accept native queued messages and slash
+  commands whose catalog explicitly allows execution during a turn. Other
+  immediate messages MUST wait. These delivery modes MUST still reject
+  startup screens, dialogs, non-composer frames, and existing drafts.
+- A complete model, effort, and context footer MUST NOT make an otherwise live
+  composer appear unavailable. Unrelated output below the frame MUST still
+  prevent it from being treated as a live composer.
+- Losing a paste acknowledgement MUST report uncertain delivery rather than
+  authorize an automatic retry. Readiness MUST be checked again after owner
+  validation and before the paste.
+- A recovered prompt or slash-command resend MUST durably consume its recovery
+  token before delivery or queue admission. If that write cannot commit, no
+  delivery may occur and the original token remains unused.
+- The claim MUST preserve the actual submitted text and a fresh uncertain
+  recovery token. An unresolved attempt MUST reject its old token across restart
+  and clear replacement, and require an explicit new recovery decision; it MUST
+  NOT be automatically acknowledged or replayed. A refusal after the claim
+  commits may conservatively remain uncertain, but MUST offer a usable new
+  decision rather than permanently blocking recovery.
+- Successful delivery or durable queue admission MUST settle only its own
+  recovery token. Failed acknowledgement writes after accepted delivery MUST be
+  surfaced and retried without repeating delivery or clearing a newer recovery.
+- A confirmed recovery receipt MUST be saved before later bookkeeping, separately
+  from clearing its recovery marker. Restart MUST resume only acknowledgement for
+  a saved accepted receipt, never delivery. If even the receipt cannot be saved,
+  the attempted-delivery token MUST remain non-delivering: requesting it may
+  prepare and return a distinct recovery decision, but MUST send nothing until
+  the reader explicitly submits that new decision.
+- Confirmed delivery MUST remain accepted when later activity, command feedback,
+  or persistence fails. Its recovery claim MUST remain reserved until token-scoped
+  acknowledgement settles; a fresh-token or anonymous retry MUST NOT deliver it
+  again while that acknowledgement is pending.
+- Confirmed startup delivery MUST establish its dispatch hold before receipt
+  persistence or publication can fail, even if an earlier readiness observation
+  was negative. Acceptance MUST update the linked claim and publish a redacted
+  view before attempting its receipt write. Every public session response,
+  including mutation results and queue-removal envelopes, MUST omit accepted or
+  obsolete recovery markers without mutating internal recovery state or dropping
+  a newer unaccepted recovery.
+- A failed recovery submission MUST return its current recovery token and owning
+  session through both local and paired-node HTTP paths. The browser MUST bind
+  any restored draft to that token, including across navigation, reload and clear
+  replacement. A confirmed accepted submission MUST NOT be restored as an unsent
+  draft. Missing error metadata MUST retain the original binding rather than
+  silently turning a retry into an independent message.
+- HTTP session results serialized before an observed recovery event MUST NOT
+  overwrite that event's recovery field at an equal or older durable revision.
+  Immediate equal-revision redaction events and fresh reads issued after them
+  MUST remain valid. The client MUST preserve detail hydration, genuinely newer
+  revisions/recovery tokens, and session/computer replacement ownership rather
+  than rejecting every equal-revision update.
+- Automatic desktop-install decline MUST recapture the pane after awaited owner
+  validation and confirm the same live prompt before sending `n`. Disappearance
+  or replacement by a composer, draft, or another dialog MUST receive no input.
+- Direct terminal commands MUST respect older app FIFO entries after startup
+  reconciliation, except for the matching recovery claim. An immediate message
+  serialized behind a startup dispatch MUST NOT trust its still-visible old
+  composer as permission to submit a second message.
+- The startup dispatch hold MUST also cover command/message interleavings.
+  Turn-starting commands and commands whose feedback cannot be observed MUST
+  retain that hold for serialized followers. A stable non-turn command response
+  MAY release only its own hold. Explicit Queue requests MUST remain queued
+  rather than becoming immediate sends after stale-idle reconciliation.
+- Form identity MUST preserve word boundaries. Terminal form reads MUST use
+  tmux's joined soft-wrap capture instead of guessing whether a line break
+  separated words or split an identifier.
 
 - Full-screen send protection MUST recognize active terminal dialogs, including
   single-field questions, without treating keyboard hints quoted in transcript
@@ -288,6 +355,14 @@ provider turn. Unsent queued text MUST be restored or remain as durable,
 explicit recovery when the cancellation write is refused. Storage MUST finish
 admitted writes and refuse late mutations after shutdown.
 
+Recovery sends MUST retain their per-dispatch delivery boundary through that
+admitted lifetime, including generated command prompts and answering-enqueue
+transactions. Confirmed-delivery acknowledgement MUST finish before provider
+teardown; acknowledgement retries MUST themselves be admitted, and shutdown
+MUST wake cancelled retry waiters without attempting another delivery. A storage
+outage MUST surface the failed settlement and retain the consumed-token
+uncertainty rather than allowing replay or a late write into a closed store.
+
 Queue drains MUST coalesce wake-ups and re-read the committed canonical queue
 after a reserved head is edited or removed. Stale reservations MAY retry;
 ordinary authentication or storage failures MUST NOT cause a hot retry loop.
@@ -304,9 +379,9 @@ bounded retry. A queued entry MUST NOT by itself create or reopen a native
 runtime; unknown prior delivery or explicit closed/suspended state stays held.
 Repeated startup MUST NOT duplicate delivery or create additional pollers.
 
-An explicit recovery token MUST match the current failed prompt. Accepting a
-token-bearing retry MUST atomically retain one canonical FIFO entry and consume
-that recovery, including retries requested while idle. Replayed or stale tokens
+An explicit recovery token MUST match the current failed prompt. For Claude,
+accepting a token-bearing retry MUST atomically retain one canonical FIFO entry
+and consume that recovery, including retries requested while idle. Replayed or stale tokens
 MUST NOT dispatch or enqueue another copy, or clear a newer recovery. Unrelated
 ordinary sends MUST NOT consume recovery. A new uncertain provider-start outcome
 MUST remain explicitly uncertain; the supplied token is not proof of delivery.

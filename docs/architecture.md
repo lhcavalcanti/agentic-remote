@@ -164,6 +164,12 @@ delivery uncertainty protects joined Clear before returning or throwing.
 Uncertainty does not become known delivery. The controller includes lost paste
 acknowledgements in its uncertainty boundary; pre-paste capture/buffer failures
 and a paste process that could not spawn remain definite, effect-free failures.
+This Clear effect latch is separate from the per-dispatch accepted receipt:
+uncertain native effects never call `recordDelivery()` or acknowledge recovery.
+Confirmed delivery still holds startup followers before fallible receipt work,
+redacts accepted recovery immediately, and retains acknowledgement-only retries.
+Deferred native demand uses the existing coalesced queue wakeup, which cannot
+enter an exclusive Clear lease from an unrelated admission.
 
 Native startup queue intent is captured from managed-open persisted sessions
 before discovery can promote other live terminals. Startup seeds the existing
@@ -174,6 +180,19 @@ claim transaction. The existing bounded claim/settlement retries retain this
 startup intent across transient observation or persistence failures. Queued
 sessions are not force-created by boot recovery, and repeated `start()` calls
 join the same startup rather than reload state or install more pollers.
+An accepted recovery awaiting acknowledgement retains its startup queue intent:
+the acknowledgement's coalesced wake must still satisfy the original startup
+owner, readable-composer, and managed-open claim checks. Unknown delivery remains
+held rather than becoming an accepted receipt or an automatic retry.
+Normal drain and failed-read retry cleanup use the same exact-token accepted
+recovery predicate, after checking lifecycle eligibility. A scheduled startup
+acknowledgement keeps that origin across write retries; closure, suspension,
+deletion, stop, or a backend change cancels its automatic queue wake rather than
+turning it into an ordinary unguarded drain.
+Native receipts restored at startup keep that origin even when a closed or
+unmanaged session never qualified for startup queue intent.
+Eligibility comes from the original persisted intent, not discovery-promoted
+metadata; an acknowledgement cannot revive an intent already retired.
 
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then
@@ -271,6 +290,105 @@ claim becomes visible uncertain recovery, not a
 retryable queue item. Older runtimes also retain the existing recovery record.
 Settlement preserves a newer native completion or permission state instead of
 restoring the claim's obsolete running state.
+
+Recovery resends use the existing `failedPrompt` record as a durable claim.
+Before dispatch, a compare-and-set replaces the acknowledged `failedAt` token
+with a fresh `resend:<UUID>` token, the actual submitted text (including edits), and
+`uncertain: true`. A private `recoveryResend` record commits the same token and
+content with `accepted: false` in that transaction. A refused write or rename
+delivers nothing. The consumed
+token no longer matches durable state, so another reader cannot replay it after
+a crash even if every post-delivery write failed. In-flight ownership also
+blocks use of the fresh token until that dispatch finishes.
+
+An unresolved attempt's token never authorizes another delivery, even across a
+restart. Asking to resend it commits a distinct decision token and returns 409
+with that token, without sending input; the reader must check the conversation
+and terminal and explicitly submit the new decision. The existing HTTP receipt
+and composer-binding protocol preserves the edited draft across this boundary.
+Even a pre-delivery refusal after the claim commits conservatively takes this
+path. Successful sends acknowledge the attempted-delivery token; app-queued
+resends pass that token to the existing atomic
+answering-enqueue operation. Acknowledgement retries compare the token inside
+the store mutation, so a delayed retry cannot erase a newer decision. Failed
+acknowledgements report uncertainty instead of reporting a completed settlement.
+Clear replacement carries the current marker, not the consumed token.
+
+Delivery acceptance is tracked per dispatch, not by a session-wide boolean.
+Terminal receipt, durable application queue admission, and handled command
+results cross that boundary before activity/feedback writes. A confirmed external
+receipt sets the private record's `accepted` bit in its own awaited transaction
+before later bookkeeping. After restart, accepted records reconstruct only the
+token-scoped acknowledgement task and remain unavailable for resend. If even
+that receipt write fails, the persisted unconfirmed attempt still cannot deliver
+again without the separate explicit-decision exchange described above; the
+service does not invent certainty about an unsaved receipt. A later failure
+keeps the recovery claim reserved and retries only acknowledgement of its own
+token, following clear lineage when necessary. Public session reads do not offer
+a known-accepted marker while acknowledgement is pending. An anonymous copy of
+an unresolved `resend:` draft is refused instead of bypassing token validation.
+
+The confirmed-delivery boundary establishes startup dispatch ownership before
+any fallible receipt or publication work; an earlier readiness observation cannot
+undo a later confirmed receipt. It marks the linked in-memory claim accepted and
+publishes that projected state even when the receipt write is refused. A committed
+receipt is published again at its durable revision. All public session-returning
+methods, including reply/lifecycle results and nested queue-removal sessions,
+use the same projection. It consults only current recovery metadata, hides
+accepted and obsolete markers, and leaves internal failure/queue ownership and
+newer unaccepted recoveries unchanged.
+
+The same dispatch boundary and claimed token pass through admission wrappers,
+SDK turn preparation, generated command prompts, and durable answering-enqueue
+transactions. The first accepted acknowledgement belongs to the original send
+admission. Each later token-only retry enrolls separately; its backoff sleep is
+cancelled and resolved on shutdown. Teardown joins admitted sends and retries
+before stopping providers or closing the store. A failed final checkpoint is
+reported, with the fresh uncertainty retained for an explicit decision after
+restart. SDK handoff markers cannot be consumed as recovery claims while their
+queue admission still owns them.
+
+Recovery acknowledgement wakes the owning backend's queue through the tracked,
+coalesced wake-up path. A wake blocked by an existing drain is retained until that
+drain releases ownership, but stop closes admission before any new pass. Neither
+acknowledgement nor a delayed wake may clear a newer recovery, resurrect a retired
+owner, or replay a delivered action.
+
+Submission errors carry an optional `{ sessionId, failedAt, accepted }` receipt.
+The node error handler, remote-node client, hub error handler and browser API
+preserve that bounded metadata and the HTTP status. The browser captures the
+submitted token before awaiting the request, defers snapshot reconciliation
+while that submission is in flight, and binds a restored draft to the returned
+token. Failed-response bindings persist beside drafts and follow session
+replacement; navigation must not move the draft into the selected unrelated
+session. If a response is lost or an older peer omits metadata, the original
+binding remains rather than permitting an anonymous resend. Accepted receipts
+do not restore submitted text. Unrelated writing remains untouched.
+
+The browser also orders already-serialized HTTP results against observed
+session events. API requests capture the client event sequence before fetching;
+decoded session objects, arrays and queue-removal envelopes retain that local
+provenance in a WeakMap, without wire fields or fabricated durable revisions.
+The common session merger uses the existing per-session event watermark: an
+overtaken equal/older-revision result may hydrate history or return mutation
+data, but inherits the current recovery field instead of reviving an accepted
+one or clearing a newer recovery. Fresh reads after the event and genuinely
+newer durable results remain admissible. Removed session/computer ownership is
+also checked. State observations discard request provenance so later local
+reconciliation cannot misclassify them as pending HTTP responses.
+
+The private `recoveryResend` field is additive within saved-state version 1.
+It is omitted from public session snapshots and validated on load; malformed
+receipt metadata fails startup rather than silently becoming retryable.
+Legacy unstamped
+recoveries remain readable and are claimed when their unchanged text is
+resubmitted. Older runtimes that check `acknowledgesFailure` still reject an
+already-consumed token because the saved token changed. They do not,
+however, honor the private attempted-delivery and accepted-receipt record.
+Rolling back to such a binary can re-enable a consumed attempt. Development validation
+must exercise both write-refusal boundaries and restart before promotion; an
+old-binary rollback needs an operator decision to settle or pause recovery
+resends first. Do not rewrite stored recovery state merely to enable rollback.
 
 ### Durable identity retirement
 

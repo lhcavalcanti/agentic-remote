@@ -30,6 +30,12 @@ export interface QueuedPromptReservation {
   prompt: QueuedPrompt
 }
 
+export interface RecoveryResend {
+  failedAt: string
+  content: string
+  accepted: boolean
+}
+
 export interface TranscriptObservation {
   epoch: string | undefined
   isCurrent?: () => boolean
@@ -78,6 +84,7 @@ interface StoredSession extends SessionDetail {
   terminalQueueDispatch?: TerminalQueueDispatch
   queuedPromptReservation?: { id: string; promptId: string }
   sdkQueueAdmission?: SdkQueueAdmission
+  recoveryResend?: RecoveryResend
   transcriptEpoch?: string
   lastClaimedRecovery?: string
 }
@@ -132,6 +139,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     terminalQueueDispatch,
     queuedPromptReservation: _queuedPromptReservation,
     sdkQueueAdmission,
+    recoveryResend: _recoveryResend,
     transcriptEpoch: _transcriptEpoch,
     lastClaimedRecovery: _lastClaimedRecovery,
     contextCwd: _contextCwd,
@@ -228,6 +236,13 @@ export class SessionStore {
       session.queuedCount = session.queuedPrompts.length
       session.queuedPromptReservation = undefined
       session.pendingUserInput = undefined
+      const resend = session.recoveryResend
+      if (resend !== undefined && (
+        !resend || typeof resend !== 'object' || Array.isArray(resend) ||
+        typeof resend.failedAt !== 'string' || !resend.failedAt ||
+        typeof resend.content !== 'string' || !resend.content.trim() ||
+        typeof resend.accepted !== 'boolean'
+      )) throw new Error('Invalid recovery resend metadata')
       const admission = session.sdkQueueAdmission
       if (admission !== undefined) {
         if (
@@ -1107,7 +1122,70 @@ export class SessionStore {
         (answers === undefined || session.failedPrompt.failedAt === answers)
       ) {
         session.failedPrompt = undefined
+        session.recoveryResend = undefined
       }
+    })
+  }
+
+  async claimFailedPrompt(
+    sessionId: string,
+    expected: NonNullable<SessionDetail['failedPrompt']>,
+    submitted: string,
+    claimedAt: string,
+  ): Promise<SessionDetail> {
+    return this.mutate(sessionId, (stored) => {
+      if (
+        !claimedAt || claimedAt === expected.failedAt ||
+        stored.terminalQueueDispatch || stored.sdkQueueAdmission ||
+        !stored.failedPrompt ||
+        stored.failedPrompt.failedAt !== expected.failedAt ||
+        stored.failedPrompt.content !== expected.content
+      ) {
+        throw Object.assign(
+          new Error('That recovery decision has already been used. Review the current recovered prompt.'),
+          { statusCode: 409 },
+        )
+      }
+      // Consume the old token before delivery. The new token describes an
+      // unresolved attempt, including the edited text, even if no later write
+      // can commit or the process exits before it can record the receipt.
+      stored.failedPrompt = { content: submitted, failedAt: claimedAt, uncertain: true }
+      stored.recoveryResend = { content: submitted, failedAt: claimedAt, accepted: false }
+    })
+  }
+
+  // Projection reads recovery metadata without cloning the session's history.
+  failedPrompt(sessionId: string): SessionDetail['failedPrompt'] {
+    const failed = this.state.sessions[sessionId]?.failedPrompt
+    return !this.isRetiredSession(sessionId) && failed ? structuredClone(failed) : undefined
+  }
+
+  recoveryResend(sessionId: string): RecoveryResend | undefined {
+    const session = this.state.sessions[sessionId]
+    const resend = session?.recoveryResend
+    return !this.isRetiredSession(sessionId) && resend?.failedAt === session?.failedPrompt?.failedAt
+      ? structuredClone(resend)
+      : undefined
+  }
+
+  async acceptRecoveryResend(sessionId: string, expected: string): Promise<SessionDetail> {
+    if (this.closed) throw new Error('Session store is closed')
+    if (this.recoveryResend(sessionId)?.accepted) return this.requireSession(sessionId)
+    return this.mutate(sessionId, (stored) => {
+      stored.recoveryResend!.accepted = true
+    }, (stored) => stored.failedPrompt?.failedAt === expected && stored.recoveryResend?.failedAt === expected)
+  }
+
+  async prepareRecoveryDecision(sessionId: string, expected: string, next: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (stored) => {
+      if (!next || next === expected || stored.failedPrompt?.failedAt !== expected ||
+          stored.recoveryResend?.failedAt !== expected || stored.recoveryResend.accepted ||
+          stored.sdkQueueAdmission || stored.terminalQueueDispatch) {
+        throw Object.assign(new Error('That recovery attempt no longer owns this decision'), { statusCode: 409 })
+      }
+      stored.failedPrompt.failedAt = next
+      stored.failedPrompt.uncertain = true
+      stored.recoveryResend = undefined
     })
   }
 
@@ -1131,6 +1209,7 @@ export class SessionStore {
       session.queuedCount = session.queuedPrompts.length
       session.lastClaimedRecovery = token
       session.failedPrompt = undefined
+      session.recoveryResend = undefined
       if (session.status === 'error') {
         session.status = session.pendingPermission || session.pendingUserInput ? 'waiting' : 'idle'
         session.activity = session.pendingPermission?.title || session.pendingUserInput?.question
@@ -1138,13 +1217,14 @@ export class SessionStore {
     })
   }
 
-  async clearFailedPrompt(sessionId: string): Promise<SessionDetail> {
+  async clearFailedPrompt(sessionId: string, expected?: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (stored) => {
       if (stored.terminalQueueDispatch || stored.sdkQueueAdmission) {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }
       stored.failedPrompt = undefined
-    })
+      stored.recoveryResend = undefined
+    }, expected === undefined ? undefined : (stored) => stored.failedPrompt?.failedAt === expected)
   }
 
   async shiftQueuedPrompt(

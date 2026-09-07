@@ -28,7 +28,11 @@ describe('Native send effect classification', () => {
     { failureAt: 'terminal settings restoration', uncertain: true },
   ])('classifies $failureAt without inventing confirmed delivery', async ({ failureAt, uncertain }) => {
     const controller = new TmuxTerminalSessionController()
-    vi.spyOn(controller as unknown as { target(id: string): Promise<string> }, 'target').mockResolvedValue('%owned')
+    const owner = { pid: 1234, target: '%owned' }
+    vi.spyOn(controller as unknown as {
+      owner(id: string): Promise<typeof owner>
+    }, 'owner').mockResolvedValue(owner)
+    controller['inputReadySessions'].set('owned', owner)
     let pasted = false
     let submits = 0
     const failure = Object.assign(new Error(`Synthetic ${failureAt} failure`),
@@ -79,7 +83,9 @@ describe('Native send effect classification', () => {
 
   it('returns false without effects when the owner is gone before sending', async () => {
     const controller = new TmuxTerminalSessionController()
-    vi.spyOn(controller as unknown as { target(id: string): Promise<string | undefined> }, 'target')
+    vi.spyOn(controller as unknown as {
+      owner(id: string): Promise<{ pid: number; target: string } | undefined>
+    }, 'owner')
       .mockResolvedValue(undefined)
     await expect(controller.send('missing', text, false)).resolves.toBe(false)
     expect(processAdapter.run).not.toHaveBeenCalled()

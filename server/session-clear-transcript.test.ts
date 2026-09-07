@@ -458,6 +458,9 @@ describe('Transcript and Clear admission serialization', () => {
     await store.setBackend(id, 'terminal')
     terminal.has.mockResolvedValue(true)
     const before = await persisted()
+    const delivery = vi.spyOn(service as unknown as {
+      recordDelivery(...args: unknown[]): Promise<void>
+    }, 'recordDelivery')
     const entered = gate()
     const release = gate()
     const content = kind === 'command' ? '/usage' : 'Possibly pasted native message'
@@ -497,7 +500,7 @@ describe('Transcript and Clear admission serialization', () => {
     const [send, clear] = await Promise.all([sending, clearing])
     expect(send).toEqual({ error: failure })
     expect(terminal.send).toHaveBeenCalledTimes(1)
-    expect(service['deliveredSends'].has(id)).toBe(false)
+    expect(delivery).not.toHaveBeenCalled()
     if (uncertain) {
       expect(clear).toMatchObject({ error: { statusCode: 409 } })
       expect(terminal.reset).not.toHaveBeenCalled()

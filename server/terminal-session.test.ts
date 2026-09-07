@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -7,6 +8,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   isTerminalAgentWorking,
+  isTerminalDesktopInstallPrompt,
   isTerminalOverlay,
   isTerminalSessionInUsePrompt,
   composerHoldsOtherText,
@@ -66,6 +68,183 @@ const folderTrustPane = [
   '╰────────────────────────────────────────────────────────────────────────╯',
 ].join('\n')
 
+const desktopInstallPane = [
+  '╭───────────────────────────────────────────────╮',
+  'THE GITHUB COPILOT APP',
+  'Now generally available!',
+  'Install it now?',
+  '❯ Yes, install      No, thanks',
+  '←/→ to choose · Enter to select · Y / N',
+  '╰───────────────────────────────────────────────╯',
+].join('\n')
+
+function readyComposer(text = '', working = false): string {
+  return [
+    '╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+    `┃ ${text}`,
+    '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+    working ? ' ◉ Working · esc interrupt' : ' / commands',
+  ].join('\n')
+}
+
+const shellReadyComposer =
+  "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃ \\n╹▀▀▀▀\\n\\033[2A\\033[2C'"
+
+function fixtureReceiptWriter(filename: string): string {
+  return `
+import { renameSync, writeFileSync } from 'node:fs'
+const receiptPath = ${JSON.stringify(filename)}
+const writeReceipt = (value) => {
+  writeFileSync(receiptPath + '.tmp', JSON.stringify(value))
+  renameSync(receiptPath + '.tmp', receiptPath)
+}
+`
+}
+
+async function deliveryFixture(working: boolean, nextPane?: string, repaintPane?: string, footer = '') {
+  const directory = await mkdtemp(path.join(tmpdir(), 'terminal-delivery-test-'))
+  directories.push(directory)
+  const executable = path.join(directory, 'copilot-delivery.mjs')
+  const output = path.join(directory, 'received.json')
+  const sessionId = randomUUID()
+  await writeFile(output, '')
+  await writeFile(executable, `
+${fixtureReceiptWriter(output)}
+let input = ''
+let pasted
+const received = { pastes: [], submits: [] }
+const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
+const makeComposer = ${readyComposer.toString()}
+const composer = (text = '', working = false) => makeComposer(text, working) + ${JSON.stringify(footer ? `\n${footer}` : '')}
+const repaint = ${JSON.stringify(repaintPane)}
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.stdin.on('data', (data) => {
+  if (repaint !== undefined && data.includes(29)) {
+    draw(repaint)
+    return
+  }
+  input += data.toString()
+  const end = input.indexOf('\\x1b[201~')
+  if (pasted === undefined && end >= 0) {
+    pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
+    input = input.slice(end + 6)
+    received.pastes.push(pasted)
+    writeReceipt(received)
+    draw(composer(pasted, ${working}))
+  }
+  if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
+    received.submits.push(input.includes('\\x11') ? 'queue' : 'enter')
+    writeReceipt(received)
+    input = ''
+    pasted = undefined
+    draw(${JSON.stringify(nextPane)} ?? composer('', ${working}))
+  }
+})
+draw(composer('', ${working}))
+`)
+  const tmuxSession = `agentic-delivery-${process.pid}`
+  tmuxSessions.push(tmuxSession)
+  await execFileAsync('tmux', [
+    'new-session', '-d', '-s', tmuxSession,
+    process.execPath, executable, '--session-id', sessionId,
+  ])
+  const panePid = (await execFileAsync('tmux', [
+    'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+  ])).stdout.trim()
+  await waitForProcessCommand(Number(panePid), [executable])
+  const copilotHome = path.join(directory, 'copilot-home')
+  const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+  await mkdir(sessionDirectory, { recursive: true })
+  await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+  vi.stubEnv('COPILOT_HOME', copilotHome)
+  const controller = new TmuxTerminalSessionController()
+  await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('╹')))
+  return { controller, sessionId, output, directory, tmuxSession }
+}
+
+async function ownedStartupFixture(initialPane?: string, footer = '') {
+  const directory = await mkdtemp(path.join(tmpdir(), 'terminal-startup-consent-'))
+  directories.push(directory)
+  const executable = path.join(directory, 'copilot-startup.mjs')
+  const output = path.join(directory, 'received.json')
+  const replacementPath = path.join(directory, 'replacement-pane.txt')
+  await writeFile(output, JSON.stringify({ keys: '', pastes: [], submits: 0 }))
+  await writeFile(executable, `#!/usr/bin/env node
+${fixtureReceiptWriter(output)}
+import { readFileSync } from 'node:fs'
+const state = { keys: '', pastes: [], submits: 0 }
+const save = () => writeReceipt(state)
+const makeComposer = ${readyComposer.toString()}
+const composer = (text = '') => makeComposer(text) + ${JSON.stringify(footer ? `\n${footer}` : '')}
+const draw = (pane) => process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
+let confirmed = ${initialPane === undefined}
+let desktop = ${initialPane === desktopInstallPane}
+let replaced = false
+let input = ''
+let pasted
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.on('SIGUSR2', () => {
+  const pane = readFileSync(${JSON.stringify(replacementPath)}, 'utf8')
+  replaced = true
+  desktop = pane.includes('THE GITHUB COPILOT APP') && pane.includes('Install it now?')
+  confirmed = pane.includes('╹')
+  draw(pane)
+})
+process.stdin.on('data', (data) => {
+  const text = data.toString()
+  if (replaced) {
+    state.keys += text
+    save()
+    if (desktop && text.includes('n')) {
+      desktop = false
+      confirmed = true
+      draw(composer())
+    } else if (confirmed) {
+      draw(composer(state.keys))
+    }
+    return
+  }
+  if (!confirmed) {
+    state.keys += text
+    save()
+    if (/[\\r\\n]/.test(text) || (desktop && text.includes('n'))) {
+      desktop = false
+      confirmed = true
+      draw(composer())
+    }
+    return
+  }
+  input += text
+  const end = input.indexOf('\\x1b[201~')
+  if (pasted === undefined && end >= 0) {
+    pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end).replace(/\\r\\n?/g, '\\n')
+    input = input.slice(end + 6)
+    state.pastes.push(pasted)
+    save()
+    draw(composer(pasted))
+  }
+  if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
+    state.submits += 1
+    save()
+    pasted = undefined
+    input = ''
+    draw(composer())
+  }
+})
+draw(${JSON.stringify(initialPane)} ?? composer())
+`)
+  await chmod(executable, 0o755)
+  vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', '')
+  vi.stubEnv('COPILOT_BIN', executable)
+  vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot-home'))
+  const controller = new TmuxTerminalSessionController()
+  const sessionId = randomUUID()
+  await controller.create(sessionId, directory, 'Owned startup', false)
+  return { controller, sessionId, output, replacementPath }
+}
+
 beforeEach(async () => {
   tmuxRoot = await createIsolatedTmuxRoot()
   vi.stubEnv('HOME', tmuxRoot)
@@ -101,6 +280,167 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it.each([
+    ['an empty composer', readyComposer()],
+    ['an existing draft', readyComposer('Keep this native draft')],
+    ['a different permission dialog', folderTrustPane],
+  ])('does not decline a desktop prompt replaced by %s during owner validation', async (_name, replacement) => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture(sessionInUsePane)
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{ pid: number; target: string } | undefined>
+    }
+    const owner = await inspectable.owner(sessionId, undefined, true)
+    expect(owner).toBeDefined()
+    await writeFile(replacementPath, desktopInstallPane)
+    process.kill(owner!.pid, 'SIGUSR2')
+    await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane && isTerminalDesktopInstallPrompt(pane)))
+    const originalOwner = inspectable.owner.bind(controller)
+    let initialOwnerRead = false
+    let replaced = false
+    const spy = vi.spyOn(inspectable, 'owner').mockImplementation(async (id, target, fresh) => {
+      const current = await originalOwner(id, target, fresh)
+      if (!fresh && current) initialOwnerRead = true
+      if (fresh && current && initialOwnerRead && !replaced) {
+        replaced = true
+        await writeFile(replacementPath, replacement)
+        process.kill(current.pid, 'SIGUSR2')
+        await eventually(
+          async () => (await execFileAsync('tmux', ['capture-pane', '-J', '-p', '-t', current.target])).stdout,
+          (pane) => !isTerminalDesktopInstallPrompt(pane),
+        )
+      }
+      return current
+    })
+    try {
+      await controller.resolveStartupPrompt(sessionId)
+      expect(replaced).toBe(true)
+      expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: '', pastes: [], submits: 0 })
+      const pane = await controller.capture(sessionId)
+      if (replacement.includes('Keep this native draft')) expect(pane).toContain('Keep this native draft')
+      if (replacement === folderTrustPane) expect(pane).toContain('Confirm folder trust')
+    } finally {
+      spy.mockRestore()
+    }
+  }, 15000)
+
+  it('declines an unchanged live desktop prompt exactly once after owner validation', async () => {
+    const { controller, sessionId, output } = await ownedStartupFixture(desktopInstallPane)
+    expect(await controller.inputReady(sessionId)).toBe(true)
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: 'n', pastes: [], submits: 0 })
+  }, 15000)
+
+  it.each([
+    ['Fixture Model · High · 1.1M context (0%)', false, false],
+    ['Fixture preview · 128k context (37%)', false, false],
+    ['Fixture Model · Medium · 262,144 context (100%)', false, false],
+    ['Fixture Model · High · 1.1M context (7.5%)', true, true],
+  ] as const)('admits a complete model/context footer: %s (working=%s, queue=%s)', async (footer, working, enqueue) => {
+    const { controller, sessionId, output } = await deliveryFixture(working, undefined, undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(!working)
+    await expect(controller.send(sessionId, 'One footer-aware message', enqueue)).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['One footer-aware message'], submits: [enqueue ? 'queue' : 'enter'],
+    })
+  }, 15_000)
+
+  it('returns a fresh owned session with the complete model/context footer', async () => {
+    const footer = 'Fixture Model · High · 1.1M context (0%)'
+    const { controller, sessionId } = await ownedStartupFixture(undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(true)
+  }, 15_000)
+
+  it.each([
+    [' Changes    +0 -0', false, false],
+    ['Changes +12 -3', false, false],
+    [' Changes    +0 -3\n Fixture Model · High · 1.1M context (7%)', false, false],
+    [' Changes    +12 -0\n Fixture Model · High · 1.1M context (0%)\n 0.0.999 available · /update', true, true],
+  ] as const)('admits an exact change-summary footer: %s (working=%s, queue=%s)', async (footer, working, enqueue) => {
+    const { controller, sessionId, output } = await deliveryFixture(working, undefined, undefined, footer)
+    expect(await controller.capture(sessionId)).toContain(footer)
+    expect(await controller.inputReady(sessionId)).toBe(!working)
+    await expect(controller.send(sessionId, 'One change-summary message', enqueue)).resolves.toBe(true)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({
+      pastes: ['One change-summary message'], submits: [enqueue ? 'queue' : 'enter'],
+    })
+  }, 15_000)
+
+  it.each(['Changes +0 -0', ' Changes    +12 -3'])(
+    'returns a fresh owned session with a change-summary footer: %s',
+    async (changes) => {
+      const footer = `${changes}\n Fixture Model · High · 1.1M context (0%)`
+      const { controller, sessionId, output } = await ownedStartupFixture(undefined, footer)
+      expect(await controller.capture(sessionId)).toContain(footer)
+      expect(await controller.inputReady(sessionId)).toBe(true)
+      await expect(controller.send(sessionId, 'First message after startup', false)).resolves.toBe(true)
+      const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+        JSON.parse(value).submits === 1,
+      )
+      expect(JSON.parse(received)).toEqual({
+        keys: '', pastes: ['First message after startup'], submits: 1,
+      })
+    },
+    15_000,
+  )
+
+  it.each([
+    'Changes +1 -2 and more',
+    'Summary: Changes +1 -2',
+    'Changes +1 -2 · Are you sure?',
+    'Changes +1 -2\nA different view is loading',
+    'Change +1 -2',
+    'changes +1 -2',
+    'Changes +1',
+    'Changes -1 +2',
+    'Changes +1 --2',
+    'Changes +1.5 -2',
+    'Changes +1 -2.5',
+    'Changes +1,000 -2',
+    'Changes +1e3 -2',
+  ])('rejects a change-summary near-match footer: %s', async (footer) => {
+    const { controller, sessionId, output } = await deliveryFixture(false, `${readyComposer()}\n${footer}`)
+    await controller.send(sessionId, 'Warmup', true)
+    const before = await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    await expect(controller.send(sessionId, 'Do not paste this', true))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await readFile(output, 'utf8')).toBe(before)
+  }, 15_000)
+
+  it('requires explicit consent for session-use confirmation in an owned startup', async () => {
+    const { controller, sessionId, output } = await ownedStartupFixture(sessionInUsePane)
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('')
+    const permission = await controller.pendingPermission(sessionId)
+    expect(permission).toMatchObject({
+      options: [
+        { optionId: 'terminal:allow', name: 'Resume anyway' },
+        { optionId: 'terminal:stop', name: 'Go back' },
+      ],
+    })
+    expect(await controller.canHandleStartupPrompt(sessionId, sessionInUsePane)).toBe(false)
+    expect(await controller.resolveStartupPrompt(sessionId)).toBe(false)
+    await expect(controller.send(sessionId, 'Do not consent for me', false))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({ keys: '', pastes: [], submits: 0 })
+    if (!permission) throw new Error('The startup fixture did not expose its permission')
+    expect(await controller.replyPermission(sessionId, permission, 'terminal:allow')).toBe(true)
+    expect(await controller.resolveStartupPrompt(sessionId)).toBe(true)
+    await controller.send(sessionId, 'Only after explicit consent', false)
+    const received = await eventually(() => readFile(output, 'utf8'), (value) =>
+      JSON.parse(value).submits === 1,
+    )
+    expect(JSON.parse(received)).toMatchObject({ pastes: ['Only after explicit consent'], submits: 1 })
+  }, 15_000)
+
   async function clearFixture() {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-clear-test-'))
     directories.push(directory)
@@ -109,7 +449,7 @@ describe('TmuxTerminalSessionController', () => {
     await mkdir(originalCwd)
     await mkdir(replacementCwd)
     const executable = path.join(directory, 'copilot-clear-fake')
-    await writeFile(executable, '#!/usr/bin/env bash\nsleep 60\n')
+    await writeFile(executable, `#!/usr/bin/env bash\n${shellReadyComposer}\nsleep 60\n`)
     await chmod(executable, 0o755)
     vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', '')
     vi.stubEnv('COPILOT_BIN', executable)
@@ -186,7 +526,7 @@ describe('TmuxTerminalSessionController', () => {
         : Array.from({ length: 32 }, (_, index) => `line ${index}`).join('\n')
     await writeFile(output, '')
     await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let input = ''
 let pasted
 let enters = 0
@@ -210,7 +550,7 @@ process.stdin.on('data', (data) => {
   }
   if (pasted !== undefined && /[\\r\\x11]/.test(input)) {
     enters += 1
-    writeFileSync(${JSON.stringify(output)}, JSON.stringify({ content: pasted, enters, queued: input.includes('\\x11') }))
+    writeReceipt({ content: pasted, enters, queued: input.includes('\\x11') })
     input = ''
     draw('')
   }
@@ -247,7 +587,111 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
       const received = await eventually(() => readFile(output, 'utf8'), (text) => text.length > 0)
       expect(JSON.parse(received)).toEqual({ content, enters: 1, queued: enqueue })
     }
-  })
+  }, 15_000)
+
+  it.each([
+    ['queued prompt', 'Continue after this turn', true, undefined, 'queue'],
+    ['permitted slash command', '/usage', false, { allowDuringAgentExecution: true }, 'enter'],
+  ] as const)('delivers a %s to a working composer exactly once', async (_name, content, enqueue, options, key) => {
+    const { controller, sessionId, output } = await deliveryFixture(true)
+    expect(await controller.inputReady(sessionId)).toBe(false)
+    await expect(controller.send(sessionId, content, enqueue, options)).resolves.toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    expect(JSON.parse(received)).toEqual({ pastes: [content], submits: [key] })
+  }, 15_000)
+
+  it.each([
+    ['ordinary message while working', readyComposer('', true), 'Do not interrupt', false, undefined],
+    ['unapproved slash command while working', readyComposer('', true), '/model', false, undefined],
+    ['ordinary text with a command allowance', readyComposer('', true), 'Do not interrupt', false, { allowDuringAgentExecution: true }],
+    ['an existing draft', readyComposer('unfinished draft', true), 'Queue this', true, undefined],
+    ['an uncertain paste', readyComposer('[Paste #1 - 32 lines]', true), '/usage', false, { allowDuringAgentExecution: true }],
+    ['a settings overlay', 'Settings\n↑/↓ navigate · enter edit · esc close', 'Queue this', true, undefined],
+    ['a session-use confirmation', sessionInUsePane, '/usage', false, { allowDuringAgentExecution: true }],
+    ['a folder-trust confirmation', folderTrustPane, 'Queue this', true, undefined],
+    ['a structured form', 'Copilot needs information.\nWhich target?\nTarget:\n╭────────╮\n│        │\n╰────────╯\nenter accept · esc cancel', '/usage', false, { allowDuringAgentExecution: true }],
+    ['a startup screen without a composer', 'Starting Copilot…', 'Queue this', true, undefined],
+    ['a non-composer frame', '╭────────╮\n│        │\n╰────────╯', 'Queue this', true, undefined],
+    ['an incomplete composer frame', '╻▄▄▄▄\n┃', 'Queue this', true, undefined],
+    ['a replaced composer', `${readyComposer()}\nLoading a new view…`, '/usage', false, { allowDuringAgentExecution: true }],
+    ['a footer with unrelated output', `${readyComposer()}\nFixture Model · High · 1.1M context (0%)\nLoading a different view...`, 'Must not be pasted', false, undefined],
+    ['a change-summary footer over a working composer', `${readyComposer('', true)}\nChanges +12 -3`, 'Do not interrupt', false, undefined],
+    ['a change-summary footer over an existing draft', `${readyComposer('unfinished draft')}\nChanges +12 -3`, 'Queue this', true, undefined],
+    ['a change-summary footer over a settings overlay', `${readyComposer()}\nSettings\n↑/↓ navigate · enter edit · esc close\nChanges +12 -3`, 'Queue this', true, undefined],
+    ['a change-summary footer over a session-use confirmation', `${sessionInUsePane}\nChanges +12 -3`, 'Do not consent', false, undefined],
+    ['a change-summary footer over a folder-trust confirmation', `${folderTrustPane}\nChanges +12 -3`, 'Do not consent', false, undefined],
+    ['a change-summary footer over a non-composer frame', '╭────────╮\n│        │\n╰────────╯\nChanges +12 -3', 'Queue this', true, undefined],
+    ['working hints without a composer', 'Working\nesc interrupt', 'Queue this', true, undefined],
+  ] as const)('does not paste into %s after a previously ready send', async (_name, pane, content, enqueue, options) => {
+    const { controller, sessionId, output } = await deliveryFixture(false, pane)
+    await expect(controller.send(sessionId, 'Warmup', true)).resolves.toBe(true)
+    await eventually(
+      () => readFile(output, 'utf8'),
+      (value) => Boolean(value && JSON.parse(value).submits.length),
+    )
+    const before = await readFile(output, 'utf8')
+    const captured = await controller.capture(sessionId)
+    await expect(controller.send(sessionId, content, enqueue, options))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await readFile(output, 'utf8')).toBe(before)
+    expect(await controller.capture(sessionId)).toBe(captured)
+  }, 15_000)
+
+  it('rechecks the composer after awaited owner validation', async () => {
+    const overlay = 'Settings\n↑/↓ navigate · enter edit · esc close'
+    const { controller, sessionId, output, tmuxSession } = await deliveryFixture(false, undefined, overlay)
+    await controller.send(sessionId, 'Warmup', true)
+    await eventually(() => readFile(output, 'utf8'), (value) =>
+      Boolean(value && JSON.parse(value).submits.length))
+    const before = await readFile(output, 'utf8')
+    const internals = controller as unknown as {
+      owner(id: string, target?: string, refresh?: boolean): Promise<{ pid: number; target: string } | undefined>
+    }
+    const original = internals.owner.bind(controller)
+    let repainted = false
+    vi.spyOn(internals, 'owner').mockImplementation(async (id, target, refresh) => {
+      const owner = await original(id, target, refresh)
+      if (refresh && !repainted) {
+        repainted = true
+        await execFileAsync('tmux', ['send-keys', '-t', tmuxSession, 'C-]'])
+        await eventually(
+          async () => (await execFileAsync('tmux', ['capture-pane', '-p', '-t', tmuxSession])).stdout,
+          (pane) => pane.includes('Settings'),
+        )
+      }
+      return owner
+    })
+    await expect(controller.send(sessionId, 'Must not reach the overlay', true))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(repainted).toBe(true)
+    expect(await readFile(output, 'utf8')).toBe(before)
+  }, 15_000)
+
+  it('reports a lost paste acknowledgement as uncertain and does not paste again', async () => {
+    const { controller, sessionId, output, directory } = await deliveryFixture(false)
+    const realTmux = (await execFileAsync('sh', ['-c', 'command -v tmux'])).stdout.trim()
+    const bin = path.join(directory, 'bin')
+    await mkdir(bin)
+    const wrapper = path.join(bin, 'tmux')
+    await writeFile(wrapper, [
+      '#!/usr/bin/env bash',
+      '"$REAL_TMUX" "$@" || exit "$?"',
+      'if [[ "$1" == paste-buffer ]]; then echo "acknowledgement lost after paste" >&2; exit 1; fi',
+    ].join('\n'))
+    await chmod(wrapper, 0o755)
+    vi.stubEnv('REAL_TMUX', realTmux)
+    vi.stubEnv('PATH', `${bin}:${process.env.PATH}`)
+    await expect(controller.send(sessionId, 'One possibly delivered paste', false))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: true })
+    const received = await eventually(() => readFile(output, 'utf8'), (value) => value.length > 0)
+    expect(JSON.parse(received)).toEqual({ pastes: ['One possibly delivered paste'], submits: [] })
+    await expect(controller.send(sessionId, 'Do not append a duplicate', false))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await readFile(output, 'utf8')).toBe(received)
+  }, 15_000)
 
   it('exposes session-use warnings without approving a concurrent takeover', () => {
     const permission = parseTerminalPermission(sessionInUsePane)
@@ -292,11 +736,11 @@ if (${JSON.stringify(format)} === 'previous-send-clearing') setTimeout(() => dra
       const sessionId = randomUUID()
       await writeFile(output, '')
       await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let selected = 1
 let pending = ''
 function finish(decision) {
-  writeFileSync(${JSON.stringify(output)}, JSON.stringify({ decision }))
+  writeReceipt({ decision })
   process.stdout.write('\\x1b[2J\\x1b[HReady\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
 }
 process.stdin.setRawMode(true)
@@ -416,12 +860,11 @@ process.stdout.write(${JSON.stringify(sessionInUsePane.replace('❯ 1.', '  1.')
     ]
     await writeFile(output, '')
     await writeFile(executable, `
-import { writeFileSync } from 'node:fs'
+${fixtureReceiptWriter(output)}
 let selected = 0
 let pending = ''
 function finish(action) {
-  writeFileSync(${JSON.stringify(output)}, JSON.stringify(
-    action === 'accept' ? { accepted: selected === 0 } : { action }))
+  writeReceipt(action === 'accept' ? { accepted: selected === 0 } : { action })
   process.stdout.write('\\x1b[2J\\x1b[HFinished\\r\\n╻▄▄▄▄▄▄▄▄\\r\\n┃\\r\\n╹▀▀▀▀▀▀▀▀\\r\\n / commands')
 }
 function draw() {
@@ -509,18 +952,272 @@ draw()
   it('detects the Copilot session-in-use startup dialog', () => {
     expect(
       isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
 │ Session in use
 │ This session appears to be in use by another CLI or application.
 │ ❯ 1. Resume anyway
 │   2. Go back (Esc)
+│ ↑/↓ to navigate · enter to select · esc to cancel
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(true)
+    expect(
+      isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────╮
+│ Session in use                     │
+│ ❯ 1. Resume anyway                 │
+│   2. Go back (Esc)                 │
+│ ↑/↓ to navigate · enter to         │
+│ select · esc to cancel             │
+╰────────────────────────────────────╯
       `),
     ).toBe(true)
     expect(isTerminalSessionInUsePrompt('❯ Ready for a prompt')).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+● The old panel said Session in use.
+● It offered 1. Resume anyway and 2. Go back.
+╻▄▄▄▄
+┃
+╹▀▀▀▀
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
+│ > Session in use                                           │
+│ This session appears to be in use by another CLI.          │
+│ 1. Resume anyway                                           │
+│ 2. Go back                                                  │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
+│ >                                                          │
+│ Session in use                                             │
+│ 1. Resume anyway                                           │
+│ 2. Go back                                                  │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
+│ Session in use                                             │
+│ This session appears to be in use by another CLI.          │
+│ 1. Resume anyway                                           │
+│ 2. Go back                                                  │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+╭────────────────────────────────────────────────────────────╮
+│ Run session recovery                                      │
+│ ────────────────────────────────────────────────────────── │
+│ Session in use                                             │
+│ ❯ 1. Resume anyway                                        │
+│   2. Go back                                               │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+│ ────────────────────────────────────────────────────────── │
+│ Do you want to run this                                    │
+│ command?                                                   │
+│ ❯ 1. Yes                                                   │
+│   2. No, and tell Copilot what to do differently           │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalSessionInUsePrompt(`
+● The old panel said Session in use.
+● It offered 1. Resume anyway and 2. Go back.
+╭────
+│
+╰────
+      `),
+    ).toBe(false)
+  })
+
+  it('detects the Copilot desktop-app startup promotion', () => {
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
+│ Now generally available!                       │
+│ Install it now?                               │
+│ ❯ Yes, install      No, thanks                │
+│ ←/→ to choose · Enter to select · Y / N       │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(true)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭────────────────────────────────────╮
+│ THE GITHUB COPILOT APP             │
+│ Now generally available!           │
+│ Install it now?                    │
+│ ❯ Yes, install      No, thanks     │
+│ ←/→ to choose · Enter to           │
+│ select · Y / N                     │
+╰────────────────────────────────────╯
+      `),
+    ).toBe(true)
+    // Both choices share a row, so the marker sits mid-line when the second
+    // one is selected. Anchoring it to the start of the line refused a panel
+    // that was really being shown, and startup then timed out.
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
+│ Now generally available!                       │
+│ Install it now?                               │
+│ Yes, install    ❯ No, thanks                  │
+│ ←/→ to choose · Enter to select · Y / N       │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(true)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
+│ Now generally available!                       │
+│ Install it now?                               │
+│ Yes, install      ❯ No, thanks                │
+│ ←/→ to choose · Enter to select · Y / N       │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(true)
+    expect(
+      isTerminalDesktopInstallPrompt('❯ Ready for a prompt'),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+┃ THE GITHUB COPILOT APP
+┃ Now generally available!
+┃ Install it now?
+┃ ❯ Yes, install      No, thanks
+┃ ←/→ to choose · Enter to select · Y / N
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      parseTerminalUserInput(`
+╭───────────────────────────────────────────────╮
+┃ Question
+┃ Which environment?
+┃ ❯ 1. Production
+┃   2. Development
+┃ ↑/↓ to select · enter to confirm · esc cancel
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalUserInput(`
+╭─────────────────────────────────────────────────╮
+│ ╭─────────────────────────────────────────────╮ │
+│ │ Question                                    │ │
+│ │ Which environment?                          │ │
+│ │ ❯ 1. Production                             │ │
+│ │   2. Development                            │ │
+│ │ ↑/↓ to select · enter to confirm · esc cancel│ │
+│ ╰─────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+╭─────────────────────────────────────────────────╮
+│ ╭─────────────────────────────────────────────╮ │
+│ │ Confirm folder trust                        │ │
+│ │ Do you trust the files in this              │ │
+│ │ folder?                                     │ │
+│ │ ❯ 1. Yes                                    │ │
+│ │   2. Yes, and remember this folder for      │ │
+│ │      future sessions                        │ │
+│ │   3. No (Esc)                               │ │
+│ │ ↑/↓ to navigate · enter to select · esc to  │ │
+│ │ cancel                                      │ │
+│ ╰─────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    // The composer draws itself as a frame too, and what is typed in it can be
+    // anything -- this panel's own words among them, pasted or recalled. It is
+    // drawn without a prompt marker while it holds no caret, which is exactly
+    // when it looked most like the panel. Answering it would send Enter or `n`
+    // into somebody's draft.
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
+│ Now generally available!                       │
+│ Install it now?                               │
+│ Yes, install      No, thanks                  │
+│ ←/→ to choose · Enter to select · Y / N       │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭─────────────────────────────────────────────────╮
+│ ╭─────────────────────────────────────────────╮ │
+│ │ THE GITHUB COPILOT APP                      │ │
+│ │ Now generally available!                    │ │
+│ │ Install it now?                             │ │
+│ │ ❯ Yes, install      No, thanks              │ │
+│ │ ←/→ to choose · Enter to select · Y / N     │ │
+│ │ esc to cancel                               │ │
+│ ╰─────────────────────────────────────────────╯ │
+╰─────────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ > THE GITHUB COPILOT APP                      │
+│ Install it now?                               │
+│ Yes, install · No, thanks · Y / N             │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ THE GITHUB COPILOT APP                         │
+│ Install it now?                               │
+│ Yes, install · No, thanks · Y / N             │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+╭───────────────────────────────────────────────╮
+│ Settings                                      │
+│ Search: Install it now? Yes, install No,      │
+│ thanks Y / N                                  │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
+    expect(
+      isTerminalDesktopInstallPrompt(`
+● Earlier output: THE GITHUB COPILOT APP
+╭───────────────────────────────────────────────╮
+│ Settings: Install it now?                     │
+│ Yes, install · No, thanks · Y / N             │
+╰───────────────────────────────────────────────╯
+      `),
+    ).toBe(false)
   })
 
   it('parses Copilot ask-user choice and freeform dialogs', () => {
     expect(
       parseTerminalUserInput(`
+╭────────────────────────────────────────────────╮
 │ Question                                      │
 │ ────────────────────────────────────────────  │
 │ Which environment do you prefer?              │
@@ -530,6 +1227,7 @@ draw()
 │   3. Other (type your answer)                 │
 │                                               │
 │ ↑/↓ to select · enter to confirm · esc cancel │
+╰────────────────────────────────────────────────╯
       `),
     ).toMatchObject({
       question: 'Which environment do you prefer?',
@@ -539,11 +1237,13 @@ draw()
 
     expect(
       parseTerminalUserInput(`
+╭────────────────────────────────────╮
 │ Question                         │
 │ Which package group?             │
 │ ❯ 1. Standard                    │
 │   2. Other package managers      │
 │ ↑/↓ to select · enter to confirm │
+╰────────────────────────────────────╯
       `),
     ).toMatchObject({
       choices: ['Standard', 'Other package managers'],
@@ -551,18 +1251,33 @@ draw()
     })
     expect(
       parseTerminalUserInput(`
+╭──────────────────────────────────────╮
 │ Question                           │
 │ Describe your deployment plan.     │
 │                                    │
 │ ❯ Type your answer...              │
 │                                    │
 │ enter to submit · esc to cancel    │
+╰──────────────────────────────────────╯
       `),
     ).toMatchObject({
       question: 'Describe your deployment plan.',
       choices: [],
       allowFreeform: true,
     })
+    expect(
+      parseTerminalUserInput(`
+╭──────────────────────────────────────╮
+│ Question                             │
+│ Old question?                        │
+│ 1. Yes                               │
+│ enter to confirm · esc to cancel     │
+╰──────────────────────────────────────╯
+╻▄▄▄▄
+┃
+╹▀▀▀▀
+      `),
+    ).toBeUndefined()
   })
 
   it('parses Copilot terminal permission dialogs', () => {
@@ -595,6 +1310,140 @@ Permission request (1 remaining)
     })
     expect(
       parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Run stale diagnostics                                      │
+│ ────────────────────────────────────────────────────────── │
+│ printf 'stale'                                             │
+│ Do you want to run this command?                           │
+│ ❯ 1. Yes                                                   │
+│   2. No, and tell Copilot what to do differently           │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+╻▄▄▄▄
+┃
+╹▀▀▀▀
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ 1. Yes                                                     │
+│ 2. Yes, and remember this folder for future sessions       │
+│ 3. No (Esc)                                                │
+╰────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────╮
+│ Settings                                                   │
+│ esc close                                                  │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ ❯ 1. Yes                                                   │
+│   2. Yes, and remember this folder for future sessions     │
+│   3. No (Esc)                                              │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────╮
+│ Run diagnostics                                            │
+│ ────────────────────────────────────────────────────────── │
+│ printf 'ready'                                             │
+│ Do you want to run this command?                           │
+│ ❯ 1. Yes                                                   │
+│   2. No, and tell Copilot what to do differently           │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toMatchObject({ kind: 'terminal', title: 'Run diagnostics' })
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Run copied trust text                                      │
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ 1. Yes                                                     │
+│ 2. Yes, and remember this folder for future sessions       │
+│ 3. No (Esc)                                                │
+│ Do you want to run this command?                           │
+│ 1. Yes                                                     │
+│ 2. No                                                      │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ 1. Yes                                                     │
+│ 2. Yes, and remember this folder for future sessions       │
+│ 3. No (Esc)                                                │
+╰────────────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────────╮
+│ Do you trust the files in this folder?                     │
+│ Unrelated recovery view                                    │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+● Earlier output quoted:
+  Confirm folder trust
+  Do you trust the files in this folder?
+  1. Yes
+  2. Yes, and remember this folder for future sessions
+  3. No (Esc)
+╭────
+│
+╰────
+      `),
+    ).toBeUndefined()
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ /home/user/project                                         │
+│ ────────────────────────────────────────────────────────── │
+│ Do you trust the files in this                             │
+│ folder?                                                    │
+│ ❯ 1. Yes                                                   │
+│   2. Yes, and remember this folder for                     │
+│      future sessions                                       │
+│   3. No (Esc)                                              │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toMatchObject({
+      kind: 'terminal',
+      options: [
+        { optionId: 'terminal:allow' },
+        { optionId: 'terminal:stop' },
+      ],
+    })
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────╮
+│ Confirm folder trust               │
+│ /work/checkout                     │
+│ ────────────────────────────────── │
+│ Do you trust the files in this     │
+│ folder?                            │
+│ ❯ 1. Yes                           │
+│   2. Yes, and remember this folder │
+│      for future sessions           │
+│   3. No (Esc)                      │
+│ ↑/↓ to navigate · enter to         │
+│ select · esc to cancel             │
+╰────────────────────────────────────╯
+      `),
+    ).toMatchObject({ kind: 'terminal', title: 'Trust folder for this session: /work/checkout' })
+    expect(
+      parseTerminalPermission(`
 ────────────────────────────────────────────────────────────
 │ Query selected services
 │ ──────────────────────────────────────────────────────────
@@ -616,6 +1465,79 @@ Permission request (1 remaining)
         { optionId: 'terminal:stop', name: 'Stop' },
       ],
     })
+    // A command permission frame can display any text at all, the command's
+    // own included. One printing the trust dialog word for word would be
+    // answered as trust, and "Trust once" would send Enter to whatever the
+    // command dialog actually had selected. The command's own question wraps
+    // like any other line, so it is looked for the same way.
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Run a script                                               │
+│ ────────────────────────────────────────────────────────── │
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ \u276F 1. Yes                                                   │
+│   2. Yes, and remember this folder for future sessions     │
+│   3. No (Esc)                                              │
+│ ────────────────────────────────────────────────────────── │
+│ Do you want to run this                                    │
+│ command?                                                   │
+│ \u276F 1. Yes                                                   │
+│   2. Yes, and allow similar commands this session          │
+│   3. No, and tell Copilot what to do differently           │
+│ \u2191/\u2193 to navigate \u00B7 enter to select \u00B7 esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toMatchObject({ kind: 'terminal', title: 'Run a script' })
+
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ ────────────────────────────────────────────────────────── │
+│ ╭────────────────────────────────────────────────────────╮ │
+│ │ /home/user/project                                     │ │
+│ ╰────────────────────────────────────────────────────────╯ │
+│                                                            │
+│ Do you trust the files in this folder?                     │
+│                                                            │
+│ ❯ 1. Yes                                                   │
+│   2. Yes, and remember this folder for future sessions     │
+│   3. No (Esc)                                              │
+│                                                            │
+│ ↑/↓ to navigate · enter to select · esc to cancel          │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toMatchObject({
+      requestId: expect.stringMatching(/^terminal-permission:/),
+      title: 'Trust folder for this session: /home/user/project',
+      kind: 'terminal',
+      choiceCount: 3,
+      options: [
+        {
+          optionId: 'terminal:allow',
+          name: 'Trust for this session',
+          kind: 'allow_once',
+        },
+        {
+          optionId: 'terminal:stop',
+          name: 'Stop',
+          kind: 'reject_once',
+        },
+      ],
+    })
+    expect(
+      parseTerminalPermission(`
+╭────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                       │
+│ Do you trust the files in this folder?                     │
+│ 1. Yes                                                     │
+│ 2. Yes, and remember this folder for future sessions       │
+│ 3. No (Esc)                                                │
+╰────────────────────────────────────────────────────────────╯
+      `),
+    ).toBeUndefined()
   })
 
   it('creates a Copilot window in the configured existing tmux session', async () => {
@@ -625,7 +1547,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-window-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nprintf '%s' "$PWD" >"${output}"\nsleep 60\n`,
+      `#!/usr/bin/env bash\nprintf '%s' "$PWD" >"${output}"\nprintf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = String(process.pid)
@@ -761,6 +1683,412 @@ Permission request (1 remaining)
       ),
     ).toBe(true)
     expect(cleared).toBe(true)
+  }, 20_000)
+
+  it('reauthorizes the restored owner when reset fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const count = path.join(directory, 'starts.txt')
+    const response = path.join(directory, 'response.txt')
+    const executable = path.join(directory, 'copilot-reset-rollback')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        `starts=$(cat "${count}" 2>/dev/null || printf 0)`,
+        'starts=$((starts + 1))',
+        `printf '%s' "$starts" >"${count}"`,
+        'if [[ "$starts" -eq 1 ]]; then',
+        "  printf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        '  sleep 60',
+        'fi',
+        "printf '╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
+        'IFS= read -r -n 1 answer',
+        `printf '%s' "$answer" >"${response}"`,
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-reset-rollback-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
+    await controller.create(sessionId, directory, 'Reset rollback', true)
+
+    await expect(
+      controller.reset(
+        sessionId,
+        randomUUID(),
+        directory,
+        undefined,
+        async () => {
+          throw new Error('state clear failed')
+        },
+      ),
+    ).rejects.toThrow('state clear failed')
+    await expect(
+      controller.resolveStartupPrompt(sessionId),
+    ).resolves.toBe(true)
+
+    expect(await readFile(response, 'utf8')).toBe('n')
+    // Two Copilot starts against a real tmux session, and a startup panel
+    // answered after the second: more than the five seconds a test is given by
+    // default, and it fails on time alone.
+  }, 30_000)
+
+  it('declines the desktop-app promotion before returning a new session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const response = path.join(directory, 'response.txt')
+    const executable = path.join(directory, 'copilot-promotion-fake')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
+        'IFS= read -r -n 1 answer',
+        `printf '%s' "$answer" >"${response}"`,
+        'sleep 0.5',
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        `if IFS= read -r -t 0.2 -n 1 extra; then printf '%s' "$extra" >"${response}.extra"; fi`,
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-promotion-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+
+    const controller = new TmuxTerminalSessionController()
+    await controller.create(
+      randomUUID(),
+      directory,
+      'Promotion prompt',
+      true,
+    )
+
+    expect(await readFile(response, 'utf8')).toBe('n')
+    expect(existsSync(`${response}.extra`)).toBe(false)
+  })
+
+  it('returns a recovered session that is already showing a structured form', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-structured-form')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf 'Copilot needs information.\\nChoose a target.\\n\\nTarget\\n\\nenter accept · esc cancel\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-structured-form-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
+    await expect(
+      controller.create(sessionId, directory, 'Structured form', true),
+    ).resolves.toMatchObject({ sessionName: tmuxSession })
+    await expect(
+      controller.send(sessionId, 'must not enter the form', false),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('waiting for user input'),
+      statusCode: 409,
+    })
+  })
+
+  it('returns a new session that is already showing a generic overlay', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-settings-overlay')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "for _ in $(seq 1 40); do printf '\\n'; done",
+        "printf 'Settings\\n❯ allowedUrls (default)\\n/ search · ↑/↓ navigate · tab switch scope · enter edit\\nesc close\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-settings-overlay-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
+
+    await expect(
+      controller.create(sessionId, directory, 'Settings overlay', true),
+    ).resolves.toMatchObject({ sessionName: tmuxSession })
+    await expect(
+      controller.send(sessionId, 'must not enter settings', false),
+    ).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('rechecks readiness after an actionable startup prompt is answered', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const output = path.join(directory, 'received.txt')
+    const executable = path.join(directory, 'copilot-trust-then-promotion')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╭────────────────────────────────────────────────────────────╮\\nConfirm folder trust\\nDo you trust the files in this folder?\\n❯ 1. Yes\\n  2. Yes, and remember this folder for future sessions\\n  3. No (Esc)\\n↑/↓ to navigate · enter to select · esc to cancel\\n╰────────────────────────────────────────────────────────────╯\\n'",
+        'IFS= read -r trust',
+        "printf '\\033[2J\\033[H╻▄▄▄▄\\n┃\\n'",
+        'sleep 0.5',
+        "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
+        'IFS= read -r -n 1 answer',
+        '[[ "$answer" == n ]] || exit 2',
+        shellReadyComposer,
+        'IFS= read -r line',
+        'sleep 0.2',
+        `printf '%s' "$line" >"${output}"`,
+        shellReadyComposer,
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-trust-promotion-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
+    const location = await controller.create(
+      sessionId,
+      directory,
+      'Trust then promotion',
+      true,
+    )
+    await execFileAsync('tmux', [
+      'send-keys',
+      '-t',
+      location.windowId,
+      'Enter',
+    ])
+    await expect(
+      Promise.all([
+        controller.resolveStartupPrompt(sessionId),
+        controller.resolveStartupPrompt(sessionId),
+      ]),
+    ).resolves.toEqual([true, true])
+
+    const delivered = await controller.send(
+      sessionId,
+      'arrives after both prompts',
+      false,
+    )
+
+    expect(delivered).toBe(true)
+    const received = await eventually(
+      () => readFile(output, 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      }),
+      (value) => value === 'arrives after both prompts',
+    )
+    expect(received).toBe('arrives after both prompts')
+  }, 15_000)
+
+  it('captures an owned startup prompt from its expected pane', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const sessionId = randomUUID()
+    const copilotHome = path.join(directory, 'copilot-home')
+    const bystander = path.join(directory, 'copilot-bystander')
+    const executable = path.join(directory, 'copilot-owned-startup')
+    await writeFile(
+      bystander,
+      [
+        '#!/usr/bin/env bash',
+        "printf 'Settings\\n❯ allowedUrls (default)\\nesc close\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╭────────────────────────────────────────────────────────────╮\\nConfirm folder trust\\nDo you trust the files in this folder?\\n❯ 1. Yes\\n  2. Yes, and remember this folder for future sessions\\n  3. No (Esc)\\n↑/↓ to navigate · enter to select · esc to cancel\\n╰────────────────────────────────────────────────────────────╯\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await Promise.all([chmod(bystander, 0o755), chmod(executable, 0o755)])
+    const tmuxSession = `agentic-owned-capture-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      '-e',
+      `COPILOT_HOME=${copilotHome}`,
+      bystander,
+      '--session-id',
+      sessionId,
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const controller = new TmuxTerminalSessionController()
+
+    await controller.create(sessionId, directory, 'Owned startup', true)
+
+    await expect(controller.capture(sessionId)).resolves.toContain(
+      'Confirm folder trust',
+    )
+  })
+
+  it('removes a new window when startup readiness fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-startup-failure')
+    await writeFile(
+      executable,
+      '#!/usr/bin/env bash\nsleep 1\nexit 1\n',
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-startup-failure-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      'sleep',
+      '60',
+    ])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'set-environment',
+      '-t',
+      tmuxSession,
+      'COPILOT_HOME',
+      copilotHome,
+    ])
+    const controller = new TmuxTerminalSessionController()
+
+    await expect(
+      controller.create(randomUUID(), directory, 'Failed startup', true),
+    ).rejects.toThrow()
+
+    const windows = (
+      await execFileAsync('tmux', [
+        'list-windows',
+        '-t',
+        tmuxSession,
+        '-F',
+        '#{window_name}',
+      ])
+    ).stdout.trim().split('\n')
+    expect(windows).not.toContain('Failed startup')
   })
 
   it('kills only the owning pane when panes are renumbered while confirming', async () => {
@@ -850,7 +2178,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nIFS= read -r line\nprintf '%s' "$line" >"${output}"\nsleep 60\n`,
+      `#!/usr/bin/env bash\n${shellReadyComposer}\nIFS= read -r line\nprintf '%s' "$line" >"${output}"\nsleep 0.5\n${shellReadyComposer}\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = `agentic-test-${process.pid}`
@@ -871,6 +2199,7 @@ Permission request (1 remaining)
         '#{pane_pid}',
       ])
     ).stdout.trim()
+    await waitForProcessCommand(Number.parseInt(panePid, 10), [executable])
     const sessionId = 'abcdef12-abcd-abcd-abcd-abcdef123456'
     const copilotHome = path.join(directory, 'copilot-home')
     const sessionDirectory = path.join(
@@ -886,6 +2215,12 @@ Permission request (1 remaining)
     vi.stubEnv('COPILOT_HOME', copilotHome)
 
     const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
     const delivered = await controller.send(
       sessionId,
       'terminal delivery works',
@@ -931,7 +2266,7 @@ Permission request (1 remaining)
     const executable = path.join(directory, 'copilot-concurrent-fake')
     await writeFile(
       executable,
-      `#!/usr/bin/env bash\nIFS= read -r first\nIFS= read -r second\nprintf '%s\\n%s' "$first" "$second" >"${output}"\nsleep 60\n`,
+      `#!/usr/bin/env bash\n${shellReadyComposer}\nIFS= read -r first\n${shellReadyComposer}\nIFS= read -r second\nprintf '%s\\n%s' "$first" "$second" >"${output}"\n${shellReadyComposer}\nsleep 60\n`,
     )
     await chmod(executable, 0o755)
     const tmuxSession = `agentic-concurrent-${process.pid}`
@@ -952,6 +2287,7 @@ Permission request (1 remaining)
         '#{pane_pid}',
       ])
     ).stdout.trim()
+    await waitForProcessCommand(Number.parseInt(panePid, 10), [executable])
     const sessionId = 'fedcba98-abcd-abcd-abcd-123456789abc'
     const copilotHome = path.join(directory, 'copilot-home')
     const sessionDirectory = path.join(
@@ -966,25 +2302,256 @@ Permission request (1 remaining)
     )
     vi.stubEnv('COPILOT_HOME', copilotHome)
     const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
 
     await Promise.all([
       controller.send(sessionId, 'MESSAGE-AAAA', false),
       controller.send(sessionId, 'MESSAGE-BBBB', false),
     ])
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      try {
-        if ((await readFile(output, 'utf8')).includes('MESSAGE-BBBB')) {
-          break
-        }
-      } catch {
-        // The fake terminal has not consumed both lines yet.
+    const received = await eventually(
+      () => readFile(output, 'utf8').catch(() => ''),
+      (value) => value.includes('MESSAGE-BBBB'),
+    )
+    expect(received).toBe('MESSAGE-AAAA\nMESSAGE-BBBB')
+  }, 15_000)
+
+  it('rejects a cached session owner that reopened in another pane', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-reopened-fake')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        shellReadyComposer,
+        'IFS= read -r line',
+        shellReadyComposer,
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-reopened-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    const sessionId = randomUUID()
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    const originalWindow = (
+      await execFileAsync('tmux', [
+        'new-session',
+        '-d',
+        '-P',
+        '-F',
+        '#{window_id}',
+        '-s',
+        tmuxSession,
+        '-e',
+        `COPILOT_HOME=${copilotHome}`,
+        executable,
+        '--session-id',
+        sessionId,
+      ])
+    ).stdout.trim()
+    const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
+    await expect(
+      controller.send(sessionId, 'establish cached owner', false),
+    ).resolves.toBe(true)
+    await expect(controller.has(sessionId)).resolves.toBe(true)
+    await execFileAsync('tmux', [
+      'new-window',
+      '-d',
+      '-t',
+      `=${tmuxSession}:`,
+      'sleep',
+      '60',
+    ])
+    await execFileAsync('tmux', ['kill-window', '-t', originalWindow])
+    const reopenedPanePid = (
+      await execFileAsync('tmux', [
+        'new-window',
+        '-d',
+        '-P',
+        '-F',
+        '#{pane_pid}',
+        '-t',
+        `=${tmuxSession}:`,
+        '-e',
+        `COPILOT_HOME=${copilotHome}`,
+        executable,
+        '--session-id',
+        sessionId,
+      ])
+    ).stdout.trim()
+    await waitForProcessCommand(Number.parseInt(reopenedPanePid, 10), [
+      executable,
+    ])
+
+    let replacementAvailable = false
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      replacementAvailable = await controller.has(sessionId)
+      if (replacementAvailable) {
+        break
       }
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
+    expect(replacementAvailable).toBe(true)
+    await expect(
+      controller.send(sessionId, 'must not trust the replacement', false),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    await expect(
+      controller.send(sessionId, 'replacement can be rediscovered', false),
+    ).resolves.toBe(true)
+  }, 15_000)
 
-    expect(await readFile(output, 'utf8')).toBe(
-      'MESSAGE-AAAA\nMESSAGE-BBBB',
+  it('does not paste after the owner changes during readiness', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const initial = path.join(directory, 'copilot-readiness-initial')
+    const replacement = path.join(directory, 'copilot-readiness-replacement')
+    const received = path.join(directory, 'replacement-received.txt')
+    await writeFile(
+      initial,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        'sleep 60',
+      ].join('\n'),
     )
+    await writeFile(
+      replacement,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        'if IFS= read -r -t 5 line; then',
+        `  printf '%s' "$line" >"${received}"`,
+        'fi',
+        'sleep 60',
+      ].join('\n'),
+    )
+    await Promise.all([chmod(initial, 0o755), chmod(replacement, 0o755)])
+    const tmuxSession = `agentic-readiness-owner-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    const sessionId = randomUUID()
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      '-e',
+      `COPILOT_HOME=${copilotHome}`,
+      initial,
+      '--session-id',
+      sessionId,
+    ])
+    const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
+
+    const sending = controller.send(
+      sessionId,
+      'must not reach the replacement',
+      false,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    await execFileAsync('tmux', [
+      'respawn-pane',
+      '-k',
+      '-t',
+      tmuxSession,
+      '-e',
+      `COPILOT_HOME=${copilotHome}`,
+      replacement,
+      '--session-id',
+      sessionId,
+    ])
+
+    await expect(sending).rejects.toMatchObject({ statusCode: 409 })
+    expect(existsSync(received)).toBe(false)
+  })
+
+  it('does not dismiss a delayed startup promotion for a discovered session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const output = path.join(directory, 'received.txt')
+    const executable = path.join(directory, 'copilot-delayed-promotion')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        "printf '╻▄▄▄▄\\n┃\\n'",
+        'sleep 0.5',
+        "printf '\\033[2J\\033[H╭───────────────────────────────────────────────╮\\nTHE GITHUB COPILOT APP\\nNow generally available!\\nInstall it now?\\n❯ Yes, install      No, thanks\\n←/→ to choose · Enter to select · Y / N\\n╰───────────────────────────────────────────────╯\\n'",
+        'sleep 60',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `agentic-delayed-promotion-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session',
+      '-d',
+      '-s',
+      tmuxSession,
+      executable,
+    ])
+    const panePid = (
+      await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        tmuxSession,
+        '#{pane_pid}',
+      ])
+    ).stdout.trim()
+    await waitForProcessCommand(Number.parseInt(panePid, 10), [executable])
+    const sessionId = 'fedcba98-abcd-abcd-abcd-abcdef654321'
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(
+      copilotHome,
+      'session-state',
+      sessionId,
+    )
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(
+      path.join(sessionDirectory, `inuse.${panePid}.lock`),
+      `${panePid}\n`,
+    )
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    const controller = new TmuxTerminalSessionController()
+    expect(
+      await eventually(
+        () => controller.has(sessionId),
+        (available) => available,
+      ),
+    ).toBe(true)
+
+    await expect(
+      controller.send(
+        sessionId,
+        'must not enter startup',
+        false,
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('waiting for user input'),
+      statusCode: 409,
+    })
+    expect(existsSync(output)).toBe(false)
   })
 })
 
@@ -1018,6 +2585,10 @@ describe('paneShowsText', () => {
     // Only a send too large to echo can account for a placeholder.
     const huge = 'a very long message '.repeat(60)
     expect(paneShowsText('> [Pasted text #1 +40 lines]', huge)).toBe(true)
+    const multiline = Array.from({ length: 24 }, () => 'a long message').join('\n')
+    expect(paneShowsText('> [Paste #1 - 24 lines]', multiline)).toBe(true)
+    expect(paneShowsText('> [Paste #1 - 24 lines]', huge)).toBe(false)
+    expect(paneShowsText('> [Paste recipe]', huge)).toBe(false)
   })
 
   it('recognises a placeholder for a long paste ending in a short line', () => {
@@ -1029,6 +2600,35 @@ describe('paneShowsText', () => {
     expect(
       paneShowsText('> [Pasted text #1 +40 lines]', 'ok', 0, content),
     ).toBe(true)
+    expect(
+      paneShowsText('> [Paste #1 - 2 lines]', 'ok', 0, content),
+    ).toBe(true)
+  })
+
+  it('recognises a short eleven-line paste placeholder', () => {
+    const content = Array.from({ length: 11 }, (_, index) =>
+      index === 10 ? 'final token z' : `line ${index + 1}`,
+    ).join('\n')
+    expect(content.length).toBeLessThan(801)
+    expect(
+      paneShowsText('> [Paste #1 - 11 lines]', 'final token z', 0, content),
+    ).toBe(true)
+    expect(
+      paneShowsText(
+        '> [Pasted text #1 +11 lines]',
+        'final token z',
+        0,
+        content,
+      ),
+    ).toBe(false)
+    expect(
+      composerTookPaste(
+        '> ',
+        '> [Paste #1 - 11 lines] [Pasted text #2 +11 lines]',
+        'final token z',
+        content,
+      ),
+    ).toBe(false)
   })
 
   it('measures a paste by what the CLI received, not by what it renders', () => {
@@ -1072,6 +2672,7 @@ describe('paneShowsText', () => {
     expect(
       paneShowsText('> [Pasted text #1 +40 lines]', 'ship it'),
     ).toBe(false)
+    expect(paneShowsText('> [Paste #1 - 24 lines]', 'ship it')).toBe(false)
   })
 
   it('does not accept the same message sent earlier as this one arriving', () => {
@@ -1666,13 +3267,16 @@ describe('single field forms', () => {
     expect(parseTerminalFormActiveField(pane, wrappedForm)).toBeUndefined()
   })
 
-  it('recognises a question wrapped inside a word and across blank paragraphs', () => {
+  it('requires a joined capture for a wrap inside a word', () => {
     const pane = wrappedPane.replace(
       'authentication. Please complete the sign-in\n prompt',
       'authentica\n tion.\n\n Please complete the sign-in\n prompt',
     )
-    expect(terminalFormShowsFields(pane, wrappedForm)).toBe(true)
-    expect(parseTerminalFormActiveField(pane, wrappedForm)).toBe(0)
+    expect(terminalFormShowsFields(pane, wrappedForm)).toBe(false)
+    expect(parseTerminalFormActiveField(pane, wrappedForm)).toBeUndefined()
+    const joined = pane.replace('authentica\n tion.', 'authentication.')
+    expect(terminalFormShowsFields(joined, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(joined, wrappedForm)).toBe(0)
   })
 
   it('requires the whole wrapped question, not a prefix or text in a field', () => {
@@ -1726,6 +3330,110 @@ describe('terminal form identity', () => {
     expect(terminalFormShowsFields(formPaneLastField, form)).toBe(true)
   })
 
+  it('recognizes a question wrapped to the terminal width', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [
+        ' Configure the deployment request with a long explanation that',
+        ' wraps across terminal lines before the fields are shown.',
+      ].join('\n'),
+    )
+    const wrappedForm = {
+      ...form,
+      question:
+        'Configure the deployment request with a long explanation that wraps across terminal lines before the fields are shown.',
+    }
+
+    expect(terminalFormShowsFields(wrapped, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(wrapped, wrappedForm)).toBe(0)
+  })
+
+  it('recognizes a tmux-joined question containing an unbroken URL', () => {
+    const question =
+      'Inspect https://example.test/a-very-long-unbroken-resource-identifier before continuing.'
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      ` ${question}`,
+    )
+    const wrappedForm = { ...form, question }
+
+    expect(terminalFormShowsFields(wrapped, wrappedForm)).toBe(true)
+    expect(parseTerminalFormActiveField(wrapped, wrappedForm)).toBe(0)
+  })
+
+  it('does not conflate a word boundary with an unbroken identifier', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [' Choose user', ' name'].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose username',
+      }),
+    ).toBe(false)
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose user name',
+      }),
+    ).toBe(true)
+  })
+
+  it('does not hard-join a soft wrap after punctuation', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [' Choose foo-bar', ' baz'].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose foo-barbaz',
+      }),
+    ).toBe(false)
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose foo-bar baz',
+      }),
+    ).toBe(true)
+  })
+
+  it('does not hard-join a soft wrap before a digit', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [' Choose version', ' 2'].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose version2',
+      }),
+    ).toBe(false)
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question: 'Choose version 2',
+      }),
+    ).toBe(true)
+  })
+
+  it('keeps the exact question after tmux joins several URL wraps', () => {
+    const question =
+      'Inspect https://example.test/a-very-long-resource-identifier-that-spans-several-terminal-lines before continuing.'
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      ` ${question}`,
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, { ...form, question }),
+    ).toBe(true)
+  })
+
   it('rejects a form that belongs to another request', () => {
     // A prompt that replaced the one being answered shows its own fields, so
     // an answer written for the old form must not reach it.
@@ -1750,6 +3458,36 @@ describe('terminal form identity', () => {
       ' Configure the rollback request.',
     )
     expect(terminalFormShowsFields(reasked, form)).toBe(false)
+  })
+
+  it('rejects a stale question that prefixes the live question', () => {
+    const replacement = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [
+        ' Configure the deployment request.',
+        ' Include the regional override.',
+      ].join('\n'),
+    )
+
+    expect(terminalFormShowsFields(replacement, form)).toBe(false)
+  })
+
+  it('rejects a different wrapped question with the same fields', () => {
+    const wrapped = formPaneFirstField.replace(
+      ' Configure the deployment request.',
+      [
+        ' Configure the rollback request with a long explanation that',
+        ' wraps across terminal lines before the fields are shown.',
+      ].join('\n'),
+    )
+
+    expect(
+      terminalFormShowsFields(wrapped, {
+        ...form,
+        question:
+          'Configure the deployment request with a long explanation that wraps across terminal lines before the fields are shown.',
+      }),
+    ).toBe(false)
   })
 
   it('reads which field the form has focused, by position', () => {
@@ -1808,6 +3546,67 @@ describe('submitTerminalForm', () => {
     await expect(
       submitTerminalForm(async () => openForm, async () => {}, 10),
     ).resolves.toBe(false)
+  })
+
+  it('recognizes a single-field form whose footer wraps', () => {
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Choose a target.',
+        ' Target:',
+        ' ↑/↓ select · enter accept',
+        ' · esc cancel',
+      ].join('\n')),
+    ).toBe(true)
+  })
+
+  it('ignores cancel text before the actual form footer', () => {
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Explain why the cancel operation is needed.',
+        ' Target:',
+        ' Cancel deployment',
+        ' enter accept · esc cancel',
+      ].join('\n')),
+    ).toBe(true)
+  })
+
+  it('does not mistake a round-framed field for the composer', () => {
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Choose a target.',
+        ' Target:',
+        ' ╭────────╮',
+        ' │ value  │',
+        ' ╰────────╯',
+        ' enter accept · esc cancel',
+      ].join('\n')),
+    ).toBe(true)
+  })
+
+  it('rejects a quoted structured form above a live composer', () => {
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Choose a target.',
+        ' enter accept · esc cancel',
+        '╻▄▄▄▄',
+        '┃',
+        '╹▀▀▀▀',
+      ].join('\n')),
+    ).toBe(false)
+    expect(
+      parseTerminalFormPrompt([
+        ' Copilot needs information.',
+        ' Choose a target.',
+        ' enter accept · esc cancel',
+        '╭────',
+        '│',
+        '╰────',
+      ].join('\n')),
+    ).toBe(false)
   })
 })
 
@@ -1982,6 +3781,13 @@ describe('composerHoldsOtherText', () => {
         'a very long message '.repeat(60),
       ),
     ).toBe(false)
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Paste #1 - 24 lines] │']),
+        Array.from({ length: 24 }, () => 'a very long message').join('\n'),
+      ),
+    ).toBe(false)
   })
 
   it('keeps a placeholder that was already there', () => {
@@ -2061,6 +3867,19 @@ describe('composerHoldsOtherText', () => {
         framed(['│ >  │']),
         framed(['│ > [Pasted text #7] │']),
         'short',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not claim a legacy placeholder from an eleven-line paste', () => {
+    const content = Array.from({ length: 11 }, (_, index) =>
+      `line ${index + 1}`,
+    ).join('\n')
+    expect(
+      composerHoldsOtherText(
+        framed(['│ >  │']),
+        framed(['│ > [Pasted text #7 +11 lines] │']),
+        content,
       ),
     ).toBe(true)
   })

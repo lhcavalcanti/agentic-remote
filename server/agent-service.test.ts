@@ -4187,12 +4187,14 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       '/allow-all on',
       false,
+      { allowDuringAgentExecution: true },
     )
     expect(terminal.send).toHaveBeenNthCalledWith(
       3,
       client.session.sessionId,
       '/usage',
       false,
+      { allowDuringAgentExecution: true },
     )
     expect(sent).toMatchObject({
       activity: 'Sent to terminal',
@@ -4371,7 +4373,66 @@ describe('AgentService deletion', () => {
     // the prompt a second time.
     await expect(
       service.sendMessage(created.id, 'the one that failed', true, failedAt),
-    ).rejects.toThrow(/already been sent/)
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been used') })
+  })
+
+  it.each([
+    [true, false],
+    [true, true],
+    [false, false],
+  ] as const)('keeps a fresh recovery decision after an unresolved terminal resend (%s, acknowledgement failure=%s)', async (uncertain, failAcknowledgement) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-uncertain-recovery-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const failure = Object.assign(new Error('Terminal delivery was not confirmed'), {
+      statusCode: 409,
+      ...(uncertain ? { uncertainDelivery: true } : {}),
+    })
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true).mockRejectedValueOnce(failure),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client,
+      async () => [{
+        id: client.session.sessionId, cwd: directory, title: 'Recovered terminal',
+        updatedAt: new Date().toISOString(),
+      }],
+      async () => undefined, async () => [], async () => undefined, terminal,
+    )
+    await service.start()
+    const failedAt = new Date().toISOString()
+    await service.store.update(client.session.sessionId, (stored) => {
+      stored.failedPrompt = { content: 'Recovered prompt', failedAt, uncertain: true }
+    })
+    const acknowledgement = failAcknowledgement
+      ? vi.spyOn(service.store, 'clearFailedPrompt').mockRejectedValue(new Error('Acknowledgement storage is unavailable'))
+      : undefined
+    try {
+      await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
+        .rejects.toMatchObject({ cause: failure, statusCode: 409, submission: { accepted: false } })
+      const recovery = service.store.get(client.session.sessionId)!.failedPrompt!
+      expect(recovery).toMatchObject({ content: 'Recovered prompt', uncertain: true })
+      expect(recovery.failedAt).not.toBe(failedAt)
+      await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
+        .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been used') })
+      expect(terminal.send).toHaveBeenCalledOnce()
+      if (acknowledgement) expect(acknowledgement).not.toHaveBeenCalled()
+      acknowledgement?.mockRestore()
+      await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, recovery.failedAt))
+        .rejects.toMatchObject({ statusCode: 409, submission: { accepted: false } })
+      expect(terminal.send).toHaveBeenCalledOnce()
+      const decision = service.store.get(client.session.sessionId)!.failedPrompt!.failedAt
+      expect(decision).not.toBe(recovery.failedAt)
+      await service.sendMessage(client.session.sessionId, 'Recovered prompt', false, decision)
+      expect(terminal.send).toHaveBeenCalledTimes(2)
+      expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
+    } finally {
+      acknowledgement?.mockRestore()
+      await service.stop()
+    }
   })
 
   it('does not clear a failure the sender never said they had', async () => {
@@ -5267,7 +5328,20 @@ describe('AgentService deletion', () => {
     )
 
     expect(terminal.capture).not.toHaveBeenCalled()
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      '/usage',
+      false,
+      { allowDuringAgentExecution: true },
+    )
     expect(result.messages.at(-1)?.content).toBe('/usage')
+    await expect(
+      service.executeCommand(client.session.sessionId, '/model fixture-model'),
+    ).rejects.toThrow('must be queued')
+    await expect(
+      service.executeCommand(client.session.sessionId, '/unlisted-command'),
+    ).rejects.toThrow('must be queued')
+    expect(terminal.send).toHaveBeenCalledTimes(1)
     await service.stop()
   })
 
@@ -5323,6 +5397,586 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it.each(['external', 'owned-message', 'owned-command'] as const)('requires explicit session-use consent for %s admission', async (mode) => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-resume-prompt-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const pane = [
+      ' ╭────────────────────────────────────────────────────────────╮',
+      ' Session in use',
+      ' This session appears to be in use by another CLI or application.',
+      ' ❯ 1. Resume anyway',
+      '   2. Go back (Esc)',
+      ' ↑/↓ to navigate · enter to select · esc to cancel',
+      ' ╰────────────────────────────────────────────────────────────╯',
+    ].join('\n')
+    let currentPane = pane
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      ownsStartupPrompt: vi.fn(() => mode !== 'external'),
+      canHandleStartupPrompt: vi.fn(async () => mode !== 'external'),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    try {
+      await expect(mode === 'owned-command'
+        ? service.executeCommand(client.session.sessionId, '/usage')
+        : service.sendMessage(client.session.sessionId, 'Continue the work'),
+      ).rejects.toMatchObject({
+        statusCode: 409, message: expect.stringContaining('permission card'),
+      })
+      expect(terminal.resolveStartupPrompt).not.toHaveBeenCalled()
+      expect(terminal.send).not.toHaveBeenCalled()
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('does not send into a desktop-app promotion', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-promotion-prompt-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const pane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => pane),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'External session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+
+    await expect(
+      service.sendMessage(client.session.sessionId, 'Continue the work'),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    expect(terminal.send).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('lets an owned startup prompt reach the terminal controller', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-owned-startup-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const pane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    let currentPane = pane
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      canHandleStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Owned startup',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
+
+    await service.sendMessage(
+      client.session.sessionId,
+      'Continue the work',
+      true,
+    )
+
+    expect(terminal.canHandleStartupPrompt).toHaveBeenCalledWith(
+      client.session.sessionId,
+      pane,
+    )
+    expect(terminal.resolveStartupPrompt).toHaveBeenCalledWith(
+      client.session.sessionId,
+    )
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Continue the work',
+      false,
+    )
+    expect(
+      service.store.get(client.session.sessionId)?.queuedPrompts ?? [],
+    ).toEqual([])
+    await service.stop()
+  })
+
+  async function startupFifoFixture(startup = true) {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-fifo-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const startupPane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    let currentPane = startup ? startupPane : '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      inputReady: vi.fn(async () => true),
+      canHandleStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Owned startup FIFO',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+    const sessionId = client.session.sessionId
+    const olderPrompt = {
+      id: randomUUID(),
+      content: 'Older queued prompt',
+      createdAt: new Date().toISOString(),
+    }
+    await service.store.update(sessionId, (session) => {
+      session.status = 'running'
+    })
+    return {
+      service,
+      terminal,
+      sessionId,
+      olderPrompt,
+      enqueueOlder: () => service.store.enqueuePrompt(sessionId, olderPrompt),
+      persisted: async () => JSON.parse(
+        await readFile(path.join(directory, 'state', 'state.json'), 'utf8'),
+      ).sessions[sessionId],
+    }
+  }
+
+  it.each([
+    { enqueue: true, arrival: 'before', startup: true },
+    { enqueue: false, arrival: 'before', startup: true },
+    { enqueue: false, arrival: 'owner-detection', startup: true },
+    { enqueue: false, arrival: 'startup-resolution', startup: true },
+    { enqueue: false, arrival: 'input-readiness', startup: true },
+    { enqueue: false, arrival: 'before', startup: false },
+    { enqueue: false, arrival: 'owner-detection', startup: false },
+    { enqueue: false, arrival: 'empty', startup: true },
+    { enqueue: false, arrival: 'empty', startup: false },
+    { enqueue: true, arrival: 'startup-resolution', startup: true },
+  ])('keeps persisted terminal prompts ahead of a startup send (enqueue=$enqueue, arrival=$arrival, startup=$startup)', async ({ enqueue, arrival, startup }) => {
+    const context = await startupFifoFixture(startup)
+    const { service, terminal, sessionId, enqueueOlder, persisted } = context
+    try {
+      if (arrival === 'before') {
+        await enqueueOlder()
+      } else if (arrival === 'owner-detection') {
+        terminal.has.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return true
+        })
+      } else if (arrival === 'startup-resolution') {
+        const resolve = terminal.resolveStartupPrompt.getMockImplementation()!
+        terminal.resolveStartupPrompt.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return resolve()
+        })
+      } else if (arrival === 'input-readiness') {
+        terminal.inputReady.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return true
+        })
+      }
+      const send = service.sendMessage(sessionId, 'New startup prompt', enqueue)
+      if (arrival !== 'empty' && !enqueue) {
+        await expect(send).rejects.toMatchObject({
+          statusCode: 409,
+          message: expect.stringContaining('queue'),
+        })
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect((await persisted()).queuedPrompts).toEqual([context.olderPrompt])
+      } else {
+        await send
+        expect(terminal.send).toHaveBeenCalledExactlyOnceWith(
+          sessionId,
+          arrival === 'empty' ? 'New startup prompt' : 'Older queued prompt',
+          false,
+        )
+        expect(((await persisted()).queuedPrompts ?? []).map((prompt: { content: string }) => prompt.content))
+          .toEqual(arrival === 'empty' ? [] : ['New startup prompt'])
+      }
+      expect(terminal.resolveStartupPrompt).toHaveBeenCalledTimes(startup ? 1 : 0)
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it.each([
+    { startup: true, enqueue: false, recovery: 'acknowledged' },
+    { startup: false, enqueue: false, recovery: 'acknowledged' },
+    { startup: true, enqueue: true, recovery: 'acknowledged' },
+    { startup: false, enqueue: true, recovery: 'acknowledged' },
+    { startup: true, enqueue: false, recovery: 'unacknowledged' },
+    { startup: true, enqueue: false, recovery: 'replaced-during-detection' },
+  ])('preserves an earlier native recovery ahead of remaining FIFO (startup=$startup, enqueue=$enqueue, recovery=$recovery)', async ({ startup, enqueue, recovery }) => {
+    const { service, terminal, sessionId, olderPrompt, enqueueOlder, persisted } = await startupFifoFixture(startup)
+    const token = '2026-09-04T00:00:00.000Z'
+    const submitted = 'Earlier failed prompt'
+    try {
+      await enqueueOlder()
+      await service.store.update(sessionId, (session) => {
+        session.failedPrompt = { content: submitted, failedAt: token, uncertain: true }
+      })
+      if (recovery === 'replaced-during-detection') {
+        terminal.has.mockImplementationOnce(async () => {
+          await service.store.update(sessionId, (session) => {
+            session.failedPrompt = {
+              content: 'A newer failure', failedAt: 'newer-failure', uncertain: true,
+            }
+          })
+          return true
+        })
+      }
+      const send = service.sendMessage(
+        sessionId, submitted, enqueue, recovery === 'unacknowledged' ? undefined : token,
+      )
+      if (recovery !== 'acknowledged') {
+        await expect(send).rejects.toMatchObject({ statusCode: 409 })
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect((await persisted()).queuedPrompts).toEqual([olderPrompt])
+        expect((await persisted()).failedPrompt.failedAt)
+          .toBe(recovery === 'unacknowledged' ? token : 'newer-failure')
+      } else {
+        await send
+        expect((await persisted()).failedPrompt).toBeUndefined()
+        if (!enqueue) {
+          expect(terminal.send).toHaveBeenCalledExactlyOnceWith(sessionId, submitted, false)
+          expect((await persisted()).queuedPrompts).toEqual([olderPrompt])
+        } else {
+          const queued = (await persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content)
+          if (startup) {
+            expect(terminal.send).toHaveBeenCalledExactlyOnceWith(sessionId, olderPrompt.content, false)
+            expect(queued).toEqual([submitted])
+          } else {
+            expect(terminal.send).not.toHaveBeenCalled()
+            expect(queued).toEqual([olderPrompt.content, submitted])
+          }
+        }
+      }
+    } finally {
+      await service.stop()
+    }
+  })
+
+  it('resolves owned startup before queueing a terminal command', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-command-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let currentPane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    const terminal = {
+      ownsStartupPrompt: vi.fn(() => true),
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => {
+        currentPane = [
+          ' ● Usage this month: 42 requests',
+          '╻▄▄▄▄',
+          '┃',
+          '╹▀▀▀▀',
+        ].join('\n')
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      canHandleStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Owned startup command',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
+
+    await service.executeCommand(client.session.sessionId, '/usage', true)
+
+    expect(terminal.resolveStartupPrompt).toHaveBeenCalledWith(
+      client.session.sessionId,
+    )
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      '/usage',
+      false,
+      { allowDuringAgentExecution: true },
+    )
+    await service.stop()
+  })
+
+  it('reconciles stale running state after a startup blocker closes', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-idle-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      ownsStartupPrompt: vi.fn(() => true),
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => '╻▄▄▄▄\n┃\n╹▀▀▀▀'),
+      inputReady: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Startup blocker closed',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'running'
+    })
+
+    await service.sendMessage(
+      client.session.sessionId,
+      'Send after blocker',
+      true,
+    )
+
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Send after blocker',
+      false,
+    )
+    expect(
+      service.store.get(client.session.sessionId)?.queuedPrompts ?? [],
+    ).toEqual([])
+    await service.stop()
+  })
+
+  it('serializes sends that overlap startup resolution', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-overlap-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    let currentPane = [
+      ' ╭───────────────────────────────────────────────╮',
+      ' THE GITHUB COPILOT APP',
+      ' Now generally available!',
+      ' Install it now?',
+      ' ❯ Yes, install      No, thanks',
+      ' ←/→ to choose · Enter to select · Y / N',
+      ' ╰───────────────────────────────────────────────╯',
+    ].join('\n')
+    const gates: Array<() => void> = []
+    let activeSends = 0
+    let maximumActiveSends = 0
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(
+        async (_sessionId: string, _content: string, _enqueue: boolean) =>
+          new Promise<boolean>((resolve) => {
+            activeSends += 1
+            maximumActiveSends = Math.max(maximumActiveSends, activeSends)
+            gates.push(() => {
+              activeSends -= 1
+              resolve(true)
+            })
+          }),
+      ),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      canHandleStartupPrompt: vi.fn(async () => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
+        return true
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Owned startup overlap',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+
+    const first = service.sendMessage(
+      client.session.sessionId,
+      'First startup prompt',
+      true,
+    )
+    await vi.waitFor(() => expect(gates).toHaveLength(1))
+    const second = service.sendMessage(
+      client.session.sessionId,
+      'Second startup prompt',
+      true,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(gates).toHaveLength(1)
+    gates[0]()
+    await first
+    await vi.waitFor(() => expect(gates).toHaveLength(2))
+    gates[1]()
+    await second
+
+    expect(maximumActiveSends).toBe(1)
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      1,
+      client.session.sessionId,
+      'First startup prompt',
+      false,
+    )
+    expect(terminal.send).toHaveBeenNthCalledWith(
+      2,
+      client.session.sessionId,
+      'Second startup prompt',
+      true,
+    )
+    await service.stop()
+  })
   it.each(['transcript', 'composer'])(
     'sends a prompt when keyboard hints are only quoted in the %s',
     async (location) => {
@@ -5805,6 +6459,59 @@ describe('AgentService deletion', () => {
     )
 
     expect(result.messages.at(-1)?.content).toBe('/plan')
+    await service.stop()
+  })
+
+  it('marks a rediscovered terminal command prompt as uncertain after a store failure', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-command-fallback-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = {
+      ownsStartupPrompt: vi.fn(() => true),
+      has: vi.fn(async () => false),
+      send: vi.fn(async (_sessionId: string, content: string) => {
+        if (content === '/plan') {
+          return false
+        }
+        return true
+      }),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => undefined),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Command fallback',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    await service.start()
+    await service.store.update(client.session.sessionId, (session) => {
+      session.status = 'idle'
+    })
+    vi.spyOn(service.store, 'markTerminalPromptDispatched')
+      .mockRejectedValueOnce(new Error('state write failed'))
+
+    await expect(
+      service.executeCommand(client.session.sessionId, '/plan'),
+    ).rejects.toMatchObject({ uncertainDelivery: true })
+    expect(terminal.send).toHaveBeenCalledWith(
+      client.session.sessionId,
+      'Create the requested plan',
+      false,
+    )
     await service.stop()
   })
 

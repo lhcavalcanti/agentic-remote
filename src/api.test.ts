@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelBackgroundTask,
   getProviderRuntimeOptions,
+  getSession,
   getRuntimeOptions,
   listBackgroundTasks,
+  listHistory,
+  listSessionListing,
   removeQueuedPrompt,
   sendMessage,
   sendTestPushNotification,
@@ -11,12 +14,66 @@ import {
   uploadSessionFile,
   validateSessionDirectory,
 } from './api'
+import {
+  currentSessionEventSequence,
+  nextSessionEventSequence,
+  sessionResponseStartedAt,
+} from './session-response-order'
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
 describe('API request headers', () => {
+  it.each(['detail', 'listing', 'history', 'queue envelope'] as const)(
+    'retains request-start provenance through serialized %s responses without wire changes',
+    async (surface) => {
+      const session = { id: 'session', computerId: 'computer', revision: 6, messages: [] }
+      const body = surface === 'listing' || surface === 'history'
+        ? { sessions: [session], answeredComputerIds: ['computer'] }
+        : { session, prompt: { id: 'queue', content: 'Queued work', createdAt: '' } }
+      const bytes = JSON.stringify(body)
+      let release!: (response: Response) => void
+      vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => { release = resolve })))
+      const startedAt = currentSessionEventSequence()
+      const pending = surface === 'detail' ? getSession('computer', 'session')
+        : surface === 'listing' ? listSessionListing()
+        : surface === 'history' ? listHistory()
+        : removeQueuedPrompt('computer', 'session', 'queue')
+      const eventAt = nextSessionEventSequence()
+      release(new Response(bytes, { status: 200 }))
+      const result = await pending
+      const entries = Array.isArray(result) ? result
+        : 'sessions' in result ? result.sessions
+        : 'session' in result ? [result.session]
+        : [result]
+      expect(entries).toHaveLength(1)
+      expect(entries[0]).toEqual(session)
+      expect(sessionResponseStartedAt(entries[0])).toBe(startedAt)
+      expect(startedAt).toBeLessThan(eventAt)
+      expect(Object.keys(entries[0])).toEqual(Object.keys(session))
+    },
+  )
+
+  it.each([false, true])('preserves the submission token and accepted=%s receipt from HTTP errors', async (accepted) => {
+    const submission = { sessionId: 'replacement', failedAt: 'resend:current-token', accepted }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: accepted ? 'Already delivered; bookkeeping failed' : 'Check the current recovery',
+      submission,
+    }, { status: 409 })))
+    await expect(sendMessage('computer', 'session', { content: 'recovered', acknowledgesFailure: 'old' }))
+      .rejects.toMatchObject({ statusCode: 409, submission })
+  })
+
+  it('does not trust malformed receipt fields or expose an internal server message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      statusCode: 500, error: 'Internal Server Error', message: 'private exception details',
+      submission: { sessionId: 'session', failedAt: 'token', accepted: 'true' },
+    }, { status: 500 })))
+    await expect(sendMessage('computer', 'session', { content: 'recovered' }))
+      .rejects.toMatchObject({ message: 'Internal Server Error', statusCode: 500, submission: undefined })
+  })
+
   it('requests fresh provider and session model catalogs without browser caching', async () => {
     const fetchMock = vi.fn(async () => Response.json({ models: [] }))
     vi.stubGlobal('fetch', fetchMock)

@@ -355,6 +355,49 @@ describe('Claude recovered draft admission', () => {
   })
 })
 
+describe('PR162 final root integration', () => {
+  it.each([false, true])('retains claimed Claude recovery behind restored FIFO when Clear joins failed lookup (stop: %s)', async (stop) => {
+    const runtime = await fixture(true, true)
+    const entered = deferred()
+    const lookup = deferred()
+    vi.mocked(runtime.sdk.getSessionInfo).mockImplementationOnce(async () => {
+      entered.resolve()
+      await lookup.promise
+      return undefined
+    })
+    const finishing = vi.spyOn(runtime.store, 'finishMessage')
+    await runtime.combined.sendMessage(id, 'Edited recovered A', false, runtime.token)
+    await entered.promise
+    const clearing = runtime.combined.clearConversation(id)
+      .then((value) => ({ value }), (error: unknown) => ({ error }))
+    const stopping = stop ? runtime.combined.stop() : Promise.resolve()
+    lookup.reject(new Error('Metadata lookup rejected after recovery was claimed'))
+    await stopping
+    expect(await clearing).toMatchObject({ error: { statusCode: stop ? 503 : 409 } })
+    expect(runtime.calls).toEqual([])
+    expect(finishing).not.toHaveBeenCalled()
+    expect(runtime.sdk.deleteSession).not.toHaveBeenCalled()
+    const durable = await runtime.persisted()
+    expect(durable.queuedPrompts.map((prompt: { content: string }) => prompt.content))
+      .toEqual(['B', 'Edited recovered A'])
+    expect(durable.lastClaimedRecovery).toBe(runtime.token)
+    expect(durable.sdkQueueAdmission).toBeUndefined()
+    expect(runtime.store.isRetiredSession(id)).toBe(false)
+    const resumed = stop
+      ? await (async () => {
+          const store = new SessionStore(runtime.directory)
+          await store.initialize()
+          return connect(runtime.directory, store)
+        })()
+      : runtime
+    await expect(resumed.combined.sendMessage(id, 'Edited recovered A', false, runtime.token))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await resumed.claude['drainQueue'](id)
+    await vi.waitFor(() => expect(resumed.calls).toEqual(['B', 'Edited recovered A']))
+    await idle(resumed)
+  })
+})
+
 describe('Claude unregistered query recovery', () => {
   it.each([false, true])('restores queued A before completing a rejected metadata lookup (stop: %s)', async (stop) => {
     const { store, claude, sdk, calls, persisted } = await fixture(false, true)

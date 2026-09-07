@@ -467,18 +467,35 @@ describe('Persisted native queue startup', () => {
     const runtime = native.connect()
     vi.spyOn(runtime.terminal, 'has').mockRejectedValueOnce(new Error('Transient owner probe failure'))
     await runtime.service.start()
-    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)).submits)
+    expect((await native.receipt()).pastes).toEqual([])
+    expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(true)
+    expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, discoveryReadinessTimeout)).submits)
       .toEqual(['Native owner survived'])
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
     expect(runtime.creates).not.toHaveBeenCalled()
-  }, 15_000)
+  }, 20_000)
 
-  it.each(['incomplete', 'rejected'])('waits for %s initial discovery and recovers on the existing schedule', async (failure) => {
+  it('accepts a positively identified owner omitted from the initial aggregate listing', async () => {
+    const native = await fixture()
+    await native.seed(['Use the confirmed native owner'])
+    const before = await native.receipt()
+    const runtime = native.connect()
+    runtime.finder.mockResolvedValueOnce([])
+    const has = vi.spyOn(runtime.terminal, 'has')
+    await runtime.service.start()
+    expect(await runtime.finder.mock.results[0].value).toEqual([])
+    expect(await has.mock.results[0].value).toBe(true)
+    expect((await native.receipt()).submits).toEqual(['Use the confirmed native owner'])
+    expect((await native.receipt()).pid).toBe(before.pid)
+    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(runtime.creates).not.toHaveBeenCalled()
+  }, 20_000)
+
+  it('waits for rejected initial discovery and recovers on the existing schedule', async () => {
     const native = await fixture()
     await native.seed(['Await complete discovery'])
     const runtime = native.connect()
-    if (failure === 'incomplete') runtime.finder.mockResolvedValueOnce([])
-    else runtime.finder.mockRejectedValueOnce(new Error('Transient initial discovery failure'))
+    runtime.finder.mockRejectedValueOnce(new Error('Transient initial discovery failure'))
     await runtime.service.start()
     expect((await native.receipt()).submits).toEqual([])
     expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
@@ -514,7 +531,7 @@ describe('Persisted native queue startup', () => {
     expect((await native.persisted()).queuedPrompts).toEqual([])
   }, 15_000)
 
-  it('recovers initial discovery persistence failure on the existing bounded schedules', async () => {
+  it('rejects initial discovery persistence failure without consuming work and permits explicit startup retry', async () => {
     const native = await fixture()
     await native.seed(['Await durable discovery'])
     const before = await native.persisted()
@@ -530,11 +547,13 @@ describe('Persisted native queue startup', () => {
       return disk.writeFile(...args)
     })
     const runtime = native.connect()
-    await runtime.service.start()
+    await expect(runtime.service.start()).rejects.toMatchObject({ code: 'EISDIR' })
     expect(refused).toBe(true)
     expect((await native.receipt()).pastes).toEqual([])
     expect((await native.persisted()).queuedPrompts).toEqual(before.queuedPrompts)
     expect(runtime.service['nativeStartupDiscoveryReady']).toBe(false)
+    expect(runtime.creates).not.toHaveBeenCalled()
+    await runtime.service.start()
     expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, discoveryReadinessTimeout)).submits)
       .toEqual(['Await durable discovery'])
     expect(runtime.creates).not.toHaveBeenCalled()
@@ -732,7 +751,9 @@ describe('PR162 startup pump composition', () => {
         setReadable()
       }
       if (readiness !== 'no owner') {
-        expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)).submits)
+        // A refused coalesced read adds a bounded retry before native readiness.
+        const completionTimeout = coalescedBatch === 'refusal' ? discoveryReadinessTimeout : retryReadinessTimeout
+        expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, completionTimeout)).submits)
           .toEqual([queued])
         expect(claims).toHaveBeenCalledOnce()
         expect(claims.mock.calls[0][3]).toBe(true)
@@ -742,7 +763,7 @@ describe('PR162 startup pump composition', () => {
         .rejects.toMatchObject({ statusCode: 409 })
       expect((await native.receipt()).pastes).not.toContain(accepted)
       expect(runtime.creates).not.toHaveBeenCalled()
-    }, 15_000,
+    }, 20_000,
   )
 
   it.each(['newer recovery', 'unknown attempt'] as const)(

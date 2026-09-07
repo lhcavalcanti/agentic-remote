@@ -259,7 +259,7 @@
     "server/terminal-send-uncertainty.test.ts": "d385bc54129f4ca67f186e9614c3a76527a8a2fc78a63ac9717bdbee73253ee1",
     "server/terminal-session.test.ts": "7736542f25b3755757c14f9fa961d2464c2ce03be63ac24dc8c7361dff38b2a2",
     "server/terminal-session.ts": "fc0dc25d77b094ef8013e328b97cc0df6dce9867a887c3b4ae0e0ee3445de3f7",
-    "server/terminal-startup-queue.test.ts": "8c9cb6d56b50e303578b2260a12d5f30b81342a13438d392fce3b532f42d4817",
+    "server/terminal-startup-queue.test.ts": "f8fc4971e2ebf178c7c6b6f70d063fc387d8afee0d695a0c17cb3b0559e9f96a",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
     "server/tmux-errors.ts": "c81388a0558de865caf123ae67302e6581c978dec3f2f6e2ea5a215ec6637d2b",
@@ -377,15 +377,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "056349f26e29b9cbc2ba85358abcb9be3c073d167f424b9b989fa32daf1aefaa",
+    "GRAPH_REPORT.md": "00033b4632aaa60d085eb8e2aefe0e332585ef00e0f480de337d45d7b6efc6cf",
     "communities.json": "14c47e34c0f00ddb0c91b18396169b1a11ab058ad64de3f2305cd608b7c8b62d",
-    "graph.html": "e338a44bcb9a5bdc33ee6b39ba017f5c2e860889ed9470c9d5e8985f666010cf",
-    "graph.json": "616a65839006985c70fe8fb7a3480aa6bebec1d4cc78c1cd2620a7d1f05f462b"
+    "graph.html": "ee47243d582e7ac33f4ba25bb859ec842e289337bcd4ed5496c0c5ef26246ae5",
+    "graph.json": "5ef49b6124a714c55a92c9dbf1334a3f76df37e683386f77eefa22e603de0faf"
   },
   "schema_version": 1,
-  "source_commit": "7dbd67018d3a31bd3c4596d2655e1ba2c6d6b09f",
-  "source_fingerprint": "4bb6c8776e71cde3c0b7aea027681f231a572cc3fa1018406bebd4ee85317409",
+  "source_commit": "18b66ab6664413383da092be71c90a4f05313149",
+  "source_fingerprint": "18c5f4bea5bae253fecb7098e28285dc4ec2465d67e0fca26c2ca9318a1bb7e2",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md"
+    "server/terminal-startup-queue.test.ts"
   ]
 }

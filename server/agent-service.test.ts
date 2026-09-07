@@ -1995,6 +1995,71 @@ describe('AgentService deletion', () => {
     },
   )
 
+  it('keeps a backend-less legacy owner closed while terminal discovery is indeterminate', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-legacy-owner-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create({
+      id: 'legacy-owner', cwd: directory, title: 'Legacy live owner',
+      updatedAt: '2026-09-05T00:00:00.000Z', status: 'idle', isOpen: true,
+      messages: [],
+    }, { managedOpen: true })
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    client.nextSessionList = Promise.resolve([{
+      sessionId: 'legacy-owner', startTime: new Date(), modifiedTime: new Date(),
+      summary: 'Legacy live owner', isRemote: false,
+      context: { workingDirectory: directory },
+    }])
+    let unavailable = true
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+    }
+    const service = new AgentService(
+      store, client,
+      async () => {
+        if (unavailable) throw new Error('Indeterminate tmux discovery')
+        return [{
+          id: 'legacy-owner', cwd: directory, title: 'Legacy live owner',
+          updatedAt: '2026-09-05T00:00:00.000Z',
+        }]
+      }, async () => undefined, async () => [], async () => undefined, terminal,
+    )
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await service.start()
+      expect(store.backend('legacy-owner')).toBeUndefined()
+      await expect(service.activateSession('legacy-owner')).rejects.toThrow(/discovery/)
+      expect(client.resumedSessionIds).toEqual([])
+      unavailable = false
+      await service.refreshDiscovery()
+      expect(store.backend('legacy-owner')).toBe('terminal')
+      expect(client.resumedSessionIds).toEqual([])
+    } finally {
+      await service.stop()
+      warning.mockRestore()
+    }
+  })
+
+  it('does not hide an SDK listing failure behind simultaneous terminal uncertainty', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-dual-discovery-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const sdkFailure = new Error('SDK listing failed')
+    vi.spyOn(client, 'listSessions').mockRejectedValue(sdkFailure)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => { throw new Error('Terminal discovery failed') },
+    )
+    await expect(service.start()).rejects.toBe(sdkFailure)
+    await service.stop()
+  })
+
   it('still rejects cold startup when non-discovery state writes fail', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-discovery-write-'))
     directories.push(directory)

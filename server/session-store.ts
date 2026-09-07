@@ -566,7 +566,10 @@ export class SessionStore {
             managedOpen: true,
             isOpen: true,
           }
-        } else if (!session.backend && knownSdk.has(session.id)) {
+        } else if (
+          !session.backend &&
+          (knownSdk.has(session.id) || session.managedOpen === true)
+        ) {
           state.sessions[session.id] = {
             ...session,
             revision: (session.revision ?? 0) + 1,

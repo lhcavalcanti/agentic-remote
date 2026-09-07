@@ -1907,7 +1907,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private isTerminalRecoveryPending(sessionId: string): boolean {
-    return this.store.backend(sessionId) === 'terminal' &&
+    const backend = this.store.backend(sessionId)
+    if (this.startupRecoveryPending && backend === undefined) {
+      return true
+    }
+    return backend === 'terminal' &&
       ((this.startupRecoveryPending && !this.terminalRecoveryStates) ||
         this.terminalRecoveryStates?.get(sessionId) === 'pending')
   }
@@ -5700,12 +5704,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (this.stopped || this.lifecycleLocks.size) return false
       generation = this.discoveryGeneration
-      const discovery = await Promise.all([
+      const discovery = await Promise.allSettled([
         this.client.listSessions(),
         this.discoverTerminalSessions(),
       ])
-      sessions = discovery[0]
-      activeSessions = discovery[1]
+      // Terminal uncertainty may be deferred, but an independent SDK listing
+      // failure must still fail startup even when both probes reject.
+      if (discovery[0].status === 'rejected') {
+        throw discovery[0].reason
+      }
+      if (discovery[1].status === 'rejected') {
+        throw discovery[1].reason
+      }
+      sessions = discovery[0].value
+      activeSessions = discovery[1].value
       if (this.stopped) return false
       if (generation === this.discoveryGeneration) {
         break

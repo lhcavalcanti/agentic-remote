@@ -2938,6 +2938,44 @@ describe('App', () => {
     )
   })
 
+  it('keeps a healthy folder load when an unrelated computer is removed', async () => {
+    const remote: ComputerSummary = {
+      ...computer, id: 'computer-2', name: 'worker-node', isLocal: false,
+    }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    let finishFolder!: (listing: WorkspaceListing) => void
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (_rootId, path = '.') => {
+      if (path === '.') {
+        return {
+          path: '.',
+          entries: [{ name: 'docs', path: 'docs', kind: 'directory' }],
+        }
+      }
+      return new Promise((resolve) => { finishFolder = resolve })
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /docs/ }))
+    await waitFor(() => expect(finishFolder).toBeDefined())
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.removed', computerId: remote.id }),
+      } as MessageEvent)
+    })
+    await act(async () => {
+      finishFolder({
+        path: 'docs', parent: '.',
+        entries: [{ name: 'guide.md', path: 'docs/guide.md', kind: 'markdown' }],
+      })
+    })
+
+    expect(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+      .toBeInTheDocument()
+  })
+
   it('forgets loaded Knowledge when a reconnect discovers a missed computer removal', async () => {
     const remote: ComputerSummary = {
       ...computer, id: 'computer-2', name: 'worker-node', isLocal: false,

@@ -1576,10 +1576,10 @@ export class TmuxTerminalSessionController
       )
       throw new Error('tmux did not return the created pane')
     }
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      const owner = await this.owner(sessionId, expectedTarget)
-      if (owner) {
-        try {
+    try {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const owner = await this.owner(sessionId, expectedTarget)
+        if (owner) {
           const startup = await waitForTerminalStartup(
             owner.target,
             true,
@@ -1609,21 +1609,18 @@ export class TmuxTerminalSessionController
             })
           }
           return { sessionName, windowId }
-        } catch (error) {
-          this.inputReadySessions.delete(sessionId)
-          this.automaticStartupSessions.delete(sessionId)
-          await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
-            () => undefined,
-          )
-          throw error
         }
+        await new Promise((resolve) => setTimeout(resolve, 100))
       }
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      throw new Error('Copilot did not start in the new tmux window')
+    } catch (error) {
+      this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
+      await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
+        () => undefined,
+      )
+      throw error
     }
-    await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
-      () => undefined,
-    )
-    throw new Error('Copilot did not start in the new tmux window')
   }
 
   sending(sessionId: string): boolean {

@@ -10053,12 +10053,6 @@ function App() {
       computerId,
       (knowledgeComputerLifetimes.current.get(computerId) || 0) + 1,
     )
-    knowledgeRequest.current += 1
-    // The invalidation above is deliberately blunt, and a read already in
-    // flight clears the spinner only when its own generation is still
-    // current. Left alone, that reader returns quietly and the panel spins
-    // for good, so the flag is put down here instead.
-    setKnowledgeLoading(false)
     const orphaned = new Set(
       rootsRef.current
         .filter((root) => root.computerId === computerId)
@@ -10068,6 +10062,8 @@ function App() {
       current.filter((root) => root.computerId !== computerId),
     )
     if (activeRootIdRef.current && orphaned.has(activeRootIdRef.current)) {
+      knowledgeRequest.current += 1
+      setKnowledgeLoading(false)
       setActiveRootId(undefined)
       setKnowledgeFolders({})
       setExpandedKnowledge([])

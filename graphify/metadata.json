@@ -173,7 +173,7 @@
     "docs/provider-compatibility.md": "054d4ce1d94a3df1a84255aba6c3811e099808e5400409a9d7d9cbf6602f47d6",
     "docs/slash-command-feedback.md": "49df532a01a5ed60ead540fe349cc80e1b2cc737ff710b77ad984e09156b082e",
     "index.html": "dd40370c1e575f22efc5df1845898b7183087b9b0696bc52de52fcd13442335a",
-    "package.json": "7644fd8983e7ebe97eeb1c136810d9c0e3d0fa0ccc3879418f31ec6a7e4ffe60",
+    "package.json": "97e25d96604660f30fbbab50924ce436d8474c6056d9b62490e199dd4d5488a7",
     "public/apple-touch-icon-precomposed.png": "9358cf47aba927d07ecc9fafff9788778808af66df52f61112cca31485d77923",
     "public/apple-touch-icon.png": "9358cf47aba927d07ecc9fafff9788778808af66df52f61112cca31485d77923",
     "public/icon.svg": "f87a549219e57af31640b22bdb538a963fa2d1da18ef2e280c43cd5094c566c4",
@@ -361,15 +361,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ca492e8f7e9de66232598f80b6ae10028cdf91862f0e6034c7831590e06509e7",
+    "GRAPH_REPORT.md": "5ed69e01357c6a481a0f4c4ab4b7febd3ecb76300cf8701e035db7b743ad2abe",
     "communities.json": "13dc3b80db357a42c1d0c73a7acb6d9b3d24f1e8dd0dfd194f588fffd71385d0",
-    "graph.html": "77e1af0eee930734c23264c1cb3202321306ee465e283a194e89526d07ecca53",
-    "graph.json": "d97dfbcda35090feabd7256fde336f9ab5647a35f66c3c1ed20f377dbb2168f6"
+    "graph.html": "d74559e4e850f86a8885eeac043a020affd241dc6e52aa32f10c0774da59f92f",
+    "graph.json": "e0378b4ece09d4a5265c71dbd7184c585d1061b92c160acfdafd365e0481ac80"
   },
   "schema_version": 1,
-  "source_commit": "f4f148b79145dcffee12ae07f47c1e689fe6a4fc",
-  "source_fingerprint": "cb114ac37192714a2105d18aca627b259bc576963147506e3a1294a5d781f4ed",
-  "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md"
-  ]
+  "source_commit": "c5a98ada9b24aea28ace2a49d6ac9409d87323ef",
+  "source_fingerprint": "6607adc0539b9f5b901afc200f5287ad3d866d9640ff333c15bfdf7f2dfea5f4",
+  "working_tree_changes": []
 }

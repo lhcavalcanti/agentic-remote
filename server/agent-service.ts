@@ -1835,7 +1835,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.stopped) return
     for (const session of this.store.list()) {
       const resend = this.store.recoveryResend(session.id)
-      if (resend?.accepted) this.restoreRecoveryAcknowledgement(session.id, resend.failedAt, resend.content)
+      if (resend?.accepted) this.restoreRecoveryAcknowledgement(
+        session.id, resend.failedAt, resend.content, this.store.backend(session.id) === 'terminal',
+      )
     }
 
     await this.refreshTranscripts()
@@ -3492,14 +3494,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.store.list().find((session) => session.replacedSessionIds?.includes(sessionId))?.id ?? sessionId
   }
 
-  private restoreRecoveryAcknowledgement(sessionId: string, failedAt: string, content: string): void {
+  private restoreRecoveryAcknowledgement(
+    sessionId: string, failedAt: string, content: string, startupNative = false,
+  ): void {
     if (this.recoveryClaims.has(failedAt)) return
     const claim: RecoveryResendClaim = {
       failedAt, accepted: true,
       release: () => { this.recoveryClaims.delete(failedAt) },
     }
     this.recoveryClaims.set(failedAt, claim)
-    this.scheduleFailureAcknowledgement(sessionId, content, claim)
+    this.scheduleFailureAcknowledgement(sessionId, content, claim, startupNative)
   }
 
   private async recordDelivery(
@@ -3574,12 +3578,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     submitted: string,
     claim: RecoveryResendClaim,
+    startupNative = false,
   ): void {
     const acknowledged = claim.failedAt
     const key = `${sessionId}:${acknowledged}`
     if (this.pendingAcknowledgements.has(key)) {
       return
     }
+    const session = this.store.get(sessionId)
+    const startupRecovery = startupNative && session?.queuedPrompts?.length
+      ? this.startupTerminalQueues.has(sessionId) ? 'eligible' : 'ineligible'
+      : this.awaitingAcceptedStartupRecovery(sessionId, session) ? 'eligible' : undefined
     // Kept up until it works or the service stops. Giving up after a few
     // tries left the marker holding the queue with its own resend refused,
     // and nothing to start it again once storage came back.
@@ -3603,7 +3612,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         try {
           await this.admissions.run(current, () =>
-            this.acknowledgeFailedPrompt(current, submitted, acknowledged))
+            this.acknowledgeFailedPrompt(current, submitted, acknowledged, startupRecovery))
           return
         } catch (error) {
           console.warn(
@@ -4223,6 +4232,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     submitted: string,
     acknowledged?: string,
+    startupRecovery?: 'eligible' | 'ineligible',
   ): Promise<SessionDetail | undefined> {
     const failed = this.store.get(sessionId)?.failedPrompt
     if (!failed) {
@@ -4256,7 +4266,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.publish(cleared)
     // The marker was holding the queue shut. Nothing else will come back to
     // it, so the prompts it was blocking are started here.
-    if (cleared.queuedPrompts?.length) {
+    if (cleared.queuedPrompts?.length &&
+        (startupRecovery === undefined ||
+          (startupRecovery === 'eligible' && this.startupTerminalQueues.has(sessionId) &&
+            this.hasStartupQueueLifecycle(sessionId, cleared)))) {
       if (this.externalSessionIds.has(sessionId) || this.store.backend(sessionId) === 'terminal') {
         this.wakeTerminalQueue(sessionId)
       } else {
@@ -6858,18 +6871,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const stored = await this.store.readAfterWrites(sessionId)
       const next = stored.queuedPrompts?.[0]
       const terminalDispatch = this.store.terminalQueueDispatch(sessionId)
+      const startup = this.startupTerminalQueues.has(sessionId)
+      if (startup && !this.hasStartupQueueLifecycle(sessionId, stored)) {
+        this.startupTerminalQueues.delete(sessionId)
+        this.pendingTerminalQueueClaims.delete(sessionId)
+        return false
+      }
       if (!next || stored.failedPrompt || terminalDispatch) {
         this.pendingTerminalQueueClaims.delete(sessionId)
         // The acknowledgement's later wake still needs startup owner/composer/claim checks.
-        const awaitingAcceptedRecovery = next && !terminalDispatch && stored.failedPrompt?.failedAt &&
-          this.recoveryClaims.get(stored.failedPrompt.failedAt)?.accepted
-        if (!awaitingAcceptedRecovery) this.startupTerminalQueues.delete(sessionId)
-        return false
-      }
-      const startup = this.startupTerminalQueues.has(sessionId)
-      if (startup && (!this.store.isManagedOpen(sessionId) || this.store.backend(sessionId) !== 'terminal')) {
-        this.startupTerminalQueues.delete(sessionId)
-        this.pendingTerminalQueueClaims.delete(sessionId)
+        if (!this.awaitingAcceptedStartupRecovery(sessionId, stored)) this.startupTerminalQueues.delete(sessionId)
         return false
       }
       const isCurrent = () =>
@@ -6949,11 +6960,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
   }
 
+  private hasStartupQueueLifecycle(sessionId: string, session: SessionDetail | undefined): boolean {
+    return Boolean(session && !this.stopped && !this.deletingSessions.has(sessionId) &&
+      !this.suspendingSessions.has(sessionId) && !session.suspended &&
+      this.store.isManagedOpen(sessionId) && this.store.backend(sessionId) === 'terminal')
+  }
+
+  private awaitingAcceptedStartupRecovery(sessionId: string, session: SessionDetail | undefined): boolean {
+    const token = session?.failedPrompt?.failedAt
+    const claim = token ? this.recoveryClaims.get(token) : undefined
+    return this.startupTerminalQueues.has(sessionId) && Boolean(session?.queuedPrompts?.length) &&
+      !this.store.terminalQueueDispatch(sessionId) && claim?.accepted === true && claim.failedAt === token
+  }
+
   private retryTerminalQueueClaim(sessionId: string, failed = false): void {
     const session = this.store.get(sessionId)
-    if (!session?.queuedPrompts?.length || session.failedPrompt || this.stopped ||
-        (this.startupTerminalQueues.has(sessionId) && (!this.store.isManagedOpen(sessionId) ||
-          session.suspended || this.store.backend(sessionId) !== 'terminal'))) {
+    if (!session?.queuedPrompts?.length || this.stopped || this.deletingSessions.has(sessionId) ||
+        (this.startupTerminalQueues.has(sessionId) && !this.hasStartupQueueLifecycle(sessionId, session)) ||
+        (session.failedPrompt && !this.awaitingAcceptedStartupRecovery(sessionId, session))) {
       this.pendingTerminalQueueClaims.delete(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       return

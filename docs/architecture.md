@@ -184,6 +184,15 @@ An accepted recovery awaiting acknowledgement retains its startup queue intent:
 the acknowledgement's coalesced wake must still satisfy the original startup
 owner, readable-composer, and managed-open claim checks. Unknown delivery remains
 held rather than becoming an accepted receipt or an automatic retry.
+Normal drain and failed-read retry cleanup use the same exact-token accepted
+recovery predicate, after checking lifecycle eligibility. A scheduled startup
+acknowledgement keeps that origin across write retries; closure, suspension,
+deletion, stop, or a backend change cancels its automatic queue wake rather than
+turning it into an ordinary unguarded drain.
+Native receipts restored at startup keep that origin even when a closed or
+unmanaged session never qualified for startup queue intent.
+Eligibility comes from the original persisted intent, not discovery-promoted
+metadata; an acknowledgement cannot revive an intent already retired.
 
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then

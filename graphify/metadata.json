@@ -174,7 +174,7 @@
     "docs/sdk-architecture-roadmap.md": "f3d65fb83bed8aa9f6fe95e49ba8df5490737ff55891744265e515f9e144e45b",
     "docs/slash-command-feedback.md": "49df532a01a5ed60ead540fe349cc80e1b2cc737ff710b77ad984e09156b082e",
     "index.html": "dd40370c1e575f22efc5df1845898b7183087b9b0696bc52de52fcd13442335a",
-    "package.json": "7644fd8983e7ebe97eeb1c136810d9c0e3d0fa0ccc3879418f31ec6a7e4ffe60",
+    "package.json": "97e25d96604660f30fbbab50924ce436d8474c6056d9b62490e199dd4d5488a7",
     "public/apple-touch-icon-precomposed.png": "9358cf47aba927d07ecc9fafff9788778808af66df52f61112cca31485d77923",
     "public/apple-touch-icon.png": "9358cf47aba927d07ecc9fafff9788778808af66df52f61112cca31485d77923",
     "public/icon.svg": "f87a549219e57af31640b22bdb538a963fa2d1da18ef2e280c43cd5094c566c4",
@@ -363,15 +363,17 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "81452a793d726ba5d3f8a5a8c706c2b2c1275052ba0544fa67c075eaf924fde1",
+    "GRAPH_REPORT.md": "610e10a82aec3643887e1c15221158465bd87f6dd8a9b8fa576f2e06c43d9e20",
     "communities.json": "13dc3b80db357a42c1d0c73a7acb6d9b3d24f1e8dd0dfd194f588fffd71385d0",
-    "graph.html": "56f517812a9fb6d5b0254b3c59abdab289bffd9b0baf5041bfe89b528216e1ce",
-    "graph.json": "0dea82d365d97f8541fd75ceb2262ef6ff9eb85a0c2c3bda2fc9d39a6da273a8"
+    "graph.html": "0d0390c84389904af411061910d9feacf1cebde2ef3f16f96294e2f39c8e999e",
+    "graph.json": "912cdcc5814a8edbf65872c56b7113c9f7b806c55eae27328f7299891e696036"
   },
   "schema_version": 1,
-  "source_commit": "e28d809ba3c7c97a5f8dd999dbdfbfae37d13d65",
-  "source_fingerprint": "32ab25d747bc8d3a483582129e96be0608edcaa078654de4bec2d053b7fb9a77",
+  "source_commit": "29a32e2b4eb21db83a67ce26d1f83a777990617c",
+  "source_fingerprint": "099fc870a5fb3fc42aa6be9aaf62e142fb5f5ace19bc9dd30862519e3b8d0a25",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md"
+    "README.md",
+    "docs/native-shell.md",
+    "docs/sdk-architecture-roadmap.md"
   ]
 }

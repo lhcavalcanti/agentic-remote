@@ -48,18 +48,18 @@
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.5",
+    "@types/react-dom": "^19.2.7",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^6.1.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
     "jsdom": "^30.0.1",
-    "oxlint": "^1.80.0",
-    "tsx": "^4.23.12",
+    "oxlint": "^1.81.0",
+    "tsx": "^4.23.13",
     "typescript": "~7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   }
 }

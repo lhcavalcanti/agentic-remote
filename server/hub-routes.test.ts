@@ -46,6 +46,7 @@ describe('hub routes', () => {
       app,
       {
         clearConversation,
+        captureComputerRegistration: () => () => true,
         on: () => undefined,
         off: () => undefined,
       } as unknown as ComputerManager,
@@ -71,6 +72,7 @@ describe('hub routes', () => {
     await registerHubRoutes(
       app,
       {
+        captureComputerRegistration: () => () => true,
         clearConversation: async () => ({
           id: 'session-1-cleared',
           computerId: 'computer-1',

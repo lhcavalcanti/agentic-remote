@@ -18,8 +18,10 @@ import type {
   RenameSessionInput,
   RuntimeOptions,
   SendMessageInput,
+  SessionKnowledgeBinding,
   SessionFileUpload,
   SlashCommand,
+  UpdateSessionKnowledgeRootInput,
   UserInputReplyInput,
   WorkspaceFile,
   WorkspaceListing,
@@ -164,6 +166,66 @@ export async function deleteKnowledgeRoot(rootId: string): Promise<void> {
   await requestVoid(`/api/knowledge/roots/${encodeURIComponent(rootId)}`, {
     method: 'DELETE',
   })
+}
+
+export class SessionKnowledgeRequestError extends Error {
+  readonly status: number
+  readonly binding?: SessionKnowledgeBinding
+
+  constructor(
+    message: string,
+    status: number,
+    binding?: SessionKnowledgeBinding,
+  ) {
+    super(message)
+    this.name = 'SessionKnowledgeRequestError'
+    this.status = status
+    this.binding = binding
+  }
+}
+
+async function requestSessionKnowledgeRoot(
+  computerId: string,
+  sessionId: string,
+  input?: UpdateSessionKnowledgeRootInput,
+): Promise<SessionKnowledgeBinding> {
+  const response = await fetch(`${sessionPath(computerId, sessionId)}/knowledge-root`, {
+    cache: 'no-store',
+    ...(input === undefined
+      ? {}
+      : {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(input),
+        }),
+  })
+  if (!response.ok) {
+    const payload = await response.clone().json().catch(() => null) as {
+      binding?: SessionKnowledgeBinding
+    } | null
+    throw new SessionKnowledgeRequestError(
+      (await responseError(response)).message,
+      response.status,
+      payload?.binding,
+    )
+  }
+  const payload = await response.json() as { binding: SessionKnowledgeBinding }
+  return payload.binding
+}
+
+export async function getSessionKnowledgeRoot(
+  computerId: string,
+  sessionId: string,
+): Promise<SessionKnowledgeBinding> {
+  return requestSessionKnowledgeRoot(computerId, sessionId)
+}
+
+export async function updateSessionKnowledgeRoot(
+  computerId: string,
+  sessionId: string,
+  input: UpdateSessionKnowledgeRootInput,
+): Promise<SessionKnowledgeBinding> {
+  return requestSessionKnowledgeRoot(computerId, sessionId, input)
 }
 
 export async function listKnowledgeEntries(

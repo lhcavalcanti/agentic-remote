@@ -1,0 +1,109 @@
+import type { Page, Route } from '@playwright/test'
+import { describe, expect, it, vi } from 'vitest'
+import type { KnowledgeRoot, SessionKnowledgeBinding } from '../shared/contracts'
+import {
+  createWorkspaceFixtureState,
+  fixtureKnowledgeRoots,
+  KNOWLEDGE_FILE_PATH,
+  KNOWLEDGE_ROOT_ID,
+  SELECTED_SESSION_ID,
+  setupWorkspaceFixture,
+} from './workspace-fixtures'
+
+async function fixtureApi() {
+  let handler!: (route: Route) => Promise<void>
+  const context = {
+    addInitScript: vi.fn(),
+    routeWebSocket: vi.fn(),
+    route: vi.fn(async (_pattern: string, callback: typeof handler) => { handler = callback }),
+  }
+  const page = {
+    on: vi.fn(),
+    clock: { setFixedTime: vi.fn() },
+    context: () => context,
+  } as unknown as Page
+  const state = createWorkspaceFixtureState()
+  const fixture = await setupWorkspaceFixture(page, { baseUrl: 'http://127.0.0.1:4840', state })
+  async function request<T = Record<string, unknown>>(path: string, method = 'GET', body?: object) {
+    const fulfill = vi.fn<(response: { status?: number; body?: string }) => Promise<void>>()
+      .mockResolvedValue(undefined)
+    await handler({
+      request: () => ({
+        url: () => `http://127.0.0.1:4840${path}`,
+        method: () => method,
+        postDataJSON: () => body,
+      }),
+      fulfill,
+    } as unknown as Route)
+    const response = fulfill.mock.calls[0][0]
+    return { status: response.status ?? 200, body: JSON.parse(response.body ?? '{}') as T }
+  }
+  return { fixture, request, state }
+}
+
+describe('workspace fixture directory routing', () => {
+  it.each([
+    ['fixture-studio', '~', '/home/demo'],
+    ['fixture-studio', '/home/demo', '/home/demo'],
+    ['fixture-studio', '/home/demo/field-notes', '/home/demo/field-notes'],
+    ['fixture-build', '/home/demo/workspace-checks/docs', '/home/demo/workspace-checks/docs'],
+  ])('lists an allowed directory independently of Knowledge file routes: %s %s', async (computerId, path, expected) => {
+    const { fixture, request } = await fixtureApi()
+    const response = await request(`/api/computers/${computerId}/directories?path=${encodeURIComponent(path)}`)
+    expect(response.status).toBe(200)
+    expect(response.body).toMatchObject({ path: expected, directories: expect.any(Array) })
+    fixture.assertHealthy()
+  })
+
+  it('keeps directory discovery, root creation, conflict, and explicit retry coherent', async () => {
+    const { fixture, request, state } = await fixtureApi()
+    expect((await request('/api/computers/fixture-studio/directories?path=~')).status).toBe(200)
+    const created = await request<{ root: KnowledgeRoot }>('/api/knowledge/roots', 'POST', {
+      computerId: 'fixture-studio', path: '/home/demo',
+    })
+    expect(created.status).toBe(201)
+    expect(created.body.root.id).toBe('fixture-created-1')
+    const key = `fixture-studio:${SELECTED_SESSION_ID}`
+    const latest: SessionKnowledgeBinding = {
+      ...state.bindings.get(key)!,
+      rootId: fixtureKnowledgeRoots[1].id,
+      root: fixtureKnowledgeRoots[1],
+      revision: 2,
+    }
+    fixture.emit({
+      type: 'session.knowledge.updated', computerId: 'fixture-studio',
+      sessionId: SELECTED_SESSION_ID, binding: latest,
+    })
+    const path = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}/knowledge-root`
+    const conflict = await request<{ binding: SessionKnowledgeBinding }>(path, 'PUT', {
+      rootId: created.body.root.id, expectedRevision: 1,
+    })
+    expect(conflict.status).toBe(409)
+    expect(conflict.body.binding).toEqual(latest)
+    expect(state.bindings.get(key)).toEqual(latest)
+    const retry = await request<{ binding: SessionKnowledgeBinding }>(path, 'PUT', {
+      rootId: created.body.root.id, expectedRevision: 2,
+    })
+    expect(retry.status).toBe(200)
+    expect(retry.body.binding).toMatchObject({ rootId: created.body.root.id, revision: 3, available: true })
+    fixture.assertHealthy()
+  })
+
+  it('keeps Knowledge entries and files reachable', async () => {
+    const { fixture, request } = await fixtureApi()
+    expect((await request(`/api/knowledge/roots/${KNOWLEDGE_ROOT_ID}/entries?path=.`)).status).toBe(200)
+    expect((await request(`/api/knowledge/roots/${KNOWLEDGE_ROOT_ID}/file?path=${KNOWLEDGE_FILE_PATH}`)).status).toBe(200)
+    fixture.assertHealthy()
+  })
+
+  it.each([
+    ['/api/computers/fixture-studio/directories?path=/not-in-the-fixture', 'GET'],
+    ['/api/computers/unknown/directories?path=~', 'GET'],
+    ['/api/computers/fixture-studio/directories?path=~', 'POST'],
+  ])('fails closed for unsupported directory requests: %s %s', async (path, method) => {
+    const { fixture, request } = await fixtureApi()
+    expect((await request(path, method)).status).toBe(501)
+    expect(fixture.failures).toHaveLength(1)
+    expect(() => fixture.assertHealthy()).toThrow()
+  })
+})

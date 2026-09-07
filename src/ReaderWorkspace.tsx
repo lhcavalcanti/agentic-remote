@@ -57,7 +57,7 @@ export default function ReaderWorkspace({
   const minimum = Math.min(WIDTH_MIN, maximum)
   const clamp = (value: number) =>
     Math.min(maximum, Math.max(minimum, Math.round(value)))
-  const defaultWidth = Math.min(560, Math.max(WIDTH_MIN, workspaceWidth * 0.34))
+  const defaultWidth = workspaceWidth > 0 ? workspaceWidth / 2 : WIDTH_MIN
   const width = clamp(preferredWidth ?? defaultWidth)
 
   const finishResize = useCallback(() => {

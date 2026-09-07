@@ -3,6 +3,8 @@ import { z } from 'zod'
 import type { HubEvent } from '../shared/contracts.js'
 import { ComputerManager } from './computer-manager.js'
 import { KnowledgeStore } from './knowledge-store.js'
+import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
+import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 
 const addComputerSchema = z.object({
   baseUrl: z.string().trim().url().max(2048),
@@ -244,6 +246,7 @@ export async function registerHubRoutes(
   manager: ComputerManager,
   knowledge: KnowledgeStore,
   mutes?: SessionMuteCarrier,
+  sessionKnowledge?: SessionKnowledgeStore,
 ): Promise<void> {
   const policy = originPolicy()
   app.addHook('onRequest', async (request, reply) => {
@@ -261,6 +264,10 @@ export async function registerHubRoutes(
     }
   })
 
+  const sessionKnowledgeLifecycle = sessionKnowledge
+    ? await registerSessionKnowledgeRoutes(app, manager, knowledge, sessionKnowledge)
+    : undefined
+
   app.get('/api/health', async () => ({ ok: true }))
 
   app.get('/api/computers', async () => ({
@@ -277,10 +284,12 @@ export async function registerHubRoutes(
     '/api/computers/:computerId',
     async (request, reply) => {
       await manager.removeComputer(request.params.computerId)
+      const finishKnowledgeRemoval = sessionKnowledgeLifecycle?.removedComputerCleanup(request.params.computerId)
       // A knowledge root is a computer and a path. Unpairing the computer
       // leaves the root able to answer nothing but "not found", so it goes
       // with it rather than staying in the list offering to try.
       await knowledge.removeRootsForComputer(request.params.computerId)
+      await finishKnowledgeRemoval?.()
       return reply.code(204).send()
     },
   )
@@ -357,6 +366,7 @@ export async function registerHubRoutes(
       if (!(await knowledge.removeRoot(request.params.rootId))) {
         return reply.code(404).send({ error: 'Knowledge root not found' })
       }
+      await sessionKnowledgeLifecycle?.rootRemoved(request.params.rootId)
       return reply.code(204).send()
     },
   )
@@ -535,10 +545,42 @@ export async function registerHubRoutes(
       const silenced =
         mutes?.settings().mutedSessions.includes(`${computerId}:${sessionId}`) ??
         false
-      const session = await manager.clearConversation(computerId, sessionId)
-      if (silenced && session.id !== sessionId) {
-        await mutes?.setSessionMuted(computerId, session.id, true)
+      const registrationIsCurrent = manager.captureComputerRegistration(computerId)
+      const assertCurrent = () => {
+        if (!registrationIsCurrent()) {
+          throw Object.assign(new Error('Computer pairing changed while clearing. Reload sessions before continuing.'), {
+            statusCode: 409,
+          })
+        }
       }
+      const carryKnowledge = sessionKnowledgeLifecycle?.replacementCarrier(computerId)
+      const session = await manager.clearConversation(computerId, sessionId)
+      assertCurrent()
+      // The replacement is already real. Auxiliary persistence must not hide
+      // its ID: older nodes supply that lineage only in this HTTP response.
+      const carryMetadata = async (carry: () => Promise<unknown> | undefined, message: string) => {
+        try {
+          await carry()
+        } catch (error) {
+          app.log.error({ err: error, computerId, sessionId: session.id }, message)
+          if (registrationIsCurrent()) {
+            manager.emit('event', { type: 'error', computerId, sessionId: session.id, message })
+          }
+        }
+      }
+      await Promise.all([
+        carryMetadata(
+          () => carryKnowledge?.(sessionId, session),
+          'Conversation cleared, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.',
+        ),
+        carryMetadata(
+          () => silenced && session.id !== sessionId
+            ? mutes?.setSessionMuted(computerId, session.id, true)
+            : undefined,
+          'Conversation cleared, but notification silence could not be restored. Silence notifications again for this session.',
+        ),
+      ])
+      assertCurrent()
       return { session }
     },
   )
@@ -719,10 +761,12 @@ export async function registerHubRoutes(
   app.delete<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId',
     async (request, reply) => {
-      await manager.deleteSession(
-        request.params.computerId,
-        request.params.sessionId,
-      )
+      const { computerId, sessionId } = request.params
+      if (sessionKnowledgeLifecycle) {
+        await sessionKnowledgeLifecycle.deleteSession(computerId, sessionId)
+      } else {
+        await manager.deleteSession(computerId, sessionId)
+      }
       return reply.code(204).send()
     },
   )

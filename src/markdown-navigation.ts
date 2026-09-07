@@ -147,6 +147,7 @@ export function inlineText(markdown: string): string {
 export function outlineFromMarkdown(content: string): DocumentHeading[] {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(content)
   const headings: DocumentHeading[] = []
+  const used = new Map<string, number>()
   // Counted separately from the entries. An outline entry is found in the
   // document by its position among the rendered headings, and a heading with
   // nothing to show -- `#` on its own, or one made only of an image with no
@@ -156,11 +157,12 @@ export function outlineFromMarkdown(content: string): DocumentHeading[] {
   const visit = (node: RootContent | Root) => {
     if (node.type === 'heading') {
       const text = nodeText(node)
+      const id = headingSlug(text, used)
       const index = rendered
       rendered += 1
       if (text) {
         headings.push({
-          id: headingSlug(text),
+          id,
           text,
           level: node.depth,
           index,
@@ -331,6 +333,18 @@ export function scrollToDocumentFragment(
   if (!heading) {
     return false
   }
+  heading.focus({ preventScroll: true })
+  heading.scrollIntoView({ block: 'start' })
+  return true
+}
+
+export function scrollToDocumentHeading(
+  container: HTMLElement | null,
+  index: number,
+): boolean {
+  const heading = container
+    ?.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')[index]
+  if (!heading) return false
   heading.focus({ preventScroll: true })
   heading.scrollIntoView({ block: 'start' })
   return true

@@ -18,7 +18,9 @@ import type { DragEndEvent } from '@dnd-kit/core'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
+  KnowledgeRoot,
   ManagedSession,
+  SessionKnowledgeBinding,
   WorkspaceFile,
   WorkspaceListing,
 } from '../shared/contracts'
@@ -41,6 +43,9 @@ import {
   getPushSettings,
   getProviderRuntimeOptions,
   getSession,
+  getSessionKnowledgeRoot,
+  updateSessionKnowledgeRoot,
+  SessionKnowledgeRequestError,
   getRuntimeOptions,
   listBackgroundTasks,
   listCommands,
@@ -51,6 +56,7 @@ import {
   listKnowledgeEntries,
   readKnowledgeFile,
   addKnowledgeRoot,
+  deleteKnowledgeRoot,
   listSessions,
   listSessionListing,
   listWorkspace,
@@ -85,26 +91,27 @@ vi.mock('@dnd-kit/core', async (importOriginal) => {
   return {
     ...actual,
     DndContext(props: DndProps) {
-      if (props.id && props.onDragEnd) {
-        dragHandlers.set(props.id, props.onDragEnd)
+      if (props.onDragEnd) {
+        dragHandlers.set(props.id || 'session-navigation', props.onDragEnd)
       }
       return <actual.DndContext {...props} />
     },
   }
 })
 
-function finishQueueReorder(from: string, to: string) {
-  const handler = dragHandlers.get('prompt-queue')
-  if (!handler) throw new Error('The queue drag handler is not mounted')
+
+function finishReorder(context: string, from: string, to: string) {
+  const handler = dragHandlers.get(context)
+  if (!handler) throw new Error(`The ${context} drag handler is not mounted`)
   const event: DragEndEvent = {
     activatorEvent: new Event('pointerup'),
     active: {
-      id: `queued:${from}`,
+      id: from,
       data: { current: {} },
       rect: { current: { initial: null, translated: null } },
     },
     over: {
-      id: `queued:${to}`,
+      id: to,
       data: { current: {} },
       rect: new DOMRect(0, 0, 10, 10),
       disabled: false,
@@ -115,7 +122,12 @@ function finishQueueReorder(from: string, to: string) {
   handler(event)
 }
 
-vi.mock('./api', () => ({
+function finishQueueReorder(from: string, to: string) {
+  finishReorder('prompt-queue', `queued:${from}`, `queued:${to}`)
+}
+
+vi.mock('./api', async (importOriginal) => ({
+  SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   listSessions: vi.fn(),
   listSessionListing: vi.fn(),
   listBackgroundTasks: vi.fn(),
@@ -138,6 +150,8 @@ vi.mock('./api', () => ({
   readWorkspaceFile: vi.fn(),
   searchWorkspace: vi.fn(),
   getSession: vi.fn(),
+  getSessionKnowledgeRoot: vi.fn(),
+  updateSessionKnowledgeRoot: vi.fn(),
   listCommands: vi.fn(),
   addComputer: vi.fn(),
   removeComputer: vi.fn(),
@@ -278,6 +292,63 @@ const knowledgeRoot = {
   createdAt: '2026-08-01T00:00:00.000Z',
 }
 
+let fixtureKnowledgeRoots: KnowledgeRoot[] = []
+const fixtureKnowledgeBindings = new Map<string, SessionKnowledgeBinding>()
+
+function mockKnowledgeRoots(roots: KnowledgeRoot[]) {
+  fixtureKnowledgeRoots = structuredClone(roots)
+  vi.mocked(listKnowledgeRoots).mockImplementation(async () => structuredClone(fixtureKnowledgeRoots))
+}
+
+function mockAddedKnowledgeRoot(root: KnowledgeRoot) {
+  vi.mocked(addKnowledgeRoot).mockImplementation(async () => {
+    fixtureKnowledgeRoots = [
+      ...fixtureKnowledgeRoots.filter((candidate) => candidate.id !== root.id),
+      structuredClone(root),
+    ]
+    return structuredClone(root)
+  })
+}
+
+async function chooseKnowledgeRoot(id: string) {
+  const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === id)
+  if (!root) throw new Error(`Unknown fixture root: ${id}`)
+  fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+  const dialog = await screen.findByRole('dialog', { name: /Choose a (session root|Knowledge folder)/ })
+  const choice = within(dialog).queryByRole('radio', {
+    name: `${root.name} on ${root.computerName}: ${root.path}`,
+  }) || within(dialog).getByRole('radio', { name: "Use this session's folder" })
+  await waitFor(() => expect(choice).toBeEnabled())
+  fireEvent.click(choice)
+  const apply = within(dialog).getByRole('button', { name: /^(Use for this session|Open folder)$/ })
+  await waitFor(() => expect(apply).toBeEnabled())
+  fireEvent.click(apply)
+  await waitFor(() => expect(dialog).not.toBeInTheDocument())
+}
+
+function fixtureKnowledgeBinding(computerId: string, sessionId: string): SessionKnowledgeBinding {
+  const key = `${computerId}:${sessionId}`
+  let saved = fixtureKnowledgeBindings.get(key)
+  if (!saved) {
+    // Older tests specify their initial reading context in browser storage.
+    // Mirror that fixture configuration as an existing hub link; new tests
+    // explicitly override this API to exercise unbound/legacy-only sessions.
+    const positions = JSON.parse(localStorage.getItem('agentic-remote:knowledge-session-positions') || '{}') as
+      Record<string, { rootId?: string }>
+    const root = localStorage.getItem('agentic-remote:knowledge-position')
+      ? undefined
+      : fixtureKnowledgeRoots.find((candidate) => candidate.id === positions[key]?.rootId) ||
+        fixtureKnowledgeRoots[0]
+    saved = {
+      computerId, sessionId, rootId: root?.id || null,
+      revision: root ? 1 : 0, available: Boolean(root), root,
+    }
+    fixtureKnowledgeBindings.set(key, saved)
+  }
+  const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === saved.rootId)
+  return { ...saved, root: root || saved.root, available: Boolean(root) }
+}
+
 /**
  * Knowledge listings have to answer per path. A single fixed listing makes
  * every folder contain itself, so expanding one recurses until the stack is
@@ -292,7 +363,570 @@ function knowledgeListings(
 
 let restoreScrollTop: (() => void) | undefined
 
+function openSessionActions() {
+  const trigger = screen.getByRole('button', { name: 'Session actions' })
+  if (trigger.getAttribute('aria-expanded') !== 'true') {
+    fireEvent.click(trigger)
+  }
+}
+
+function sessionAction(name: string) {
+  openSessionActions()
+  return screen.getByRole('button', { name })
+}
+
+async function findSessionAction(name: string) {
+  await screen.findByRole('button', { name: 'Session actions' })
+  openSessionActions()
+  return screen.findByRole('button', { name })
+}
+
 describe('App', () => {
+  it('initializes a chooser opened during lookup from the confirmed root, not a stale local default', async () => {
+    const other = { ...knowledgeRoot, id: 'other-root', name: 'Other notes', path: '/srv/other' }
+    mockKnowledgeRoots([knowledgeRoot, other])
+    const key = `${computer.id}:${session.id}`
+    localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+      [key]: { rootId: knowledgeRoot.id, path: '.' },
+    }))
+    let finishLookup!: (binding: SessionKnowledgeBinding) => void
+    vi.mocked(getSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishLookup = resolve }))
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    const old = within(chooser).getByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    })
+    expect(old).toBeDisabled()
+    const confirmed: SessionKnowledgeBinding = {
+      computerId: computer.id, sessionId: session.id, rootId: other.id,
+      root: other, revision: 2, available: true,
+    }
+    fixtureKnowledgeBindings.set(key, confirmed)
+    await act(async () => finishLookup(confirmed))
+    expect(within(chooser).getByRole('radio', {
+      name: `${other.name} on ${other.computerName}: ${other.path}`,
+    })).toBeChecked()
+    expect(old).not.toBeChecked()
+    expect(within(chooser).getByRole('button', { name: 'Use for this session' })).toBeEnabled()
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+  })
+
+  it('leaves an unassigned session explicit and saves a root only after confirmation', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    const key = `${computer.id}:${session.id}`
+    fixtureKnowledgeBindings.set(key, {
+      computerId: computer.id, sessionId: session.id, rootId: null, revision: 0, available: false,
+    })
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('heading', { name: 'Give this session a place to read' })
+    expect(screen.queryByRole('tree')).toBeNull()
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+    expect(addKnowledgeRoot).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Cancel' }))
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+    await chooseKnowledgeRoot(knowledgeRoot.id)
+    await screen.findByText('Saved for this session')
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+      rootId: knowledgeRoot.id, expectedRevision: 0,
+    })
+    expect(addKnowledgeRoot).not.toHaveBeenCalled()
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+  })
+
+  it('uses the hub root rather than a document remembered under another root', async () => {
+    const other = { ...knowledgeRoot, id: 'other-root', name: 'Other notes', path: '/srv/other' }
+    mockKnowledgeRoots([knowledgeRoot, other])
+    const key = `${computer.id}:${session.id}`
+    localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+      [key]: { rootId: knowledgeRoot.id, path: '.', file: 'old.md' },
+    }))
+    fixtureKnowledgeBindings.set(key, {
+      computerId: computer.id, sessionId: session.id, rootId: other.id,
+      root: other, revision: 3, available: true,
+    })
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findAllByText('Other notes')
+    await screen.findByRole('tree')
+    expect(readKnowledgeFile).not.toHaveBeenCalled()
+    expect(vi.mocked(listKnowledgeEntries).mock.calls.every(([id]) => id === other.id)).toBe(true)
+    expect(JSON.parse(localStorage.getItem('agentic-remote:knowledge-session-positions') || '{}')[key])
+      .toEqual({ rootId: other.id, path: '.' })
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+  })
+
+  it.each(['live update', 'lookup', 'late catalog'])('learns a newly linked root missing from this client catalog (%s)', async (source) => {
+    const added = { ...knowledgeRoot, id: 'new-root', name: 'New notes', path: '/srv/new-notes' }
+    const key = `${computer.id}:${session.id}`
+    const binding: SessionKnowledgeBinding = {
+      computerId: computer.id, sessionId: session.id, rootId: added.id,
+      root: added, revision: 2, available: true,
+    }
+    mockKnowledgeRoots([knowledgeRoot])
+    let finishRoots: ((roots: KnowledgeRoot[]) => void) | undefined
+    if (source === 'late catalog') {
+      vi.mocked(listKnowledgeRoots).mockReturnValueOnce(new Promise((resolve) => { finishRoots = resolve }))
+    } else {
+      vi.mocked(listKnowledgeRoots).mockResolvedValueOnce([knowledgeRoot])
+    }
+    if (source === 'lookup') {
+      fixtureKnowledgeRoots.push(added)
+      fixtureKnowledgeBindings.set(key, binding)
+    }
+    vi.mocked(listKnowledgeEntries).mockImplementation(async (id) => ({
+      path: '.',
+      entries: [{ name: id === added.id ? 'new.md' : 'previous.md', path: 'guide.md', kind: 'markdown' }],
+    }))
+    vi.mocked(readKnowledgeFile).mockImplementation(async (id) => ({
+      name: 'guide.md', path: 'guide.md', kind: 'markdown', mimeType: 'text/markdown',
+      size: 20, content: id === added.id ? '# New guide' : '# Previous guide',
+    }))
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep my draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    if (source !== 'lookup') {
+      await screen.findByText('Saved for this session')
+      if (source === 'live update') {
+        fireEvent.click(await screen.findByRole('treeitem', { name: 'previous.md' }))
+        await screen.findByRole('heading', { name: 'Previous guide' })
+      }
+      fixtureKnowledgeRoots.push(added)
+      fixtureKnowledgeBindings.set(key, binding)
+      await act(async () => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding,
+          }),
+        } as MessageEvent)
+        finishRoots?.([knowledgeRoot])
+      })
+    }
+    const newFile = await screen.findByRole('treeitem', { name: 'new.md' })
+    expect(screen.queryByText('Saved folder unavailable')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Previous guide' })).not.toBeInTheDocument()
+    fireEvent.click(newFile)
+    await screen.findByRole('heading', { name: 'New guide' })
+    expect(readKnowledgeFile).toHaveBeenLastCalledWith(added.id, 'guide.md')
+    expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('does not reintroduce a root from an unavailable binding, stale update, or delayed catalog', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    let finishRoots!: (roots: KnowledgeRoot[]) => void
+    vi.mocked(listKnowledgeRoots).mockReturnValueOnce(new Promise((resolve) => { finishRoots = resolve }))
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    const previous = fixtureKnowledgeBinding(computer.id, session.id)
+    const removed = { ...previous, revision: 2, available: false }
+    fixtureKnowledgeRoots = []
+    fixtureKnowledgeBindings.set(`${computer.id}:${session.id}`, removed)
+    vi.mocked(listKnowledgeEntries).mockClear()
+    await act(async () => {
+      for (const binding of [removed, previous]) {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding,
+          }),
+        } as MessageEvent)
+      }
+      finishRoots([knowledgeRoot])
+    })
+    await screen.findByText('Saved folder unavailable')
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
+    expect(listKnowledgeEntries).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    expect(screen.queryByRole('radio', {
+      name: `${knowledgeRoot.name} on ${knowledgeRoot.computerName}: ${knowledgeRoot.path}`,
+    })).not.toBeInTheDocument()
+  })
+
+  it('does not revive a locally removed root from a late binding or a stale retry catalog', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('tree')
+    const previous = fixtureKnowledgeBinding(computer.id, session.id)
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    fireEvent.click(screen.getByText('Manage shared folders'))
+    fireEvent.click(screen.getByRole('button', {
+      name: `Review removal of ${knowledgeRoot.name} on ${knowledgeRoot.computerName}`,
+    }))
+    const confirmation = await screen.findByRole('dialog', { name: 'Remove Knowledge folder?' })
+    let finishLookup!: (binding: SessionKnowledgeBinding) => void
+    vi.mocked(getSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishLookup = resolve }))
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Remove from Knowledge' }))
+    await waitFor(() => expect(confirmation).not.toBeInTheDocument())
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Choose a session root' }))
+      .getByRole('button', { name: 'Cancel' }))
+    await screen.findByText('Saved folder unavailable')
+    const late = { ...previous, revision: 2 }
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: late,
+        }),
+      } as MessageEvent)
+      finishLookup(late)
+    })
+    vi.mocked(listKnowledgeEntries).mockClear()
+    vi.mocked(listKnowledgeRoots).mockResolvedValueOnce([knowledgeRoot])
+    fireEvent.click(screen.getByRole('button', { name: 'Retry saved root' }))
+    await waitFor(() => expect(listKnowledgeRoots).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Saved folder unavailable')).toBeVisible()
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
+    expect(listKnowledgeEntries).not.toHaveBeenCalled()
+  })
+
+  it.each(['response', 'failure'])('keeps a newer catalog retry authoritative over an older startup %s', async (outcome) => {
+    const fresh = { ...knowledgeRoot, id: 'fresh-root', name: 'Current catalog folder' }
+    const stale = { ...knowledgeRoot, id: 'stale-root', name: 'Obsolete catalog folder' }
+    mockKnowledgeRoots([knowledgeRoot])
+    let finishRoots!: (roots: KnowledgeRoot[]) => void
+    let failRoots!: (error: Error) => void
+    vi.mocked(listKnowledgeRoots).mockReturnValueOnce(new Promise((resolve, reject) => {
+      finishRoots = resolve
+      failRoots = reject
+    }))
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    const removed = { ...fixtureKnowledgeBinding(computer.id, session.id), available: false }
+    fixtureKnowledgeRoots = [fresh]
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: removed,
+      }),
+    } as MessageEvent))
+    await screen.findByText('Saved folder unavailable')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Retry saved root' })))
+    expect(listKnowledgeRoots).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      if (outcome === 'response') finishRoots([stale])
+      else failRoots(new Error('Stale catalog failure'))
+    })
+    expect(screen.queryByText('Stale catalog failure')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    expect(screen.getByRole('radio', {
+      name: `${fresh.name} on ${fresh.computerName}: ${fresh.path}`,
+    })).toBeEnabled()
+    expect(screen.queryByRole('radio', {
+      name: `${stale.name} on ${stale.computerName}: ${stale.path}`,
+    })).not.toBeInTheDocument()
+  })
+
+  it('rejects an explicit root add overtaken by that root being removed', async () => {
+    const added = { ...knowledgeRoot, id: 'added-root', name: 'Removed during add', path: session.cwd }
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    let finishAdding!: (root: KnowledgeRoot) => void
+    vi.mocked(addKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishAdding = resolve }))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('tree')
+    fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+    const add = within(dialog).getByRole('button', { name: 'Add this folder' })
+    await waitFor(() => expect(add).toBeEnabled())
+    fireEvent.click(add)
+    await waitFor(() => expect(addKnowledgeRoot).toHaveBeenCalledOnce())
+    await act(async () => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id,
+          binding: {
+            computerId: computer.id, sessionId: session.id, rootId: added.id,
+            root: added, revision: 2, available: false,
+          },
+        }),
+      } as MessageEvent)
+      finishAdding(added)
+    })
+    expect(within(dialog).getByText(
+      'This Knowledge folder was removed while it was being added. Choose the folder again.',
+    )).toBeVisible()
+    expect(updateSessionKnowledgeRoot).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('does not import an unpaired root from a late available binding (paired again: %s)', async (repaired) => {
+    const remoteRoot = { ...knowledgeRoot, computerId: secondComputer.id, computerName: secondComputer.name }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    mockKnowledgeRoots([remoteRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByRole('tree')
+    const previous = fixtureKnowledgeBinding(computer.id, session.id)
+    fixtureKnowledgeRoots = []
+    await act(async () => {
+      const socket = MockWebSocket.instances.at(-1)!
+      socket.onmessage?.({
+        data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+      } as MessageEvent)
+      if (repaired) {
+        socket.onmessage?.({
+          data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }),
+        } as MessageEvent)
+      }
+      socket.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id,
+          binding: { ...previous, revision: 2 },
+        }),
+      } as MessageEvent)
+    })
+    await screen.findByText('Saved folder unavailable')
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    expect(screen.queryByRole('radio', {
+      name: `${remoteRoot.name} on ${remoteRoot.computerName}: ${remoteRoot.path}`,
+    })).not.toBeInTheDocument()
+  })
+
+  it('keeps a pending root choice after a conflict and retries the reviewed revision', async () => {
+    const other = { ...knowledgeRoot, id: 'other-root', name: 'Other notes', path: '/srv/other' }
+    mockKnowledgeRoots([knowledgeRoot, other])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    const candidate = within(chooser).getByRole('radio', {
+      name: `${other.name} on ${other.computerName}: ${other.path}`,
+    })
+    fireEvent.click(candidate)
+    const key = `${computer.id}:${session.id}`
+    const changed = { ...fixtureKnowledgeBinding(computer.id, session.id), revision: 2 }
+    fixtureKnowledgeBindings.set(key, changed)
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: changed,
+      }),
+    } as MessageEvent))
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
+    await within(chooser).findByText('Root changed in another client')
+    expect(candidate).toBeChecked()
+    expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+    const retry = within(chooser).getByRole('button', { name: 'Use for this session' })
+    await waitFor(() => expect(retry).toBeEnabled())
+    fireEvent.click(retry)
+    await waitFor(() => expect(chooser).not.toBeInTheDocument())
+    expect(updateSessionKnowledgeRoot).toHaveBeenLastCalledWith(computer.id, session.id, {
+      rootId: other.id, expectedRevision: 2,
+    })
+    expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(other.id)
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('does not overwrite a newer binding while validating the session folder', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    let finishAdding!: (root: KnowledgeRoot) => void
+    vi.mocked(addKnowledgeRoot).mockReturnValue(new Promise((resolve) => { finishAdding = resolve }))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    fireEvent.click(within(chooser).getByRole('radio', { name: "Use this session's folder" }))
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
+    await waitFor(() => expect(addKnowledgeRoot).toHaveBeenCalledWith({
+      computerId: computer.id, path: session.cwd,
+    }))
+    const key = `${computer.id}:${session.id}`
+    const newer = { ...fixtureKnowledgeBinding(computer.id, session.id), revision: 2 }
+    fixtureKnowledgeBindings.set(key, newer)
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: newer,
+      }),
+    } as MessageEvent))
+    const added = { ...knowledgeRoot, id: 'new-root', name: 'Project files', path: session.cwd }
+    fixtureKnowledgeRoots.push(added)
+    await act(async () => finishAdding(added))
+    await within(chooser).findByText('Root changed in another client')
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+      rootId: added.id, expectedRevision: 1,
+    })
+    expect(fixtureKnowledgeBindings.get(key)?.rootId).toBe(knowledgeRoot.id)
+    expect(fixtureKnowledgeBindings.get(key)?.revision).toBe(2)
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('closes the chooser after a committed save despite unrelated computer removal', async () => {
+    const other = { ...knowledgeRoot, id: 'other-root', name: 'Other notes', path: '/srv/other' }
+    mockKnowledgeRoots([knowledgeRoot, other])
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    let finish!: (value: SessionKnowledgeBinding) => void
+    vi.mocked(updateSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    await screen.findByText('Saved for this session')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+    const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+    fireEvent.click(within(chooser).getByRole('radio', {
+      name: `${other.name} on ${other.computerName}: ${other.path}`,
+    }))
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Use for this session' }))
+    await waitFor(() => expect(updateSessionKnowledgeRoot).toHaveBeenCalledOnce())
+    const saved: SessionKnowledgeBinding = {
+      computerId: computer.id, sessionId: session.id, rootId: other.id,
+      root: other, revision: 2, available: true,
+    }
+    fixtureKnowledgeBindings.set(`${computer.id}:${session.id}`, saved)
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+    } as MessageEvent))
+    await act(async () => finish(saved))
+    await waitFor(() => expect(chooser).not.toBeInTheDocument())
+    expect(updateSessionKnowledgeRoot).toHaveBeenCalledExactlyOnceWith(computer.id, session.id, {
+      rootId: other.id, expectedRevision: 1,
+    })
+    expect(screen.queryByText(/pairing changed while saving/)).not.toBeInTheDocument()
+    expect(fixtureKnowledgeBindings.get(`${computer.id}:${session.id}`)).toEqual(saved)
+  })
+
+  it.each(['before browsing', 'before creating', 'during creation'] as const)(
+    'keeps the reviewed revision when another client changes the root %s',
+    async (timing) => {
+      const added = { ...knowledgeRoot, id: 'browsed-root', name: 'Browsed files', path: '/home/tester/browsed' }
+      mockKnowledgeRoots([knowledgeRoot])
+      mockAddedKnowledgeRoot(added)
+      vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+      vi.mocked(listDirectories).mockResolvedValue({ path: added.path, directories: [] })
+      let finishAdding: ((root: KnowledgeRoot) => void) | undefined
+      if (timing === 'during creation') {
+        vi.mocked(addKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishAdding = resolve }))
+      }
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+      await screen.findByText('Saved for this session')
+      fireEvent.click(screen.getByRole('button', { name: 'Choose Knowledge root' }))
+      const chooser = await screen.findByRole('dialog', { name: 'Choose a session root' })
+      const key = `${computer.id}:${session.id}`
+      const changeBinding = () => {
+        const newer = { ...fixtureKnowledgeBinding(computer.id, session.id), revision: 2 }
+        fixtureKnowledgeBindings.set(key, newer)
+        act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: newer,
+          }),
+        } as MessageEvent))
+      }
+      if (timing === 'before browsing') changeBinding()
+      fireEvent.click(within(chooser).getByRole('button', { name: /Browse another folder/ }))
+      const folder = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+      const confirm = within(folder).getByRole('button', { name: 'Add this folder' })
+      await waitFor(() => expect(confirm).toBeEnabled())
+      if (timing === 'before creating') changeBinding()
+      fireEvent.click(confirm)
+      if (timing === 'during creation') {
+        await waitFor(() => expect(addKnowledgeRoot).toHaveBeenCalledOnce())
+        changeBinding()
+        fixtureKnowledgeRoots.push(added)
+        await act(async () => finishAdding?.(added))
+      }
+      await within(folder).findByText('Root changed in another client')
+      expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+        rootId: added.id, expectedRevision: 1,
+      })
+      expect(fixtureKnowledgeBindings.get(key)).toMatchObject({ rootId: knowledgeRoot.id, revision: 2 })
+      await waitFor(() => expect(confirm).toBeEnabled())
+      fireEvent.click(confirm)
+      await waitFor(() => expect(folder).not.toBeInTheDocument())
+      expect(updateSessionKnowledgeRoot).toHaveBeenLastCalledWith(computer.id, session.id, {
+        rootId: added.id, expectedRevision: 2,
+      })
+      expect(fixtureKnowledgeBindings.get(key)).toMatchObject({ rootId: added.id, revision: 3 })
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['New knowledge root', 'Add a Knowledge folder', 'New Knowledge folder', 'empty catalog', 'late empty catalog'])(
+    'captures the starting binding revision for the %s creation flow',
+    async (entry) => {
+      const empty = entry.includes('empty catalog')
+      const initialRevision = empty ? 0 : 1
+      const key = `${computer.id}:${session.id}`
+      const initial: SessionKnowledgeBinding = {
+        computerId: computer.id, sessionId: session.id,
+        rootId: empty ? null : knowledgeRoot.id,
+        root: empty ? undefined : knowledgeRoot, revision: initialRevision, available: !empty,
+      }
+      fixtureKnowledgeBindings.set(key, initial)
+      mockKnowledgeRoots(empty ? [] : [knowledgeRoot])
+      const added = { ...knowledgeRoot, id: 'direct-added-root', name: 'Direct folder', path: '/home/tester/direct' }
+      mockAddedKnowledgeRoot(added)
+      vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+      vi.mocked(listDirectories).mockResolvedValue({ path: added.path, directories: [] })
+      let finishLookup: ((binding: SessionKnowledgeBinding) => void) | undefined
+      if (entry === 'late empty catalog') {
+        vi.mocked(getSessionKnowledgeRoot).mockReturnValueOnce(new Promise((resolve) => { finishLookup = resolve }))
+      }
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+      if (finishLookup) {
+        await waitFor(() => expect(getSessionKnowledgeRoot).toHaveBeenCalled())
+        await act(async () => finishLookup?.(initial))
+      }
+      if (!empty) {
+        await screen.findByText('Saved for this session')
+        if (entry === 'New Knowledge folder') {
+          fireEvent.click(screen.getByRole('button', { name: 'Show files' }))
+        }
+        fireEvent.click(screen.getAllByRole('button', { name: entry })[0])
+      }
+      const folder = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+      const confirm = within(folder).getByRole('button', { name: 'Add this folder' })
+      await waitFor(() => expect(confirm).toBeEnabled())
+      const newer: SessionKnowledgeBinding = {
+        ...initial, rootId: knowledgeRoot.id, root: knowledgeRoot,
+        revision: initialRevision + 1, available: true,
+      }
+      if (empty) fixtureKnowledgeRoots.push(knowledgeRoot)
+      fixtureKnowledgeBindings.set(key, newer)
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.knowledge.updated', computerId: computer.id, sessionId: session.id, binding: newer,
+        }),
+      } as MessageEvent))
+      fireEvent.click(confirm)
+      await within(folder).findByText('Root changed in another client')
+      expect(updateSessionKnowledgeRoot).toHaveBeenCalledWith(computer.id, session.id, {
+        rootId: added.id, expectedRevision: initialRevision,
+      })
+      expect(fixtureKnowledgeBindings.get(key)).toEqual(newer)
+      await waitFor(() => expect(confirm).toBeEnabled())
+      fireEvent.click(confirm)
+      await waitFor(() => expect(folder).not.toBeInTheDocument())
+      expect(updateSessionKnowledgeRoot).toHaveBeenLastCalledWith(computer.id, session.id, {
+        rootId: added.id, expectedRevision: newer.revision,
+      })
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+    },
+  )
+
   afterEach(() => {
     restoreScrollTop?.()
     restoreScrollTop = undefined
@@ -302,6 +936,46 @@ describe('App', () => {
     expect(composerMaximumHeight(true, 844)).toBe(104)
     expect(composerMaximumHeight(true, 430)).toBe(72)
     expect(composerMaximumHeight(false, 430)).toBe(180)
+  })
+
+  it('keeps the chosen reading appearance independent from the tab accent', async () => {
+    const rendered = render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(await screen.findByRole('radio', { name: 'Graphite appearance' })).toBeChecked()
+    fireEvent.click(screen.getByRole('radio', { name: 'Ocean accent' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Light appearance' }))
+    expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'light')
+    expect(document.querySelector('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
+    expect(document.documentElement).toHaveAttribute('data-appearance', 'light')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:appearance') || 'null')).toBe('light')
+    rendered.unmount()
+    render(<App />)
+    await screen.findByLabelText('Message')
+    expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'light')
+    expect(document.querySelector('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
+  })
+
+  it('keeps the previous appearance and reports an unavailable preference store', async () => {
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const light = await screen.findByRole('radio', { name: 'Light appearance' })
+    const original = Storage.prototype.setItem
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage, key: string, value: string,
+    ) {
+      if (key === 'agentic-remote:appearance') throw new Error('Storage unavailable')
+      original.call(this, key, value)
+    })
+    try {
+      fireEvent.click(light)
+      expect(screen.getByText('Could not save appearance: Storage unavailable')).toBeVisible()
+      expect(screen.getByRole('radio', { name: 'Graphite appearance' })).toBeChecked()
+      expect(document.querySelector('.app-shell')).toHaveAttribute('data-appearance', 'graphite')
+    } finally {
+      save.mockRestore()
+    }
   })
 
   it('tracks the visual viewport at normal and keyboard-open sizes', async () => {
@@ -387,10 +1061,12 @@ describe('App', () => {
 
   beforeEach(() => {
     dragHandlers.clear()
+    vi.restoreAllMocks()
     vi.clearAllMocks()
     dragHandlers.clear()
     localStorage.clear()
     sessionStorage.clear()
+    fixtureKnowledgeBindings.clear()
     // The address now carries the selected session, so it has to be reset or
     // one test's deep link selects a session in the next.
     window.history.replaceState({}, '', '/')
@@ -414,7 +1090,26 @@ describe('App', () => {
     })
     vi.mocked(listComputers).mockResolvedValue([computer])
     vi.mocked(listHistory).mockResolvedValue([session, historicalSession])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
+    vi.mocked(getSessionKnowledgeRoot).mockImplementation(async (computerId, sessionId) =>
+      fixtureKnowledgeBinding(computerId, sessionId))
+    vi.mocked(updateSessionKnowledgeRoot).mockImplementation(async (computerId, sessionId, input) => {
+      const previous = fixtureKnowledgeBinding(computerId, sessionId)
+      if (input.expectedRevision !== previous.revision) {
+        throw new SessionKnowledgeRequestError('Root changed in another client', 409, previous)
+      }
+      const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
+      if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
+      const binding: SessionKnowledgeBinding = {
+        computerId, sessionId, rootId: input.rootId, revision: previous.revision + 1,
+        root, available: Boolean(root),
+      }
+      fixtureKnowledgeBindings.set(`${computerId}:${sessionId}`, binding)
+      return binding
+    })
+    vi.mocked(deleteKnowledgeRoot).mockImplementation(async (id) => {
+      fixtureKnowledgeRoots = fixtureKnowledgeRoots.filter((root) => root.id !== id)
+    })
     vi.mocked(listWorkspace).mockImplementation(
       async (_computerId, _sessionId, path = '.') =>
         path === 'docs'
@@ -967,6 +1662,7 @@ describe('App', () => {
     const resizer = await screen.findByRole('separator', {
       name: 'Resize sidebar',
     })
+    const initialWidth = Number(resizer.getAttribute('aria-valuenow'))
     const pointer = (type: string, clientX: number) =>
       new PointerEvent(type, { bubbles: true, clientX, pointerId: 1 })
 
@@ -982,7 +1678,7 @@ describe('App', () => {
       resizer.dispatchEvent(pointer('pointerup', 380))
     })
 
-    expect(localStorage.getItem('agentic-remote:sidebar-width')).toBe('366')
+    expect(localStorage.getItem('agentic-remote:sidebar-width')).toBe(String(initialWidth + 80))
   })
 
   it('recalls previous sent messages with ArrowUp per session', async () => {
@@ -1148,23 +1844,22 @@ describe('App', () => {
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
 
-    // Start navigating, so history is active and tracking the empty draft.
-    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    fireEvent.change(textarea, { target: { value: 'Unsent walking notes' } })
+    fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
     expect(textarea).toHaveValue('Second prompt')
 
-    // Dictation belongs to the real draft (empty here), not the preview, and
-    // does not go through the textarea's change handler.
+    // A programmatic append belongs to the hidden draft, not the preview.
     const file = new File(['audio'], 'idea.webm', { type: 'audio/webm' })
     fireEvent.drop(textarea.closest('.composer')!, {
       dataTransfer: { files: [file], types: ['Files'] },
     })
     await waitFor(() =>
-      expect(textarea).toHaveValue('Transcribed walking idea'),
+      expect(textarea).toHaveValue('Unsent walking notes\n\nTranscribed walking idea'),
     )
 
     // Navigating again must not discard the dictated text.
     fireEvent.keyDown(textarea, { key: 'ArrowUp' })
-    expect(textarea).toHaveValue('Transcribed walking idea')
+    expect(textarea).toHaveValue('Unsent walking notes\n\nTranscribed walking idea')
   })
 
   it('does not let history navigation overwrite a programmatic draft', async () => {
@@ -3031,7 +3726,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Discard saved paste 1' }))
     expect(screen.queryByRole('region', { name: 'Saved paste recovery' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByText('Project chat').closest('button')!)
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(newer))
     expect(screen.getByRole('region', { name: 'Saved paste recovery' })).toHaveTextContent('local saved 0')
     rendered.unmount()
@@ -4775,7 +5470,7 @@ describe('App', () => {
       fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
       await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
-      fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+      fireEvent.click(sessionAction('Close session'))
       await waitFor(() => expect(screen.queryByText('Project chat')).not.toBeInTheDocument())
       await act(async () => {
         if (outcome === 'accepted') {
@@ -4900,7 +5595,7 @@ describe('App', () => {
       clipboardData: { getData: () => pasted },
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() =>
       expect(clearConversation).toHaveBeenCalledWith(
         'computer-1',
@@ -5208,7 +5903,7 @@ describe('App', () => {
     fireEvent.paste(textarea, {
       clipboardData: { getData: () => pasted },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(clearConversation).toHaveBeenCalledOnce())
     act(() => {
       MockWebSocket.instances[0]?.onmessage?.({
@@ -5314,7 +6009,7 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('Useful knowledge.')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Raw' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }))
     expect(screen.getByText(/# Workspace guide/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Insert path' }))
     expect(screen.getByLabelText('Message')).toHaveValue(
@@ -5763,7 +6458,7 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mute session notifications' }),
+      sessionAction('Mute session notifications'),
     )
 
     await waitFor(() =>
@@ -5774,7 +6469,7 @@ describe('App', () => {
       ),
     )
     expect(
-      screen.getByRole('button', { name: 'Unmute session notifications' }),
+      sessionAction('Unmute session notifications'),
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -5984,7 +6679,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+    fireEvent.click(sessionAction('Rename session'))
 
     // The frame takes the focus only when the dialog has not placed it
     // itself. Pulling it back here would take the reader out of the field
@@ -5993,6 +6688,9 @@ describe('App', () => {
     expect(name).toHaveFocus()
     fireEvent.change(name, { target: { value: 'Typed straight away' } })
     expect(name).toHaveValue('Typed straight away')
+    fireEvent.keyDown(name, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Rename session' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Session actions' })).toHaveFocus()
   })
 
   it('fills the new-session dialog in once the computers arrive', async () => {
@@ -6025,7 +6723,7 @@ describe('App', () => {
       isLocal: false,
     }
     vi.mocked(listComputers).mockResolvedValue([computer, remote])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-remote',
         computerId: remote.id,
@@ -6036,6 +6734,7 @@ describe('App', () => {
       },
     ])
     render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
     expect(await screen.findAllByText('worker docs')).not.toHaveLength(0)
 
     act(() => {
@@ -6047,11 +6746,11 @@ describe('App', () => {
       } as MessageEvent)
     })
 
-    // The hub drops the roots of a computer that has been unpaired, so a tab
-    // still listing one would offer a document it can no longer fetch.
-    await waitFor(() =>
-      expect(screen.queryByText('worker docs')).not.toBeInTheDocument(),
-    )
+    // Keep the saved reference recognizable, but never offer the removed
+    // computer's files as though the root were still available.
+    await screen.findByText('Saved folder unavailable')
+    expect(screen.getByText('worker docs')).toBeVisible()
+    expect(screen.queryByRole('tree')).not.toBeInTheDocument()
   })
 
   it('forgets loaded Knowledge when a reconnect discovers a missed computer removal', async () => {
@@ -6059,7 +6758,7 @@ describe('App', () => {
       ...computer, id: 'computer-2', name: 'worker-node', isLocal: false,
     }
     vi.mocked(listComputers).mockResolvedValue([computer, remote])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+    mockKnowledgeRoots([{
       id: 'root-remote', computerId: remote.id, computerName: remote.name,
       path: '/home/tester/docs', name: 'worker docs',
       createdAt: '2026-08-01T00:00:00.000Z',
@@ -6085,7 +6784,8 @@ describe('App', () => {
     await act(async () => {
       MockWebSocket.instances[0]?.onopen?.()
     })
-    await waitFor(() => expect(screen.queryAllByText('worker docs')).toHaveLength(0))
+    await screen.findByText('Saved folder unavailable')
+    expect(screen.getByText('worker docs')).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Remote guide' })).not.toBeInTheDocument()
   })
 
@@ -6210,7 +6910,7 @@ describe('App', () => {
   it('rejects a root creation response from an earlier pairing lifetime', async () => {
     let finishRoot!: (value: Awaited<ReturnType<typeof addKnowledgeRoot>>) => void
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(addKnowledgeRoot).mockReturnValue(new Promise((resolve) => {
       finishRoot = resolve
     }))
@@ -6300,8 +7000,8 @@ describe('App', () => {
 
   it('accepts fresh Knowledge after another tab announces a re-pairing', async () => {
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
-    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+    mockKnowledgeRoots([])
+    mockAddedKnowledgeRoot({
       id: 'fresh-pairing-root', computerId: secondComputer.id,
       computerName: secondComputer.name, path: '/home/worker/docs',
       name: 'Fresh pairing docs', createdAt: '2026-09-05T00:00:00.000Z',
@@ -6568,7 +7268,7 @@ describe('App', () => {
       ),
     )
     expect(
-      screen.getByText('Tap ↑ to send · Return adds a line'),
+      screen.getByText('Tap Send · Return adds a line'),
     ).toBeInTheDocument()
     expect(
       screen.getByText('SDK', { selector: '.session-mode-badge' }),
@@ -6599,7 +7299,7 @@ describe('App', () => {
   it('renames the selected session from the conversation header', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Rename session' }))
+    fireEvent.click(sessionAction('Rename session'))
     fireEvent.change(screen.getByLabelText('Session name'), {
       target: { value: 'Renamed project' },
     })
@@ -6828,6 +7528,46 @@ describe('App', () => {
     expect(textarea).toHaveValue('my queued rewrite')
   })
 
+  it('labels the queued primary action as Save when immediate dispatch is unavailable', async () => {
+    await openTargetedQueueEditor()
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer }),
+      } as MessageEvent)
+    })
+    expect(screen.getByRole('button', { name: 'Put this back in the queue' }))
+      .toHaveTextContent('Save')
+    expect(screen.queryByRole('button', { name: 'Send edited message' })).toBeNull()
+  })
+
+  it('does not let queued-edit focus steal a newly opened modal', async () => {
+    const queued = {
+      ...session,
+      queuedPrompts: [{ id: 'q1', content: 'Queued original', createdAt: session.updatedAt }],
+      queuedCount: 1,
+    }
+    vi.mocked(listSessions).mockResolvedValue([queued])
+    vi.mocked(getSession).mockResolvedValue(queued)
+    render(<App />)
+    const edit = await screen.findByRole('button', { name: 'Edit queued prompt 1' })
+    const frames: FrameRequestCallback[] = []
+    const animation = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    try {
+      fireEvent.click(edit)
+      fireEvent.click(sessionAction('Rename session'))
+      const name = screen.getByLabelText('Session name')
+      act(() => {
+        while (frames.length) frames.shift()!(0)
+      })
+      expect(name).toHaveFocus()
+    } finally {
+      animation.mockRestore()
+    }
+  })
+
   it('does not run an app command hidden inside a pasted queued rewrite', async () => {
     const { textarea } = await openTargetedQueueEditor()
     fireEvent.change(textarea, { target: { value: '' } })
@@ -6925,6 +7665,34 @@ describe('App', () => {
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('unconfirmed rewrite')
     expect(screen.getByRole('button', { name: 'Send edited message' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Save to queue' })).toBeDisabled()
+    expect(dispatchQueuedPrompt).toHaveBeenCalledOnce()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps an explicit remote unknown outcome locked without fabricating an attempt ID', async () => {
+    const { rendered, textarea, key } = await openTargetedQueueEditor()
+    fireEvent.change(textarea, { target: { value: 'Keep this remote rewrite' } })
+    const unknown = {
+      outcome: 'uncertain' as const, promptId: 'q2', delivery: 'unknown' as const,
+      message: 'The owning computer did not confirm dispatch. No automatic retry was made.',
+    }
+    vi.mocked(dispatchQueuedPrompt).mockResolvedValue(unknown)
+    fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+    await waitFor(() => expect(textarea).toHaveValue('Keep this remote rewrite'))
+    // The queue notice names the session it belongs to, so the message is
+    // carried inside that banner rather than standing alone.
+    await within(screen.getByRole('main')).findByText(
+      (content) => content.includes(unknown.message),
+    )
+    expect(unknown).not.toHaveProperty('attemptId')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].queuedEdit)
+      .toEqual({ promptId: 'q2', dispatchPending: true })
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Send edited message' })).toBeDisabled()
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('Keep this remote rewrite')
+    expect(screen.getByRole('button', { name: 'Send edited message' })).toBeDisabled()
     expect(dispatchQueuedPrompt).toHaveBeenCalledOnce()
     expect(sendMessage).not.toHaveBeenCalled()
   })
@@ -9148,7 +9916,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+    fireEvent.click(sessionAction('Close session'))
 
     await waitFor(() => {
       expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1')
@@ -9163,7 +9931,7 @@ describe('App', () => {
     fireEvent.change(textarea, { target: { value: 'Keep this draft' } })
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Clear conversation' }),
+      sessionAction('Clear conversation'),
     )
     await waitFor(() =>
       expect(clearConversation).toHaveBeenCalledWith(
@@ -9171,7 +9939,9 @@ describe('App', () => {
         'session-1',
       ),
     )
-    expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByText('Hello agent')).not.toBeInTheDocument(),
+    )
     expect(textarea).toHaveValue('Keep this draft')
 
     vi.mocked(clearConversation).mockClear()
@@ -9189,7 +9959,7 @@ describe('App', () => {
     render(<App />)
     await screen.findByText('Hello agent')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Restart session' }))
+    fireEvent.click(sessionAction('Restart session'))
     await waitFor(() =>
       expect(restartSession).toHaveBeenCalledWith(
         'computer-1',
@@ -9225,9 +9995,9 @@ describe('App', () => {
 
     render(<App />)
 
-    await screen.findByRole('button', { name: 'Move session to tmux' })
+    await findSessionAction('Move session to tmux')
     fireEvent.click(
-      screen.getByRole('button', { name: 'Move session to tmux' }),
+      sessionAction('Move session to tmux'),
     )
 
     await waitFor(() =>
@@ -9236,6 +10006,7 @@ describe('App', () => {
         'session-1',
       ),
     )
+    openSessionActions()
     expect(
       screen.queryByRole('button', { name: 'Move session to tmux' }),
     ).not.toBeInTheDocument()
@@ -9258,6 +10029,7 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByLabelText('Message')
+    openSessionActions()
     expect(
       screen.queryByRole('button', { name: 'Move session to tmux' }),
     ).not.toBeInTheDocument()
@@ -10543,7 +11315,7 @@ describe('App', () => {
   })
 
   it('follows Knowledge Markdown links on the owning root and reports failed reads', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([{
+    mockKnowledgeRoots([{
       id: 'root-1',
       computerId: computer.id,
       computerName: computer.name,
@@ -10714,6 +11486,1094 @@ describe('App', () => {
       ).toBe(240),
     )
   })
+  describe('Knowledge-to-agent handoff', () => {
+    const note: WorkspaceFile = {
+      name: 'guide.md',
+      path: 'guide.md',
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 80,
+      content: '# Workspace guide\n\nKeep the agent and its context together.',
+    }
+
+    beforeEach(() => {
+      mockKnowledgeRoots([knowledgeRoot])
+      vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
+        '.': {
+          path: '.',
+          entries: [{ name: note.name, path: note.path, kind: 'markdown', size: note.size }],
+        },
+      }))
+      vi.mocked(readKnowledgeFile).mockResolvedValue(note)
+    })
+
+    async function openNote() {
+      fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+      const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+      fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+      await screen.findByRole('heading', { name: 'Workspace guide' })
+      return screen.getByRole('button', { name: 'Ask agent about file' })
+    }
+
+    it.each([
+      { source: 'knowledge', action: 'save' },
+      { source: 'knowledge', action: 'send' },
+      { source: 'workspace', action: 'save' },
+      { source: 'workspace', action: 'send' },
+    ])(
+      'preserves structured queued-edit ownership from hidden history through $source handoff and $action',
+      async ({ source, action }) => {
+        const { textarea, queuedSession, prompts, key } = await openTargetedQueueEditor()
+        const pasted = Array.from({ length: 21 }, (_, index) => `  queued line ${index}`).join('\r\n')
+        fireEvent.change(textarea, { target: { value: 'Queued ' } })
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+        fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+        fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+        expect(textarea).toHaveValue('Hello agent')
+        fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+        expect(updateQueuedPrompt).not.toHaveBeenCalled()
+        expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+        if (source === 'knowledge') {
+          fireEvent.click(await openNote())
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: 'Browse current session folder' }))
+          fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+          fireEvent.click(await screen.findByRole('button', { name: 'Ask agent about file' }))
+        }
+        const path = source === 'knowledge' ? '/home/tester/docs/guide.md' : `${session.cwd}/README.md`
+        const reference = `Please review \`${path}\` and help me with it.`
+        expect(textarea).toHaveValue(`Queued [Paste #1 - 21 lines]\n\n${reference}`)
+        const draft = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key]
+        expect(draft.queuedEdit).toEqual({ promptId: 'q2' })
+        expect(draft.pastes[0].content).toBe(pasted)
+        expect(draft.pendingSubmission).toBeUndefined()
+        const expanded = `Queued ${pasted}\n\n${reference}`
+        vi.mocked(updateQueuedPrompt).mockResolvedValue({
+          session: { ...queuedSession, queuedPrompts: [prompts[0], { ...prompts[1], content: expanded }, prompts[2]] },
+          prompt: { ...prompts[1], content: expanded },
+        })
+        vi.mocked(dispatchQueuedPrompt).mockResolvedValue({
+          outcome: 'sent', promptId: 'q2', attemptId: 'handoff-attempt',
+          session: { ...queuedSession, queuedPrompts: [prompts[0], prompts[2]], queuedCount: 2 },
+        })
+        fireEvent.click(screen.getByRole('button', { name: action === 'save' ? 'Save to queue' : 'Send edited message' }))
+        await waitFor(() => expect(action === 'save' ? updateQueuedPrompt : dispatchQueuedPrompt)
+          .toHaveBeenCalledExactlyOnceWith(computer.id, session.id, 'q2', expanded))
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(removeQueuedPrompt).not.toHaveBeenCalled()
+        expect(executeCommand).not.toHaveBeenCalled()
+      },
+    )
+
+    it.each(['sent', 'refused', 'uncertain', 'receipt-cleanup-failure'] as const)(
+      'preserves pending queued identity, newer pasted handoff and replacement lineage on %s',
+      async (outcome) => {
+        const { rendered, textarea, queuedSession, prompts, key } = await openTargetedQueueEditor()
+        const outgoing = Array.from({ length: 21 }, (_, index) => `outgoing ${index}`).join('\n')
+        const newer = Array.from({ length: 22 }, (_, index) => `newer ${index}`).join('\n')
+        fireEvent.change(textarea, { target: { value: 'Outgoing ' } })
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+        fireEvent.paste(textarea, { clipboardData: { getData: () => outgoing } })
+        let finish!: (result: Awaited<ReturnType<typeof dispatchQueuedPrompt>>) => void
+        const dispatch = new Promise<Awaited<ReturnType<typeof dispatchQueuedPrompt>>>((resolve) => { finish = resolve })
+        vi.mocked(dispatchQueuedPrompt).mockReturnValueOnce(dispatch)
+        fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+        await waitFor(() => expect(dispatchQueuedPrompt).toHaveBeenCalledOnce())
+        expect(vi.mocked(dispatchQueuedPrompt).mock.results[0].value).toBe(dispatch)
+        const pending = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key].pendingSubmission
+        expect(pending).toMatchObject({ queuedPromptId: 'q2', originKey: key })
+        fireEvent.change(textarea, { target: { value: 'Newer ' } })
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+        fireEvent.paste(textarea, { clipboardData: { getData: () => newer } })
+        fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+        fireEvent.click(await openNote())
+        const reference = 'Please review `/home/tester/docs/guide.md` and help me with it.'
+        const display = `Newer [Paste #1 - 22 lines]\n\n${reference}`
+        expect(textarea).toHaveValue(display)
+        const staged = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key]
+        expect(staged.pendingSubmission).toEqual(pending)
+        expect(staged.queuedEdit).toEqual({ promptId: 'q2', dispatchPending: true })
+
+        const accepted = outcome === 'sent' || outcome === 'receipt-cleanup-failure'
+        const replacement = { ...queuedSession, id: 'queued-replacement' }
+        const final = { ...queuedSession, id: 'queued-final',
+          ...(accepted ? { queuedPrompts: [prompts[0], prompts[2]], queuedCount: 2 } : {}),
+        }
+        vi.mocked(getSession).mockImplementation(async (_computer, id) =>
+          id === final.id ? final : id === replacement.id ? replacement : queuedSession,
+        )
+        await act(async () => {
+          for (const [from, to] of [[queuedSession, replacement], [replacement, final]]) {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'session.removed', computerId: computer.id, sessionId: from.id, replacedBy: to.id }),
+            } as MessageEvent)
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'session.upserted', session: to }),
+            } as MessageEvent)
+          }
+        })
+        const finalKey = `${computer.id}:${final.id}`
+        await waitFor(() => expect(window.location.search).toContain(`session=${final.id}`))
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+        )[finalKey].pendingSubmission).toEqual(pending)
+        const setItem = Storage.prototype.setItem
+        const storage = outcome === 'receipt-cleanup-failure'
+          ? vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, storageKey, value) {
+              if (this === localStorage && storageKey === 'agentic-remote:composer-drafts-v2') {
+                throw new DOMException('Receipt cleanup blocked', 'QuotaExceededError')
+              }
+              setItem.call(this, storageKey, value)
+            })
+          : undefined
+        try {
+          await act(async () => finish(accepted
+            ? { outcome: 'sent', promptId: 'q2', attemptId: 'handoff-attempt',
+                session: { ...queuedSession, queuedPrompts: [prompts[0], prompts[2]], queuedCount: 2 } }
+            : outcome === 'refused'
+              ? { outcome: 'refused', promptId: 'q2', attemptId: 'handoff-attempt', restored: true, session: queuedSession }
+              : { outcome: 'uncertain', promptId: 'q2', attemptId: 'handoff-attempt', delivery: 'unknown', session: queuedSession }))
+          const expected = `${accepted ? '' : `Outgoing ${outgoing}\n\n`}Newer ${newer}\n\n${reference}`
+          if (accepted) expect(screen.getByLabelText('Message')).toHaveValue(display)
+          if (outcome === 'uncertain') {
+            expect(screen.getByRole('button', { name: 'Send edited message' })).toBeDisabled()
+            expect(screen.getByLabelText('Message')).toHaveAccessibleDescription(/Queued delivery is pending or unconfirmed/)
+          }
+          if (outcome === 'receipt-cleanup-failure') {
+            expect(JSON.parse(
+              localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+            )[finalKey].pendingSubmission).toEqual(pending)
+            expect(
+              localStorage.getItem('agentic-remote:composer-drafts-generation'),
+              JSON.stringify({
+                storageWarning: document.querySelector('#composer-storage-warning')?.textContent,
+                error: document.querySelector('.error-banner')?.textContent,
+                dispatchCalls: vi.mocked(dispatchQueuedPrompt).mock.calls.length,
+              }),
+            ).toContain(pending.id)
+          }
+          rendered.unmount()
+          vi.mocked(listSessions).mockResolvedValue([final])
+          render(<App />)
+          await screen.findByLabelText('Message')
+          expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts') || '{}')[finalKey]).toBe(expected)
+          if (outcome !== 'receipt-cleanup-failure') {
+            const saved = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[finalKey]
+            expect(saved.pendingSubmission).toBeUndefined()
+            expect(saved.queuedEdit).toEqual(accepted
+              ? undefined
+              : { promptId: 'q2', ...(outcome === 'uncertain' ? { dispatchPending: true } : {}) })
+          }
+          expect(dispatchQueuedPrompt).toHaveBeenCalledOnce()
+          expect(sendMessage).not.toHaveBeenCalled()
+        } finally {
+          storage?.mockRestore()
+        }
+      },
+    )
+
+    it.each(['knowledge', 'workspace'] as const)(
+      'navigates each repeated, colliding and reference heading in the %s outline',
+      async (source) => {
+        const content = [
+          '# Workspace guide',
+          '## Repeat',
+          '## Repeat',
+          '## Repeat-1',
+          '#',
+          '## Section',
+          '## [Repeat][known]',
+          '## [Unknown][missing]',
+          '[known]: https://example.invalid/reference',
+        ].join('\n\n')
+        vi.mocked(readKnowledgeFile).mockResolvedValue({ ...note, content })
+        vi.mocked(readWorkspaceFile).mockResolvedValue({
+          ...note, name: 'README.md', path: 'README.md', content,
+        })
+        render(<App />)
+        const composer = await screen.findByLabelText('Message')
+        fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+        if (source === 'knowledge') {
+          await openNote()
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: 'Browse current session folder' }))
+          fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+          await screen.findByRole('heading', { name: 'Workspace guide' })
+        }
+        const document = window.document.querySelector('.workspace-preview__content')!
+        const headings = [...document.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
+        expect(headings.map((heading) => heading.id)).toEqual([
+          'workspace-guide', 'repeat', 'repeat-1', 'repeat-1-1',
+          'section', 'section-1', 'repeat-2', 'unknownmissing',
+        ])
+        const location = window.location.href
+        for (const [entry, index] of [0, 1, 2, 3, 5, 6, 7].entries()) {
+          fireEvent.click(screen.getByRole('button', { name: 'Document outline' }))
+          const outline = screen.getByRole('navigation', { name: 'Document outline' })
+          const buttons = within(outline).getAllByRole('button')
+            .filter((button) => button.classList.contains('document-outline__item'))
+          expect(buttons).toHaveLength(7)
+          fireEvent.click(buttons[entry])
+          expect(headings[index]).toHaveFocus()
+        }
+        expect(composer).toHaveValue('Keep this draft')
+        expect(window.location.href).toBe(location)
+        expect(sendMessage).not.toHaveBeenCalled()
+      },
+    )
+
+    it.each(['knowledge', 'workspace'] as const)(
+      'appends %s references to the hidden recovery draft, not its history preview',
+      async (source) => {
+        const pasted = Array.from({ length: 21 }, (_, index) => `recovered ${index}`).join('\r\n')
+        const failed = {
+          ...session,
+          failedPrompt: {
+            content: 'Recover this prompt',
+            failedAt: '2026-09-05T00:00:00.000Z',
+          },
+        }
+        vi.mocked(listSessions).mockResolvedValue([failed])
+        vi.mocked(getSession).mockResolvedValue(failed)
+        const rendered = render(<App />)
+        const composer = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+        await waitFor(() => expect(composer).toHaveValue(failed.failedPrompt.content))
+        composer.setSelectionRange(0, composer.value.length)
+        fireEvent.paste(composer, { clipboardData: { getData: () => pasted } })
+        fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+        expect(composer).toHaveValue('Hello agent')
+
+        if (source === 'knowledge') {
+          fireEvent.click(await openNote())
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: 'Browse current session folder' }))
+          fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+          fireEvent.click(await screen.findByRole('button', { name: 'Ask agent about file' }))
+        }
+        const path = source === 'knowledge'
+          ? '/home/tester/docs/guide.md'
+          : '/home/tester/src/project/README.md'
+        const reference = `Please review \`${path}\` and help me with it.`
+        const display = `[Paste #1 - 21 lines]\n\n${reference}`
+        expect(composer).toHaveValue(display)
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(executeCommand).not.toHaveBeenCalled()
+        const saved = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')
+        expect(saved['computer-1:session-1'].pastes).toHaveLength(1)
+        expect(saved['computer-1:session-1'].pastes[0].content).toBe(pasted)
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-draft-failures') || '{}',
+        )['computer-1:session-1']).toBe(failed.failedPrompt.failedAt)
+
+        rendered.unmount()
+        render(<App />)
+        expect(await screen.findByLabelText('Message')).toHaveValue(display)
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+        await waitFor(() =>
+          expect(sendMessage).toHaveBeenLastCalledWith(computer.id, session.id, {
+            content: `${pasted}\n\n${reference}`,
+            enqueue: false,
+            acknowledgesFailure: failed.failedPrompt.failedAt,
+          }),
+        )
+      },
+    )
+
+    it.each([
+      { enqueue: false, accepted: true },
+      { enqueue: true, accepted: true },
+      { enqueue: false, accepted: false },
+      { enqueue: true, accepted: false },
+    ])(
+      'keeps a file handoff and newer pastes through replacement and settlement ($enqueue, $accepted)',
+      async ({ enqueue, accepted }) => {
+        const original = Array.from({ length: 21 }, (_, index) => `submitted ${index}`).join('\n')
+        const newer = Array.from({ length: 22 }, (_, index) => `newer ${index}`).join('\n')
+        const running = { ...session, status: 'running' as const }
+        const replacement = { ...running, id: 'replacement-1' }
+        const final = { ...running, id: 'replacement-2' }
+        vi.mocked(listSessions).mockResolvedValue([running])
+        vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+          id === final.id ? final : id === replacement.id ? replacement : running,
+        )
+        let resolveSend!: (value: ManagedSession) => void
+        let rejectSend!: (reason: Error) => void
+        vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve, reject) => {
+          resolveSend = resolve
+          rejectSend = reject
+        }))
+        const rendered = render(<App />)
+        const composer = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
+        fireEvent.paste(composer, { clipboardData: { getData: () => original } })
+        fireEvent.click(screen.getByRole('button', { name: enqueue ? 'Queue message' : 'Send message' }))
+        await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+        const pending = JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+        )['computer-1:session-1'].pendingSubmission
+        fireEvent.change(composer, { target: { value: 'Newer ' } })
+        composer.setSelectionRange(composer.value.length, composer.value.length)
+        fireEvent.paste(composer, { clipboardData: { getData: () => newer } })
+        fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+        expect(composer).toHaveValue('Hello agent')
+        fireEvent.click(await openNote())
+        const reference = 'Please review `/home/tester/docs/guide.md` and help me with it.'
+        expect(composer).toHaveValue(`Newer [Paste #1 - 22 lines]\n\n${reference}`)
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+        )['computer-1:session-1'].pendingSubmission).toEqual(pending)
+        expect(sendMessage).toHaveBeenCalledOnce()
+
+        await act(async () => {
+          for (const [from, to] of [[running, replacement], [replacement, final]]) {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({
+                type: 'session.removed',
+                computerId: computer.id,
+                sessionId: from.id,
+                replacedBy: to.id,
+              }),
+            } as MessageEvent)
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'session.upserted', session: to }),
+            } as MessageEvent)
+          }
+        })
+        await waitFor(() => expect(window.location.search).toContain(`session=${final.id}`))
+        await act(async () => {
+          if (accepted) resolveSend(running)
+          else rejectSend(new Error('Delivery could not be confirmed by fixture'))
+        })
+        const saved = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')
+        expect(saved['computer-1:session-1']).toBeUndefined()
+        expect(saved['computer-1:replacement-1']).toBeUndefined()
+        expect(saved['computer-1:replacement-2'].pendingSubmission).toBeUndefined()
+        const expected = `${accepted ? '' : `${original}\n\n`}Newer ${newer}\n\n${reference}`
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        )['computer-1:replacement-2']).toBe(expected)
+        const display = (screen.getByLabelText('Message') as HTMLTextAreaElement).value
+        expect(saved['computer-1:replacement-2'].pastes).toHaveLength(accepted ? 1 : 2)
+        expect(display).not.toContain('Hello agent')
+        rendered.unmount()
+        vi.mocked(listSessions).mockResolvedValue([final])
+        render(<App />)
+        await screen.findByLabelText('Message')
+        expect(JSON.parse(
+          localStorage.getItem('agentic-remote:composer-drafts') || '{}',
+        )['computer-1:replacement-2']).toBe(expected)
+        expect(sendMessage).toHaveBeenCalledOnce()
+      },
+    )
+
+    it('warns rather than authorizing a send when a file handoff cannot save its draft', async () => {
+      render(<App />)
+      const composer = await screen.findByLabelText('Message')
+      fireEvent.change(composer, { target: { value: 'Unsent draft' } })
+      fireEvent.keyDown(document.querySelector('.app-shell')!, { key: 'ArrowUp' })
+      const ask = await openNote()
+      const setItem = Storage.prototype.setItem
+      const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(
+        function (this: Storage, key, value) {
+          if (this === localStorage && key.startsWith('agentic-remote:composer')) {
+            throw new DOMException('Fixture storage is full', 'QuotaExceededError')
+          }
+          setItem.call(this, key, value)
+        },
+      )
+      try {
+        fireEvent.click(ask)
+        expect(composer).toHaveValue(
+          'Unsent draft\n\nPlease review `/home/tester/docs/guide.md` and help me with it.',
+        )
+        expect(screen.getByText(/Draft changes could not be saved/)).toBeVisible()
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(screen.getByText(/Message was not sent/)).toBeVisible()
+      } finally {
+        storage.mockRestore()
+      }
+      fireEvent.change(composer, { target: { value: 'Saved after repair' } })
+      expect(screen.queryByText(/could not be saved/)).toBeNull()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('keeps an unreadable initial draft untouched when adding a file reference', async () => {
+      const saved = JSON.stringify({ 'computer-1:session-1': { text: 'Saved original', pastes: [] } })
+      localStorage.setItem('agentic-remote:composer-drafts-v2', saved)
+      localStorage.setItem('agentic-remote:composer-drafts-generation', '1')
+      localStorage.setItem('agentic-remote:composer-drafts', JSON.stringify({
+        'computer-1:session-1': 'Saved original',
+      }))
+      const getItem = Storage.prototype.getItem
+      const storage = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(
+        function (this: Storage, key) {
+          if (this === localStorage && key.startsWith('agentic-remote:composer')) {
+            throw new DOMException('Fixture read denied', 'SecurityError')
+          }
+          return getItem.call(this, key)
+        },
+      )
+      let rendered: ReturnType<typeof render> | undefined
+      try {
+        rendered = render(<App />)
+        const composer = await screen.findByLabelText('Message')
+        fireEvent.change(composer, { target: { value: 'New editable text' } })
+        fireEvent.click(await openNote())
+        expect(composer).toHaveValue(
+          'New editable text\n\nPlease review `/home/tester/docs/guide.md` and help me with it.',
+        )
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+        expect(sendMessage).not.toHaveBeenCalled()
+        expect(getItem.call(localStorage, 'agentic-remote:composer-drafts-v2')).toBe(saved)
+        expect(screen.getByText(/Message was not sent/)).toBeVisible()
+      } finally {
+        storage.mockRestore()
+        rendered?.unmount()
+      }
+      render(<App />)
+      expect(await screen.findByLabelText('Message')).toHaveValue('Saved original')
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not steal focus from a dialog opened before the handoff focus frame', async () => {
+      render(<App />)
+      const ask = await openNote()
+      const frames: FrameRequestCallback[] = []
+      const animation = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+      try {
+        fireEvent.click(ask)
+        fireEvent.click(sessionAction('Rename session'))
+        const name = screen.getByLabelText('Session name')
+        expect(name).toHaveFocus()
+        act(() => {
+          while (frames.length) frames.shift()!(0)
+        })
+        expect(name).toHaveFocus()
+      } finally {
+        animation.mockRestore()
+      }
+    })
+
+    it('disables a cached session-file handoff when its owning computer goes offline', async () => {
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Browse current session folder' }))
+      fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+      const ask = await screen.findByRole('button', { name: 'Ask agent about file' })
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'computer.updated',
+            computer: { ...computer, online: false },
+          }),
+        } as MessageEvent)
+      })
+      expect(ask).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Insert path' })).toBeDisabled()
+      expect(screen.getByText('Reconnect development to add a file reference.')).toBeVisible()
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Message')).toHaveValue('')
+    })
+
+    it('reloads session-file ownership when the same session changes working folder', async () => {
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Browse current session folder' }))
+      fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+      await screen.findByRole('button', { name: 'Ask agent about file' })
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.upserted',
+            session: { ...session, cwd: '/home/tester/new-project' },
+          }),
+        } as MessageEvent)
+      })
+      expect(screen.queryByRole('button', { name: 'Ask agent about file' })).toBeNull()
+      fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Ask agent about file' }))
+      expect(screen.getByLabelText('Message')).toHaveValue(
+        'Please review `/home/tester/new-project/README.md` and help me with it.',
+      )
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it.each([390, 1280])(
+      'preserves the document, anchor, tree offset and reader preference through a handoff at %ipx',
+      async (width) => {
+        const previousWidth = window.innerWidth
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+        localStorage.setItem('agentic-remote:reader-width', '760')
+        vi.mocked(readKnowledgeFile).mockImplementation(async (_root, path) => ({
+          ...note,
+          path,
+          name: path,
+          content: '# Workspace guide\n\n[Go to details](section.md#details)\n\n## Details\n\nKeep this section.',
+        }))
+        try {
+          render(<App />)
+          await openNote()
+          fireEvent.click(screen.getByRole('link', { name: 'Go to details' }))
+          await waitFor(() => expect(readKnowledgeFile).toHaveBeenCalledTimes(2))
+          await act(async () => {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          })
+          const content = document.querySelector<HTMLElement>('.knowledge-reader .workspace-preview__content')!
+          const tree = screen.getByRole('navigation', { name: 'Knowledge' })
+          content.scrollTop = 270
+          tree.scrollTop = 70
+          fireEvent.scroll(tree)
+          if (width > 960) {
+            fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+          }
+          fireEvent.click(screen.getByRole('button', { name: 'Ask agent about file' }))
+          if (width <= 960) {
+            fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+          }
+          await act(async () => {
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          })
+          expect(document.querySelector('.knowledge-reader .workspace-preview__content')).toBe(content)
+          expect(content.scrollTop).toBe(270)
+          expect(screen.getByRole('navigation', { name: 'Knowledge' }).scrollTop).toBe(70)
+          expect(screen.getByRole('heading', { name: 'Details' })).toBeVisible()
+          expect(readKnowledgeFile).toHaveBeenCalledTimes(2)
+          expect(localStorage.getItem('agentic-remote:reader-width')).toBe('760')
+          expect(sendMessage).not.toHaveBeenCalled()
+          expect(window.location.hash).toBe('')
+        } finally {
+          Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
+        }
+      },
+    )
+
+    it('keeps drafts, queued work, selection and reading positions when the current session is filtered out', async () => {
+      const queued = {
+        ...session,
+        queuedCount: 1,
+        queuedPrompts: [{ id: 'queued', content: 'Keep this queued work', createdAt: session.updatedAt }],
+      }
+      vi.mocked(listSessions).mockResolvedValue([queued])
+      vi.mocked(getSession).mockResolvedValue(queued)
+      vi.mocked(listComputers).mockResolvedValue([
+        computer,
+        { ...secondComputer, online: false },
+        { ...secondComputer, id: 'empty-computer', name: 'Empty computer' },
+      ])
+      render(<App />)
+      const composer = await screen.findByLabelText('Message')
+      fireEvent.change(composer, { target: { value: 'Do not replace this draft' } })
+      await openNote()
+      const content = document.querySelector<HTMLElement>('.knowledge-reader .workspace-preview__content')!
+      await act(async () => {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      })
+      content.scrollTop = 175
+      const savedDraft = localStorage.getItem('agentic-remote:composer-drafts-v2')
+      const savedPosition = localStorage.getItem('agentic-remote:knowledge-session-positions')
+      const address = window.location.search
+      const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+      fireEvent.change(search, { target: { value: 'no matching session' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
+      for (const name of [computer.name, secondComputer.name, 'Empty computer']) {
+        expect(screen.getByRole('region', { name })).toBeVisible()
+      }
+      expect(screen.getByRole('status', { name: 'Session filter results' })).toHaveTextContent('0 of 1 sessions')
+      expect(composer).toHaveValue('Do not replace this draft')
+      expect(content.scrollTop).toBe(175)
+      expect(screen.getByText('Keep this queued work')).toBeVisible()
+      expect(localStorage.getItem('agentic-remote:composer-drafts-v2')).toBe(savedDraft)
+      expect(localStorage.getItem('agentic-remote:knowledge-session-positions')).toBe(savedPosition)
+      expect(window.location.search).toBe(address)
+      fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+      expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute('aria-current', 'page')
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(removeQueuedPrompt).not.toHaveBeenCalled()
+    })
+
+    it('appends the owning-root path to the existing draft without sending', async () => {
+      render(<App />)
+      const composer = await screen.findByLabelText('Message')
+      fireEvent.change(composer, { target: { value: 'My existing question' } })
+      const ask = await openNote()
+      fireEvent.click(screen.getByRole('button', { name: 'Expand knowledge panel' }))
+      fireEvent.click(ask)
+      expect(composer).toHaveValue(
+        'My existing question\n\nPlease review `/home/tester/docs/guide.md` and help me with it.',
+      )
+      expect(document.querySelector('.workspace')).toHaveClass('workspace--docked')
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      await waitFor(() => expect(composer).toHaveFocus())
+    })
+
+    it('reveals the phone conversation while keeping the document available to reopen', async () => {
+      const originalWidth = window.innerWidth
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+      try {
+        render(<App />)
+        const ask = await openNote()
+        fireEvent.click(ask)
+        expect(document.querySelector('.workspace')).toHaveClass('workspace--hidden')
+        expect(screen.getByLabelText('Message')).toHaveValue(
+          'Please review `/home/tester/docs/guide.md` and help me with it.',
+        )
+        expect(sendMessage).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+        expect(await screen.findByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+      }
+    })
+
+    it('does not give a session a path on a different computer', async () => {
+      vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+      mockKnowledgeRoots([{
+        ...knowledgeRoot, computerId: secondComputer.id, computerName: secondComputer.name,
+      }])
+      render(<App />)
+      const composer = await screen.findByLabelText('Message')
+      fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+      const ask = await openNote()
+      expect(ask).toBeDisabled()
+      expect(screen.getByText('Open a session on worker-node to ask about this file.')).toBeVisible()
+      fireEvent.click(ask)
+      expect(composer).toHaveValue('Keep this draft')
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not offer an agent handoff when the owning computer is offline', async () => {
+      vi.mocked(listComputers).mockResolvedValue([{ ...computer, online: false }])
+      render(<App />)
+      const ask = await openNote()
+      expect(ask).toBeDisabled()
+      expect(screen.getByText('Reconnect development to ask about this file.')).toBeVisible()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('opens Knowledge directly from the sessionless welcome screen', async () => {
+      vi.mocked(listSessions).mockResolvedValue([])
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Open Knowledge' }))
+      const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+      fireEvent.click(await within(tree).findByRole('treeitem', { name: /guide.md/ }))
+      expect(await screen.findByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Ask agent about file' })).toBeDisabled()
+      expect(createSession).not.toHaveBeenCalled()
+    })
+
+    it('refreshes and retries a folder without discarding the open document', async () => {
+      render(<App />)
+      await openNote()
+      vi.mocked(listKnowledgeEntries).mockRejectedValueOnce(new Error('Folder temporarily unavailable'))
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh current folder' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Folder temporarily unavailable')
+      expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      expect(screen.getByRole('treeitem', { name: 'guide.md' })).toBeVisible()
+      fireEvent.click(screen.getByRole('button', { name: 'Retry loading root folder' }))
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+      expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      { navigation: 'file', failure: false },
+      { navigation: 'file', failure: true },
+      { navigation: 'session', failure: false },
+      { navigation: 'session', failure: true },
+    ])(
+      'releases only a stale refresh after $navigation navigation (failure=$failure)',
+      async ({ navigation, failure }) => {
+        vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+        vi.mocked(getSession).mockImplementation(async (_computer, id) =>
+          id === secondSession.id ? secondSession : session,
+        )
+        localStorage.setItem('agentic-remote:knowledge-session-positions', JSON.stringify({
+          'computer-1:session-2': { rootId: knowledgeRoot.id, path: '.', file: note.path },
+        }))
+        render(<App />)
+        await openNote()
+        const savedDraft = localStorage.getItem('agentic-remote:composer-drafts-v2')
+        let resolve!: (listing: WorkspaceListing) => void
+        let reject!: (error: Error) => void
+        vi.mocked(listKnowledgeEntries).mockReturnValueOnce(new Promise((accept, refuse) => {
+          resolve = accept
+          reject = refuse
+        }))
+        const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
+        fireEvent.click(refresh)
+        expect(refresh).toBeDisabled()
+        if (navigation === 'file') {
+          fireEvent.click(screen.getByRole('treeitem', { name: note.name }))
+        } else {
+          fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+        }
+        await waitFor(() => expect(readKnowledgeFile).toHaveBeenCalledTimes(2))
+        await act(async () => {
+          if (failure) reject(new Error('Stale refresh failed'))
+          else resolve({ path: '.', entries: [{ name: 'stale.md', path: 'stale.md', kind: 'markdown' }] })
+        })
+        const currentRefresh = screen.getByRole('button', { name: 'Refresh current folder' })
+        await waitFor(() => expect(currentRefresh).toBeEnabled())
+        expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+        expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
+        expect(screen.queryByText('stale.md')).toBeNull()
+        expect(screen.queryByText('Stale refresh failed')).toBeNull()
+        expect(screen.queryByText('Refreshing folder...')).toBeNull()
+        expect(localStorage.getItem('agentic-remote:composer-drafts-v2')).toBe(savedDraft)
+        fireEvent.click(currentRefresh)
+        await waitFor(() => expect(currentRefresh).toBeEnabled())
+        expect(sendMessage).not.toHaveBeenCalled()
+      },
+    )
+
+    it.each([
+      { newerFirst: false, failure: false },
+      { newerFirst: false, failure: true },
+      { newerFirst: true, failure: false },
+      { newerFirst: true, failure: true },
+    ])(
+      'preserves the newer refresh owner (newerFirst=$newerFirst, failure=$failure)',
+      async ({ newerFirst, failure }) => {
+        render(<App />)
+        await openNote()
+        let resolveOld!: (listing: WorkspaceListing) => void
+        let rejectOld!: (error: Error) => void
+        let resolveNew!: (listing: WorkspaceListing) => void
+        vi.mocked(listKnowledgeEntries)
+          .mockReturnValueOnce(new Promise((resolve, reject) => { resolveOld = resolve; rejectOld = reject }))
+          .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve }))
+        const before = vi.mocked(listKnowledgeEntries).mock.calls.length
+        const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
+        act(() => {
+          fireEvent.click(refresh)
+          fireEvent.click(refresh)
+        })
+        expect(vi.mocked(listKnowledgeEntries).mock.calls.length).toBe(before + 2)
+        const fresh: WorkspaceListing = {
+          path: '.', entries: [{ name: 'fresh.md', path: 'fresh.md', kind: 'markdown' }],
+        }
+        if (newerFirst) {
+          await act(async () => resolveNew(fresh))
+          expect(refresh).toBeEnabled()
+        }
+        await act(async () => {
+          if (failure) rejectOld(new Error('Superseded refresh failed'))
+          else resolveOld({ path: '.', entries: [{ name: 'stale.md', path: 'stale.md', kind: 'markdown' }] })
+        })
+        expect(screen.queryByText('stale.md')).toBeNull()
+        expect(screen.queryByText('Superseded refresh failed')).toBeNull()
+        if (!newerFirst) {
+          expect(refresh).toBeDisabled()
+          expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
+          await act(async () => resolveNew(fresh))
+        }
+        expect(refresh).toBeEnabled()
+        expect(screen.getByRole('treeitem', { name: 'fresh.md' })).toBeVisible()
+        expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+        expect(screen.queryByText('Refreshing folder...')).toBeNull()
+      },
+    )
+
+    it.each(['root', 'root-return', 'pairing'] as const)(
+      'does not clear another %s lifetime loading the same folder path',
+      async (change) => {
+        const originalRoot = {
+          ...knowledgeRoot, computerId: secondComputer.id, computerName: secondComputer.name,
+        }
+        const otherRoot = { ...knowledgeRoot, id: 'root-other', name: 'Other docs' }
+        vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+        mockKnowledgeRoots([originalRoot, otherRoot])
+        const listing: WorkspaceListing = {
+          path: '.', entries: [{ name: note.name, path: note.path, kind: 'markdown' }],
+        }
+        render(<App />)
+        await openNote()
+        let resolveOld!: (listing: WorkspaceListing) => void
+        let resolveNew!: (listing: WorkspaceListing) => void
+        vi.mocked(listKnowledgeEntries).mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh current folder' }))
+        if (change === 'pairing') {
+          act(() => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }),
+            } as MessageEvent)
+          })
+          await screen.findByText('Saved folder unavailable')
+          await chooseKnowledgeRoot(otherRoot.id)
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh current folder' })).toBeEnabled())
+          act(() => {
+            MockWebSocket.instances.at(-1)?.onmessage?.({
+              data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }),
+            } as MessageEvent)
+          })
+        } else if (change === 'root-return') {
+          await chooseKnowledgeRoot(otherRoot.id)
+          await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh current folder' })).toBeEnabled())
+        }
+        vi.mocked(listKnowledgeEntries).mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve }))
+        if (change === 'pairing') {
+          mockAddedKnowledgeRoot({ ...originalRoot, name: 'Repaired docs' })
+          fireEvent.click(screen.getByRole('button', { name: 'New knowledge root' }))
+          const dialog = await screen.findByRole('dialog', { name: 'Add knowledge root' })
+          fireEvent.change(within(dialog).getByLabelText('Computer'), {
+            target: { value: secondComputer.id },
+          })
+          const add = within(dialog).getByRole('button', { name: 'Add this folder' })
+          await waitFor(() => expect(add).toBeEnabled())
+          fireEvent.click(add)
+          await screen.findAllByText('Repaired docs')
+        } else {
+          await chooseKnowledgeRoot(change === 'root' ? otherRoot.id : originalRoot.id)
+        }
+        await waitFor(() => expect(resolveNew).toBeDefined())
+        const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
+        expect(refresh).toBeDisabled()
+        await act(async () => resolveOld({
+          path: '.', entries: [{ name: 'retired.md', path: 'retired.md', kind: 'markdown' }],
+        }))
+        expect(refresh).toBeDisabled()
+        expect(screen.queryByText('retired.md')).toBeNull()
+        await act(async () => resolveNew(listing))
+        await waitFor(() => expect(refresh).toBeEnabled())
+        expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
+        expect(screen.queryByText('retired.md')).toBeNull()
+        expect(sendMessage).not.toHaveBeenCalled()
+      },
+    )
+
+    it('retains the newest refresh error and retry when an older refresh succeeds late', async () => {
+      render(<App />)
+      await openNote()
+      let resolveOld!: (listing: WorkspaceListing) => void
+      let rejectNew!: (error: Error) => void
+      vi.mocked(listKnowledgeEntries)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+        .mockReturnValueOnce(new Promise((_resolve, reject) => { rejectNew = reject }))
+      const refresh = screen.getByRole('button', { name: 'Refresh current folder' })
+      act(() => {
+        fireEvent.click(refresh)
+        fireEvent.click(refresh)
+      })
+      await act(async () => rejectNew(new Error('Newest refresh failed')))
+      await act(async () => resolveOld({
+        path: '.', entries: [{ name: 'stale.md', path: 'stale.md', kind: 'markdown' }],
+      }))
+      expect(screen.getByRole('alert')).toHaveTextContent('Newest refresh failed')
+      expect(screen.queryByText('stale.md')).toBeNull()
+      const retry = screen.getByRole('button', { name: 'Retry loading root folder' })
+      expect(retry).toBeEnabled()
+      fireEvent.click(retry)
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+      await waitFor(() => expect(refresh).toBeEnabled())
+      expect(screen.getByRole('treeitem', { name: note.name })).toBeVisible()
+      expect(screen.getByRole('heading', { name: 'Workspace guide' })).toBeVisible()
+    })
+  })
+
+  it('keeps custom ordering while explicit sorted views also drive keyboard navigation', async () => {
+    const items = [
+      { ...session, id: 'sort-zulu', title: 'Zulu' },
+      { ...session, id: 'sort-mike', title: 'Mike', messages: [] },
+      { ...session, id: 'sort-alpha', title: 'Alpha', messages: [] },
+    ]
+    const order = items.map((item) => `${computer.id}:${item.id}`)
+    localStorage.setItem('agentic-remote:session-order', JSON.stringify({ [computer.id]: order }))
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = items.find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    render(<App />)
+    await screen.findAllByText('Zulu')
+    const titles = () => [...document.querySelectorAll('.session-item__open strong')]
+      .map((element) => element.textContent)
+    expect(titles()).toEqual(['Zulu', 'Mike', 'Alpha'])
+    const draft = screen.getByLabelText('Message')
+    fireEvent.change(draft, { target: { value: 'Keep this draft' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Session order' }), {
+      target: { value: 'name' },
+    })
+    expect(titles()).toEqual(['Alpha', 'Mike', 'Zulu'])
+    expect(draft).toHaveValue('Keep this draft')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:session-sort') || 'null')).toBe('name')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:session-order') || '{}')[computer.id])
+      .toEqual(order)
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=sort-alpha'))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Session order' }), {
+      target: { value: 'custom' },
+    })
+    expect(titles()).toEqual(['Zulu', 'Mike', 'Alpha'])
+  })
+
+  it('keeps session shortcuts inside the visible search and attention results', async () => {
+    const items = [
+      { ...session, id: 'visible-first', title: 'Visible first', messages: [] },
+      { ...session, id: 'hidden-session', title: 'Hidden conversation', messages: [] },
+      {
+        ...session, id: 'visible-last', title: 'Visible last', messages: [],
+        status: 'error' as const,
+      },
+    ]
+    localStorage.setItem('agentic-remote:session-order', JSON.stringify({
+      [computer.id]: items.map((item) => `${computer.id}:${item.id}`),
+    }))
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = items.find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Hidden conversation,/ }))
+    await waitFor(() => expect(window.location.search).toContain('session=hidden-session'))
+    const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+    fireEvent.change(search, { target: { value: 'Visible' } })
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=visible-first'))
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=visible-last'))
+    fireEvent.keyDown(window, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=visible-first'))
+    fireEvent.change(search, { target: { value: 'Missing' } })
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    expect(window.location.search).toContain('session=visible-first')
+    fireEvent.change(search, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
+    fireEvent.keyDown(window, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=visible-last'))
+  })
+
+  it('reports a refused sort preference without claiming the order was saved', async () => {
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    expect(document.querySelector('.sidebar')).toHaveClass('sidebar--open')
+    const original = Storage.prototype.setItem
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage, key: string, value: string,
+    ) {
+      if (key === 'agentic-remote:session-sort') throw new Error('Storage unavailable')
+      original.call(this, key, value)
+    })
+    try {
+      fireEvent.change(screen.getByRole('combobox', { name: 'Session order' }), {
+        target: { value: 'recent' },
+      })
+      expect(within(screen.getByRole('main'))
+        .getByText('Could not save the session order: Storage unavailable')).toBeVisible()
+      expect(screen.getByRole('combobox', { name: 'Session order' })).toHaveValue('custom')
+      expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
+    } finally {
+      save.mockRestore()
+    }
+  })
+
+  it.each(['computer', 'session'])('reports a refused custom %s order without losing the draft', async (kind) => {
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Keep my draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    const key = `agentic-remote:${kind}-order`
+    const persisted = localStorage.getItem(key)
+    const original = Storage.prototype.setItem
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage, storageKey: string, value: string,
+    ) {
+      if (storageKey === key) throw new Error('Storage unavailable')
+      original.call(this, storageKey, value)
+    })
+    try {
+      act(() => finishReorder(
+        'session-navigation',
+        kind === 'computer' ? `computer:${computer.id}` : `session:${computer.id}:${session.id}`,
+        kind === 'computer' ? `computer:${secondComputer.id}` : `session:${computer.id}:${secondSession.id}`,
+      ))
+      expect(within(screen.getByRole('main'))
+        .getByText(`Could not save the ${kind} order: Storage unavailable`)).toBeVisible()
+      expect(document.querySelector('.sidebar')).not.toHaveClass('sidebar--open')
+      expect(screen.getByLabelText('Message')).toHaveValue('Keep my draft')
+      expect(localStorage.getItem(key)).toBe(persisted)
+    } finally {
+      save.mockRestore()
+    }
+  })
+
+  it('keeps search arrows from recalling a prompt or changing the selected session', async () => {
+    render(<App />)
+    const composer = await screen.findByLabelText('Message')
+    fireEvent.change(composer, { target: { value: 'Keep my draft' } })
+    const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+    search.focus()
+    fireEvent.change(search, { target: { value: 'Project' } })
+    fireEvent.keyDown(search, { key: 'ArrowUp' })
+    expect(composer).toHaveValue('Keep my draft')
+    expect(search).toHaveFocus()
+    expect(window.location.search).toBe('?computer=computer-1&session=session-1')
+  })
+
+  it('dismisses session actions before the open Knowledge panel on Escape', async () => {
+    mockKnowledgeRoots([knowledgeRoot])
+    vi.mocked(listKnowledgeEntries).mockResolvedValue({ path: '.', entries: [] })
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+    const action = sessionAction('Rename session')
+    action.focus()
+    fireEvent.keyDown(action, { key: 'Escape' })
+    expect(screen.queryByRole('group', { name: 'Session actions' })).toBeNull()
+    expect(document.querySelector('.workspace')).toHaveClass('workspace--docked')
+    expect(screen.getByRole('button', { name: 'Session actions' })).toHaveFocus()
+  })
+
+  it('keeps offline lifecycle actions unavailable while allowing hub-owned notification settings', async () => {
+    vi.mocked(listSessions).mockResolvedValue([{ ...session, executionMode: 'sdk' }])
+    vi.mocked(getSession).mockResolvedValue({ ...session, executionMode: 'sdk' })
+    render(<App />)
+    await screen.findByLabelText('Message')
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, online: false } }),
+      } as MessageEvent)
+    })
+    openSessionActions()
+    for (const name of ['Rename session', 'Restart session', 'Clear conversation', 'Close session', 'Move session to tmux']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    expect(screen.getByRole('button', { name: 'Mute session notifications' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Close session' })).toHaveAccessibleDescription(
+      'Permanently deletes this session and history',
+    )
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect(clearConversation).not.toHaveBeenCalled()
+    expect(restartSession).not.toHaveBeenCalled()
+    expect(moveSessionToTmux).not.toHaveBeenCalled()
+  })
+
+  it('does not let a stale idle status authorize restart, clear, migration or suspend over a pending question', async () => {
+    const pending = {
+      ...session,
+      executionMode: 'sdk' as const,
+      pendingUserInput: { requestId: 'question', question: 'Keep this pending', choices: [], allowFreeform: true },
+    }
+    vi.mocked(listSessions).mockResolvedValue([pending])
+    vi.mocked(getSession).mockResolvedValue(pending)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Keep this pending' })
+    openSessionActions()
+    for (const name of ['Restart session', 'Clear conversation', 'Move session to tmux', 'Suspend Project chat']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled()
+    expect(replyUserInput).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it('moves the session to a folder browsed in Knowledge', async () => {
     vi.mocked(executeCommand).mockImplementation(
       async (_computerId, _sessionId, input) => ({
@@ -10721,7 +12581,7 @@ describe('App', () => {
         cwd: input.command.slice('/cwd '.length),
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10779,7 +12639,7 @@ describe('App', () => {
     const sdkSession = { ...session, executionMode: 'sdk' as const }
     vi.mocked(listSessions).mockResolvedValue([sdkSession])
     vi.mocked(getSession).mockResolvedValue(sdkSession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10824,7 +12684,7 @@ describe('App', () => {
     const busySession = { ...session, status: 'running' as const }
     vi.mocked(listSessions).mockResolvedValue([busySession])
     vi.mocked(getSession).mockResolvedValue(busySession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10868,7 +12728,7 @@ describe('App', () => {
     const claudeSession = { ...session, provider: 'claude' as const }
     vi.mocked(listSessions).mockResolvedValue([claudeSession])
     vi.mocked(getSession).mockResolvedValue(claudeSession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10909,7 +12769,7 @@ describe('App', () => {
     vi.mocked(validateSessionDirectory).mockRejectedValue(
       new Error('Sessions are restricted to the user home directory'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -10954,7 +12814,7 @@ describe('App', () => {
   })
 
   it('browses a knowledge root from the sidebar switch', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11043,7 +12903,7 @@ describe('App', () => {
   })
 
   it('expands knowledge folders in place and remembers them', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11135,7 +12995,7 @@ describe('App', () => {
   })
 
   it('keeps the tree usable when one folder cannot be read', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11177,7 +13037,7 @@ describe('App', () => {
   })
 
   it('expands and collapses knowledge folders from the keyboard', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11234,7 +13094,7 @@ describe('App', () => {
   })
 
   it('adds a knowledge root by picking a computer folder', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') => ({
         path,
@@ -11242,7 +13102,7 @@ describe('App', () => {
         directories: [],
       }),
     )
-    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+    mockAddedKnowledgeRoot({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
@@ -11285,7 +13145,7 @@ describe('App', () => {
   })
 
   it('falls back to home when the active session folder is unavailable', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') => {
         if (path === session.cwd) {
@@ -11325,7 +13185,7 @@ describe('App', () => {
 
   it('uses the session folder only before the root picker computer changes', async () => {
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockImplementation(
       async (_computerId, path = '~') => ({ path, directories: [] }),
     )
@@ -11374,7 +13234,7 @@ describe('App', () => {
         }) => void)
       | undefined
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockImplementation(
       async (computerId, path = '~') => {
         if (computerId === computer.id && path === session.cwd) {
@@ -11537,7 +13397,7 @@ describe('App', () => {
         file: 'guides/setup.md',
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11620,7 +13480,7 @@ describe('App', () => {
       }),
     )
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11641,7 +13501,8 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Second chat')
-    await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
+    await screen.findByRole('heading', { name: 'Give this session a place to read' })
+    expect(listKnowledgeEntries).not.toHaveBeenCalled()
 
     // The link says which session to open, not where that session was
     // reading, so the position an older build kept is discarded.
@@ -11689,14 +13550,12 @@ describe('App', () => {
     })
 
     expect(
-      await screen.findByRole('button', {
-        name: 'Unmute session notifications',
-      }),
+      await findSessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
   })
 
   it('picks a knowledge root from anywhere on the computer', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-existing',
         computerId: computer.id,
@@ -11711,7 +13570,7 @@ describe('App', () => {
       parent: '/',
       directories: [{ name: 'docs', path: '/srv/docs' }],
     })
-    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+    mockAddedKnowledgeRoot({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
@@ -11753,7 +13612,7 @@ describe('App', () => {
 
   it('keeps the general root picker available without a selected session', async () => {
     vi.mocked(listSessions).mockResolvedValue([])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findByText('No sessions here.')
@@ -11784,7 +13643,7 @@ describe('App', () => {
     ])
     vi.mocked(listSessions).mockResolvedValue([offlineSession])
     vi.mocked(getSession).mockResolvedValue(offlineSession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -11830,7 +13689,7 @@ describe('App', () => {
     localStorage.setItem('agentic-remote:reader-width', '420')
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11897,7 +13756,7 @@ describe('App', () => {
   })
 
   it('expands the knowledge panel over the conversation', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -11941,7 +13800,7 @@ describe('App', () => {
   })
 
   it('restores the knowledge scroll position when the panel reopens', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -12195,7 +14054,7 @@ describe('App', () => {
     // shown as one thing and answer to another.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -12314,7 +14173,7 @@ describe('App', () => {
     // One press puts away one thing, in the order they are stacked.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -12338,7 +14197,7 @@ describe('App', () => {
     // composer while the menu stayed exactly where it was.
     vi.mocked(listSessions).mockResolvedValue([session])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
     vi.mocked(listCommands).mockResolvedValue([
       {
         name: 'clear',
@@ -12376,7 +14235,7 @@ describe('App', () => {
     // reader could not see, and left the thing they were looking at.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -12428,7 +14287,7 @@ describe('App', () => {
     // something invisible and left what was in front of the reader open.
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
     const setWidth = (width: number) => {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,
@@ -12483,7 +14342,7 @@ describe('App', () => {
   it('drives sessions and the knowledge panel from the keyboard', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([knowledgeRoot])
+    mockKnowledgeRoots([knowledgeRoot])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -12579,7 +14438,7 @@ describe('App', () => {
 
   it('keeps knowledge reachable with no session selected', async () => {
     vi.mocked(listSessions).mockResolvedValue([])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -12622,7 +14481,7 @@ describe('App', () => {
         'computer-1:session-2': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -12692,7 +14551,7 @@ describe('App', () => {
   })
 
   it('shows errors in the knowledge panel that covers the conversation', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -12773,7 +14632,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
+    fireEvent.click(sessionAction('Close session'))
 
     await waitFor(() =>
       expect(
@@ -12799,7 +14658,7 @@ describe('App', () => {
       }),
     )
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -12872,13 +14731,11 @@ describe('App', () => {
     await waitFor(() => expect(answerSettings).toBeDefined())
 
     fireEvent.click(
-      screen.getByRole('button', { name: 'Mute session notifications' }),
+      sessionAction('Mute session notifications'),
     )
-    await screen.findByRole('button', {
-      name: 'Unmute session notifications',
-    })
+    await findSessionAction('Unmute session notifications')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     act(() => {
       MockWebSocket.instances[0]?.onmessage?.({
         data: JSON.stringify({
@@ -12897,9 +14754,7 @@ describe('App', () => {
     })
 
     expect(
-      await screen.findByRole('button', {
-        name: 'Unmute session notifications',
-      }),
+      await findSessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
     confirmSpy.mockRestore()
   })
@@ -13670,7 +15525,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(answerClear).toBeDefined())
 
     await act(async () => {
@@ -13735,7 +15590,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(answerClear).toBeDefined())
 
     // B is cleared into C before A's answer names B. Moving the draft into B
@@ -13902,7 +15757,7 @@ describe('App', () => {
         'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13947,7 +15802,7 @@ describe('App', () => {
   })
 
   it('reaches the file tree while the panel covers the conversation', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -13990,7 +15845,7 @@ describe('App', () => {
     }
     vi.mocked(listSessions).mockResolvedValue([historySession])
     vi.mocked(getSession).mockResolvedValue(historySession)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14015,9 +15870,8 @@ describe('App', () => {
     await screen.findByRole('navigation', { name: 'Knowledge' })
     // The root selector and breadcrumbs sit outside the tree's own key
     // handling, so they are where a stray recall would surface.
-    const rootButton = document.querySelector<HTMLButtonElement>(
-      '.knowledge-root > button',
-    )!
+    const rootButton = screen.getByRole('button', { name: 'Choose Knowledge root' })
+    await waitFor(() => expect(rootButton).toBeEnabled())
     rootButton.focus()
 
     fireEvent.keyDown(rootButton, { key: 'ArrowUp' })
@@ -14045,7 +15899,7 @@ describe('App', () => {
         'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14066,7 +15920,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
 
     // Clearing gives the session a new id, so its reading position has to
     // travel with it rather than being stranded under the old one.
@@ -14088,7 +15942,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14151,13 +16005,13 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     vi.mocked(listDirectories).mockResolvedValue({
       path: '/srv',
       parent: '/',
       directories: [{ name: 'docs', path: '/srv/docs' }],
     })
-    vi.mocked(addKnowledgeRoot).mockResolvedValue({
+    mockAddedKnowledgeRoot({
       id: 'root-new',
       computerId: computer.id,
       computerName: computer.name,
@@ -14251,7 +16105,7 @@ describe('App', () => {
   })
 
   it('colours the knowledge toggles while they are on', async () => {
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14308,7 +16162,7 @@ describe('App', () => {
         },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14448,7 +16302,7 @@ describe('App', () => {
         },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14514,11 +16368,7 @@ describe('App', () => {
     await waitFor(() => expect(releaseGuides).toBeDefined())
 
     // The reader switches root while the remembered branch is still loading.
-    fireEvent.click(
-      within(tree)
-        .getAllByRole('button', { name: /other/ })
-        .find((button) => button.closest('.knowledge-root'))!,
-    )
+    await chooseKnowledgeRoot('root-2')
     await within(tree).findByRole('treeitem', { name: /only-here.md/ })
 
     releaseGuides?.()
@@ -14549,7 +16399,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14605,7 +16455,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14690,7 +16540,7 @@ describe('App', () => {
         'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -14730,7 +16580,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14782,7 +16632,7 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
-  it('carries the position across a clear even as the removal arrives', async () => {
+  it.each([false, true])('carries the position across a clear even as the removal arrives (metadata warning: %s)', async (metadataWarning) => {
     const replacement: ManagedSession = {
       ...session,
       id: 'session-1-cleared',
@@ -14801,12 +16651,13 @@ describe('App', () => {
         'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Keep this draft across clear' } })
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(releaseClear).toBeDefined())
 
     // The server removes the old session and creates a replacement, and the
@@ -14820,6 +16671,14 @@ describe('App', () => {
           sessionId: 'session-1',
         }),
       } as MessageEvent)
+      if (metadataWarning) {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({
+            type: 'error', computerId: computer.id, sessionId: replacement.id,
+            message: 'Conversation cleared, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.',
+          }),
+        } as MessageEvent)
+      }
     })
     await act(async () => {
       releaseClear?.()
@@ -14835,6 +16694,13 @@ describe('App', () => {
         'computer-1:session-1-cleared': { rootId: 'root-1', path: 'guides' },
       }),
     )
+    expect(clearConversation).toHaveBeenCalledOnce()
+    expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft across clear')
+    expect(window.location.search).toContain('session=session-1-cleared')
+    if (metadataWarning) {
+      expect(within(screen.getByRole('main'))
+        .getByText(/Conversation cleared, but its Knowledge folder metadata/)).toBeVisible()
+    }
     confirmSpy.mockRestore()
   })
 
@@ -14847,7 +16713,7 @@ describe('App', () => {
         'computer-1:session-2': { rootId: 'root-1', path: 'notes' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -14881,7 +16747,7 @@ describe('App', () => {
   it('carries the draft across a clear on every client', async () => {
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
     vi.mocked(getSession).mockResolvedValue(session)
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
@@ -14920,7 +16786,7 @@ describe('App', () => {
       'agentic-remote:knowledge-mode',
       JSON.stringify('docked'),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -14980,13 +16846,13 @@ describe('App', () => {
     vi.mocked(getPushSettings).mockResolvedValue({
       mutedSessions: ['computer-1:session-1'],
     })
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
 
     render(<App />)
     await screen.findAllByText('Project chat')
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: 'Unmute session notifications' }),
+        sessionAction('Unmute session notifications'),
       ).toBeInTheDocument(),
     )
 
@@ -15020,7 +16886,7 @@ describe('App', () => {
       ),
     )
     expect(
-      screen.getByRole('button', { name: 'Unmute session notifications' }),
+      sessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
   })
 
@@ -15035,7 +16901,7 @@ describe('App', () => {
       'agentic-remote:knowledge-position',
       JSON.stringify({ rootId: 'root-1', path: '.' }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -15105,13 +16971,13 @@ describe('App', () => {
         'computer-1:session-1': { rootId: 'root-1', path: 'guides' },
       }),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([])
+    mockKnowledgeRoots([])
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
     fireEvent.change(textarea, { target: { value: 'Draft worth keeping' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Clear conversation' }))
+    fireEvent.click(sessionAction('Clear conversation'))
     await waitFor(() => expect(releaseClear).toBeDefined())
 
     // A node on an older build sends no replacement link, so the removal
@@ -15142,7 +17008,7 @@ describe('App', () => {
     )
     expect(screen.getByLabelText('Message')).toHaveValue('Draft worth keeping')
     expect(
-      screen.getByRole('button', { name: 'Unmute session notifications' }),
+      sessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
     confirmSpy.mockRestore()
   })
@@ -15159,9 +17025,7 @@ describe('App', () => {
 
     render(<App />)
     await screen.findAllByText('Project chat')
-    await screen.findByRole('button', {
-      name: 'Unmute session notifications',
-    })
+    await findSessionAction('Unmute session notifications')
 
     let answerSettings: (() => void) | undefined
     vi.mocked(getPushSettings).mockImplementation(
@@ -15201,9 +17065,7 @@ describe('App', () => {
     // The reply predates the clear, so it must not unmute the replacement the
     // mute was just moved to.
     expect(
-      await screen.findByRole('button', {
-        name: 'Unmute session notifications',
-      }),
+      await findSessionAction('Unmute session notifications'),
     ).toBeInTheDocument()
   })
 
@@ -15219,7 +17081,7 @@ describe('App', () => {
       }),
     )
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -15292,7 +17154,7 @@ describe('App', () => {
       'agentic-remote:knowledge-position',
       JSON.stringify(remembered),
     )
-    vi.mocked(listKnowledgeRoots).mockResolvedValue([
+    mockKnowledgeRoots([
       {
         id: 'root-1',
         computerId: computer.id,
@@ -15306,6 +17168,7 @@ describe('App', () => {
     vi.mocked(listKnowledgeEntries).mockRejectedValue(new Error('offline'))
     render(<App />)
     await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
     await waitFor(() => expect(listKnowledgeEntries).toHaveBeenCalled())
 
     // A failed restore must not erase where the reader was. The position now

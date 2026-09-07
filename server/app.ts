@@ -20,6 +20,7 @@ import { PushNotificationService } from './push-notification-service.js'
 import { ProviderSessionService } from './provider-session-service.js'
 import { registerPushRoutes } from './push-routes.js'
 import { SessionStore } from './session-store.js'
+import { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionService } from './session-service.js'
 import {
   LocalTranscriptionService,
@@ -53,6 +54,7 @@ export interface BuildAppOptions {
   pushService?: PushNotificationService
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
+  sessionKnowledgeStore?: SessionKnowledgeStore
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -73,6 +75,7 @@ export async function buildApp(
   pushService?: PushNotificationService
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
+  sessionKnowledgeStore?: SessionKnowledgeStore
 }> {
   const role = options.role ?? 'hub'
   let publicDirectory: string | undefined
@@ -149,6 +152,7 @@ export async function buildApp(
   let pushService: PushNotificationService | undefined
   let transcriptionService: TranscriptionService | undefined
   let knowledgeStore: KnowledgeStore | undefined
+  let sessionKnowledgeStore: SessionKnowledgeStore | undefined
   if (role === 'hub') {
     manager =
       options.manager ??
@@ -160,11 +164,14 @@ export async function buildApp(
     await manager.initialize()
     knowledgeStore = options.knowledgeStore ?? new KnowledgeStore(dataDirectory)
     await knowledgeStore.initialize()
+    sessionKnowledgeStore = options.sessionKnowledgeStore ??
+      new SessionKnowledgeStore(dataDirectory, knowledgeStore)
+    await sessionKnowledgeStore.initialize()
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
     pushService.attach(manager)
-    await registerHubRoutes(app, manager, knowledgeStore, pushService)
+    await registerHubRoutes(app, manager, knowledgeStore, pushService, sessionKnowledgeStore)
     await registerPushRoutes(app, pushService)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
@@ -221,5 +228,6 @@ export async function buildApp(
     pushService,
     transcriptionService: transcriptionService ?? localTranscription,
     knowledgeStore,
+    sessionKnowledgeStore,
   }
 }

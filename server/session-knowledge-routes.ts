@@ -51,7 +51,7 @@ export async function registerSessionKnowledgeRoutes(
 ): Promise<SessionKnowledgeLifecycle> {
   const generations = new Map<string, RegistrationGeneration>()
   const background = new Set<Promise<void>>()
-  const computerRemovals = new Map<string, Promise<void>>()
+  const computerRemovals = new Map<string, Promise<void>[]>()
 
   function generationFor(computerId: string): RegistrationGeneration {
     if (!manager.listComputers().some((computer) => computer.id === computerId)) {
@@ -213,7 +213,9 @@ export async function registerSessionKnowledgeRoutes(
     if (event.type === 'computer.removed') {
       generations.delete(event.computerId)
       const cleanup = store.removeComputer(event.computerId)
-      computerRemovals.set(event.computerId, cleanup)
+      const queued = computerRemovals.get(event.computerId) ?? []
+      queued.push(cleanup)
+      computerRemovals.set(event.computerId, queued)
       observe(cleanup, event.computerId)
       return
     }
@@ -356,9 +358,10 @@ export async function registerSessionKnowledgeRoutes(
       await store.removeSession(computerId, sessionId, validate)
     },
     removedComputerCleanup(computerId) {
-      const cleanup = computerRemovals.get(computerId)
-      if (!cleanup) throw new Error('Computer removal did not queue Knowledge cleanup')
-      computerRemovals.delete(computerId)
+      const queued = computerRemovals.get(computerId)
+      if (!queued?.length) throw new Error('Computer removal did not queue Knowledge cleanup')
+      const cleanup = queued.shift()!
+      if (queued.length === 0) computerRemovals.delete(computerId)
       // Capture the event's queued cleanup before the route awaits catalog
       // persistence. A later unscoped removal could erase a re-paired owner.
       return async () => {

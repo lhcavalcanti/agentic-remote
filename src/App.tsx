@@ -8958,18 +8958,16 @@ function App() {
   useEffect(() => {
     try {
       localStorage.setItem('agentic-remote:computer-order', JSON.stringify(computerOrder))
-    } catch (caught) {
-      setSidebarOpen(false)
-      setError(`Could not save the computer order: ${caught instanceof Error ? caught.message : String(caught)}`)
+    } catch {
+      // Automatic snapshot reconciliation remains usable without storage.
     }
   }, [computerOrder])
 
   useEffect(() => {
     try {
       localStorage.setItem('agentic-remote:session-order', JSON.stringify(sessionOrder))
-    } catch (caught) {
-      setSidebarOpen(false)
-      setError(`Could not save the session order: ${caught instanceof Error ? caught.message : String(caught)}`)
+    } catch {
+      // Automatic snapshot reconciliation remains usable without storage.
     }
   }, [sessionOrder])
 
@@ -13450,11 +13448,17 @@ function App() {
     if (activeId.startsWith('computer:') && overId.startsWith('computer:')) {
       const activeComputer = activeId.slice('computer:'.length)
       const overComputer = overId.slice('computer:'.length)
-      setComputerOrder((current) => {
-        const from = current.indexOf(activeComputer)
-        const to = current.indexOf(overComputer)
-        return from >= 0 && to >= 0 ? arrayMove(current, from, to) : current
-      })
+      const from = computerOrder.indexOf(activeComputer)
+      const to = computerOrder.indexOf(overComputer)
+      if (from < 0 || to < 0) return
+      const next = arrayMove(computerOrder, from, to)
+      try {
+        localStorage.setItem('agentic-remote:computer-order', JSON.stringify(next))
+        setComputerOrder(next)
+      } catch (caught) {
+        setSidebarOpen(false)
+        setError(`Could not save the computer order: ${caught instanceof Error ? caught.message : String(caught)}`)
+      }
       return
     }
     if (!activeId.startsWith('session:') || !overId.startsWith('session:')) {
@@ -13479,18 +13483,21 @@ function App() {
     ) {
       return
     }
-    setSessionOrder((current) => {
-      const order = current[activeSession.computerId] || []
-      const from = order.indexOf(activeKey)
-      const to = order.indexOf(overKey)
-      if (from < 0 || to < 0) {
-        return current
-      }
-      return {
-        ...current,
-        [activeSession.computerId]: arrayMove(order, from, to),
-      }
-    })
+    const order = sessionOrder[activeSession.computerId] || []
+    const from = order.indexOf(activeKey)
+    const to = order.indexOf(overKey)
+    if (from < 0 || to < 0) return
+    const next = {
+      ...sessionOrder,
+      [activeSession.computerId]: arrayMove(order, from, to),
+    }
+    try {
+      localStorage.setItem('agentic-remote:session-order', JSON.stringify(next))
+      setSessionOrder(next)
+    } catch (caught) {
+      setSidebarOpen(false)
+      setError(`Could not save the session order: ${caught instanceof Error ? caught.message : String(caught)}`)
+    }
   }
 
   function changeSessionSort(sort: SessionSort) {

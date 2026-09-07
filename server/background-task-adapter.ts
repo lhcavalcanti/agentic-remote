@@ -630,6 +630,27 @@ function shellTaskMode(
   }
 }
 
+function isShellStopTool(name: string): boolean {
+  return name === 'stop_bash' || name === 'stop_shell'
+}
+
+function shellStopAcknowledged(
+  data: Record<string, unknown>,
+  requestedId: string,
+  currentId: string,
+): boolean {
+  if (data.success !== true) return false
+  const status = toolTelemetryProperties(data).shell_status
+  if (status !== undefined) return status === 'stopped'
+  const last = rawTailText(data.result)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1)
+  return last === `<command with id: ${requestedId} stopped>` ||
+    last === `<command with id: ${currentId} stopped>`
+}
+
 /** Tools that report on a shell somebody else started. */
 function isShellObserverTool(name: string | undefined): boolean {
   if (!name) {
@@ -641,8 +662,7 @@ function isShellObserverTool(name: string | undefined): boolean {
   return (
     tool === 'read_bash' ||
     tool === 'read_shell' ||
-    tool === 'stop_bash' ||
-    tool === 'stop_shell' ||
+    isShellStopTool(tool) ||
     tool === 'list_bash' ||
     tool === 'bash_output' ||
     isShellTool(tool)
@@ -692,33 +712,38 @@ function taskIdAlias(
 function rekeyTask(
   tasks: Map<string, BackgroundTask>,
   aliases: Map<string, string>,
-  from: string,
+  current: BackgroundTask,
   to: string,
+  compareExecutions: (left: BackgroundTask, right: BackgroundTask) => number,
   assumed?: { flags: Set<string>; owners: Map<string, string> },
 ): BackgroundTask | undefined {
-  const resolvedFrom = taskIdAlias(aliases, from)
-  const current = tasks.get(resolvedFrom)
-  if (!current) {
-    aliases.set(from, to)
-    return tasks.get(taskIdAlias(aliases, to))
+  const from = current.id
+  if (tasks.get(from) !== current) return undefined
+  const destination = tasks.get(to)
+  if (
+    destination && destination !== current &&
+    (isLiveTaskStatus(destination.status) || !(compareExecutions(current, destination) > 0))
+  ) {
+    return undefined
   }
-  if (resolvedFrom !== to) {
-    tasks.delete(resolvedFrom)
+  const ownsAlias = taskIdAlias(aliases, from) === from
+  if (from !== to) {
+    tasks.delete(from)
     current.id = to
     tasks.set(to, current)
     // A task carries its identity, so what was recorded against the old one
     // has to follow it. Leaving it behind records the assumption against an id
     // no task answers to, and the sweep never recognizes the task again.
-    if (assumed?.flags.delete(resolvedFrom)) {
+    if (assumed?.flags.delete(from)) {
       assumed.flags.add(to)
     }
-    const owner = assumed?.owners.get(resolvedFrom)
+    const owner = assumed?.owners.get(from)
     if (owner !== undefined) {
-      assumed?.owners.delete(resolvedFrom)
+      assumed?.owners.delete(from)
       assumed?.owners.set(to, owner)
     }
   }
-  aliases.set(from, to)
+  if (ownsAlias) aliases.set(from, to)
   aliases.set(to, to)
   return current
 }
@@ -846,6 +871,67 @@ function notificationKind(
 ): Record<string, unknown> {
   const kind = recordValue(data.kind)
   return Object.keys(kind).length > 0 ? kind : data
+}
+
+function isLiveTaskStatus(status: BackgroundTaskStatus): boolean {
+  return status === 'running' || status === 'queued'
+}
+
+function isTerminalTaskStatus(status: BackgroundTaskStatus): boolean {
+  return (
+    status === 'completed' || status === 'failed' || status === 'cancelled'
+  )
+}
+
+function isOlderExecution(startedAt: string, current: BackgroundTask): boolean {
+  return Date.parse(startedAt) < Date.parse(current.startedAt)
+}
+
+function sameExecutionStart(left: string, right: string): boolean {
+  if (left === right) return true
+  const instant = Date.parse(left)
+  return Number.isFinite(instant) && instant === Date.parse(right)
+}
+
+/**
+ * Fold a fresh inventory row into the shell it refreshes.
+ *
+ * A confirmed terminal state is the record of how a shell actually ended, and
+ * a later running or queued snapshot is stale by the time it arrives. Letting
+ * it overwrite the task resurrects a cancelled shell or erases a real exit
+ * before a pending stop is even read. So a terminal task keeps its status,
+ * completion time, error, result and output, and only borrows the metadata it
+ * still lacks -- and only from a refresh that agrees the shell has ended. A
+ * live task takes the newer snapshot but keeps the launch command and last
+ * output the CLI leaves out of an inventory row.
+ */
+function mergeShellRefresh(
+  previous: BackgroundTask,
+  reported: BackgroundTask,
+): BackgroundTask {
+  if (isTerminalTaskStatus(previous.status)) {
+    if (isTerminalTaskStatus(reported.status)) {
+      previous.completedAt ??= reported.completedAt
+      if (previous.status === reported.status) previous.error ??= reported.error
+      previous.result ??= reported.result
+      previous.latestResponse ??= reported.latestResponse
+      previous.activeTimeMs ??= reported.activeTimeMs
+      previous.pid ??= reported.pid
+      previous.model ??= reported.model
+      previous.resolvedModel ??= reported.resolvedModel
+      previous.agentType ??= reported.agentType
+    }
+    previous.canCancel = false
+    return previous
+  }
+  if (!reported.command && previous.command) {
+    reported.command = previous.command
+  }
+  if (!reported.progress && previous.progress) {
+    reported.progress = previous.progress
+  }
+  reported.attachmentMode ??= previous.attachmentMode
+  return reported
 }
 
 function backgroundHandoff(
@@ -1000,39 +1086,163 @@ export function backgroundTasksFromEvents(
   // Which tool a call belongs to. Only the start event says so, and the
   // completion has to know whether it came from something that reads shells.
   const toolNames = new Map<string, string>()
-  const assumed = { flags: assumedBackground, owners: assumedOwners }
   const aliases = new Map<string, string>()
-  const shellStarts = new Map<
-    string,
-    {
+  type ShellIdentity = {
+    startedAt: string
+    creationOrder: number
+    toolCallId?: string
+    start?: {
       id: string
       timestamp: string
       data: Record<string, unknown>
       mode?: ReturnType<typeof shellTaskMode>
     }
+    materialized: boolean
+    exitCode?: number
+    completion?: Pick<BackgroundTask, 'status' | 'completedAt' | 'error' | 'progress'>
+    ids: Set<string>
+  }
+  // A per-execution handle that stays with a shell through metadata refreshes,
+  // provider-id rekeys and native handoffs, even before a synchronous launch
+  // has a background row. Pending controls and observations bind to this
+  // handle, never to the mutable alias that another execution may reuse.
+  const shellInstances = new WeakMap<BackgroundTask, ShellIdentity>()
+  const shellTasksByIdentity = new Map<ShellIdentity, BackgroundTask>()
+  const shellIdentitiesById = new Map<string, ShellIdentity>()
+  const shellIdentitiesByStart = new Map<string, Map<string | number, ShellIdentity | null>>()
+  const reusedShellIds = new Set<string>()
+  let shellCreationOrder = 0
+  const startKey = (startedAt: string): string | number => {
+    const instant = Date.parse(startedAt)
+    return Number.isFinite(instant) ? instant : startedAt
+  }
+  const claimShellId = (id: string, identity: ShellIdentity): void => {
+    const previous = shellIdentitiesById.get(id)
+    if (previous && previous !== identity) reusedShellIds.add(id)
+    shellIdentitiesById.set(id, identity)
+    const starts = shellIdentitiesByStart.get(id) || new Map<string | number, ShellIdentity | null>()
+    const key = startKey(identity.startedAt)
+    // Explicit launches with tied clocks still have different identities.
+    // Such a timestamp alone can no longer identify a native completion.
+    starts.set(key, starts.has(key) && starts.get(key) !== identity ? null : identity)
+    shellIdentitiesByStart.set(id, starts)
+    identity.ids.add(id)
+  }
+  const bindShellIdentity = (
+    task: BackgroundTask,
+    identity: ShellIdentity,
+    claimId = true,
+  ): void => {
+    identity.materialized = true
+    shellInstances.set(task, identity)
+    shellTasksByIdentity.set(identity, task)
+    if (claimId) claimShellId(task.id, identity)
+  }
+  // Which execution a launching call created, kept by the call's own id so a
+  // late handoff for that call can find its original execution even after the
+  // id it once held has been reused by a newer launch.
+  const launchIdentity = new Map<string, ShellIdentity>()
+  const shellObserverTargets = new Map<
+    string,
+    { identity?: ShellIdentity; requestedId: string }
   >()
-
-  const shellStartFor = (
-    id: string | undefined,
-  ):
-    | {
-        id: string
-        timestamp: string
-        data: Record<string, unknown>
-        mode?: ReturnType<typeof shellTaskMode>
-      }
-    | undefined => {
-    if (!id) {
-      return undefined
+  const shellIdentityOf = (task: BackgroundTask): ShellIdentity => {
+    const existing = shellInstances.get(task)
+    if (existing) {
+      return existing
     }
-    const direct = shellStarts.get(id)
-    if (direct) {
-      return direct
+    const identity: ShellIdentity = {
+      startedAt: task.startedAt, creationOrder: shellCreationOrder++,
+      materialized: false, ids: new Set(),
     }
-    const resolved = taskIdAlias(aliases, id)
-    return [...shellStarts.values()].find(
-      (start) => taskIdAlias(aliases, start.id) === resolved,
-    )
+    bindShellIdentity(task, identity)
+    return identity
+  }
+  const shellByIdentity = (identity: ShellIdentity): BackgroundTask | undefined => {
+    const task = shellTasksByIdentity.get(identity)
+    return task?.type === 'shell' && tasks.get(task.id) === task &&
+      shellInstances.get(task) === identity ? task : undefined
+  }
+  const assumed = { flags: assumedBackground, owners: assumedOwners }
+  const shellIdentityAt = (id: string): ShellIdentity | undefined =>
+    shellIdentitiesById.get(id) ||
+    shellIdentitiesById.get(taskIdAlias(aliases, id))
+  const compareShellExecutions = (
+    left: ShellIdentity | BackgroundTask,
+    right: ShellIdentity | BackgroundTask,
+  ): number => {
+    const leftIdentity = 'creationOrder' in left ? left : shellInstances.get(left)
+    const rightIdentity = 'creationOrder' in right ? right : shellInstances.get(right)
+    const leftStart = (leftIdentity || left).startedAt
+    const rightStart = (rightIdentity || right).startedAt
+    const difference = Date.parse(leftStart) - Date.parse(rightStart)
+    if (Number.isFinite(difference) && difference !== 0) return difference
+    // Tied or unparseable clocks need retained execution order, not the
+    // arrival of a refresh or delayed handoff. Without both identities,
+    // callers must reject an unordered comparison rather than fail open.
+    if (leftIdentity && rightIdentity) {
+      return leftIdentity.creationOrder - rightIdentity.creationOrder
+    }
+    return difference
+  }
+  const isStaleUnboundShellStart = (
+    id: string,
+    startedAt: string,
+    distinctCall = false,
+  ): boolean => {
+    const owner = shellIdentitiesById.get(id)
+    // An explicit sync launch owns its id before it has a task row. Unbound
+    // reports must respect that owner, and tied starts need call provenance.
+    return Boolean(owner && Date.parse(startedAt) < Date.parse(owner.startedAt)) ||
+      (!distinctCall && shellIdentitiesByStart.get(id)?.get(startKey(startedAt)) === null)
+  }
+  const rekeyShellTask = (
+    current: BackgroundTask,
+    to: string,
+  ): BackgroundTask | undefined => {
+    const destination = shellIdentitiesById.get(to)
+    if (
+      destination && !destination.materialized &&
+      !(compareShellExecutions(current, destination) > 0)
+    ) return undefined
+    const moved = rekeyTask(tasks, aliases, current, to, compareShellExecutions, assumed)
+    if (moved) claimShellId(to, shellIdentityOf(moved))
+    return moved
+  }
+  const materializeShell = (
+    identity: ShellIdentity,
+    id: string,
+    mode: NonNullable<ReturnType<typeof shellTaskMode>>,
+  ): BackgroundTask | undefined => {
+    if (identity.materialized) return shellByIdentity(identity)
+    const start = identity.start
+    if (!start || shellIdentitiesById.get(start.id) !== identity) return undefined
+    const destination = tasks.get(id)
+    const destinationIdentity = shellIdentitiesById.get(id)
+    if (
+      // An admitted new launch may already own the requested id while the
+      // prior execution's row is waiting for its stop acknowledgement.
+      destination && destinationIdentity !== identity &&
+      (isLiveTaskStatus(destination.status) ||
+        !(compareShellExecutions(identity, destination) > 0))
+    ) return undefined
+    if (
+      destinationIdentity && destinationIdentity !== identity &&
+      !(compareShellExecutions(identity, destinationIdentity) > 0)
+    ) return undefined
+    const current = {
+      ...shellTask(id, start.timestamp, start.data, {
+        ...mode,
+        attachmentMode: mode.attachmentMode ?? start.mode?.attachmentMode ?? 'attached',
+      }),
+      ...identity.completion,
+    }
+    bindShellIdentity(current, identity)
+    tasks.set(id, current)
+    aliases.set(start.id, id)
+    if (identity.toolCallId) aliases.set(identity.toolCallId, id)
+    aliases.set(id, id)
+    return current
   }
 
   const finishShellTask = (
@@ -1040,101 +1250,178 @@ export function backgroundTasksFromEvents(
     timestamp: string,
     data: Record<string, unknown>,
   ): void => {
-    const resolvedId = taskIdAlias(aliases, shellId)
-    const start = shellStartFor(shellId)
-    let current = tasks.get(resolvedId)
-    if (current?.type !== 'shell') {
-      current = undefined
+    const toolCallId = eventString(data, 'toolCallId')
+    const startedAt = eventString(data, 'startedAt') || eventString(data, 'started_at')
+    const byCall = toolCallId ? launchIdentity.get(toolCallId) : undefined
+    const byStart = startedAt
+      ? shellIdentitiesByStart.get(shellId)?.get(startKey(startedAt))
+      : undefined
+    if (!byCall && byStart === null) return
+    const identity = byCall || byStart || shellIdentityAt(shellId)
+    if (identity) {
+      if (startedAt && !sameExecutionStart(identity.startedAt, startedAt)) return
+      if (
+        toolCallId && toolCallId !== identity.toolCallId &&
+        (identity.toolCallId || !startedAt)
+      ) return
+      // A bare native shell id is sufficient only until that id has denoted
+      // multiple executions. Otherwise a delayed legacy exit is ambiguous.
+      if (!toolCallId && !startedAt && reusedShellIds.has(shellId)) return
     }
-    if (!current && start) {
-      current = shellTask(
-        start.id,
-        start.timestamp,
-        start.data,
-        start.mode || {
+    let current = identity ? shellByIdentity(identity) : undefined
+    if (identity && !current) {
+      current = materializeShell(
+        identity,
+        shellId,
+        identity.start?.mode || {
           executionMode: 'background',
           attachmentMode:
             data.type === 'shell_detached_completed' ? 'detached' : 'attached',
           assumed: false,
         },
       )
-      if (start.mode?.assumed) {
-        assumedBackground.add(current.id)
-      }
-      tasks.set(start.id, current)
-      aliases.set(start.id, start.id)
+      if (!current) return
     }
     if (!current) {
+      if (tasks.has(shellId)) return
       current = {
         type: 'shell',
         id: shellId,
         description: 'Background shell',
         status: 'running',
         startedAt:
-          eventString(data, 'startedAt') ||
-          eventString(data, 'started_at') ||
-          timestamp,
+          startedAt || timestamp,
         executionMode: 'background',
         attachmentMode: 'detached',
         canCancel: false,
       }
+      const createdIdentity = shellIdentityOf(current)
+      if (toolCallId) {
+        createdIdentity.toolCallId = toolCallId
+        launchIdentity.set(toolCallId, createdIdentity)
+      }
       tasks.set(shellId, current)
       aliases.set(shellId, shellId)
     }
-    if (current.id !== shellId) {
-      current =
-        rekeyTask(tasks, aliases, current.id, shellId, assumed) || current
+    if (current.id !== shellId && !identity?.ids.has(shellId)) {
+      const moved = rekeyShellTask(current, shellId)
+      if (!moved) return
+      current = moved
     }
+    if (identity?.completion) return
     const exitCode = numberValue(data.exitCode)
+    const currentIdentity = shellIdentityOf(current)
+    if (currentIdentity.exitCode !== undefined) {
+      if (currentIdentity.exitCode === exitCode) shellTaskOutput(current, data)
+      return
+    }
+    currentIdentity.exitCode = exitCode
     current.status =
       data.cancelled === true
         ? 'cancelled'
         : exitCode !== undefined && exitCode !== 0
           ? 'failed'
-          : current.status === 'failed' || current.status === 'cancelled'
+          : current.status === 'cancelled' || (exitCode === undefined && current.status === 'failed')
             ? current.status
             : 'completed'
-    current.completedAt = timestamp
+    current.completedAt ??= timestamp
     current.description =
       boundedText(eventString(data, 'description')) || current.description
     if (current.status === 'failed') {
       current.error =
         errorValue(data) ||
-        current.error ||
         (exitCode === undefined
-          ? 'Shell task failed'
+          ? current.error || 'Shell task failed'
           : `Shell exited with status ${exitCode}`)
     } else {
       current.error = undefined
     }
     shellTaskOutput(current, data)
     current.canCancel = false
-    for (const [toolCallId, pending] of shellStarts) {
-      if (
-        pending.id === shellId ||
-        taskIdAlias(aliases, pending.id) === taskIdAlias(aliases, shellId)
-      ) {
-        shellStarts.delete(toolCallId)
-      }
-    }
   }
 
   for (const event of events) {
     const data = recordValue(event.data)
+    const completingCallId = event.type === 'tool.execution_complete'
+      ? eventString(data, 'toolCallId')
+      : undefined
+    const observerTarget = completingCallId ? shellObserverTargets.get(completingCallId) : undefined
+    const completingIdentity = completingCallId ? launchIdentity.get(completingCallId) : undefined
     const listedTasks = [
       ...taskInfoListFromValue(data),
       ...taskInfoListFromValue(data.result),
     ]
     for (const listedTask of listedTasks) {
-      tasks.set(
-        listedTask.id,
-        normalizeBackgroundTask(listedTask, undefined, false),
-      )
-      aliases.set(listedTask.id, listedTask.id)
+      let previous = tasks.get(listedTask.id)
+      const reported = normalizeBackgroundTask(listedTask, undefined, false)
+      if (observerTarget || completingIdentity) {
+        const identity = observerTarget?.identity || completingIdentity
+        if (
+          !identity || reported.type !== 'shell' || data.success !== true ||
+          (observerTarget && identity.completion) ||
+          !sameExecutionStart(identity.startedAt, reported.startedAt) ||
+          (observerTarget && reported.id !== observerTarget.requestedId && !identity.ids.has(reported.id))
+        ) continue
+        previous = shellByIdentity(identity) ||
+          materializeShell(identity, reported.id, {
+            executionMode: 'background', attachmentMode: reported.attachmentMode, assumed: false,
+          })
+        if (!previous) continue
+        // Bound metadata refreshes the captured execution at its current id,
+        // not a replacement now occupying the requested alias.
+        reported.id = previous.id
+      } else if (reported.type === 'shell') {
+        const identity = shellIdentitiesByStart.get(reported.id)?.get(startKey(reported.startedAt))
+        if (identity === null) continue
+        if (identity?.materialized) {
+          // Inventory may still name a historical alias after a provider
+          // rekey. Refresh the indexed execution at its current id, never
+          // reclaim that alias or re-create an execution that was replaced.
+          previous = shellByIdentity(identity)
+          if (!previous) continue
+          reported.id = previous.id
+        }
+        if (isStaleUnboundShellStart(reported.id, reported.startedAt)) continue
+      }
+      if (
+        previous?.type === 'shell' && reported.type === 'shell' &&
+        isOlderExecution(reported.startedAt, previous)
+      ) continue
+      const sameExecution =
+        previous?.type === 'shell' &&
+        reported.type === 'shell' &&
+        sameExecutionStart(previous.startedAt, reported.startedAt)
+      let current = reported
+      if (sameExecution && previous) {
+        // Refreshing the same runtime record is not a new execution, so its
+        // identity, and any pending stop bound to it, must carry across.
+        current = mergeShellRefresh(previous, reported)
+        bindShellIdentity(current, shellIdentityOf(previous), false)
+      } else if (reported.type === 'shell') {
+        // A reported shell that does not continue a known one is a distinct
+        // execution and gets its own identity, so a stop meant for the shell
+        // it replaced can never land on it.
+        const pending = shellIdentitiesById.get(reported.id)
+        if (
+          pending?.start && !pending.materialized &&
+          sameExecutionStart(pending.startedAt, reported.startedAt)
+        ) {
+          const materialized = materializeShell(pending, reported.id, {
+            executionMode: 'background', attachmentMode: reported.attachmentMode, assumed: false,
+          })
+          if (!materialized) continue
+          current = mergeShellRefresh(materialized, reported)
+          bindShellIdentity(current, pending)
+        } else {
+          shellIdentityOf(current)
+        }
+      }
+      tasks.set(current.id, current)
+      aliases.set(current.id, current.id)
       // The CLI has reported this task itself, so nothing about it is being
       // assumed any more and the turn ending must not end it.
-      assumedBackground.delete(listedTask.id)
-      assumedOwners.delete(listedTask.id)
+      assumedBackground.delete(current.id)
+      assumedOwners.delete(current.id)
     }
     const eventType = String(event.type)
     if (
@@ -1155,43 +1442,119 @@ export function backgroundTasksFromEvents(
           eventString(kind, 'shell_id') ||
           shellIdFromValue(kind)
         if (shellId) {
-          const mode = {
-            executionMode: 'background' as const,
-            attachmentMode:
-              kindType === 'shell_detached_started'
-                ? ('detached' as const)
-                : ('attached' as const),
-            assumed: false,
-          }
-          const current = shellTask(
-            shellId,
-            eventString(kind, 'startedAt') || event.timestamp,
-            kind,
-            mode,
-          )
-          current.status =
+          const attachmentMode =
+            kindType === 'shell_detached_started'
+              ? ('detached' as const)
+              : ('attached' as const)
+          const reportedStatus =
             eventString(kind, 'status') === 'queued' ? 'queued' : 'running'
-          // The call that started this shell may already have a task of its
-          // own, projected before any shell id was known. Left alone it stays
-          // beside the reported one, so the same command is counted twice and
-          // the older half never finishes.
-          const startedBy = eventString(kind, 'toolCallId') || eventString(data, 'toolCallId')
-          if (startedBy) {
-            const existing = taskIdAlias(aliases, startedBy)
-            if (existing !== shellId && tasks.has(existing)) {
-              tasks.delete(existing)
-              assumedBackground.delete(existing)
-              assumedOwners.delete(existing)
+          const startedBy =
+            eventString(kind, 'toolCallId') || eventString(data, 'toolCallId')
+          const reportedStartedAt = eventString(kind, 'startedAt')
+          const byCall = startedBy ? launchIdentity.get(startedBy) : undefined
+          if (
+            !byCall &&
+            isStaleUnboundShellStart(shellId, reportedStartedAt || event.timestamp, Boolean(startedBy))
+          ) continue
+          const pending = shellIdentitiesById.get(shellId)
+          const matchesPending = pending?.start && !pending.materialized &&
+            reportedStartedAt && sameExecutionStart(pending.startedAt, reportedStartedAt)
+          const knownIdentity = startedBy
+            ? byCall
+            : matchesPending ? pending : undefined
+          const known = knownIdentity
+            ? shellByIdentity(knownIdentity) ||
+              materializeShell(knownIdentity, shellId, {
+                executionMode: 'background', attachmentMode, assumed: false,
+              })
+            : undefined
+          if (knownIdentity) {
+            // This notification renames a call's own shell to the provider id.
+            // It is bound to the execution the call launched, not to whatever
+            // id it once held: after that id is reused by a newer launch the
+            // original execution may be gone (a stale late handoff, ignored) or
+            // living under a different id (rekeyed here to follow it).
+            if (known && known.type === 'shell') {
+              const destination = tasks.get(shellId)
+              const stealsLiveSlot =
+                destination !== undefined &&
+                destination !== known &&
+                shellInstances.get(destination) !== knownIdentity &&
+                isLiveTaskStatus(destination.status)
+              const replacesNewerExecution =
+                destination !== undefined && destination !== known &&
+                !(compareShellExecutions(known, destination) > 0)
+              if (!stealsLiveSlot && !replacesNewerExecution) {
+                const moved =
+                  known.id === shellId
+                    ? known
+                    : rekeyShellTask(known, shellId) || known
+                moved.executionMode = 'background'
+                if (attachmentMode === 'detached') {
+                  moved.attachmentMode = 'detached'
+                }
+                // A stop already recorded against this execution stands: the
+                // handoff renames the shell, it does not restart it.
+                if (!isTerminalTaskStatus(moved.status)) {
+                  moved.status = reportedStatus
+                }
+                tasks.set(moved.id, moved)
+                if (startedBy) aliases.set(startedBy, moved.id)
+                aliases.set(moved.id, moved.id)
+                assumedBackground.delete(moved.id)
+                assumedOwners.delete(moved.id)
+              }
             }
-            aliases.set(startedBy, shellId)
+          } else {
+            const destination = tasks.get(shellId)
+            if (
+              destination && reportedStartedAt &&
+              isOlderExecution(reportedStartedAt, destination)
+            ) continue
+            const sameExecution =
+              !startedBy && destination?.type === 'shell' &&
+              reportedStartedAt !== undefined &&
+              sameExecutionStart(destination.startedAt, reportedStartedAt)
+            if (sameExecution && destination) {
+              destination.executionMode = 'background'
+              if (attachmentMode === 'detached') destination.attachmentMode = 'detached'
+              if (!isTerminalTaskStatus(destination.status)) destination.status = reportedStatus
+              assumedBackground.delete(shellId)
+              assumedOwners.delete(shellId)
+            } else if (
+              !destination || destination.type === 'shell' ||
+              !isLiveTaskStatus(destination.status)
+            ) {
+              // A new native execution may reuse an id before the prior stop
+              // reply arrives. Give it a new identity so that old reply cannot
+              // close it. Never replace an unrelated live task kind.
+              const current = shellTask(
+                shellId,
+                reportedStartedAt || event.timestamp,
+                kind,
+                {
+                  executionMode: 'background',
+                  attachmentMode,
+                  assumed: false,
+                },
+              )
+              current.status = reportedStatus
+              shellIdentityOf(current)
+              if (startedBy) {
+                aliases.set(startedBy, shellId)
+                const identity = shellIdentityOf(current)
+                identity.toolCallId = startedBy
+                launchIdentity.set(startedBy, identity)
+              }
+              tasks.set(shellId, current)
+              aliases.set(shellId, shellId)
+              // Reported by the CLI itself, so nothing about this shell is
+              // being assumed any more. Left set, a turn ending could close a
+              // shell the CLI had just described.
+              assumedBackground.delete(shellId)
+              assumedOwners.delete(shellId)
+            }
           }
-          tasks.set(shellId, current)
-          aliases.set(shellId, shellId)
-          // Reported by the CLI itself, so nothing about this shell is being
-          // assumed any more. Left set, a turn ending could close a shell the
-          // CLI had just described.
-          assumedBackground.delete(shellId)
-          assumedOwners.delete(shellId)
         }
       }
       if (
@@ -1203,7 +1566,12 @@ export function backgroundTasksFromEvents(
           eventString(kind, 'shell_id') ||
           shellIdFromValue(kind)
         if (shellId) {
-          finishShellTask(shellId, event.timestamp, kind)
+          finishShellTask(shellId, event.timestamp, {
+            ...kind,
+            toolCallId: eventString(kind, 'toolCallId') || eventString(data, 'toolCallId'),
+            startedAt: eventString(kind, 'startedAt') || eventString(kind, 'started_at') ||
+              eventString(data, 'startedAt') || eventString(data, 'started_at'),
+          })
         }
       }
       if (kindType === 'agent_idle' || kindType === 'agent_completed') {
@@ -1265,22 +1633,43 @@ export function backgroundTasksFromEvents(
       const startedCallId = eventString(data, 'toolCallId')
       if (startedCallId) {
         toolNames.set(startedCallId, toolName)
+        if (isShellObserverTool(toolName) && !isShellTool(toolName)) {
+          const shellId = shellIdFromValue(args)
+          if (shellId) {
+            // An unknown target is captured too: a shell that appears after
+            // this request started cannot be what the request observed.
+            shellObserverTargets.set(startedCallId, {
+              identity: shellIdentityAt(shellId),
+              requestedId: shellId,
+            })
+          }
+        }
       }
       if (isShellTool(toolName)) {
         const mode = shellTaskMode(data, args, assumeBackground)
         const toolCallId = eventString(data, 'toolCallId')
         const shellId =
           shellIdFromValue(data) || shellIdFromValue(args) || toolCallId
+        const identity: ShellIdentity = {
+          startedAt: event.timestamp, creationOrder: shellCreationOrder++,
+          toolCallId, materialized: false, ids: new Set(),
+        }
         if (toolCallId && shellId) {
-          shellStarts.set(toolCallId, {
+          identity.start = {
             id: shellId,
             timestamp: event.timestamp,
             data,
             mode,
-          })
+          }
+          launchIdentity.set(toolCallId, identity)
         }
+        if (shellId) claimShellId(shellId, identity)
         if (mode && shellId) {
           const current = shellTask(shellId, event.timestamp, data, mode)
+          // A launch is always a distinct execution, even when it reuses an id
+          // at the same instant a previous one ended, so it gets a fresh
+          // identity and a stop meant for the earlier shell cannot follow.
+          bindShellIdentity(current, identity)
           if (mode?.assumed) {
             assumedBackground.add(current.id)
             // The owning agent can be named on the envelope or in the payload,
@@ -1405,31 +1794,107 @@ export function backgroundTasksFromEvents(
       // its completion to whichever live task holds that number — the very
       // collision this is meant to remove. Only an observer such as
       // `read_bash`, which owns no start, may resolve one that way.
-      const ownsShellStart = Boolean(shellStartFor(toolCallId))
+      const ownsShellStart = launchIdentity.has(toolCallId)
       // ...and only a tool that reads shells. Any other tool can return
       // content that happens to end with a completion footer -- a file being
       // read, an agent quoting a transcript -- and matching on the id would
       // close whichever live shell holds that recycled number.
-      const observesShells = isShellObserverTool(
-        eventString(data, 'toolName') || toolNames.get(toolCallId),
-      )
-      let current = tasks.get(id)
-      if (!current && !ownsShellStart && observesShells && namedShellId) {
-        current = tasks.get(taskIdAlias(aliases, namedShellId))
+      const toolName = toolNames.get(toolCallId) || normalizedToolName(data)
+      const observesShells = isShellObserverTool(toolName)
+      const ownedIdentity = launchIdentity.get(toolCallId)
+      let current = ownedIdentity ? shellByIdentity(ownedIdentity) : tasks.get(id)
+      if (ownedIdentity?.materialized && !current) continue
+      const target = shellObserverTargets.get(toolCallId)
+      if (isShellStopTool(toolName) && data.success !== true) continue
+      if (target?.identity?.completion) continue
+      if (target?.identity?.start && !target.identity.materialized) {
+        const start = target.identity.start
+        const matchesTarget = !namedShellId ||
+          namedShellId === target.requestedId || namedShellId === start.id
+        const hasOutcome = shellExit || (isShellStopTool(toolName)
+          ? shellStopAcknowledged(data, target.requestedId, start.id)
+          : data.success === true)
+        if (matchesTarget && hasOutcome) {
+          // An observer can finish or read a sync execution before its launch
+          // result arrives. Keep that evidence on the captured execution, but
+          // do not count it as background until a real handoff says so.
+          materializeShell(target.identity, start.id, start.mode || {
+            executionMode: 'sync', attachmentMode: 'attached', assumed: false,
+          })
+        }
       }
-      const start = shellStartFor(toolCallId) || shellStartFor(shellId)
+      if (isShellStopTool(toolName)) {
+        // A stop answers for the execution it addressed, wherever that
+        // execution now lives, and never for a later shell that reused the
+        // same id while the control request was in flight. Resolving it by
+        // identity rather than by id is what keeps the two apart.
+        const addressed = target?.identity
+          ? shellByIdentity(target.identity)
+          : undefined
+        if (
+          !target ||
+          !addressed ||
+          addressed.type !== 'shell' ||
+          !isLiveTaskStatus(addressed.status)
+        ) continue
+        current = addressed
+        if (!shellExit) {
+          if (shellStopAcknowledged(data, target.requestedId, current.id)) {
+            current.status = 'cancelled'
+            current.completedAt = event.timestamp
+            current.error = undefined
+            current.canCancel = false
+            shellTaskOutput(current, data.result)
+          }
+          continue
+        }
+        if (
+          shellExit.shellId !== target.requestedId &&
+          shellExit.shellId !== current.id
+        ) continue
+      } else if (target) {
+        const addressed = target.identity ? shellByIdentity(target.identity) : undefined
+        if (!addressed || (!isLiveTaskStatus(addressed.status) && !shellExit)) continue
+        if (
+          namedShellId &&
+          namedShellId !== target.requestedId &&
+          namedShellId !== addressed.id
+        ) continue
+        current = addressed
+      }
+      if (!current && !ownsShellStart && observesShells && namedShellId) {
+        if (!reusedShellIds.has(namedShellId)) {
+          const observedIdentity = shellIdentityAt(namedShellId)
+          current = observedIdentity ? shellByIdentity(observedIdentity) : undefined
+        }
+      }
+      if (observesShells && !isShellTool(toolName) && !shellExit) {
+        // Reading an attached shell does not complete it; a failed read is
+        // likewise not evidence that the process failed. Only explicit exit
+        // evidence (handled below) may change the observed lifecycle.
+        if (current?.type === 'shell' && isLiveTaskStatus(current.status) && data.success === true) {
+          shellTaskOutput(current, data.result)
+        }
+        continue
+      }
       const handoffMode = backgroundHandoff(data)
-      if (!current && start && handoffMode) {
-        const backgroundId = shellId || start.id
-        current = shellTask(
-          backgroundId,
-          start.timestamp,
-          start.data,
+      if (!current && ownedIdentity?.start && handoffMode) {
+        current = materializeShell(
+          ownedIdentity,
+          shellId || ownedIdentity.start.id,
           handoffMode,
         )
-        tasks.set(backgroundId, current)
-        aliases.set(toolCallId, backgroundId)
-        aliases.set(backgroundId, backgroundId)
+      }
+      if (!current && ownedIdentity?.start && !handoffMode) {
+        // Ordinary foreground completion is retained on the identity, not in
+        // the task map. A later observer cannot expose it as still running;
+        // an actual handoff can expose the already terminal execution.
+        current = {
+          ...shellTask(ownedIdentity.start.id, ownedIdentity.startedAt, ownedIdentity.start.data, {
+            executionMode: 'sync', attachmentMode: 'attached', assumed: false,
+          }),
+          ...ownedIdentity.completion,
+        }
       }
       if (current?.type === 'shell') {
         if (handoffMode) {
@@ -1460,21 +1925,27 @@ export function backgroundTasksFromEvents(
         const handoffShellId = handoffMode && !shellExit ? shellId : undefined
         if (handoffShellId && current.id !== handoffShellId) {
           current =
-            rekeyTask(
-              tasks,
-              aliases,
-              current.id,
-              handoffShellId,
-              assumed,
-            ) || current
+            rekeyShellTask(current, handoffShellId) || current
+          if (isShellTool(toolName)) aliases.set(toolCallId, current.id)
         }
+        if (isTerminalTaskStatus(current.status) && !(target && shellExit)) continue
         if (shellExit) {
-          current.status = shellExit.exitCode === 0 ? 'completed' : 'failed'
-          current.completedAt = event.timestamp
-          current.error =
-            current.status === 'failed'
-              ? `Shell exited with status ${shellExit.exitCode}`
-              : undefined
+          const identity = shellIdentityOf(current)
+          if (identity.exitCode !== undefined && identity.exitCode !== shellExit.exitCode) continue
+          if (identity.exitCode === undefined) {
+            // A bound read may finish after inventory or a stop closed the
+            // row. Explicit exit evidence outranks inventory, while a clean
+            // exit does not undo cancellation. The first known exit stands.
+            current.status = shellExit.exitCode !== 0
+              ? 'failed'
+              : current.status === 'cancelled' ? 'cancelled' : 'completed'
+            current.completedAt ??= event.timestamp
+            current.error =
+              current.status === 'failed'
+                ? `Shell exited with status ${shellExit.exitCode}`
+                : undefined
+            identity.exitCode = shellExit.exitCode
+          }
           // The footer form carries only an id and a code, so the command's
           // own output is taken from the result it arrived with. Reading the
           // synthesized exit alone threw away everything the task printed.
@@ -1499,8 +1970,16 @@ export function backgroundTasksFromEvents(
           current.completedAt = event.timestamp
           current.canCancel = false
         }
-        if (!shellExit) {
+        if (!shellExit && (!handoffMode || !current.progress?.recentOutput)) {
           shellTaskOutput(current, data.result)
+        }
+        if (ownedIdentity && current.executionMode === 'sync' && isTerminalTaskStatus(current.status)) {
+          ownedIdentity.completion = {
+            status: current.status,
+            completedAt: current.completedAt,
+            error: current.error,
+            progress: current.progress,
+          }
         }
         continue
       }

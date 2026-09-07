@@ -135,7 +135,7 @@
   "inputs": {
     ".github/copilot-instructions.md": "15a3fe1c5de27c9cc24a3b26697b794876c6b7dda4fbe08ab1cc4523eaa1a2fe",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "d155de40cee020b624b152189585e877ea21c0b65fdf577411702aa6ddf1b0dd",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "9f6c03f60d51fd27f97b485561dbb743e8a24a0ab4ba16c7630b6407b0c847cd",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -363,17 +363,15 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "008a053b8ac752539d55641cbf8986464d831bd1a88edcbb7374aa8b9c232c5f",
+    "GRAPH_REPORT.md": "81452a793d726ba5d3f8a5a8c706c2b2c1275052ba0544fa67c075eaf924fde1",
     "communities.json": "13dc3b80db357a42c1d0c73a7acb6d9b3d24f1e8dd0dfd194f588fffd71385d0",
-    "graph.html": "532f90e966aa4865aa68ea9abc28dfe19a389e722da8105958e5677888d37beb",
-    "graph.json": "a877f1efd636d8a2a0725de547760eb60929215d73b670f24affac2f6ef6eb5b"
+    "graph.html": "56f517812a9fb6d5b0254b3c59abdab289bffd9b0baf5041bfe89b528216e1ce",
+    "graph.json": "0dea82d365d97f8541fd75ceb2262ef6ff9eb85a0c2c3bda2fc9d39a6da273a8"
   },
   "schema_version": 1,
-  "source_commit": "4a1efb4010935089585443a93ff2281f53341a39",
-  "source_fingerprint": "ed9a5a59276d78a7d2e47561367407d45cadba6f20768d96552046a2e68273c6",
+  "source_commit": "e28d809ba3c7c97a5f8dd999dbdfbfae37d13d65",
+  "source_fingerprint": "32ab25d747bc8d3a483582129e96be0608edcaa078654de4bec2d053b7fb9a77",
   "working_tree_changes": [
-    "README.md",
-    "docs/native-shell.md",
-    "docs/sdk-architecture-roadmap.md"
+    ".github/skills/agentic-remote-navigation/SKILL.md"
   ]
 }

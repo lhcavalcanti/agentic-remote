@@ -31,7 +31,7 @@ async function responseError(response: Response): Promise<Error> {
     | null
   const fallback = `Request failed (${response.status})`
   if (!payload) {
-    return new Error(fallback)
+    return Object.assign(new Error(fallback), { statusCode: response.status })
   }
   // Fastify's built-in envelope carries a numeric `statusCode`, a generic
   // `error` label, and the real reason in `message`; the app's own handler
@@ -41,9 +41,14 @@ async function responseError(response: Response): Promise<Error> {
     typeof payload.statusCode === 'number' &&
     typeof payload.message === 'string'
   if (isDefaultEnvelope && response.status < 500) {
-    return new Error(payload.message || payload.error || fallback)
+    return Object.assign(
+      new Error(payload.message || payload.error || fallback),
+      { statusCode: response.status },
+    )
   }
-  return new Error(payload.error || fallback)
+  return Object.assign(new Error(payload.error || fallback), {
+    statusCode: response.status,
+  })
 }
 
 async function request<TResult>(

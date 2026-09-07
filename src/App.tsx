@@ -508,12 +508,17 @@ function isStoredComposerDraft(value: unknown): boolean {
     return false
   }
   const pending = value.pendingSubmission
+  const unresolved = value.unresolvedPastes
+  const unresolvedKeys = Array.isArray(unresolved)
+    ? unresolved.flatMap((paste) =>
+        isComposerObject(paste) && typeof paste.key === 'string' ? [paste.key] : [])
+    : []
   return (value.deliveryUncertain === undefined || typeof value.deliveryUncertain === 'boolean') &&
-    (value.unresolvedPastes === undefined ||
-      (Array.isArray(value.unresolvedPastes) && value.unresolvedPastes.every((paste) =>
+    (unresolved === undefined ||
+      (Array.isArray(unresolved) && unresolved.every((paste) =>
         isComposerObject(paste) && typeof paste.key === 'string' &&
         paste.key.length > 0 && isComposerPastePayload(paste),
-      ))) &&
+      ) && new Set(unresolvedKeys).size === unresolved.length)) &&
     (pending === undefined || (
       isStoredComposerContent(pending) &&
       typeof pending.id === 'string' && pending.id.length > 0 &&
@@ -759,7 +764,10 @@ function prependComposerContent(
   }
 }
 
-function recoverPendingComposerDraft(draft: ComposerDraft): ComposerDraft {
+function recoverPendingComposerDraft(
+  draft: ComposerDraft,
+  deliveryUncertain = true,
+): ComposerDraft {
   const { pendingSubmission, ...remaining } = draft
   if (pendingSubmission?.accepted) {
     return remaining
@@ -768,7 +776,7 @@ function recoverPendingComposerDraft(draft: ComposerDraft): ComposerDraft {
     ? {
         ...remaining,
         ...prependComposerContent(pendingSubmission, remaining),
-        deliveryUncertain: true,
+        ...(deliveryUncertain ? { deliveryUncertain: true } : {}),
       }
     : draft
 }
@@ -10278,6 +10286,7 @@ function App() {
   function restoreComposerSubmission(
     rawTargetKey: string,
     submission: ComposerSubmission,
+    deliveryUncertain = true,
   ) {
     const targetKey = followReplacementsRef.current(rawTargetKey)
     updateComposerDrafts([targetKey], (current) => {
@@ -10289,6 +10298,7 @@ function App() {
         ...current,
         [targetKey]: recoverPendingComposerDraft(
           durableComposerDraft(targetKey, existing),
+          deliveryUncertain,
         ),
       }
     })
@@ -11437,7 +11447,11 @@ function App() {
       }
       const liveKey = followReplacementsRef.current(targetKey)
       if (!removedSessions.current.has(liveKey)) {
-        restoreComposerSubmission(targetKey, submission)
+        restoreComposerSubmission(
+          targetKey,
+          submission,
+          Reflect.get(Object(caught), 'statusCode') !== 400,
+        )
       }
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {

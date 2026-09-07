@@ -209,6 +209,16 @@ describe('API error messages', () => {
     ).resolves.toBe('Folder does not exist')
   })
 
+  it('retains the HTTP status for definitive submission handling', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ error: 'Prompt is too long' }, { status: 400 })),
+    )
+    await expect(
+      sendMessage('computer', 'session', { content: 'hello' }),
+    ).rejects.toMatchObject({ message: 'Prompt is too long', statusCode: 400 })
+  })
+
   it('never surfaces an internal 5xx message', async () => {
     await expect(
       failWith(500, {

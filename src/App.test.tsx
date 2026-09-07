@@ -3717,6 +3717,7 @@ describe('App', () => {
     ['agentic-remote:composer-drafts-v2', 'null'],
     ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":[null]}}'],
     ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":[],"unresolvedPastes":"bad"}}'],
+    ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":[],"unresolvedPastes":[{"key":"duplicate","id":1,"content":"first\\nsecond\\nthird\\nfourth\\nfifth\\nsixth\\nseventh\\neighth\\nninth\\ntenth\\neleventh\\ntwelfth\\nthirteenth\\nfourteenth\\nfifteenth\\nsixteenth\\nseventeenth\\neighteenth\\nnineteenth\\ntwentieth\\ntwenty-first","lineCount":21},{"key":"duplicate","id":2,"content":"one\\ntwo\\nthree\\nfour\\nfive\\nsix\\nseven\\neight\\nnine\\nten\\neleven\\ntwelve\\nthirteen\\nfourteen\\nfifteen\\nsixteen\\nseventeen\\neighteen\\nnineteen\\ntwenty\\ntwenty-one","lineCount":21}]}}'],
     ['agentic-remote:composer-drafts-v2', '{"computer-1:session-1":{"text":"Saved","pastes":[],"pendingSubmission":{"text":"pending","pastes":[]}}}'],
     ['agentic-remote:composer-drafts-generation', '{"version":2,"accepted":[]}'],
     ['agentic-remote:composer-drafts-generation', '{"version":1,"accepted":[{"key":"computer-1:session-1"}]}'],
@@ -4811,6 +4812,21 @@ describe('App', () => {
     )) as HTMLTextAreaElement
     fireEvent.paste(textarea, {
       clipboardData: { getData: () => pasted },
+    })
+
+    it('restores a definitively rejected long paste without an uncertainty warning', async () => {
+      const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join('\n')
+      vi.mocked(sendMessage).mockRejectedValueOnce(
+        Object.assign(new Error('Prompt is too long'), { statusCode: 400 }),
+      )
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+      await waitFor(() => expect(textarea).toHaveValue('[Paste #1 - 21 lines]'))
+      expect(screen.getByText('Prompt is too long')).toBeInTheDocument()
+      expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))

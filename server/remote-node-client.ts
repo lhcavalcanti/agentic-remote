@@ -13,6 +13,7 @@ import type {
   ProviderRuntimeOptions,
   RenameSessionInput,
   RemovedQueuedPrompt,
+  QueuedPromptDispatchResult,
   RuntimeOptions,
   SendMessageInput,
   ServerEvent,
@@ -32,6 +33,10 @@ import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
  * computer, so the caller waits slightly longer than their sum before giving up.
  */
 const TRANSCRIPTION_TIMEOUT_MS = 13 * 60_000
+
+const DEFINITE_DISPATCH_REFUSALS = new Set([
+  400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 429,
+])
 
 function headerSafe(value: string): string {
   return value.replace(/[^\x20-\x7e]/g, '').slice(0, 200)
@@ -290,10 +295,57 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   async removeQueuedPrompt(
     sessionId: string,
     promptId: string,
+    acknowledgesDispatch?: string,
   ): Promise<RemovedQueuedPrompt> {
     return this.request<RemovedQueuedPrompt>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(promptId)}`,
-      { method: 'DELETE' },
+      {
+        method: 'DELETE',
+        ...(acknowledgesDispatch ? { body: JSON.stringify({ acknowledgesDispatch }) } : {}),
+      },
+    )
+  }
+
+  async dispatchQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<QueuedPromptDispatchResult> {
+    try {
+      const result = await this.request<QueuedPromptDispatchResult>(
+        `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(promptId)}/dispatch`,
+        { method: 'POST', body: JSON.stringify({ content }) },
+        30_000,
+      )
+      if (
+        !result || result.promptId !== promptId ||
+        !['sent', 'refused', 'uncertain'].includes(result.outcome) ||
+        (result.session && result.session.id !== sessionId) ||
+        (result.outcome === 'sent' && (
+          typeof result.attemptId !== 'string' ||
+          !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(result.attemptId)
+        ))
+      ) throw new Error('The owning computer returned an invalid dispatch receipt.')
+      return result
+    } catch (error) {
+      if (error instanceof RemoteNodeRequestError && DEFINITE_DISPATCH_REFUSALS.has(error.statusCode)) {
+        throw error
+      }
+      return {
+        outcome: 'uncertain', promptId, delivery: 'unknown',
+        message: 'The owning computer did not confirm dispatch. Check its queue and provider before retrying; no automatic retry was made.',
+      }
+    }
+  }
+
+  async updateQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<RemovedQueuedPrompt> {
+    return this.request<RemovedQueuedPrompt>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(promptId)}`,
+      { method: 'PATCH', body: JSON.stringify({ content }) },
     )
   }
 

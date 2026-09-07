@@ -553,6 +553,37 @@ export class SessionStore {
     return { session, prompt: removed }
   }
 
+  /** Rewrites a queued prompt where it stands, keeping its place in line. */
+  async updateQueuedPrompt(
+    sessionId: string,
+    promptId: string,
+    content: string,
+  ): Promise<{ session: SessionDetail; prompt?: QueuedPrompt }> {
+    let updated: QueuedPrompt | undefined
+    const session = await this.mutate(sessionId, (stored) => {
+      const queue = stored.queuedPrompts || []
+      const index = queue.findIndex((prompt) => prompt.id === promptId)
+      if (index < 0) {
+        return
+      }
+      // The flag says whether this waits as a slash command, and it is decided
+      // by the text. Kept from before, a message rewritten into a command --
+      // or a command rewritten into plain text -- waited as the thing it used
+      // to be, and the queue then ran it as the wrong kind.
+      const isCommand = content.startsWith('/')
+      updated = { ...queue[index], content }
+      if (isCommand) {
+        updated.command = true
+      } else {
+        delete updated.command
+      }
+      stored.queuedPrompts = queue.map((prompt, at) =>
+        at === index ? updated! : prompt,
+      )
+    })
+    return { session, prompt: updated }
+  }
+
   /**
    * Puts the queue in the order given.
    *

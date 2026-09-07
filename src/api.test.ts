@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelBackgroundTask,
+  dispatchQueuedPrompt,
   getProviderRuntimeOptions,
   getRuntimeOptions,
+  getSession,
   listBackgroundTasks,
   removeQueuedPrompt,
   sendMessage,
@@ -17,6 +19,18 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('forwards a bounded queue-check signal without using a cached session snapshot', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async (_path: string, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal)
+      expect(init?.cache).toBe('no-store')
+      return Response.json({ session: { id: 'session' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(getSession('computer', 'session', controller.signal)).resolves.toEqual({ id: 'session' })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('requests fresh provider and session model catalogs without browser caching', async () => {
     const fetchMock = vi.fn(async () => Response.json({ models: [] }))
     vi.stubGlobal('fetch', fetchMock)
@@ -179,6 +193,97 @@ describe('API request headers', () => {
     await expect(
       validateSessionDirectory('computer', '~/src'),
     ).resolves.toBe('/home/tester/src')
+  })
+})
+
+describe('Queued dispatch confirmations', () => {
+  const session = {
+    id: 'session', computerId: 'computer', computerName: 'Fixture',
+    title: 'Queued fixture', cwd: '/tmp/fixture', updatedAt: '2026-09-05T00:00:00Z',
+    isOpen: true, status: 'idle', messages: [],
+  }
+  const accepted = {
+    outcome: 'sent', promptId: 'queued', attemptId: 'attempt-1', session,
+  }
+
+  it('dispatches exactly one named item with unchanged prompt whitespace', async () => {
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => Response.json(accepted))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', '  rewritten\n'))
+      .resolves.toEqual(accepted)
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      '/api/computers/computer/sessions/session/queue/queued/dispatch',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ content: '  rewritten\n' }),
+        signal: expect.any(AbortSignal),
+      }),
+    )
+  })
+
+  it.each([408, 499, 500, 502, 504])('keeps HTTP %i delivery uncertain', async (status) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Unconfirmed' }, { status })))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ uncertainDelivery: true })
+  })
+
+  it.each([400, 401, 403, 404, 409, 422, 429])('recognizes an HTTP %i admission refusal', async (status) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Not admitted' }, { status })))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ uncertainDelivery: false })
+  })
+
+  it('never retries a lost transport acknowledgment', async () => {
+    const fetchMock = vi.fn(async () => { throw new TypeError('Connection lost') })
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ uncertainDelivery: true })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a remote transport uncertainty without inventing an attempt ID', async () => {
+    const result = {
+      outcome: 'uncertain', promptId: 'queued', delivery: 'unknown',
+      message: 'The owning computer did not confirm dispatch. No automatic retry was made.',
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(result)))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .resolves.toEqual(result)
+  })
+
+  it.each([
+    null,
+    { ...accepted, promptId: 'another-queued-item' },
+    { ...accepted, attemptId: undefined },
+    { ...accepted, session: undefined },
+    { ...accepted, session: { ...session, computerId: 'another-computer' } },
+    { ...accepted, session: { ...session, id: 'another-session' } },
+    { ...accepted, session: { ...session, messages: undefined } },
+    { ...accepted, outcome: 'refused', restored: undefined },
+    { ...accepted, outcome: 'uncertain', delivery: undefined },
+    { outcome: 'uncertain', promptId: 'queued', delivery: 'accepted' },
+  ])('does not release ownership for an incomplete or mismatched response %#', async (result) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(result)))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ uncertainDelivery: true })
+  })
+
+  it('keeps a response whose body was lost uncertain', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('incomplete')))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ uncertainDelivery: true })
+  })
+
+  it('sends the exact unconfirmed attempt acknowledgment with a queue discard', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ session, prompt: { id: 'queued' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await removeQueuedPrompt('computer', 'session', 'queued', 'attempt-1')
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      '/api/computers/computer/sessions/session/queue/queued',
+      expect.objectContaining({
+        method: 'DELETE', body: JSON.stringify({ acknowledgesDispatch: 'attempt-1' }),
+      }),
+    )
   })
 })
 

@@ -102,7 +102,6 @@ import {
 } from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
 import type {
-  QueuedPrompt,
   AgentProvider,
   AgentProviderCapability,
   ActivityKind,
@@ -118,6 +117,7 @@ import type {
   KnowledgeRoot,
   PendingPermission,
   PendingUserInput,
+  QueuedPrompt,
   UserInputField,
   UserInputFieldValue,
   UserInputReplyInput,
@@ -160,6 +160,8 @@ import {
   removeComputer,
   removeQueuedPrompt,
   reorderQueuedPrompts,
+  updateQueuedPrompt,
+  dispatchQueuedPrompt,
   renameSession,
   readWorkspaceFile,
   restartSession,
@@ -414,14 +416,21 @@ type ComposerSubmission = ComposerContent & {
   id: string
   originKey?: string
   acknowledgesFailure?: string
+  queuedPromptId?: string
   accepted?: boolean
 }
 
 type ComposerAcceptanceReceipt = { key: string; id: string }
 
+type ComposerQueuedEdit = {
+  promptId: string
+  dispatchPending?: boolean
+}
+
 type ComposerDraft = ComposerContent & {
   pendingSubmission?: ComposerSubmission
   deliveryUncertain?: boolean
+  queuedEdit?: ComposerQueuedEdit
 }
 
 type ComposerDrafts = Record<string, ComposerDraft>
@@ -431,6 +440,8 @@ type ComposerPersistenceResult =
 
 const collapsedPasteLineThreshold = 20
 const composerDraftsStorageKey = 'agentic-remote:composer-drafts-v2'
+const queuedEditsStorageKey = 'agentic-remote:queued-edit'
+const queuedDispatchPendingStorageKey = 'agentic-remote:queued-dispatch-pending'
 // Set the first time this build persists, and never cleared. Its presence is
 // what tells a first upgrade from a return to one.
 const composerDraftsGenerationKey = 'agentic-remote:composer-drafts-generation'
@@ -487,18 +498,26 @@ function reconcileAcceptedComposerDrafts(
     }
     if (retire) {
       const { pendingSubmission: _accepted, ...remaining } = draft
+      if (pending.queuedPromptId === remaining.queuedEdit?.promptId) {
+        delete remaining.queuedEdit
+      }
       if (result === drafts) {
         result = { ...drafts }
       }
-      if (remaining.text) {
+      if (remaining.text || remaining.queuedEdit) {
         result[key] = remaining
       } else {
         delete result[key]
       }
-    } else if (!pending.accepted) {
+    } else if (!pending.accepted ||
+      (pending.queuedPromptId && pending.queuedPromptId === draft.queuedEdit?.promptId)) {
+      const accepted = { ...draft, pendingSubmission: { ...pending, accepted: true } }
+      if (pending.queuedPromptId === accepted.queuedEdit?.promptId) {
+        delete accepted.queuedEdit
+      }
       result = {
         ...result,
-        [key]: { ...draft, pendingSubmission: { ...pending, accepted: true } },
+        [key]: accepted,
       }
     }
   }
@@ -601,6 +620,9 @@ function prependComposerContent(
 function recoverPendingComposerDraft(draft: ComposerDraft): ComposerDraft {
   const { pendingSubmission, ...remaining } = draft
   if (pendingSubmission?.accepted) {
+    if (pendingSubmission.queuedPromptId === remaining.queuedEdit?.promptId) {
+      delete remaining.queuedEdit
+    }
     return remaining
   }
   return pendingSubmission
@@ -620,7 +642,7 @@ function writeComposerContent(
   const draft = { ...drafts[key], ...content }
   if (!draft.text) {
     delete draft.deliveryUncertain
-    if (!draft.pendingSubmission) {
+    if (!draft.pendingSubmission && !draft.queuedEdit) {
       const { [key]: _removed, ...remaining } = drafts
       return remaining
     }
@@ -653,6 +675,16 @@ function readComposerDrafts(): ComposerDrafts {
     if (candidate.deliveryUncertain === true) {
       draft.deliveryUncertain = true
     }
+    if (
+      candidate.queuedEdit &&
+      typeof candidate.queuedEdit.promptId === 'string' &&
+      candidate.queuedEdit.promptId
+    ) {
+      draft.queuedEdit = {
+        promptId: candidate.queuedEdit.promptId,
+        ...(candidate.queuedEdit.dispatchPending === true ? { dispatchPending: true } : {}),
+      }
+    }
     const pending = candidate.pendingSubmission
     if (
       pending &&
@@ -669,6 +701,15 @@ function readComposerDrafts(): ComposerDrafts {
         ...(typeof pending.acknowledgesFailure === 'string'
           ? { acknowledgesFailure: pending.acknowledgesFailure }
           : {}),
+        ...(typeof pending.queuedPromptId === 'string' && pending.queuedPromptId
+          ? { queuedPromptId: pending.queuedPromptId }
+          : {}),
+      }
+      if (draft.pendingSubmission.queuedPromptId) {
+        draft.queuedEdit = {
+          promptId: draft.pendingSubmission.queuedPromptId,
+          dispatchPending: true,
+        }
       }
     }
     if (draft.pendingSubmission && hasComposerAcceptanceReceipt(receipts, key, draft.pendingSubmission)) {
@@ -682,7 +723,7 @@ function readComposerDrafts(): ComposerDrafts {
     const recovered = draft.pendingSubmission?.accepted
       ? draft
       : recoverPendingComposerDraft(draft)
-    if (recovered.text || recovered.pendingSubmission?.accepted) {
+    if (recovered.text || recovered.queuedEdit || recovered.pendingSubmission?.accepted) {
       result[key] = recovered
     }
   }
@@ -702,7 +743,7 @@ function readComposerDrafts(): ComposerDrafts {
   const returning = localStorage.getItem(composerDraftsGenerationKey) !== null
   if (returning) {
     for (const key of Object.keys(result)) {
-      if (!legacy[key]) {
+      if (!legacy[key] && !result[key].queuedEdit) {
         delete result[key]
       }
     }
@@ -715,8 +756,17 @@ function readComposerDrafts(): ComposerDrafts {
     if (mine?.pendingSubmission?.accepted && acceptedLegacySnapshots[key] === draft.text) {
       continue
     }
+    // An unconfirmed queued send keeps its target even if compatibility writes
+    // were interrupted. A plain legacy draft cannot authorize another send.
+    if (mine?.queuedEdit?.dispatchPending && !mine.pendingSubmission?.accepted) {
+      continue
+    }
     if (!mine || expandComposerPastes(mine.text, mine.pastes) !== draft.text) {
-      result[key] = draft
+      result[key] = {
+        ...draft,
+        ...(mine?.queuedEdit ? { queuedEdit: mine.queuedEdit } : {}),
+        ...(mine?.pendingSubmission?.accepted ? { pendingSubmission: mine.pendingSubmission } : {}),
+      }
     }
   }
   return Object.keys(result).length > 0 ? result : legacy
@@ -731,8 +781,13 @@ function readLegacyComposerDrafts(): ComposerDrafts {
     'agentic-remote:composer-pastes',
     {},
   )
+  const edits = readQueuedEditOwners(queuedEditsStorageKey)
+  const pending = readQueuedEditOwners(queuedDispatchPendingStorageKey)
   return Object.fromEntries(
-    Object.entries(stored)
+    Object.entries({
+      ...Object.fromEntries(Object.keys({ ...edits, ...pending }).map((key) => [key, ''])),
+      ...stored,
+    })
       .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
       .map(([key, text]) => {
         const pastes = Array.isArray(storedPastes[key])
@@ -784,9 +839,41 @@ function readLegacyComposerDrafts(): ComposerDrafts {
                     paste.start,
               )
           : []
-        return [key, { text, pastes }]
+        const promptId = pending[key] || edits[key]
+        return [key, {
+          text, pastes,
+          ...(promptId ? {
+            queuedEdit: { promptId, ...(pending[key] ? { dispatchPending: true } : {}) },
+          } : {}),
+        }]
       }),
   )
+}
+
+function readQueuedEditOwners(storageKey: string): Record<string, string> {
+  const stored: unknown = JSON.parse(localStorage.getItem(storageKey) ?? '{}')
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+    throw new Error('Queued draft ownership could not be read safely')
+  }
+  return Object.fromEntries(Object.entries(stored).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0,
+  ))
+}
+
+function queuedEditOwners(drafts: ComposerDrafts, pendingOnly = false): Record<string, string> {
+  return Object.fromEntries(Object.entries(drafts).flatMap(([key, draft]) =>
+    draft.queuedEdit && (!pendingOnly || draft.queuedEdit.dispatchPending)
+      ? [[key, draft.queuedEdit.promptId]]
+      : [],
+  ))
+}
+
+function writeQueuedEditOwners(storageKey: string, owners: Record<string, string>) {
+  if (Object.keys(owners).length) {
+    localStorage.setItem(storageKey, JSON.stringify(owners))
+  } else {
+    localStorage.removeItem(storageKey)
+  }
 }
 
 function activeComposerPastes(
@@ -3571,65 +3658,6 @@ function AppSettingsDialog({
   )
 }
 
-/** A waiting message, which can be picked up and moved in the queue. */
-function SortableQueuedPrompt({
-  prompt,
-  index,
-  busy,
-  onEdit,
-  onRemove,
-}: {
-  prompt: QueuedPrompt
-  index: number
-  busy: boolean
-  onEdit: () => void
-  onRemove: () => void
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: `queued:${prompt.id}` })
-  return (
-    <div
-      className={`queued-prompt${isDragging ? ' sortable-dragging' : ''}`}
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-    >
-      <span
-        aria-label={`Reorder queued prompt ${index + 1}`}
-        className="drag-handle"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={13} />
-      </span>
-      <span>{prompt.content}</span>
-      <button
-        aria-label={`Edit queued prompt ${index + 1}`}
-        className="icon-button"
-        disabled={busy}
-        onClick={onEdit}
-        type="button"
-      >
-        <Pencil size={14} />
-      </button>
-      <button
-        aria-label={`Remove queued prompt ${index + 1}`}
-        className="icon-button icon-button--danger"
-        disabled={busy}
-        onClick={onRemove}
-        type="button"
-      >
-        <X size={15} />
-      </button>
-    </div>
-  )
-}
-
 function PermissionCard({
   permission,
   disabled,
@@ -4883,6 +4911,75 @@ function SortableSessionItem({
           {session.suspended ? <Play size={13} /> : <Pause size={13} />}
         </button>
       ) : null}
+    </div>
+  )
+}
+
+/** One waiting message, draggable so the queue can be put in order. */
+function SortableQueuedPrompt({
+  prompt,
+  index,
+  editing,
+  busy,
+  suspended,
+  onEdit,
+  onRemove,
+}: {
+  prompt: QueuedPrompt
+  index: number
+  editing: boolean
+  busy: boolean
+  suspended: boolean
+  onEdit: () => void
+  onRemove: () => void
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: `queued:${prompt.id}` })
+  return (
+    <div
+      className={`queued-prompt${editing ? ' queued-prompt--editing' : ''}${
+        isDragging ? ' sortable-dragging' : ''
+      }`}
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <span
+        aria-label={`Reorder queued prompt ${index + 1}`}
+        className="drag-handle"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical size={13} />
+      </span>
+      <span>{prompt.content}</span>
+      <button
+        aria-label={`Edit queued prompt ${index + 1}`}
+        className={`icon-button${editing ? ' icon-button--active' : ''}`}
+        // The composer is closed while a session is put down, so opening a
+        // message for rewriting there gave a banner over a box that could not
+        // be typed in.
+        disabled={busy || suspended}
+        onClick={onEdit}
+        title={suspended ? 'Resume this session to rewrite it' : undefined}
+        type="button"
+      >
+        <Pencil size={14} />
+      </button>
+      <button
+        aria-label={`Remove queued prompt ${index + 1}`}
+        className="icon-button icon-button--danger"
+        disabled={busy}
+        onClick={onRemove}
+        type="button"
+      >
+        <X size={15} />
+      </button>
     </div>
   )
 }
@@ -6867,6 +6964,8 @@ function App() {
     Record<string, BackgroundTaskSnapshot>
   >({})
   const [selectedKey, setSelectedKey] = useState<string>()
+  const queuedDispatchInFlight = useRef(new Map<string, string>())
+  const [queueNotices, setQueueNotices] = useState<Record<string, string>>({})
   const composerInitialReadFailure = useRef<string | undefined>(undefined)
   const [composerDrafts, setComposerDrafts] = useState<ComposerDrafts>(() => {
     try {
@@ -6874,6 +6973,7 @@ function App() {
         composerDraftsStorageKey, composerDraftsGenerationKey,
         'agentic-remote:composer-drafts', 'agentic-remote:composer-pastes',
         'agentic-remote:composer-draft-failures', 'agentic-remote:composer-draft-recovered',
+        queuedEditsStorageKey, queuedDispatchPendingStorageKey,
       ]) {
         localStorage.getItem(key)
       }
@@ -6888,6 +6988,8 @@ function App() {
   const [composerStorageError, setComposerStorageError] =
     useState<string | undefined>(composerInitialReadFailure.current)
   const composerDraftsRef = useRef(composerDrafts)
+  const editingQueuedPrompts = useMemo(() => queuedEditOwners(composerDrafts), [composerDrafts])
+  const unconfirmedQueuedPrompts = useMemo(() => queuedEditOwners(composerDrafts, true), [composerDrafts])
   const composerAcceptanceReceipts = useRef(readComposerAcceptanceReceipts())
   const composerMounted = useRef(true)
   const composerHistoryRef = useRef<Record<string, ComposerHistoryState>>({})
@@ -7118,6 +7220,11 @@ function App() {
     [expandedKnowledge, knowledgeFolders],
   )
   const [commands, setCommands] = useState<SlashCommand[]>([])
+  // Which session the list above belongs to. It is fetched per session, so
+  // until the new one has arrived the old one is still on hand -- and reading
+  // it as though it described the session now open let a command only the
+  // previous provider has be saved into this one's queue.
+  const [commandsKey, setCommandsKey] = useState<string>()
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
@@ -7128,6 +7235,10 @@ function App() {
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [permissionBusy, setPermissionBusy] = useState(false)
   const [userInputBusy, setUserInputBusy] = useState(false)
+  // The waiting message the composer is currently rewriting, and the session
+  // it belongs to. Held together because the composer follows the selection: a
+  // bare id left the next session in edit mode, and Enter, Send and Escape all
+  // acted on a message that was not in front of the reader.
   const [queueActionId, setQueueActionId] = useState<string>()
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
@@ -7217,6 +7328,10 @@ function App() {
   // The sessions as last committed, so reconciliation can be worked out
   // without depending on a state updater having already run.
   const sessionsRef = useRef(sessions)
+  // What each session's composer holds, readable from a request that has
+  // already been sent. The state a callback closed over is the state as it was
+  // when the callback was made, which is exactly the wrong answer for "has
+  // this changed since?".
   const backgroundTasksOpenRef = useRef(backgroundTasksOpen)
   const selectedKeyStateRef = useRef(selectedKey)
   const backgroundTaskRequestsRef = useRef(new Set<string>())
@@ -8651,6 +8766,18 @@ function App() {
           }),
         ),
       )
+      // Install new ownership before exposing its compatibility text, and
+      // retire old ownership only after the old text has been removed.
+      for (const [storageKey, pendingOnly] of [
+        [queuedEditsStorageKey, false],
+        [queuedDispatchPendingStorageKey, true],
+      ] as const) {
+        writeQueuedEditOwners(storageKey, {
+          ...readQueuedEditOwners(storageKey),
+          ...queuedEditOwners(composerDraftsRef.current, pendingOnly),
+          ...queuedEditOwners(drafts, pendingOnly),
+        })
+      }
       // During retirement, keep the pending identity in v2 until its legacy
       // copy is clean. Otherwise a failed legacy write would resurrect an
       // accepted payload with no pending identity left to match to its receipt.
@@ -8661,6 +8788,8 @@ function App() {
         localStorage.setItem(composerDraftsStorageKey, JSON.stringify(durable))
         localStorage.setItem('agentic-remote:composer-drafts', legacy)
       }
+      writeQueuedEditOwners(queuedEditsStorageKey, queuedEditOwners(durable))
+      writeQueuedEditOwners(queuedDispatchPendingStorageKey, queuedEditOwners(durable, true))
       // Remove legacy payloads only after all three compatibility writes
       // succeed and none of the old payloads is still awaiting migration.
       if (!unmigratedComposerPastes.current) {
@@ -8877,6 +9006,7 @@ function App() {
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
       setCommands([])
+      setCommandsKey(selectedKey)
       return
     }
     let active = true
@@ -8944,6 +9074,7 @@ function App() {
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
       setCommands([])
+      setCommandsKey(selectedKey)
       return
     }
     if (selected?.suspended) {
@@ -8957,12 +9088,14 @@ function App() {
       // list is only knowable from a live runtime, and a resumed session that
       // offered no commands until its first message would be the bug.
       setCommands([])
+      setCommandsKey(selectedKey)
       return
     }
     let active = true
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
         if (active) {
+          setCommandsKey(selectedKey)
           setCommands([
             ...availableCommands,
             ...webCommands.filter(
@@ -8979,6 +9112,7 @@ function App() {
       .catch(() => {
         if (active) {
           setCommands([])
+          setCommandsKey(selectedKey)
         }
       })
     return () => {
@@ -9445,7 +9579,11 @@ function App() {
               event.failedPromptAt,
             )
           }
-          setError(event.message)
+          if (event.type === 'error' && event.computerId && event.sessionId) {
+            reportQueueNotice(`${event.computerId}:${event.sessionId}`, event.message)
+          } else {
+            setError(event.message)
+          }
         }
       }
       socket.onclose = () => {
@@ -10089,11 +10227,17 @@ function App() {
     if (fromKey === toKey) {
       return
     }
-    if (submissionsInFlight.current.delete(fromKey)) {
+    const submissionPending = submissionsInFlight.current.delete(fromKey)
+    if (submissionPending) {
       submissionsInFlight.current.add(toKey)
     }
+    setQueueNotices((current) => {
+      if (!current[fromKey]) return current
+      const { [fromKey]: notice, ...remaining } = current
+      return { ...remaining, [toKey]: current[toKey] || notice }
+    })
     updateComposerDrafts([fromKey, toKey], (current) => {
-      const source = current[fromKey]
+      let source = current[fromKey]
         ? durableComposerDraft(fromKey, current[fromKey])
         : undefined
       const destination = current[toKey]
@@ -10101,6 +10245,14 @@ function App() {
         : undefined
       if (!source) {
         return current
+      }
+      // Clear explicitly removes the old queue. A pending save keeps its
+      // ownership until its own completion; uncertain dispatch is never inferred.
+      if (source.queuedEdit && !submissionPending &&
+        !source.queuedEdit.dispatchPending && !source.pendingSubmission?.queuedPromptId &&
+        !source.deliveryUncertain) {
+        const { queuedEdit: _clearedTarget, ...draft } = source
+        source = draft
       }
       const { [fromKey]: _removed, ...remaining } = current
       if (destination) {
@@ -11011,6 +11163,14 @@ function App() {
       composerDrafts[targetKey]?.pastes || [],
     )
     const content = expandComposerPastes(displayContent, submittedPastes)
+    if (editingQueuedPromptId) {
+      if (enqueue || selectedProviderCapability?.supportsQueuedPromptDispatch !== true) {
+        await saveQueuedPromptEdit()
+      } else {
+        await sendQueuedPromptEdit()
+      }
+      return
+    }
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
     // sent. The mark is cleared once the request settles.
@@ -11432,6 +11592,160 @@ function App() {
 
 
 
+  /**
+   * Opens a waiting message for rewriting without taking it out of the queue.
+   *
+   * Editing used to remove it, so a reader who changed their mind, or simply
+   * closed the app, had silently taken their own message off the queue. It
+   * stays where it is; Enter writes the change back to it, and the send button
+   * is what takes it out and sends it now.
+   */
+  /**
+   * Why an edited message cannot be sent now, if it cannot.
+   *
+   * Send means send. Nothing can go ahead of work already waiting, and a
+   * command the agent will not take mid-turn is queued rather than run, so
+   * offering Send in those cases promised something that could not happen and
+   * quietly put the message at the back instead. Saving keeps its place, which
+   * is what the reader wanted from a queued message anyway.
+   */
+  // Only while the message being rewritten belongs to the session on screen.
+  const editingQueuedPromptId = selectedKey
+    ? editingQueuedPrompts[selectedKey]
+    : undefined
+  const queuedEditUnconfirmed = Boolean(selectedKey && editingQueuedPromptId &&
+    unconfirmedQueuedPrompts[selectedKey] === editingQueuedPromptId)
+  const queuedEditSourceMissing = Boolean(editingQueuedPromptId &&
+    !selected?.queuedPrompts?.some((prompt) => prompt.id === editingQueuedPromptId))
+  const queuedEditNeedsCheck = queuedEditSourceMissing &&
+    !selected?.queuedDispatch && !queuedEditUnconfirmed
+  const selectedQueueNotice = selectedKey ? queueNotices[selectedKey] : undefined
+
+  function reportQueueNotice(rawKey: string, message?: string) {
+    if (!composerMounted.current) return
+    const key = followReplacementsRef.current(rawKey)
+    setQueueNotices((current) => {
+      if (message) return { ...current, [key]: message }
+      if (!(key in current)) return current
+      const { [key]: _dismissed, ...remaining } = current
+      return remaining
+    })
+  }
+
+  async function checkEditedQueue() {
+    if (!selected || !editingQueuedPromptId || queueActionId) return
+    const target = selected
+    const key = sessionKey(target)
+    const promptId = editingQueuedPromptId
+    setQueueActionId(promptId)
+    try {
+      const fresh = await getSession(target.computerId, target.id, AbortSignal.timeout(15_000))
+      if (stillListed(fresh)) applySession(fresh)
+    } catch (caught) {
+      if (followReplacementsRef.current(key) !== key) return
+      reportQueueNotice(key, `The owning queue could not be checked: ${
+        caught instanceof Error ? caught.message : String(caught)
+      }. Your rewrite is still attached; this check did not send or retry any message.`)
+    } finally {
+      setQueueActionId(undefined)
+    }
+  }
+
+  function keepCheckedQueuedRewrite() {
+    if (!selectedKey || !editingQueuedPromptId || queueActionId || !queuedEditNeedsCheck) return
+    const key = selectedKey
+    const promptId = editingQueuedPromptId
+    if (!window.confirm(
+      'Check the owning provider and queue first. The original may still be running or may return to the queue. Keeping this rewrite as a draft neither removes nor cancels the original, and sends nothing. Have you checked and chosen to keep it as a new draft?',
+    )) return
+    updateComposerDrafts([key], (current) => {
+      const draft = current[key]
+      if (draft?.queuedEdit?.promptId !== promptId || draft.queuedEdit.dispatchPending) return current
+      const { queuedEdit: _released, ...remaining } = durableComposerDraft(key, draft)
+      return writeComposerContent({ ...current, [key]: remaining }, key, remaining)
+    })
+    reportQueueNotice(key)
+  }
+
+  function forgetQueuedEdit(key: string, promptId: string) {
+    updateComposerDrafts([], (current) => {
+      const draft = current[key]
+      if (draft?.queuedEdit?.promptId !== promptId) return current
+      const { queuedEdit: _released, ...remaining } = draft
+      return writeComposerContent({ ...current, [key]: remaining }, key, remaining)
+    })
+  }
+
+  function editQueuedPrompt(prompt: QueuedPrompt) {
+    if (!selected || queueActionId || sending || selected.queuedDispatch) {
+      return
+    }
+    // Already rewriting this one. Starting again would put the queued text
+    // back over whatever has been typed since.
+    if (editingQueuedPromptId === prompt.id) {
+      return
+    }
+    // Rewriting a different one, with changes that have not been saved.
+    // Replacing the marker silently detaches that rewrite and leaves it in the
+    // composer beside a message still waiting, which is how the same thing
+    // gets sent twice.
+    //
+    // Asked of the marker itself rather than of this session's view of it: it
+    // becomes undefined when the reader is looking elsewhere, so checking that
+    // let an edit started in another session quietly replace one in progress.
+    // Whatever was already written here is not this queued message, and the
+    // composer holds one draft per session. Overwriting it loses that writing,
+    // and Escape would then clear what was left in its place.
+    //
+    // What the reader actually wrote, not what is on screen: while they are
+    // walking back through what they sent, the composer shows an old message
+    // and their own text is held in the history record.
+    const history = selectedKey
+      ? composerHistoryRef.current[selectedKey]
+      : undefined
+    const unsent = history ? history.draft : composer
+    if (unsent.trim() || (selectedKey && composerDraftsRef.current[selectedKey]?.pendingSubmission)) {
+      setError(
+        'There is already something written here. Send it or clear it before editing a queued message.',
+      )
+      return
+    }
+    const key = sessionKey(selected)
+    reportQueueNotice(key)
+    if (updateComposerDrafts([key], (current) => ({
+      ...current,
+      [key]: { text: prompt.content, pastes: [], queuedEdit: { promptId: prompt.id } },
+    }), true)) {
+      window.requestAnimationFrame(() => composerRef.current?.focus())
+    }
+  }
+
+  function cancelQueuedPromptEdit() {
+    // Not while the rewriting is being written back. Leaving is meant to leave
+    // the message as it was, and letting go here only closes the editor -- the
+    // request already on its way still lands, and the message changes anyway,
+    // with nothing on screen saying so.
+    if (queueActionId) {
+      setError(selectedKey && queuedDispatchInFlight.current.has(selectedKey)
+        ? 'This message is still being dispatched. Wait for its outcome.'
+        : 'This message is still being saved. Try again in a moment.')
+      return
+    }
+    if ((queuedEditUnconfirmed || queuedEditSourceMissing) && !window.confirm(
+      'Delivery was not confirmed. Check the provider before discarding this rewrite. This discards your rewritten text, not the original queued message, and does not cancel provider work.',
+    )) return
+    if (!selectedKey) return
+    reportQueueNotice(selectedKey)
+    updateComposerDrafts([selectedKey], (current) => {
+      const { [selectedKey]: _left, ...rest } = current
+      return rest
+    })
+  }
+
+  // An unclaimed absence is not a disposition: older nodes publish the
+  // shifted FIFO before provider loading and can restore it after refusal.
+  // Ownership ends only on our accepted operation, Clear, or an explicit choice.
+
   /** Applies a session to the list, and to what this turn can read back. */
   // `setSessions` schedules; `sessionsRef` is what anything already running
   // reads. Without both, the next drag in the lane resumed from the order that
@@ -11442,11 +11756,14 @@ function App() {
   }
 
   /** Whether a session is still one the app knows about. */
-  // A reply can come back after the session it is about has been deleted.
+  // A response can come back after the session it is about has been deleted.
   // Upserting then puts the session back: one nothing can be done with, that
   // no later event will clear, because its removal has already been and gone.
   function stillListed(session: ManagedSession): boolean {
     const key = sessionKey(session)
+    // The tombstone first. A removal event and this reply can arrive between
+    // renders, and the list read here is the one from the last render -- so a
+    // session already known to be gone was still found in it.
     if (removedSessions.current.has(key)) {
       return false
     }
@@ -11455,9 +11772,300 @@ function App() {
     )
   }
 
+  /** Whether the text names a command this app answers rather than the agent. */
+  function isWebOnlyCommand(text: string): boolean {
+    if (!text.startsWith('/')) {
+      return false
+    }
+    const name = text.slice(1).split(/\s+/, 1)[0].toLowerCase()
+    return webCommands.some(
+      (candidate) =>
+        candidate.name.toLowerCase() === name ||
+        candidate.aliases?.some((alias) => alias.toLowerCase() === name),
+    )
+  }
+
+  /** The command this session knows by that name, shortcut or alias. */
+  function knownCommand(name: string): SlashCommand | undefined {
+    const wanted = name.toLowerCase()
+    return commands.find(
+      (candidate) =>
+        candidate.name.toLowerCase() === wanted ||
+        slashShortcut(candidate.name) === wanted ||
+        candidate.aliases?.some((alias) => alias.toLowerCase() === wanted),
+    )
+  }
+
+  function queuedEditSubmission() {
+    const promptId = editingQueuedPromptId
+    // What the composer held when the save was asked for, and what is sent.
+    // The draft is only cleared if it is still exactly this, so a newline
+    // typed while the request was in flight is not thrown away.
+    if (!selected || !promptId || queueActionId ||
+      submissionsInFlight.current.has(sessionKey(selected))) {
+      return false
+    }
+    const key = sessionKey(selected)
+    const draft = composerDraftsRef.current[key]
+    const history = composerHistoryRef.current[key]
+    if (history && history.index < history.messages.length) {
+      setError('Return to your queued rewrite before saving or sending a history preview.')
+      return false
+    }
+    if (!draft || draft.queuedEdit?.promptId !== promptId) return false
+    const submitted: ComposerContent = {
+      text: draft.text,
+      pastes: activeComposerPastes(draft.text, draft.pastes),
+    }
+    let content = expandComposerPastes(submitted.text, submitted.pastes)
+    if (!content.trim()) return false
+    if (selected.queuedDispatch || draft.queuedEdit.dispatchPending) {
+      setError('Delivery is unconfirmed. Check the provider and resolve the queued dispatch before changing or resending it.')
+      return false
+    }
+    if (queuedEditSourceMissing) {
+      reportQueueNotice(key, 'The owning queue has not confirmed this message. Check the provider before releasing the rewrite; this action did not send or save it.')
+      return false
+    }
+    if (content.trimStart().startsWith('/')) {
+      content = content.trim()
+      const name = content.slice(1).split(/\s+/, 1)[0]
+      // A lone slash names nothing, and every single-word command has an empty
+      // shortcut -- so it matched the first of them and would have run it.
+      if (!name) {
+        setError('That is not a command.')
+        return false
+      }
+      // The queue is drained by the agent, so a command it does not have stops
+      // the drain when it reaches it -- and everything behind it waits. The
+      // ones this app answers are never the agent's; the rest are checked
+      // against what this session actually offers, because a session that
+      // advertises no commands at all, as Claude does, can run none of them.
+      if (isWebOnlyCommand(content)) {
+        setError(
+          `/${name} is answered by this app rather than the agent, so it cannot wait in the queue. Cancel the edit and run it instead.`,
+        )
+        return false
+      }
+      // Only against this session's own list. While the new one is still
+      // arriving the previous session's is what is on hand, and reading it as
+      // though it described this session let a command only the other provider
+      // has be saved into this queue -- where its drain stops on it.
+      if (commandsKey !== sessionKey(selected)) {
+        setError(
+          'Still reading what this session can do. Try again in a moment.',
+        )
+        return false
+      }
+      const known = knownCommand(name)
+      if (!known) {
+        setError(
+          `This session has no /${name}, so a message saved as one would stop the queue when it was reached.`,
+        )
+        return false
+      }
+      // Written out in full. A shortcut is something this app expands on its
+      // way to the runtime, and the queue's own drain does not expand
+      // anything -- so `/aa on` stored as typed reached the runtime as `/aa`,
+      // which it has never heard of, and the message was consumed without
+      // being carried out.
+      if (name.toLowerCase() !== known.name.toLowerCase()) {
+        content = `/${known.name}${content.slice(name.length + 1)}`
+      }
+    }
+    const target = selected
+    const savedKey = sessionKey(target)
+    return { target, savedKey, promptId, submitted, content }
+  }
+
+  async function saveQueuedPromptEdit(): Promise<boolean> {
+    const submission = queuedEditSubmission()
+    if (!submission) return false
+    const { target, savedKey, promptId, submitted, content } = submission
+    const ownsSavedSession = () =>
+      followReplacementsRef.current(savedKey) === savedKey && !removedSessions.current.has(savedKey)
+    if (!updateComposerDrafts([], (current) => ({ ...current }), true)) return false
+    submissionsInFlight.current.add(savedKey)
+    setQueueActionId(promptId)
+    setError(undefined)
+    reportQueueNotice(savedKey)
+    try {
+      const result = await updateQueuedPrompt(
+        target.computerId,
+        target.id,
+        promptId,
+        content,
+      )
+      if (stillListed(result.session)) {
+        applySession(result.session)
+      }
+      // Kept open when the writing moved on while the request was in flight:
+      // the server has the text that was submitted, and the newer writing is
+      // still here to be saved in its turn. Closing it left that writing as an
+      // ordinary draft beside a message still queued.
+      //
+      // Read from the draft belonging to the session this was saved for. The
+      // mounted textarea shows whatever session is open now, so switching away
+      // during the request compared this rewrite against another session's
+      // text -- which normally differs, leaving the marker set over an empty
+      // composer and blocking every other edit.
+      // Only what was actually saved, and only from the session it was saved
+      // for. The composer stays writable while the request is in flight, so
+      // clearing it regardless threw away anything typed meanwhile -- and
+      // reading the live composer cleared the wrong session's draft when the
+      // reader moved on before the answer came back.
+      // A clear moves both the draft and its admission lock to the replacement.
+      const liveKey = followReplacementsRef.current(savedKey)
+      updateComposerDrafts([], (drafts) => {
+        // Exactly what was submitted. Comparing trimmed values threw away a
+        // newline typed while the request was in flight, which on a phone is
+        // what Enter puts there.
+        const current = drafts[liveKey]
+        if (!current || current.queuedEdit?.promptId !== promptId) return drafts
+        const durable = durableComposerDraft(liveKey, current)
+        if (
+          durable.text !== submitted.text ||
+          JSON.stringify(durable.pastes) !== JSON.stringify(submitted.pastes)
+        ) {
+          return drafts
+        }
+        resetComposerHistory(liveKey)
+        const { [liveKey]: _saved, ...rest } = drafts
+        return rest
+      })
+      return true
+    } catch (caught) {
+      if (!ownsSavedSession()) return false
+      const message = caught instanceof Error ? caught.message : String(caught)
+      // A not-found response can name a missing item or an unsupported route.
+      // Neither proves a disposition of the original or permits anonymous resend.
+      if (/not found|method not allowed|not implemented|does not support.*edit/i.test(message)) {
+        reportQueueNotice(savedKey,
+          `Queued editing was not confirmed by ${target.computerName}: ${message}. The item may be in flight or this runtime may not support PATCH. Your rewrite stays attached. If this runtime cannot save edits, update it or explicitly remove the original before sending the rewrite as new work.`,
+        )
+        // Refresh the visible queue, but never release edit ownership merely
+        // because the refresh also omits the item.
+        try {
+          const fresh = await getSession(target.computerId, target.id, AbortSignal.timeout(15_000))
+          if (!ownsSavedSession()) return false
+          if (sessionKey(fresh) !== savedKey) throw new Error('The queue refresh returned a different session')
+          if (stillListed(fresh)) {
+            applySession(fresh)
+          }
+        } catch (refreshError) {
+          if (!ownsSavedSession()) return false
+          // Left as it is. A re-read that failed says nothing about the
+          // message, and letting the marker go on the strength of it detached
+          // the rewrite from a message that may still be waiting.
+          reportQueueNotice(savedKey,
+            `Queued editing was not confirmed by ${target.computerName}: ${message}. This runtime may not support saving queued edits. The automatic refresh also failed: ${
+              refreshError instanceof Error ? refreshError.message : String(refreshError)
+            }. Check the queue or discard the rewrite; a visible queue row is not proof that PATCH is supported.`,
+          )
+        }
+        return false
+      }
+      reportQueueNotice(savedKey,
+        `Could not save this queued rewrite on ${target.computerName}: ${message}. Your text is retained. Check the owning queue before retrying.`,
+      )
+      return false
+    } finally {
+      submissionsInFlight.current.delete(savedKey)
+      const liveKey = followReplacementsRef.current(savedKey)
+      submissionsInFlight.current.delete(liveKey)
+      if (liveKey !== savedKey &&
+        !composerDraftsRef.current[liveKey]?.queuedEdit?.dispatchPending) {
+        forgetQueuedEdit(liveKey, promptId)
+      }
+      setQueueActionId((current) => current === promptId ? undefined : current)
+    }
+  }
+
+  async function sendQueuedPromptEdit(): Promise<boolean> {
+    const submission = queuedEditSubmission()
+    if (!submission) return false
+    const { target, savedKey, promptId, submitted, content } = submission
+    if (selectedProviderCapability?.supportsQueuedPromptDispatch !== true) {
+      setError('Update the owning runtime before sending a queued edit immediately.')
+      return false
+    }
+    const pending: ComposerSubmission = {
+      ...submitted, id: newCollapsedPasteKey(), originKey: savedKey, queuedPromptId: promptId,
+    }
+    // Use the same atomic draft/receipt ownership as ordinary submissions.
+    // New writing belongs to the now-empty editor, not to this request.
+    if (!updateComposerDrafts([savedKey], (current) => ({
+      ...current,
+      [savedKey]: {
+        text: '', pastes: [],
+        queuedEdit: { promptId, dispatchPending: true },
+        pendingSubmission: pending,
+      },
+    }), true)) return false
+    queuedDispatchInFlight.current.set(savedKey, promptId)
+    submissionsInFlight.current.add(savedKey)
+    setQueueActionId(promptId)
+    setError(undefined)
+    reportQueueNotice(savedKey)
+    const restore = (uncertain: boolean) => {
+      const liveKey = followReplacementsRef.current(savedKey)
+      updateComposerDrafts([liveKey], (current) => {
+        const draft = current[liveKey]
+        if (draft?.pendingSubmission?.id !== pending.id) return current
+        return {
+          ...current,
+          [liveKey]: {
+            ...recoverPendingComposerDraft(durableComposerDraft(liveKey, draft)),
+            queuedEdit: { promptId, ...(uncertain ? { dispatchPending: true } : {}) },
+            deliveryUncertain: uncertain || undefined,
+          },
+        }
+      })
+    }
+    try {
+      const result = await dispatchQueuedPrompt(target.computerId, target.id, promptId, content)
+      if (!composerMounted.current) return result.outcome === 'sent'
+      if (result.session && stillListed(result.session)) applySession(result.session)
+      if (result.outcome === 'sent' ||
+        (result.outcome === 'uncertain' && result.delivery === 'accepted')) {
+        const liveKey = followReplacementsRef.current(savedKey)
+        updateComposerDrafts([], (drafts) => {
+          const draft = drafts[liveKey]
+          if (draft?.pendingSubmission?.id !== pending.id) return drafts
+          return {
+            ...drafts,
+            [liveKey]: {
+              ...draft,
+              pendingSubmission: { ...draft.pendingSubmission, accepted: true },
+            },
+          }
+        })
+        if (result.outcome !== 'sent') reportQueueNotice(savedKey, result.message || 'The provider accepted this work, but its queue receipt could not be saved. Do not resend it.')
+        return true
+      }
+      restore(!(result.outcome === 'refused' && result.restored))
+      reportQueueNotice(savedKey, result.message || 'Delivery was not confirmed. Your rewrite is still here; do not resend without checking the provider.')
+      return false
+    } catch (caught) {
+      if (!composerMounted.current) return false
+      restore(!(caught && typeof caught === 'object' && Reflect.get(caught, 'uncertainDelivery') === false))
+      reportQueueNotice(savedKey, caught instanceof Error ? caught.message : String(caught))
+      return false
+    } finally {
+      if (queuedDispatchInFlight.current.get(savedKey) === promptId) queuedDispatchInFlight.current.delete(savedKey)
+      submissionsInFlight.current.delete(savedKey)
+      submissionsInFlight.current.delete(followReplacementsRef.current(savedKey))
+      setQueueActionId(undefined)
+    }
+  }
+
   async function queueDragEnded(event: DragEndEvent) {
     const { active, over } = event
     if (!selected || !over || active.id === over.id) {
+      return
+    }
+    if (selected.queuedDispatch) {
+      setError('Resolve the pending queued dispatch before changing its order.')
       return
     }
     // One drag at a time for a session, and the whole of it inside that lane:
@@ -11467,6 +12075,8 @@ function App() {
     // server had not accepted -- and then persisting it, or putting it back
     // when the recovery read failed.
     const lane = sessionKey(selected)
+    const ownsTarget = () =>
+      followReplacementsRef.current(lane) === lane && !removedSessions.current.has(lane)
     let settle: () => void = () => {}
     const mine = new Promise<void>((resolve) => {
       settle = resolve
@@ -11477,6 +12087,7 @@ function App() {
       if (ahead) {
         await ahead.catch(() => undefined)
       }
+      if (!ownsTarget()) return
       // Now that whatever was ahead has settled, this is the queue as it
       // actually stands.
       const target = sessionsRef.current.find(
@@ -11501,23 +12112,27 @@ function App() {
       // waiting for the round trip makes the list snap back under the pointer.
       applySession({ ...target, queuedPrompts: next })
       setError(undefined)
+      reportQueueNotice(lane)
       try {
-      const updated = await reorderQueuedPrompts(
-        target.computerId,
-        target.id,
-        order,
-      )
-        if (stillListed(updated)) {
+        const updated = await reorderQueuedPrompts(
+          target.computerId,
+          target.id,
+          order,
+        )
+        if (ownsTarget() && sessionKey(updated) === lane && stillListed(updated)) {
           applySession(updated)
         }
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught))
+        if (!ownsTarget()) return
+        reportQueueNotice(lane, caught instanceof Error ? caught.message : String(caught))
         // Asked for rather than assumed. The refusal usually means the queue
         // has moved on, so putting back the list as it was before the drag
         // would show work that is already gone, or hide work that has just
         // arrived.
         try {
-          const fresh = await getSession(target.computerId, target.id)
+          const fresh = await getSession(target.computerId, target.id, AbortSignal.timeout(15_000))
+          if (!ownsTarget()) return
+          if (sessionKey(fresh) !== lane) throw new Error('The queue refresh returned a different session')
           if (stillListed(fresh)) {
             applySession(fresh)
           }
@@ -11527,7 +12142,7 @@ function App() {
           // order the server had accepted. Only if it is still a session at
           // all: put back after its removal has been seen, the snapshot
           // reappears as one nothing can act on and no later event will clear.
-          if (stillListed(target)) {
+          if (ownsTarget() && stillListed(target)) {
             applySession(target)
           }
         }
@@ -11550,6 +12165,10 @@ function App() {
     }
 
     const target = selected
+    const claim = target.queuedDispatch?.promptId === promptId ? target.queuedDispatch : undefined
+    if (claim && !window.confirm(
+      'This prompt may already have been delivered. Check the provider before discarding this queue item. Discarding will not resend it or cancel provider work.',
+    )) return
     setQueueActionId(promptId)
     setError(undefined)
     try {
@@ -11557,14 +12176,24 @@ function App() {
         target.computerId,
         target.id,
         promptId,
+        ...(claim ? [claim.attemptId] as const : []),
       )
-      setSessions((current) => upsertSession(current, result.session))
+      if (stillListed(result.session)) {
+        setSessions((current) => upsertSession(current, result.session))
+      }
+      // Taken off deliberately, and acknowledged, so this is the one absence
+      // that is not a drain's doing. The marker goes with it: left set while
+      // the session was working, the banner offered to save into a message
+      // that was not there and no other could be edited until it settled.
+      const removedKey = sessionKey(target)
+      reportQueueNotice(removedKey)
+      forgetQueuedEdit(removedKey, promptId)
       if (edit) {
         replaceComposer(result.prompt.content)
         window.requestAnimationFrame(() => composerRef.current?.focus())
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      reportQueueNotice(sessionKey(target), caught instanceof Error ? caught.message : String(caught))
     } finally {
       setQueueActionId(undefined)
     }
@@ -11817,13 +12446,27 @@ function App() {
     if (event.nativeEvent.isComposing) {
       return
     }
-    // The menu is what Escape is about while it is open. Left to the global
-    // handler, the press went past it and closed a panel behind the composer
-    // while the menu stayed where it was.
+    // The menu is what Escape is about while it is open -- it sits over the
+    // composer, and over the rewriting too, so it is put away first.
     if (event.key === 'Escape' && showCommandMenu) {
       event.preventDefault()
       setCommandMenuDismissed(true)
       return
+    }
+    if (editingQueuedPromptId) {
+      // Rewriting a message that is already waiting. Enter puts the change
+      // back where it came from rather than sending it, because the reader
+      // queued it on purpose.
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        cancelQueuedPromptEdit()
+        return
+      }
+      if (event.key === 'Enter' && !event.shiftKey && !phoneEnterCreatesNewline()) {
+        event.preventDefault()
+        void saveQueuedPromptEdit()
+        return
+      }
     }
     if (!event.altKey && !event.ctrlKey && !event.metaKey) {
       if (event.key.length === 1) {
@@ -12814,6 +13457,24 @@ function App() {
 
         {selected ? (
           <footer className="composer-area">
+            {selected.queuedDispatch || queuedEditUnconfirmed ? (
+              <div className="queued-edit-banner queued-edit-banner--dispatch" role="status">
+                <span>
+                  {selected.queuedDispatch?.message ||
+                    'Queued delivery is pending or unconfirmed. Do not send the rewrite again until you have checked the provider.'}
+                </span>
+                {selected.queuedDispatch?.state === 'uncertain' ? (
+                  <button
+                    className="queued-edit-banner__save"
+                    disabled={Boolean(queueActionId) || sending}
+                    onClick={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
+                    type="button"
+                  >
+                    Discard unconfirmed queue item
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             {selected.queuedPrompts?.length ? (
               <section aria-label="Queued prompts" className="queued-prompts">
                 <header>
@@ -12835,15 +13496,15 @@ function App() {
                     <div className="queued-prompts__list">
                       {selected.queuedPrompts.map((prompt, index) => (
                         <SortableQueuedPrompt
-                          busy={Boolean(queueActionId)}
+                          busy={Boolean(queueActionId) || sending || Boolean(selected.queuedDispatch)}
+                          editing={editingQueuedPromptId === prompt.id}
                           index={index}
                           key={prompt.id}
-                          onEdit={() =>
-                            void manageQueuedPrompt(prompt.id, true)
-                          }
+                          onEdit={() => editQueuedPrompt(prompt)}
                           onRemove={() =>
                             void manageQueuedPrompt(prompt.id, false)
                           }
+                          suspended={selected.suspended === true}
                           prompt={prompt}
                         />
                       ))}
@@ -12877,7 +13538,90 @@ function App() {
                 ))}
               </div>
             ) : null}
-            {selectedKey && composerDrafts[selectedKey]?.deliveryUncertain ? (
+            {editingQueuedPromptId ? (
+              <div className={`queued-edit-banner${queuedEditNeedsCheck ? ' queued-edit-banner--dispatch' : ''}`}>
+                <Pencil size={13} />
+                <span id={queuedEditNeedsCheck ? 'queued-edit-state-warning' : undefined}>
+                  {queuedEditNeedsCheck ? (
+                    <>
+                      <strong>Queue state needs checking.</strong>{' '}
+                      {selected.computerName} does not currently list this message.
+                      It may still be in flight or may return after a failed dispatch.
+                      Your rewrite stays attached; missing rows do not confirm delivery.
+                      Check the owning provider before keeping it as a new draft or discarding it.
+                    </>
+                  ) : (
+                    <>
+                      Editing a queued message.{' '}
+                      {phoneEnterCreatesNewline() ? (
+                        <strong>Save to queue</strong>
+                      ) : (
+                        <strong>Enter</strong>
+                      )}{' '}
+                      puts it back in the queue without moving it.
+                      {selectedProviderCapability?.supportsQueuedPromptDispatch === true
+                        ? ' Send now delivers only this message.'
+                        : ''}
+                    </>
+                  )}
+                </span>
+                <button
+                  className="queued-edit-banner__save"
+                  disabled={!composer.trim() || Boolean(queueActionId) ||
+                    Boolean(selected.queuedDispatch) || queuedEditUnconfirmed || queuedEditSourceMissing}
+                  onClick={() => void saveQueuedPromptEdit()}
+                  title="Put this back in the queue"
+                  type="button"
+                >
+                  Save to queue
+                </button>
+                {queuedEditNeedsCheck || selectedQueueNotice ? (
+                  <button
+                    className="queued-edit-banner__save"
+                    disabled={Boolean(queueActionId) || sending || Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
+                    onClick={() => void checkEditedQueue()}
+                    type="button"
+                  >
+                    Check queue
+                  </button>
+                ) : null}
+                {queuedEditNeedsCheck ? (
+                  <button
+                    className="queued-edit-banner__save"
+                    disabled={Boolean(queueActionId) || sending}
+                    onClick={keepCheckedQueuedRewrite}
+                    type="button"
+                  >
+                    I've checked — keep as draft
+                  </button>
+                ) : null}
+                <button
+                  aria-label="Stop editing this queued message"
+                  className="icon-button"
+                  disabled={Boolean(queueActionId)}
+                  onClick={cancelQueuedPromptEdit}
+                  title={queuedEditSourceMissing ? 'Discard this rewrite after checking the provider (Escape)' : 'Leave it as it was (Escape)'}
+                  type="button"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : null}
+            {selectedQueueNotice && selectedKey ? (
+              <div className="error-banner" id="queued-operation-warning" role="alert">
+                <span>Session on {selected.computerName}: {selectedQueueNotice}</span>
+                <button
+                  aria-label="Dismiss this session notice"
+                  className="icon-button"
+                  onClick={() => reportQueueNotice(selectedKey)}
+                  type="button"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : null}
+            {selectedKey && composerDrafts[selectedKey]?.deliveryUncertain &&
+              !selected.queuedDispatch && !queuedEditUnconfirmed ? (
               <div className="error-banner" id="composer-delivery-warning" role="status">
                 <span>
                   Delivery could not be confirmed. Your message was restored; it may
@@ -12921,6 +13665,8 @@ function App() {
                         : undefined,
                       composerStorageError ? 'composer-storage-warning' : undefined,
                       acceptanceReceiptMissing ? 'composer-acceptance-warning' : undefined,
+                      queuedEditNeedsCheck ? 'queued-edit-state-warning' : undefined,
+                      selectedQueueNotice ? 'queued-operation-warning' : undefined,
                     ].filter(Boolean).join(' ') || undefined
                   }
                   // A suspended session has nothing running to send to. The
@@ -12936,7 +13682,13 @@ function App() {
                   placeholder={
                     selected.suspended
                       ? 'Suspended · resume to send'
-                      : `Message agent on ${selected.computerName}…`
+                      : queuedEditNeedsCheck
+                        ? 'Queue state needs checking · your rewrite is preserved'
+                        : editingQueuedPromptId
+                        ? phoneEnterCreatesNewline()
+                          ? 'Editing a queued message · Save puts it back'
+                          : 'Editing a queued message · Enter puts it back'
+                        : `Message agent on ${selected.computerName}…`
                   }
                   ref={composerRef}
                   rows={1}
@@ -13013,7 +13765,8 @@ function App() {
                     <button
                       aria-label="Queue message"
                       className="send-button send-button--queue"
-                      disabled={!composer.trim() || sending}
+                      disabled={!composer.trim() || sending || Boolean(queueActionId) ||
+                        Boolean(selected.queuedDispatch) || queuedEditUnconfirmed || queuedEditSourceMissing}
                       onClick={() => void submitMessage(true)}
                       title="Queue behind the current response"
                       type="button"
@@ -13022,11 +13775,28 @@ function App() {
                     </button>
                   ) : null}
                   <button
-                    aria-label="Send message"
+                    aria-label={
+                      editingQueuedPromptId
+                        ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
+                          ? 'Send edited message'
+                          : 'Put this back in the queue'
+                        : 'Send message'
+                    }
                     className="send-button"
-                    disabled={!composer.trim() || sending}
+                    disabled={!composer.trim() || sending || Boolean(queueActionId) ||
+                      Boolean(selected.queuedDispatch) || queuedEditUnconfirmed || selected.suspended === true ||
+                      queuedEditSourceMissing ||
+                      Boolean(editingQueuedPromptId &&
+                        selectedProviderCapability?.supportsQueuedPromptDispatch === true &&
+                        (selected.status === 'running' || selected.status === 'waiting'))}
                     onClick={() => void submitMessage()}
-                    title="Send immediately"
+                    title={
+                      editingQueuedPromptId
+                        ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
+                          ? 'Send this queued message now'
+                          : 'Put this back in the queue'
+                        : 'Send immediately'
+                    }
                     type="button"
                   >
                     <ArrowUp size={19} strokeWidth={2.4} />
@@ -13110,10 +13880,22 @@ function App() {
                   : (
                     <>
                       <span className="composer-hint__desktop">
-                        Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue
+                        {queuedEditNeedsCheck
+                          ? 'Check the provider · keep as draft only after checking · Esc asks before discarding'
+                          : editingQueuedPromptId
+                          ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
+                            ? 'Enter saves it back · ↑ sends this queued edit now · Esc leaves it as it was'
+                            : 'Enter saves it back · Shift+Enter newline · Esc leaves it as it was'
+                          : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue'}
                       </span>
                       <span className="composer-hint__mobile">
-                        Tap ↑ to send · Return adds a line
+                        {queuedEditNeedsCheck
+                          ? 'Rewrite preserved · Check the provider · Return adds a line'
+                          : editingQueuedPromptId
+                          ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
+                            ? 'Save keeps its place · ↑ sends this queued edit now · Return adds a line'
+                            : 'Tap Save to put it back · Return adds a line'
+                          : 'Tap ↑ to send · Return adds a line'}
                       </span>
                     </>
                   )}

@@ -45,6 +45,22 @@ const renameSessionSchema = z.object({
     ),
 })
 
+const updateQueuedPromptSchema = z.object({
+  // The same shape a message has to take. Without it a whitespace-only edit
+  // became a generic server error, and an edit could hold more than any
+  // message was ever allowed to.
+  content: z.string().max(200_000)
+    .refine((content) => content.trim().length > 0, 'Message cannot be blank'),
+})
+
+const discardQueuedDispatchSchema = z.object({
+  acknowledgesDispatch: z.string().uuid().optional(),
+})
+
+const reorderQueueSchema = z.object({
+  order: z.array(z.string().min(1)),
+})
+
 const sendMessageSchema = z.object({
   acknowledgesFailure: z.string().max(64).optional(),
   content: z
@@ -105,9 +121,6 @@ const knowledgeFileQuerySchema = z.object({
 
 const workspaceFileQuerySchema = z.object({
   path: z.string().trim().min(1).max(4096),
-})
-const reorderQueueSchema = z.object({
-  order: z.array(z.string().min(1)),
 })
 
 const workspaceSearchQuerySchema = z.object({
@@ -402,11 +415,39 @@ export async function registerNodeRoutes(
 
       node.delete<{ Params: { sessionId: string; promptId: string } }>(
         '/sessions/:sessionId/queue/:promptId',
-        async (request) =>
-          service.removeQueuedPrompt(
+        async (request) => {
+          const input = discardQueuedDispatchSchema.parse(request.body ?? {})
+          return service.removeQueuedPrompt(
             request.params.sessionId,
             request.params.promptId,
-          ),
+            input.acknowledgesDispatch,
+          )
+        },
+      )
+
+      node.post<{ Params: { sessionId: string; promptId: string } }>(
+        '/sessions/:sessionId/queue/:promptId/dispatch',
+        async (request) => {
+          const input = updateQueuedPromptSchema.parse(request.body)
+          const provider = service.getSession(request.params.sessionId)?.provider || 'copilot'
+          if (!service.dispatchQueuedPrompt || !service.providers().some((capability) =>
+            capability.id === provider && capability.supportsQueuedPromptDispatch === true)) {
+            throw Object.assign(new Error('Update this runtime to dispatch queued edits.'), { statusCode: 409 })
+          }
+          return service.dispatchQueuedPrompt(request.params.sessionId, request.params.promptId, input.content)
+        },
+      )
+
+      node.patch<{ Params: { sessionId: string; promptId: string } }>(
+        '/sessions/:sessionId/queue/:promptId',
+        async (request) => {
+          const input = updateQueuedPromptSchema.parse(request.body)
+          return service.updateQueuedPrompt(
+            request.params.sessionId,
+            request.params.promptId,
+            input.content,
+          )
+        },
       )
 
       node.put<{ Params: { sessionId: string } }>(

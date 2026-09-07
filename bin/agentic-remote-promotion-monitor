@@ -29,6 +29,7 @@ readonly GH_CLI_CONFIG_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_GH_CONFIG_DIR
 readonly STATE_DIR="$(profile_value AGENTIC_REMOTE_MONITOR_STATE_DIR "$USER_HOME/.local/state/agentic-remote-monitor")"
 readonly STATE_FILE="$STATE_DIR/last-graduated-commit"
 readonly STATE_RECORD="$STATE_DIR/promotion-state"
+readonly PENDING_RECORD="$STATE_DIR/pending-promotion"
 readonly LOCK_FILE="$STATE_DIR/lock"
 readonly SERVICE_NAME="$(profile_value AGENTIC_REMOTE_MONITOR_SERVICE agentic-remote.service)"
 readonly DATA_DIR="$(profile_value AGENTIC_REMOTE_DATA_DIR '')"
@@ -97,6 +98,226 @@ assert_clean() {
     die "worktree is not clean: $root"
 }
 
+sync_promotion_state() {
+  python3 - "$STATE_DIR" <<'PY'
+import os
+import sys
+
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+}
+
+read_current_release() {
+  if [[ ! -e "$RELEASE_ROOT/current" && ! -L "$RELEASE_ROOT/current" ]]; then
+    return 0
+  fi
+  readlink -f -- "$RELEASE_ROOT/current"
+}
+
+sync_release_inventory() {
+  python3 - "$RELEASE_ROOT" <<'PY'
+import os
+import sys
+
+root = os.path.realpath(sys.argv[1])
+for directory in (root, root + ".rejected"):
+    if not os.path.lexists(directory):
+        continue
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+PY
+}
+
+mark_pending_candidate_failed() {
+  python3 - "$PENDING_RELEASE" "$PENDING_COMMIT" <<'PY'
+import os
+import sys
+
+release, commit = sys.argv[1:]
+fd = os.open(os.path.join(release, ".promotion-failed"),
+             os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    stream.write(commit + "\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+fd = os.open(release, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+}
+
+write_pending_promotion() {
+  local phase="$1" candidate_commit="$2" previous_commit="$3"
+  local candidate_release="$4" previous_release="$5"
+  local temporary="$STATE_DIR/.pending-promotion-$phase-$$-$RANDOM"
+  python3 - "$temporary" "$PENDING_RECORD" "$phase" "$candidate_commit" \
+    "$previous_commit" "$candidate_release" "$previous_release" "$PROD_ROOT" "$RELEASE_ROOT" <<'PY' || return 1
+import json
+import os
+import sys
+
+temporary, pending, phase, candidate, previous, release, previous_release, runtime, root = sys.argv[1:]
+record = {
+    "version": 1,
+    "phase": phase,
+    "candidate_commit": candidate,
+    "previous_commit": previous,
+    "candidate_release": release,
+    "previous_release": previous_release,
+    "runtime_root": os.path.realpath(runtime),
+    "release_root": os.path.realpath(root),
+}
+if phase == "prepared":
+    if os.path.lexists(pending) or os.path.lexists(release):
+        raise SystemExit("A pending promotion or candidate release already exists")
+else:
+    if os.path.islink(pending):
+        raise SystemExit("The pending promotion was replaced by a symlink")
+    with open(pending, encoding="utf-8") as stream:
+        existing = json.load(stream)
+    expected_phase = {"local-verified": "prepared", "verified": "local-verified"}[phase]
+    if existing != {**record, "phase": expected_phase}:
+        raise SystemExit("The pending promotion changed before its checkpoint")
+fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    json.dump(record, stream)
+    stream.write("\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
+  mv -Tf -- "$temporary" "$PENDING_RECORD" || return 1
+  sync_promotion_state
+}
+
+load_pending_promotion() {
+  local parsed
+  local -a fields
+  parsed="$(python3 - "$PENDING_RECORD" "$PROD_ROOT" "$RELEASE_ROOT" <<'PY'
+import json
+import os
+import re
+import stat
+import sys
+
+pending, runtime, root = sys.argv[1:]
+if not stat.S_ISREG(os.lstat(pending).st_mode):
+    raise SystemExit("Pending promotion is not a regular file")
+with open(pending, encoding="utf-8") as stream:
+    record = json.load(stream)
+keys = {
+    "version", "phase", "candidate_commit", "previous_commit",
+    "candidate_release", "previous_release", "runtime_root", "release_root",
+}
+if not isinstance(record, dict) or set(record) != keys or type(record["version"]) is not int or record["version"] != 1:
+    raise SystemExit("Unsupported pending promotion record")
+for key in keys - {"version"}:
+    value = record[key]
+    if not isinstance(value, str) or any(c in value for c in "\0\r\n") or (not value and key != "previous_release"):
+        raise SystemExit("Invalid pending promotion value: " + key)
+if record["phase"] not in ("prepared", "local-verified", "verified"):
+    raise SystemExit("Invalid pending promotion phase")
+for key in ("candidate_commit", "previous_commit"):
+    if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", record[key]):
+        raise SystemExit("Invalid pending promotion commit")
+root = os.path.realpath(root)
+if record["runtime_root"] != os.path.realpath(runtime) or record["release_root"] != root:
+    raise SystemExit("Pending promotion belongs to another runtime or release root")
+for key in ("candidate_release", "previous_release"):
+    value = record[key]
+    if not value and key == "previous_release":
+        continue
+    if (os.path.dirname(value) != root or os.path.realpath(value) != value or
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", os.path.basename(value))):
+        raise SystemExit("Invalid pending promotion release path: " + key)
+if record["candidate_release"] == record["previous_release"]:
+    raise SystemExit("Pending candidate cannot be its own rollback baseline")
+for key in ("phase", "candidate_commit", "previous_commit", "candidate_release", "previous_release"):
+    print(record[key])
+PY
+)" || die "could not read the pending promotion; no runtime changes were made"
+  mapfile -t fields <<<"$parsed"
+  PENDING_PHASE="${fields[0]}"
+  PENDING_COMMIT="${fields[1]}"
+  PENDING_PREVIOUS_COMMIT="${fields[2]}"
+  PENDING_RELEASE="${fields[3]}"
+  PENDING_PREVIOUS_RELEASE="${fields[4]:-}"
+  git -C "$PROD_ROOT" cat-file -e "$PENDING_COMMIT^{commit}" &&
+    git -C "$PROD_ROOT" cat-file -e "$PENDING_PREVIOUS_COMMIT^{commit}" ||
+    die "a pending promotion commit is unavailable"
+}
+
+pending_record_committed() {
+  [[ -f "$STATE_RECORD" && ! -L "$STATE_RECORD" ]] &&
+    grep -Fxq -- "candidate_commit=$PENDING_COMMIT" "$STATE_RECORD" &&
+    grep -Fxq -- "tested_commit=$PENDING_COMMIT" "$STATE_RECORD" &&
+    grep -Fxq -- "promoted_commit=$PENDING_COMMIT" "$STATE_RECORD" &&
+    grep -Fxq -- "previous_runtime_commit=$PENDING_PREVIOUS_COMMIT" "$STATE_RECORD" &&
+    grep -Fxq -- "promoted_release=$PENDING_RELEASE" "$STATE_RECORD" &&
+    grep -Fxq -- "previous_release=$PENDING_PREVIOUS_RELEASE" "$STATE_RECORD"
+}
+
+clear_pending_promotion() {
+  rm -- "$PENDING_RECORD" || return 1
+  sync_promotion_state
+}
+
+complete_pending_promotion() {
+  local temporary_record="$STATE_RECORD.$$-$RANDOM"
+  local temporary_state="$STATE_FILE.$$-$RANDOM"
+  if ! pending_record_committed; then
+    [[ ! -L "$STATE_RECORD" ]] || die "the promotion state record is a symlink"
+    python3 - "$temporary_record" "$PENDING_COMMIT" "$PENDING_PREVIOUS_COMMIT" \
+      "$PENDING_RELEASE" "$PENDING_PREVIOUS_RELEASE" <<'PY' || die "could not prepare the promotion state; the pending promotion was retained"
+import datetime
+import os
+import sys
+
+temporary, commit, previous_commit, release, previous_release = sys.argv[1:]
+values = {
+    "candidate_commit": commit, "tested_commit": commit, "promoted_commit": commit,
+    "previous_runtime_commit": previous_commit, "promoted_release": release,
+    "previous_release": previous_release,
+    "promoted_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    for key, value in values.items():
+        stream.write(f"{key}={value}\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
+    mv -Tf -- "$temporary_record" "$STATE_RECORD" && sync_promotion_state ||
+      die "could not commit the promotion state; the pending promotion was retained"
+  fi
+  if [[ ! -f "$STATE_FILE" || "$(cat -- "$STATE_FILE")" != "$PENDING_COMMIT" ]]; then
+    [[ ! -L "$STATE_FILE" ]] || die "the success marker is a symlink"
+    python3 - "$temporary_state" "$PENDING_COMMIT" <<'PY' || die "could not prepare the success marker; the pending promotion was retained"
+import os
+import sys
+
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    stream.write(sys.argv[2] + "\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
+    mv -Tf -- "$temporary_state" "$STATE_FILE" && sync_promotion_state ||
+      die "could not commit the success marker; the pending promotion was retained"
+  fi
+  clear_pending_promotion ||
+    die "promotion was recorded but its pending journal could not be cleared"
+  log "graduated $PENDING_COMMIT successfully"
+}
+
 rollback_runtime() {
   local restore_commit="$1" restore_release="$2" link attempt
   log "rolling back the production runtime to $restore_commit"
@@ -160,8 +381,140 @@ quarantine_failed_release() {
   mkdir -p -- "$quarantine_root" || return 1
   target="$quarantine_root/$(basename -- "$failed_release")"
   [[ ! -e "$target" && ! -L "$target" ]] || return 1
-  mv -T -- "$failed_release" "$target" || return 1
+  python3 -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])' \
+    "$failed_release" "$target" || return 1
+  sync_release_inventory || return 1
   log "quarantined rejected release at $target"
+}
+
+verify_local_promotion() {
+  local commit="$1" release="$2" installed_commit installed_branch installed_changes
+  local attempt healthy=0 external_status
+  if ! installed_commit="$(git -C "$PROD_ROOT" rev-parse HEAD)" ||
+    ! installed_branch="$(git -C "$PROD_ROOT" branch --show-current)" ||
+    ! installed_changes="$(git -C "$PROD_ROOT" status --porcelain)"; then
+    printf '%s' "production runtime source could not be read after setup"
+    return 1
+  fi
+  if [[ "$installed_commit" != "$commit" || -n "$installed_branch" || -n "$installed_changes" ]]; then
+    printf '%s' "production runtime source changed during setup"
+    return 1
+  fi
+  for attempt in $(seq 1 "$READY_ATTEMPTS"); do
+    if systemctl --user is-active --quiet "$SERVICE_NAME" &&
+      curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
+      healthy=1
+      break
+    fi
+    sleep "$READY_INTERVAL"
+  done
+  if [[ "$healthy" != 1 ]]; then
+    printf '%s' "production runtime health check failed after graduation"
+    return 1
+  fi
+  if [[ ! -L "$RELEASE_ROOT/current" ||
+    "$(readlink -f -- "$RELEASE_ROOT/current")" != "$release" ]]; then
+    printf '%s' "production release pointer does not identify this candidate"
+    return 1
+  fi
+  if [[ -n "$EXTERNAL_URL" ]]; then
+    if ! external_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$EXTERNAL_URL")"; then
+      printf '%s' "external access check failed: $EXTERNAL_URL"
+      return 1
+    fi
+    if [[ -n "$EXTERNAL_STATUS" && "$external_status" != "$EXTERNAL_STATUS" ]]; then
+      printf '%s' "external access returned HTTP $external_status; expected $EXTERNAL_STATUS"
+      return 1
+    fi
+    if [[ -z "$EXTERNAL_STATUS" && ! "$external_status" =~ ^[23][0-9][0-9]$ ]]; then
+      printf '%s' "external access returned unexpected HTTP $external_status"
+      return 1
+    fi
+  fi
+}
+
+recover_pending_promotion() {
+  local mode="${1:-interrupted}" current_release failed_release="" runtime_restored=0 failure source_commit
+  load_pending_promotion
+  source_commit="$(git -C "$PROD_ROOT" rev-parse HEAD)"
+  [[ "$source_commit" == "$PENDING_COMMIT" || "$source_commit" == "$PENDING_PREVIOUS_COMMIT" ]] ||
+    die "the runtime source changed outside the pending promotion; it and the journal were preserved"
+  log "reconciling $PENDING_PHASE promotion of $PENDING_COMMIT"
+  if pending_record_committed || [[ "$PENDING_PHASE" == verified ]]; then
+    [[ ! -e "$PENDING_RELEASE/.promotion-failed" &&
+      ! -e "$(resolve_path "$RELEASE_ROOT").rejected/$(basename -- "$PENDING_RELEASE")/.promotion-failed" ]] ||
+      die "the verified pending candidate was subsequently rejected; the journal was retained"
+    complete_pending_promotion
+    return
+  fi
+  current_release="$(read_current_release)" || die "could not resolve the current release"
+  if [[ "$PENDING_PHASE" == local-verified &&
+    "$current_release" == "$PENDING_RELEASE" &&
+    ! -e "$PENDING_RELEASE/.promotion-failed" ]]; then
+    if failure="$(verify_local_promotion "$PENDING_COMMIT" "$PENDING_RELEASE")"; then
+      promote_downstream "$PENDING_COMMIT" ||
+        die "downstream promotion failed; the pending promotion and success marker were left unchanged"
+      write_pending_promotion verified "$PENDING_COMMIT" "$PENDING_PREVIOUS_COMMIT" \
+        "$PENDING_RELEASE" "$PENDING_PREVIOUS_RELEASE" ||
+        die "could not record completed verification; the pending promotion was retained"
+      load_pending_promotion
+      complete_pending_promotion
+      return
+    fi
+    log "ERROR: $failure"
+  fi
+  if [[ -d "$PENDING_RELEASE" && ! -L "$PENDING_RELEASE" ]]; then
+    failed_release="$PENDING_RELEASE"
+    mark_pending_candidate_failed ||
+      die "could not mark the pending candidate as rejected; its journal was retained"
+  fi
+  # A manual action may have selected another healthy release. Do not replace
+  # that choice with either endpoint of an interrupted transaction.
+  if [[ "$current_release" != "$PENDING_RELEASE" &&
+    "$current_release" != "$PENDING_PREVIOUS_RELEASE" ]]; then
+    if [[ -n "$failed_release" && -d "$current_release" &&
+      ! -e "$current_release/.promotion-failed" ]]; then
+      quarantine_failed_release "$failed_release" "$current_release" ||
+        die "the current release changed and the pending candidate could not be quarantined"
+    fi
+    die "the current release changed outside the pending promotion; it was preserved and the journal needs reconciliation"
+  fi
+  if [[ -z "$PENDING_PREVIOUS_RELEASE" && -z "$current_release" && -z "$failed_release" ]]; then
+    git -C "$PROD_ROOT" switch --detach "$PENDING_PREVIOUS_COMMIT" ||
+      die "could not restore the production runtime source; the pending journal was retained"
+    clear_pending_promotion || die "could not clear the unactivated pending promotion"
+    die "graduation failed before publication; the previous runtime source was restored"
+  fi
+  if rollback_runtime "$PENDING_PREVIOUS_COMMIT" "$PENDING_PREVIOUS_RELEASE"; then
+    runtime_restored=1
+    if [[ -n "$failed_release" ]]; then
+      if [[ "$mode" == interrupted ]] ||
+        ! remove_failed_release "$failed_release" "$PENDING_PREVIOUS_RELEASE"; then
+        quarantine_failed_release "$failed_release" "$PENDING_PREVIOUS_RELEASE" ||
+          die "graduation failed; the previous release was restored but the rejected release was retained; the runtime source was not restored"
+      fi
+    fi
+  elif [[ -n "$failed_release" ]] &&
+    [[ "$(readlink -f -- "$RELEASE_ROOT/current")" == "$PENDING_PREVIOUS_RELEASE" ]]; then
+    quarantine_failed_release "$failed_release" "$PENDING_PREVIOUS_RELEASE" ||
+      die "graduation failed; could not quarantine the inactive rejected release; the runtime source was not restored"
+  fi
+  # The installed CLI follows PROD_ROOT. Only downgrade it after the rejected
+  # candidate is no longer eligible for even a legacy rollback implementation.
+  if [[ -n "$PENDING_PREVIOUS_RELEASE" &&
+    "$(readlink -f -- "$RELEASE_ROOT/current")" == "$PENDING_PREVIOUS_RELEASE" ]]; then
+    sync_release_inventory ||
+      die "could not durably exclude the rejected candidate; the runtime source and pending journal were retained"
+    git -C "$PROD_ROOT" switch --detach "$PENDING_PREVIOUS_COMMIT" ||
+      die "graduation failed; could not restore the production runtime source to $PENDING_PREVIOUS_COMMIT"
+    assert_clean "$PROD_ROOT"
+    if [[ "$runtime_restored" == 1 ]]; then
+      clear_pending_promotion ||
+        die "the previous runtime was restored but the pending journal could not be cleared"
+      die "graduation failed and the previous runtime was restored"
+    fi
+  fi
+  die "graduation failed; could not fully restore the previous runtime; the rejected release and pending journal were retained"
 }
 
 # Second promotion phase. Values reach a remote bash through printf %q so a
@@ -561,6 +914,19 @@ run() {
   assert_repository "$DEV_ROOT"
   assert_repository "$PROD_ROOT"
 
+  local release_root pending_branch
+  release_root="$(resolve_path "$RELEASE_ROOT")"
+  [[ "$release_root" == "$(resolve_path "$USER_HOME/.config/agentic-remote/releases")" ]] ||
+    die "the release root must match the application CLI release directory"
+  if [[ -e "$PENDING_RECORD" || -L "$PENDING_RECORD" ]]; then
+    pending_branch="$(git -C "$PROD_ROOT" branch --show-current)"
+    [[ -z "$pending_branch" ]] ||
+      die "production runtime checkout must remain detached while recovering promotion"
+    assert_clean "$PROD_ROOT"
+    recover_pending_promotion
+    return
+  fi
+
   local dev_branch before_commit candidate_commit
   dev_branch="$(git -C "$DEV_ROOT" branch --show-current)"
   [[ "$dev_branch" == "main" ]] ||
@@ -594,6 +960,8 @@ run() {
   if [[ -z "$last_commit" && -f "$STATE_FILE" ]]; then
     last_commit="$(cat "$STATE_FILE")"
   fi
+  [[ -z "$last_commit" || "$prod_commit" == "$last_commit" ]] ||
+    die "the unrecorded runtime source has no pending promotion; reconcile the known-good baseline before retrying"
 
   if [[ "$candidate_commit" == "$prod_commit" && "$candidate_commit" == "$last_commit" ]]; then
     log "no ungraduated commit; development and production are at $candidate_commit"
@@ -681,12 +1049,11 @@ run() {
   prod_branch="$(git -C "$PROD_ROOT" branch --show-current)"
   [[ -z "$prod_branch" ]] ||
     die "production runtime checkout changed to a branch during validation"
+  [[ "$(git -C "$PROD_ROOT" rev-parse HEAD)" == "$prod_commit" ]] ||
+    die "production runtime source changed during validation"
 
   log "graduating $candidate_commit to the production runtime source"
-  local previous_release="" existing_releases="" release_root publication_id
-  release_root="$(resolve_path "$RELEASE_ROOT")"
-  [[ "$release_root" == "$(resolve_path "$USER_HOME/.config/agentic-remote/releases")" ]] ||
-    die "the release root must match the application CLI release directory"
+  local previous_release="" existing_releases="" publication_id
   publication_id="$(date -u +%Y%m%dT%H%M%SZ)-${candidate_commit:0:12}-$$-${RANDOM}"
   local candidate_release="$release_root/$publication_id"
   [[ ! -e "$candidate_release" && ! -L "$candidate_release" ]] ||
@@ -700,6 +1067,18 @@ run() {
   fi
   [[ -z "$previous_release" || ! -e "$previous_release/.promotion-failed" ]] ||
     die "the current release was rejected; restore a healthy release before retrying promotion"
+  [[ -z "$previous_release" ||
+    ( "$(dirname -- "$previous_release")" == "$release_root" &&
+      -d "$previous_release" && ! -L "$previous_release" ) ]] ||
+    die "the previous release is not a direct immutable release in the configured inventory"
+  ! grep -Fxq -- "$publication_id" <<<"$existing_releases" ||
+    die "the candidate release appeared before promotion was recorded"
+  write_pending_promotion prepared "$candidate_commit" "$prod_commit" \
+    "$candidate_release" "$previous_release" ||
+    die "could not durably record the pending promotion; no candidate was activated"
+  load_pending_promotion
+  [[ "$(read_current_release)" == "$previous_release" ]] ||
+    die "the current release changed while preparing promotion; the pending journal was retained"
   # Publishing prunes by directory mtime. Keep the known-good rollback target
   # newer than older failed candidates so setup cannot delete it before health
   # validation decides whether the new release is safe.
@@ -735,121 +1114,31 @@ run() {
     failure="setup failed for $candidate_commit"
 
   if [[ -z "$failure" ]]; then
-    local installed_commit installed_branch installed_changes
-    if ! installed_commit="$(git -C "$PROD_ROOT" rev-parse HEAD)" ||
-      ! installed_branch="$(git -C "$PROD_ROOT" branch --show-current)" ||
-      ! installed_changes="$(git -C "$PROD_ROOT" status --porcelain)"; then
-      failure="production runtime source could not be read after setup"
-    elif [[ "$installed_commit" != "$candidate_commit" ||
-      -n "$installed_branch" || -n "$installed_changes" ]]; then
-      failure="production runtime source changed during setup"
-    fi
-  fi
-
-  if [[ -z "$failure" ]]; then
-    local attempt healthy=0
-    for attempt in $(seq 1 "$READY_ATTEMPTS"); do
-      if systemctl --user is-active --quiet "$SERVICE_NAME" &&
-        curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then
-        healthy=1
-        break
-      fi
-      sleep "$READY_INTERVAL"
-    done
-    [[ "$healthy" == 1 ]] ||
-      failure="production runtime health check failed after graduation"
-  fi
-
-  if [[ -z "$failure" ]] &&
-    { [[ ! -L "$RELEASE_ROOT/current" ]] ||
-      [[ "$(readlink -f -- "$RELEASE_ROOT/current")" != "$candidate_release" ]]; }; then
-    failure="production release pointer does not identify this candidate"
-  fi
-
-  if [[ -z "$failure" && -n "$EXTERNAL_URL" ]]; then
-    local external_status
-    if external_status="$(
-      curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$EXTERNAL_URL"
-    )"; then
-      if [[ -n "$EXTERNAL_STATUS" ]]; then
-        [[ "$external_status" == "$EXTERNAL_STATUS" ]] ||
-          failure="external access returned HTTP $external_status; expected $EXTERNAL_STATUS"
-      elif [[ ! "$external_status" =~ ^[23][0-9][0-9]$ ]]; then
-        failure="external access returned unexpected HTTP $external_status"
-      fi
-    else
-      failure="external access check failed: $EXTERNAL_URL"
-    fi
+    failure="$(verify_local_promotion "$candidate_commit" "$candidate_release")" || {
+      [[ -n "$failure" ]] || failure="production verification did not complete"
+    }
   fi
 
   if [[ -n "$failure" ]]; then
     log "ERROR: $failure"
-    local failed_release=""
-    if [[ -n "$candidate_release" &&
-      "$candidate_release" != "$previous_release" &&
-      "$(dirname -- "$candidate_release")" == "$release_root" &&
-      -d "$candidate_release" && ! -L "$candidate_release" ]] &&
-      ! grep -Fxq -- "$(basename "$candidate_release")" <<<"$existing_releases"; then
-      failed_release="$candidate_release"
-      # A rollback failure must not make this candidate eligible for a later
-      # ordinary rollback. Keep this marker if restoration or removal fails.
-      printf '%s\n' "$candidate_commit" >"$failed_release/.promotion-failed" ||
-        log "WARNING: could not mark rejected release $failed_release"
-    fi
-    local runtime_restored=0
-    if rollback_runtime "$prod_commit" "$previous_release"; then
-      runtime_restored=1
-      if [[ -n "$failed_release" ]] &&
-        ! remove_failed_release "$failed_release" "$previous_release"; then
-        if ! quarantine_failed_release "$failed_release" "$previous_release"; then
-          die "graduation failed; the previous release was restored but the rejected release was retained; the runtime source was not restored"
-        fi
-      fi
-    elif [[ -n "$failed_release" ]] &&
-      [[ "$(readlink -f -- "$RELEASE_ROOT/current")" == "$previous_release" ]]; then
-      quarantine_failed_release "$failed_release" "$previous_release" ||
-        die "graduation failed; could not quarantine the inactive rejected release; the runtime source was not restored"
-    fi
-    # The installed CLI is a symlink into PROD_ROOT. Restoring older source
-    # can replace marker-aware rollback with code that selects rejected builds.
-    # Keep it until the healthy pointer is restored and that inventory is safe.
-    if [[ -n "$previous_release" &&
-      "$(readlink -f -- "$RELEASE_ROOT/current")" == "$previous_release" ]]; then
-      git -C "$PROD_ROOT" switch --detach "$prod_commit" ||
-        die "graduation failed; could not restore the production runtime source to $prod_commit"
-      if [[ "$runtime_restored" == 1 ]]; then
-        die "graduation failed and the previous runtime was restored"
-      fi
-    fi
-    die "graduation failed; could not fully restore the previous runtime; the rejected release was retained"
+    recover_pending_promotion rejected
+    die "graduation failed; recovery did not complete"
   fi
 
+  write_pending_promotion local-verified "$candidate_commit" "$prod_commit" \
+    "$candidate_release" "$previous_release" ||
+    die "could not record local verification; the pending promotion was retained"
   # Downstream hosts are promoted before the success marker advances, so a
   # failure there leaves the candidate ungraduated and the next run retries.
   if ! promote_downstream "$candidate_commit"; then
     die "downstream promotion failed; the success marker was left unchanged"
   fi
 
-  local temporary_state temporary_record
-  # Write the canonical record first: reads prefer it, so a crash between the
-  # two writes must not leave a stale record shadowing a fresh marker.
-  temporary_record="$STATE_RECORD.$$"
-  {
-    printf 'candidate_commit=%s\n' "$candidate_commit"
-    printf 'tested_commit=%s\n' "$candidate_commit"
-    printf 'promoted_commit=%s\n' "$candidate_commit"
-    printf 'previous_runtime_commit=%s\n' "$prod_commit"
-    printf 'promoted_release=%s\n' "$candidate_release"
-    printf 'previous_release=%s\n' "$previous_release"
-    printf 'promoted_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } >"$temporary_record"
-  chmod 0600 "$temporary_record"
-  mv -f -- "$temporary_record" "$STATE_RECORD"
-  temporary_state="$STATE_FILE.$$"
-  printf '%s\n' "$candidate_commit" >"$temporary_state"
-  chmod 0600 "$temporary_state"
-  mv -f -- "$temporary_state" "$STATE_FILE"
-  log "graduated $candidate_commit successfully"
+  write_pending_promotion verified "$candidate_commit" "$prod_commit" \
+    "$candidate_release" "$previous_release" ||
+    die "could not record completed verification; the pending promotion was retained"
+  load_pending_promotion
+  complete_pending_promotion
 }
 
 command="${1:-run}"

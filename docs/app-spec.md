@@ -140,6 +140,19 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   folder before reporting that refusal, or explicitly report restoration failure.
 - Cleanup failures after a replacement commits MUST be surfaced on the new
   session; they MUST NOT roll back the accepted identity or destroy its runtime.
+- Clear MUST exclude new session admissions while joining earlier loading and
+  delivery handoffs. It MUST NOT cancel those handoffs merely to become idle.
+  Work admitted while Clear waits MUST cause refusal before the original
+  provider or history is replaced, even if that work completes quickly.
+  A successfully persisted enqueue MUST count as admitted work before its
+  response is published, even if the previous turn becomes idle meanwhile.
+  A refused queue write MUST NOT count as a successful admission. Deferred
+  eligible FIFO work MUST wake after the enqueue and Clear release their locks.
+  A native message or command with possible pane effects MUST protect joined
+  Clear even when delivery is uncertain. It MUST still reject with uncertainty,
+  not claim successful delivery. Definite preflight failures MUST NOT count as
+  native activity.
+  Replacement MUST revalidate idleness and identity at its mutation boundary.
 - Cleared and deleted session identities MUST stay retired across restart,
   including after their last replacement is deleted. Retirement metadata MUST
   commit atomically with the identity change, and stale provider listings MUST
@@ -215,6 +228,12 @@ Questions and permissions are the highest-priority UI state.
   a service restart, including structured ask-user forms.
 - If an SDK callback was lost, answering the recovered question MUST resume as a
   normal user turn.
+- While the owning service is running, an accepted SDK reply whose settlement
+  write failed MUST remain retryable without resolving the provider callback
+  again. A conflicting reply MUST be rejected, and settlement MUST preserve
+  newer questions, permissions, and their waiting status.
+- Multi-question flows MUST commit the next question card before advancing
+  their private request identity or collected answers.
 - A newly arriving question or permission MUST scroll into view.
 - Entering a session that is already waiting MUST scroll to the action card.
 
@@ -237,8 +256,59 @@ Questions and permissions are the highest-priority UI state.
 - Losing a paste acknowledgement MUST report uncertain delivery rather than
   authorize an automatic retry. Readiness MUST be checked again after owner
   validation and before the paste.
-- A recovered prompt with an uncertain terminal receipt MUST retain its resend
-  claim. Failed acknowledgement writes MUST be retried without repeating delivery.
+- A recovered prompt or slash-command resend MUST durably consume its recovery
+  token before delivery or queue admission. If that write cannot commit, no
+  delivery may occur and the original token remains unused.
+- The claim MUST preserve the actual submitted text and a fresh uncertain
+  recovery token. An unresolved attempt MUST reject its old token across restart
+  and clear replacement, and require an explicit new recovery decision; it MUST
+  NOT be automatically acknowledged or replayed. A refusal after the claim
+  commits may conservatively remain uncertain, but MUST offer a usable new
+  decision rather than permanently blocking recovery.
+- Successful delivery or durable queue admission MUST settle only its own
+  recovery token. Failed acknowledgement writes after accepted delivery MUST be
+  surfaced and retried without repeating delivery or clearing a newer recovery.
+- A confirmed recovery receipt MUST be saved before later bookkeeping, separately
+  from clearing its recovery marker. Restart MUST resume only acknowledgement for
+  a saved accepted receipt, never delivery. If even the receipt cannot be saved,
+  the attempted-delivery token MUST remain non-delivering: requesting it may
+  prepare and return a distinct recovery decision, but MUST send nothing until
+  the reader explicitly submits that new decision.
+- Confirmed delivery MUST remain accepted when later activity, command feedback,
+  or persistence fails. Its recovery claim MUST remain reserved until token-scoped
+  acknowledgement settles; a fresh-token or anonymous retry MUST NOT deliver it
+  again while that acknowledgement is pending.
+- Confirmed startup delivery MUST establish its dispatch hold before receipt
+  persistence or publication can fail, even if an earlier readiness observation
+  was negative. Acceptance MUST update the linked claim and publish a redacted
+  view before attempting its receipt write. Every public session response,
+  including mutation results and queue-removal envelopes, MUST omit accepted or
+  obsolete recovery markers without mutating internal recovery state or dropping
+  a newer unaccepted recovery.
+- A failed recovery submission MUST return its current recovery token and owning
+  session through both local and paired-node HTTP paths. The browser MUST bind
+  any restored draft to that token, including across navigation, reload and clear
+  replacement. A confirmed accepted submission MUST NOT be restored as an unsent
+  draft. Missing error metadata MUST retain the original binding rather than
+  silently turning a retry into an independent message.
+- HTTP session results serialized before an observed recovery event MUST NOT
+  overwrite that event's recovery field at an equal or older durable revision.
+  Immediate equal-revision redaction events and fresh reads issued after them
+  MUST remain valid. The client MUST preserve detail hydration, genuinely newer
+  revisions/recovery tokens, and session/computer replacement ownership rather
+  than rejecting every equal-revision update.
+- Automatic desktop-install decline MUST recapture the pane after awaited owner
+  validation and confirm the same live prompt before sending `n`. Disappearance
+  or replacement by a composer, draft, or another dialog MUST receive no input.
+- Direct terminal commands MUST respect older app FIFO entries after startup
+  reconciliation, except for the matching recovery claim. An immediate message
+  serialized behind a startup dispatch MUST NOT trust its still-visible old
+  composer as permission to submit a second message.
+- The startup dispatch hold MUST also cover command/message interleavings.
+  Turn-starting commands and commands whose feedback cannot be observed MUST
+  retain that hold for serialized followers. A stable non-turn command response
+  MAY release only its own hold. Explicit Queue requests MUST remain queued
+  rather than becoming immediate sends after stale-idle reconciliation.
 - Form identity MUST preserve word boundaries. Terminal form reads MUST use
   tmux's joined soft-wrap capture instead of guessing whether a line break
   separated words or split an identifier.
@@ -277,6 +347,54 @@ before delivery begins. A failed completion write MUST NOT resend the prompt;
 the service MUST retain the delivery outcome and retry only persistence. After
 restart, an unresolved delivery MUST expose its text as uncertain recovery and
 hold later queued work until the reader explicitly deals with it.
+
+An app-queued SDK or Claude prompt MUST remain durable until its complete turn
+record is committed. Failed turn admission MUST NOT depend on a compensating
+enqueue that can also fail during a storage outage. Native FIFO delivery MUST
+recheck idleness at delivery rather than steer a turn that began while queued
+command confirmation was being persisted.
+
+Shutdown MUST close new admissions before awaiting provider or storage work.
+Already-admitted work MUST finish its commit/registration boundary before
+provider teardown; a commit completed during shutdown MUST NOT start a new
+provider turn. Unsent queued text MUST be restored or remain as durable,
+explicit recovery when the cancellation write is refused. Storage MUST finish
+admitted writes and refuse late mutations after shutdown.
+
+Recovery sends MUST retain their per-dispatch delivery boundary through that
+admitted lifetime, including generated command prompts and answering-enqueue
+transactions. Confirmed-delivery acknowledgement MUST finish before provider
+teardown; acknowledgement retries MUST themselves be admitted, and shutdown
+MUST wake cancelled retry waiters without attempting another delivery. A storage
+outage MUST surface the failed settlement and retain the consumed-token
+uncertainty rather than allowing replay or a late write into a closed store.
+
+Queue drains MUST coalesce wake-ups and re-read the committed canonical queue
+after a reserved head is edited or removed. Stale reservations MAY retry;
+ordinary authentication or storage failures MUST NOT cause a hot retry loop.
+A durable reply settlement MUST wake eligible queued work after releasing its
+own locks, without clearing a newer question or dispatching from a stopped,
+suspended, deleting, or already-owned session.
+
+Startup MUST resume eligible persisted native queues without requiring a
+post-enqueue completion event. Only previously managed-open native sessions
+qualify, and delivery MUST still require current discovery, ownership, a
+readable empty native composer, and the normal admission/claim guards.
+Unavailable observations or refused claim writes MUST retain FIFO and use
+bounded retry. A queued entry MUST NOT by itself create or reopen a native
+runtime; unknown prior delivery or explicit closed/suspended state stays held.
+Repeated startup MUST NOT duplicate delivery or create additional pollers.
+
+An explicit recovery token MUST match the current failed prompt. For Claude,
+accepting a token-bearing retry MUST atomically retain one canonical FIFO entry
+and consume that recovery, including retries requested while idle. Replayed or stale tokens
+MUST NOT dispatch or enqueue another copy, or clear a newer recovery. Unrelated
+ordinary sends MUST NOT consume recovery. A new uncertain provider-start outcome
+MUST remain explicitly uncertain; the supplied token is not proof of delivery.
+
+If provider lookup fails before a query is registered, its unstarted queued
+admission MUST be restored before completion cleanup can erase it. Refused
+restoration MUST retain durable recovery, and cleanup MUST preserve newer owners.
 
 Drafts MUST persist independently per computer/session and MUST survive session
 switches, failed sends, and clear replacement IDs.
@@ -555,6 +673,12 @@ directories, and questions arriving while an earlier reply is being recorded.
 Live streamed text MAY remain volatile until the next persisted mutation.
 Publishing a live delta MUST NOT expose unrelated, uncommitted session or queue
 changes.
+
+History fetched before a newer local admission MUST NOT overwrite that turn,
+its status, or its pending input when installed. Transcript ownership checks
+MUST run at mutation preparation, including the commit-to-registration gap.
+Rejecting stale history MUST preserve the polling version and live-watermark
+guards without disabling legitimate external/native history refresh.
 
 ## 14. Error handling
 

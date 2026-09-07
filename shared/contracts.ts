@@ -207,6 +207,7 @@ export interface SessionSummary {
    */
   failedPrompt?: {
     content: string
+    /** Opaque recovery decision token; older records use an ISO timestamp. */
     failedAt: string
     /**
      * Set when the text may still be sitting in the terminal's prompt.

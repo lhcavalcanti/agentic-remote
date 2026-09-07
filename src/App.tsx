@@ -127,6 +127,7 @@ import type {
   WorkspaceListing,
   WorkspaceSearchResult,
 } from '../shared/contracts'
+import { submissionReceiptFromError } from '../shared/submission-error'
 import {
   activateSession,
   addComputer,
@@ -171,6 +172,12 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import {
+  currentSessionEventSequence,
+  nextSessionEventSequence,
+  projectSessionResponse,
+  sessionResponseStartedAt,
+} from './session-response-order'
 import { applyAccentIcon } from './accent-icon'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
@@ -857,14 +864,19 @@ const webCommands: SlashCommand[] = [
 ]
 
 function sortSessions(sessions: ManagedSession[]): ManagedSession[] {
-  return [...sessions].sort((left, right) =>
+  // Stored observations must not inherit the provenance of a pending HTTP
+  // result when a later snapshot reconciliation reuses them.
+  return sessions.map((entry) =>
+    sessionResponseStartedAt(entry) === undefined ? entry : { ...entry },
+  ).sort((left, right) =>
     right.updatedAt.localeCompare(left.updatedAt),
   )
 }
 
-function upsertSession(
+function upsertSessionSnapshot(
   sessions: ManagedSession[],
   session: ManagedSession,
+  lastEventAt = 0,
 ): ManagedSession[] {
   const key = sessionKey(session)
   const existing = sessions.find((entry) => sessionKey(entry) === key)
@@ -876,8 +888,9 @@ function upsertSession(
   ) {
     return sessions
   }
+  const projected = projectSessionResponse(session, existing, lastEventAt)
   return sortSessions([
-    session,
+    projected,
     ...sessions.filter((entry) => sessionKey(entry) !== key),
   ])
 }
@@ -6447,6 +6460,10 @@ function App() {
   const restoredDraftContents = useRef<Record<string, string>>(
     readStoredOrder('agentic-remote:composer-draft-recovered', {}),
   )
+  const failedSubmissionBindings = useRef<Record<string, string>>(
+    readStoredOrder('agentic-remote:composer-submission-failures', {}),
+  )
+  const acceptedSubmissionTokens = useRef(new Map<string, Set<string>>())
   // The history listener is bound once, so it reads the resolver through a ref
   // rather than closing over the first one.
   const followReplacementsRef = useRef<(key: string) => string>((key) => key)
@@ -6629,7 +6646,7 @@ function App() {
   const recordingStartedAtRef = useRef(0)
   const discardRecordingRef = useRef(false)
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
-  const eventSequenceRef = useRef(0)
+  const eventSequenceRef = useRef(currentSessionEventSequence())
   const backgroundTaskSnapshotsRef = useRef(backgroundTaskSnapshots)
   const computersRef = useRef(computers)
   // The sessions as last committed, so reconciliation can be worked out
@@ -6823,6 +6840,23 @@ function App() {
   // sessions. Ordinary status changes are tracked separately.
   const computerEventSequenceRef = useRef(new Map<string, number>())
   const computerRecordSequenceRef = useRef(new Map<string, number>())
+  const upsertSession = useCallback((current: ManagedSession[], incoming: ManagedSession) => {
+    const key = sessionKey(incoming)
+    const startedAt = sessionResponseStartedAt(incoming)
+    const lastEventAt = sessionEventSequenceRef.current.get(key) || 0
+    if (
+      startedAt !== undefined &&
+      (((computerEventSequenceRef.current.get(incoming.computerId) || 0) > startedAt) ||
+        (lastEventAt > startedAt && removedSessions.current.has(key)))
+    ) return current
+    return upsertSessionSnapshot(current, incoming, lastEventAt)
+  }, [])
+  const currentSessionResponse = useCallback((incoming: ManagedSession) =>
+    projectSessionResponse(
+      incoming,
+      sessionsRef.current.find((entry) => sessionKey(entry) === sessionKey(incoming)),
+      sessionEventSequenceRef.current.get(sessionKey(incoming)) || 0,
+    ), [])
   const sidebarResizeRef = useRef<
     | { pointerId: number; startX: number; startWidth: number; width: number }
     | undefined
@@ -8092,7 +8126,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [])
+  }, [upsertSession])
 
   useEffect(() => {
     if (loading) {
@@ -8177,7 +8211,7 @@ function App() {
     return () => {
       active = false
     }
-  }, [selectedComputerId, selectedSessionId])
+  }, [selectedComputerId, selectedSessionId, upsertSession])
 
   useEffect(() => {
     if (!selectedComputerId || !selectedSessionId) {
@@ -8540,7 +8574,7 @@ function App() {
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data as string) as HubEvent
         if (event.type === 'session.upserted') {
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           sessionEventSequenceRef.current.set(
             sessionKey(event.session),
             eventSequenceRef.current,
@@ -8571,7 +8605,7 @@ function App() {
           // conversation, with the overlapping snapshot unable to settle it
           // because this very removal moved its watermark on.
           pendingReplacements.current.delete(removedKey)
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           sessionEventSequenceRef.current.set(
             removedKey,
             eventSequenceRef.current,
@@ -8626,9 +8660,10 @@ function App() {
           handledFailures.current.delete(removedKey)
           restoredFailures.current.delete(removedKey)
           unshownFailures.current.delete(removedKey)
+          acceptedSubmissionTokens.current.delete(removedKey)
         } else if (event.type === 'session.tasks.updated') {
           const key = `${event.computerId}:${event.sessionId}`
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           backgroundTaskEventSequenceRef.current.set(
           key,
           eventSequenceRef.current,
@@ -8645,7 +8680,7 @@ function App() {
           // The hub filters retired clients before publishing this event.
           // A new pairing may be announced by another tab without a refresh.
           forgottenComputers.current.delete(event.computer.id)
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           // Only the computer record is newer, not its sessions. A paired node
           // going offline is an ordinary update, and treating it as reason to
           // reject the snapshot discards every session that computer has.
@@ -8656,7 +8691,7 @@ function App() {
           computersRef.current = upsertComputer(computersRef.current, event.computer)
           setComputers(computersRef.current)
         } else if (event.type === 'computer.removed') {
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           computerEventSequenceRef.current.set(
             event.computerId,
             eventSequenceRef.current,
@@ -8671,6 +8706,9 @@ function App() {
               restoredFailures.current.delete(key)
               unshownFailures.current.delete(key)
             }
+          }
+          for (const key of acceptedSubmissionTokens.current.keys()) {
+            if (key.startsWith(`${event.computerId}:`)) acceptedSubmissionTokens.current.delete(key)
           }
           computersRef.current = computersRef.current.filter(
             (computer) => computer.id !== event.computerId,
@@ -8749,7 +8787,7 @@ function App() {
       }
       socket?.close()
     }
-  }, [])
+  }, [upsertSession])
 
   const latestContent = selected?.messages.at(-1)?.content
   useEffect(() => {
@@ -8874,16 +8912,15 @@ function App() {
    * under it. Forgetting it was handled lets the next pass hand it back.
    */
   function failureStampFor(key: string): string | undefined {
-    const current = selectedRef.current
-    return current && sessionKey(current) === key
-      ? current.failedPrompt?.failedAt || current.failedPrompt?.content
-      : undefined
+    const current = sessionsRef.current.find((session) =>
+      sessionKey(session) === followReplacementsRef.current(key),
+    )
+    return current?.failedPrompt?.failedAt || current?.failedPrompt?.content
   }
 
   function reofferFailedPrompt(key: string) {
-    const current = selectedRef.current
-    const failed =
-      current && sessionKey(current) === key ? current.failedPrompt : undefined
+    key = followReplacementsRef.current(key)
+    const failed = sessionsRef.current.find((session) => sessionKey(session) === key)?.failedPrompt
     if (!failed?.content) {
       return
     }
@@ -8897,14 +8934,14 @@ function App() {
 
   function restoreFailedPrompt(key: string, content: string, failedAt?: string) {
     const stamp = failedAt || content
-    if (handledFailures.current.get(key) === stamp) {
+    if (handledFailures.current.get(key) === stamp || acceptedSubmissionTokens.current.get(key)?.has(stamp)) {
       return
     }
     // Sending empties the composer before the request is answered, so an
     // empty composer during one is no evidence that nothing newer was
     // written. The server clears the marker when that send is accepted, which
     // is what settles the question; nothing here compares the two clocks.
-    if (submissionsInFlight.current.has(key)) {
+    if (submissionInFlight(key)) {
       // Kept rather than dropped: if that submission then fails, nothing else
       // comes back to this, and the text would stay invisible while its
       // marker holds the queue.
@@ -8945,6 +8982,12 @@ function App() {
     })
   }
 
+  function submissionInFlight(key: string): boolean {
+    return [...submissionsInFlight.current].some((submittedKey) =>
+      followReplacementsRef.current(submittedKey) === key,
+    )
+  }
+
   // A browser that was not listening when the send failed learns about it from
   // the session itself. The event covers the connected case; this covers the
   // reconnect, and doing both means neither has to be relied on alone.
@@ -8953,13 +8996,23 @@ function App() {
       const key = sessionKey(session)
       const failed = session.failedPrompt
       const stamped = failed?.failedAt || failed?.content || ''
+      if (submissionInFlight(key)) {
+        if (failed?.content) unshownFailures.current.set(key, { content: failed.content, stamp: stamped })
+        continue
+      }
+      if (acceptedSubmissionTokens.current.get(key)?.has(stamped)) continue
+      const protectedDraft = Boolean(
+        composerDrafts[key] &&
+        failedSubmissionBindings.current[key] === restoredDraftStamps.current[key] &&
+        failedSubmissionBindings.current[key] !== undefined,
+      )
       if (failed?.content) {
         // A different failure from the one this client is holding. The one it
         // was handed has been answered by somebody, and leaving that text on
         // screen has an offline tab resending it when it comes back.
         const held = restoredDraftStamps.current[key]
         const stamp = failed.failedAt || failed.content
-        if (held !== undefined && held !== stamp) {
+        if (held !== undefined && held !== stamp && !protectedDraft) {
           const handed = restoredDraftContents.current[key]
           if (handed !== undefined) {
             updateComposerDrafts([], (current) =>
@@ -8995,6 +9048,10 @@ function App() {
         }
         continue
       }
+      acceptedSubmissionTokens.current.delete(key)
+      // A failed request's draft must keep its token even if a newer snapshot
+      // no longer offers it. Otherwise the next retry becomes an anonymous send.
+      if (protectedDraft) continue
       // Gone, so somebody has answered for it -- another tab, another device,
       // or this one. What was remembered about it here goes with it, or a
       // submission from this client would carry a token for a failure that no
@@ -9021,7 +9078,7 @@ function App() {
       unshownFailures.current.delete(key)
       forgetRestoredDraft(key)
     }
-  }, [sessions])
+  }, [sessions, sending, composerDrafts])
 
   // A failure that had to wait is offered again as soon as the composer it
   // was meant for is free. Without this it stayed invisible while its marker
@@ -9036,7 +9093,7 @@ function App() {
     }
   }, [composerDrafts])
 
-  function rememberRestoredDraft(key: string, stamp: string, content: string) {
+  function rememberRestoredDraft(key: string, stamp: string, content: string, submitted = false) {
     restoredDraftStamps.current = {
       ...restoredDraftStamps.current,
       [key]: stamp,
@@ -9053,10 +9110,14 @@ function App() {
       'agentic-remote:composer-draft-recovered',
       JSON.stringify(restoredDraftContents.current),
     )
+    if (submitted) {
+      failedSubmissionBindings.current = { ...failedSubmissionBindings.current, [key]: stamp }
+      writeStored('agentic-remote:composer-submission-failures', JSON.stringify(failedSubmissionBindings.current))
+    }
   }
 
   function forgetRestoredDraft(key: string) {
-    if (!(key in restoredDraftStamps.current)) {
+    if (!(key in restoredDraftStamps.current) && !(key in failedSubmissionBindings.current)) {
       return
     }
     const { [key]: _stamp, ...remainingStamps } = restoredDraftStamps.current
@@ -9064,6 +9125,8 @@ function App() {
       restoredDraftContents.current
     restoredDraftStamps.current = remainingStamps
     restoredDraftContents.current = remainingContents
+    const { [key]: _submission, ...remainingSubmissions } = failedSubmissionBindings.current
+    failedSubmissionBindings.current = remainingSubmissions
     writeStored(
       'agentic-remote:composer-draft-failures',
       JSON.stringify(remainingStamps),
@@ -9072,6 +9135,7 @@ function App() {
       'agentic-remote:composer-draft-recovered',
       JSON.stringify(remainingContents),
     )
+    writeStored('agentic-remote:composer-submission-failures', JSON.stringify(remainingSubmissions))
   }
 
   /** Carries a recovery's identity to the session that replaced it. */
@@ -9081,8 +9145,9 @@ function App() {
       return
     }
     const content = restoredDraftContents.current[fromKey]
+    const submitted = failedSubmissionBindings.current[fromKey] === stamp
     forgetRestoredDraft(fromKey)
-    rememberRestoredDraft(toKey, stamp, content ?? '')
+    rememberRestoredDraft(toKey, stamp, content ?? '', submitted)
     const handled = handledFailures.current.get(fromKey)
     const restored = restoredFailures.current.get(fromKey)
     const unshown = unshownFailures.current.get(fromKey)
@@ -9119,6 +9184,11 @@ function App() {
     // during that wait leaves it naming a session that is gone, and writing
     // there puts the text somewhere nothing will look for it again.
     const targetKey = followReplacementsRef.current(rawTargetKey)
+    if (!value && !fromHistory && !submissionInFlight(targetKey)) {
+      forgetRestoredDraft(targetKey)
+      handledFailures.current.delete(targetKey)
+      restoredFailures.current.delete(targetKey)
+    }
     updateComposerDrafts(fromHistory ? [] : [targetKey], (current) => {
       if (!value) {
         const { [targetKey]: _removed, ...remaining } = current
@@ -9354,6 +9424,13 @@ function App() {
     // identity, could not clear the marker the replacement still carries, and
     // the prompt it was answering came back.
     moveRestoredDraft(fromKey, toKey)
+    const accepted = acceptedSubmissionTokens.current.get(fromKey)
+    if (accepted) {
+      acceptedSubmissionTokens.current.set(toKey, new Set([
+        ...(acceptedSubmissionTokens.current.get(toKey) ?? []), ...accepted,
+      ]))
+      acceptedSubmissionTokens.current.delete(fromKey)
+    }
     moveKnowledgePosition(fromKey, toKey)
     // The ref is moved on here rather than left to the effect that refreshes
     // it. Two clears in a row -- A to B, then B to C, both arriving before that
@@ -10113,6 +10190,7 @@ function App() {
     // reply arriving -- all happened somewhere off screen.
     followLatest()
     const targetKey = sessionKey(selected)
+    const submittedRecoveryToken = restoredFailures.current.get(targetKey) ?? restoredDraftStamps.current[targetKey]
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
     // sent. The mark is cleared once the request settles.
@@ -10191,49 +10269,88 @@ function App() {
     // can tell that one from a failure it has not answered.
     let acknowledgedStamp: string | undefined
     try {
-      const updated = isCommand
+      const response = isCommand
         ? await executeCommand(selected.computerId, selected.id, {
             // A restored prompt can be a slash command, and it answers the
             // failure just as a message does.
-            acknowledgesFailure: restoredFailures.current.get(targetKey),
+            acknowledgesFailure: submittedRecoveryToken,
             command: content,
             enqueue: shouldEnqueue,
           })
         : await sendMessage(selected.computerId, selected.id, {
             // Whatever they were handed back is answered by this, whether
             // they sent it as it was, edited it, or replaced it outright.
-            acknowledgesFailure: restoredFailures.current.get(targetKey),
+            acknowledgesFailure: submittedRecoveryToken,
             content,
             enqueue: shouldEnqueue,
           })
-      const acknowledged = restoredFailures.current.get(targetKey)
+      const updated = currentSessionResponse(response)
+      const resultKey = followReplacementsRef.current(targetKey)
+      const acknowledged = submittedRecoveryToken
       acknowledgedStamp = acknowledged
-      restoredFailures.current.delete(targetKey)
-      forgetRestoredDraft(targetKey)
+      if (restoredDraftStamps.current[resultKey] === acknowledged) {
+        restoredFailures.current.delete(resultKey)
+        forgetRestoredDraft(resultKey)
+      }
       // Only the failure this send was answering. A prompt that failed while
       // this one was in flight was held back precisely because the composer
       // was busy, and this answer is older than it: the session rejects the
       // stale record, so dropping the deferred text here left it invisible
       // for good, with the marker on the server still holding the queue.
-      const deferred = unshownFailures.current.get(targetKey)
-      if (!deferred || deferred.stamp === acknowledged) {
-        unshownFailures.current.delete(targetKey)
+      const deferred = unshownFailures.current.get(resultKey)
+      if (!deferred || deferred.stamp === acknowledged || deferred.stamp !== updated.failedPrompt?.failedAt) {
+        unshownFailures.current.delete(resultKey)
       }
-      setSessions((current) => upsertSession(current, updated))
+      if (!removedSessions.current.has(sessionKey(updated))) {
+        sessionsRef.current = upsertSession(sessionsRef.current, updated)
+        setSessions((current) => upsertSession(current, updated))
+      }
     } catch (caught) {
-      prependComposerForKey(targetKey, content)
-      setError(caught instanceof Error ? caught.message : String(caught))
+      const resultKey = followReplacementsRef.current(targetKey)
+      const receipt = submissionReceiptFromError(caught)
+      const awaitingReplacement = receipt && receipt.sessionId !== selected.id && resultKey === targetKey &&
+        !removedSessions.current.has(`${selected.computerId}:${receipt.sessionId}`)
+      if (!removedSessions.current.has(resultKey) || clearingSessions.current.has(resultKey) || awaitingReplacement) {
+        if (receipt?.accepted) {
+          acknowledgedStamp = submittedRecoveryToken
+          const tokens = acceptedSubmissionTokens.current.get(resultKey) ?? new Set<string>()
+          if (submittedRecoveryToken) tokens.add(submittedRecoveryToken)
+          if (receipt.failedAt) tokens.add(receipt.failedAt)
+          acceptedSubmissionTokens.current.set(resultKey, tokens)
+          const held = restoredDraftStamps.current[resultKey]
+          if (held && tokens.has(held)) {
+            forgetRestoredDraft(resultKey)
+            restoredFailures.current.delete(resultKey)
+          }
+          const deferred = unshownFailures.current.get(resultKey)
+          if (deferred && tokens.has(deferred.stamp)) unshownFailures.current.delete(resultKey)
+          if (receipt.failedAt) warnedUncertain.current.set(resultKey, receipt.failedAt)
+        } else {
+          const token = receipt?.failedAt ?? submittedRecoveryToken
+          if (token) {
+            rememberRestoredDraft(resultKey, token, content, true)
+            handledFailures.current.set(resultKey, token)
+            restoredFailures.current.set(resultKey, token)
+            if (unshownFailures.current.get(resultKey)?.stamp === token) unshownFailures.current.delete(resultKey)
+          }
+          prependComposerForKey(resultKey, content)
+        }
+        if (selectedRef.current && sessionKey(selectedRef.current) === resultKey) {
+          setError(caught instanceof Error ? caught.message : String(caught))
+        }
+      }
     } finally {
+      const resultKey = followReplacementsRef.current(targetKey)
       settleSubmission()
       setSending(false)
       // The composer is free again, so anything held back while it was busy
       // is offered now. Waiting for the next draft change left a failure
       // holding the queue with nothing on screen to answer it.
-      const stillDeferred = unshownFailures.current.get(targetKey)
+      const stillDeferred = unshownFailures.current.get(resultKey)
       if (stillDeferred) {
-        handledFailures.current.delete(targetKey)
+        handledFailures.current.delete(resultKey)
         restoreFailedPromptRef.current(
-          targetKey,
+          resultKey,
           stillDeferred.content,
           stillDeferred.stamp,
         )
@@ -10244,11 +10361,11 @@ function App() {
         // never arrives at all -- so offering whatever it still shows put the
         // prompt that was just sent back in the composer, ready to go twice.
         acknowledgedStamp === undefined ||
-        failureStampFor(targetKey) !== acknowledgedStamp
+        failureStampFor(resultKey) !== acknowledgedStamp
       ) {
-        reofferFailedPrompt(targetKey)
+        reofferFailedPrompt(resultKey)
       }
-      focusComposer(targetKey)
+      focusComposer(resultKey)
     }
   }
 
@@ -10539,7 +10656,7 @@ function App() {
       // speak for it or for what it became. Written before the list is
       // touched, and into the ref as well, so a snapshot already in flight
       // cannot put it back or drop a replacement it has never heard of.
-      eventSequenceRef.current += 1
+      eventSequenceRef.current = nextSessionEventSequence()
       sessionEventSequenceRef.current.set(targetKey, eventSequenceRef.current)
       sessionEventSequenceRef.current.set(clearedKey, eventSequenceRef.current)
       const retire = (sessions: ManagedSession[]) => {
@@ -12057,14 +12174,14 @@ function App() {
           // one that says so. Without this the mark set when it was removed
           // would outlive it and go on discarding its answers.
           forgottenComputers.current.delete(computer.id)
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
           computersRef.current = upsertComputer(computersRef.current, computer)
           setComputers(computersRef.current)
         }}
         onClose={() => setComputersOpen(false)}
         onRemoved={(computerId) => {
-          eventSequenceRef.current += 1
+          eventSequenceRef.current = nextSessionEventSequence()
           computerEventSequenceRef.current.set(computerId, eventSequenceRef.current)
           computersRef.current = computersRef.current.filter(
             (computer) => computer.id !== computerId,

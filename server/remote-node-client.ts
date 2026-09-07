@@ -26,6 +26,7 @@ import type {
 } from '../shared/contracts.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
+import { parseSubmissionReceipt, SubmissionError, type SubmissionReceipt } from '../shared/submission-error.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -43,12 +44,13 @@ interface RemoteNodeClientEvents {
   status: [online: boolean]
 }
 
-class RemoteNodeRequestError extends Error {
+class RemoteNodeRequestError extends SubmissionError {
   constructor(
     message: string,
-    readonly statusCode: number,
+    statusCode: number,
+    submission?: SubmissionReceipt,
   ) {
-    super(message)
+    super(message, statusCode, submission)
     this.name = 'RemoteNodeRequestError'
   }
 }
@@ -570,11 +572,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     }
     if (!response.ok) {
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string }
+        | { error?: string; submission?: unknown }
         | null
       throw new RemoteNodeRequestError(
         payload?.error || `${this.computer.name} request failed (${response.status})`,
         response.status,
+        parseSubmissionReceipt(payload?.submission),
       )
     }
     if (markOnline) {

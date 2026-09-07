@@ -105,6 +105,7 @@ async function fixture(ids = ['pending']) {
       return { sessionName: 'fixture', windowId: '@1' }
     }),
     send: vi.fn(async () => true),
+    capture: vi.fn<NonNullable<TerminalSessionController['capture']>>(async () => undefined),
     cancel: vi.fn(async () => true),
     stop: vi.fn<NonNullable<TerminalSessionController['stop']>>(async (id, beforeStop) => {
       const error = ownership.probeErrors.get(id)
@@ -147,6 +148,11 @@ async function fixture(ids = ['pending']) {
     directory, stateDirectory, store, client, service, terminal, active, stopper,
     ownership, events, readEvents, eventVersion,
     holdProbe,
+    drainNow: async (id = 'pending') => {
+      const retry = service['pendingTerminalQueueClaims'].get(id)
+      if (retry) retry.retryAt = 0
+      await service['drainTerminalQueue'](id)
+    },
     blockWrites: () => mkdir(blockedWrite),
     unblockWrites: () => rm(blockedWrite, { recursive: true, force: true }),
     persisted: async () => JSON.parse(await readFile(path.join(stateDirectory, 'state.json'), 'utf8')),
@@ -170,10 +176,244 @@ afterEach(async () => {
   }
 })
 
-describe('Deferred terminal ownership recovery', () => {
-  it('retries an indeterminate per-session probe after aggregate discovery recovers', async () => {
+describe('PR167 reviewed-parent composition', () => {
+  const emptyComposer = ['Synthetic idle owner', '╻▄▄▄▄▄▄▄▄▄▄', '┃ ', '╹▀▀▀▀▀▀▀▀▀▀', ' / commands'].join('\n')
+
+  it('starts with native queued demand while aggregate discovery is indeterminate', async () => {
     const f = await fixture()
-    await f.store.enqueuePrompt('pending', prompt('Retain the queue'))
+    await f.store.enqueuePrompt('pending', prompt('Persisted native work'))
+    const retained = f.store.get('pending')!
+    f.terminal.capture.mockResolvedValue(emptyComposer)
+    await expect(f.service.start()).resolves.toBeUndefined()
+
+    expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
+    expect(f.terminal.has).not.toHaveBeenCalled()
+    expect(f.terminal.capture).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    await expect(f.service.openSession('pending')).resolves.toMatchObject({
+      isOpen: true, messages: retained.messages, queuedPrompts: retained.queuedPrompts,
+    })
+    expect((await f.persisted()).sessions.pending.managedOpen).toBe(true)
+    await expect(f.service.activateSession('pending')).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('does not create or force open an absent owner merely because startup work is queued', async () => {
+    const f = await fixture()
+    await f.store.enqueuePrompt('pending', prompt('Wait for a positive owner'))
+    f.ownership.aggregateError = undefined
+    f.terminal.capture.mockResolvedValue(emptyComposer)
+    await f.service.start()
+    await f.service.refreshDiscovery()
+    await f.drainNow()
+
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')).toMatchObject({ isOpen: false, queuedCount: 1 })
+    await expect(f.service.openSession('pending')).resolves.toMatchObject({
+      isOpen: false, queuedPrompts: [prompt('Wait for a positive owner')],
+    })
+    expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
+    expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
+    await expect(f.service.activateSession('pending')).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('does not let the new queue pump bypass a still-deferred per-session probe', async () => {
+    const f = await fixture()
+    await f.store.enqueuePrompt('pending', prompt('Deliver after recovery settles'))
+    await f.service.start()
+    f.ownership.aggregateError = undefined
+    f.ownership.owners.add('pending')
+    f.ownership.probeErrors.set('pending', new Error('Ownership unreadable'))
+    f.terminal.capture.mockResolvedValue(emptyComposer)
+    await f.service.refreshDiscovery()
+    f.ownership.probeErrors.clear()
+    const probed = f.terminal.has.mock.calls.length
+
+    await f.drainNow()
+    expect(f.terminal.has).toHaveBeenCalledTimes(probed)
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')?.queuedCount).toBe(1)
+    expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
+
+    await f.service.refreshDiscovery()
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('pending', 'Deliver after recovery settles', false)
+    expect(f.store.get('pending')?.queuedCount).toBe(0)
+    await f.service.refreshDiscovery()
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledOnce()
+    expect(f.terminal.create).not.toHaveBeenCalled()
+  })
+
+  it('continues a healthy startup FIFO while the other queued identity remains deferred', async () => {
+    const f = await fixture(['pending', 'healthy'])
+    await f.store.enqueuePrompt('pending', prompt('Wait for ownership'))
+    await f.store.enqueuePrompt('healthy', prompt('Healthy queued work'))
+    await f.service.start()
+    f.ownership.aggregateError = undefined
+    f.ownership.owners.add('healthy')
+    f.ownership.probeErrors.set('pending', new Error('Ownership unreadable'))
+    f.terminal.capture.mockResolvedValue(emptyComposer)
+    await f.service.refreshDiscovery()
+    await f.drainNow('healthy')
+
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('healthy', 'Healthy queued work', false)
+    expect(f.store.get('pending')).toMatchObject({ isOpen: true, queuedCount: 1 })
+    expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
+    await expect(f.service.activateSession('healthy')).resolves.toMatchObject({ isOpen: true })
+    await expect(f.service.activateSession('pending')).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.client.resumeSession).not.toHaveBeenCalled()
+  })
+
+  it('joins late ownership recovery to the parent Clear admission and transcript boundary', async () => {
+    const f = await fixture()
+    await f.store.enqueuePrompt('pending', prompt('Retain through failed Clear'))
+    await f.service.start()
+    f.ownership.aggregateError = undefined
+    const probe = f.holdProbe()
+    const refreshing = f.service.refreshDiscovery()
+    await probe.entered
+    expect.soft(f.service['admissions'].protectsTranscript('pending')).toBe(true)
+    const clearing = f.service.clearConversation('pending')
+    const refused = expect(clearing).rejects.toMatchObject({ statusCode: 409 })
+    expect(f.service['admissions'].canEnter('pending')).toBe(false)
+    probe.fail(new Error('Ownership still unreadable'))
+    await Promise.all([refreshing, refused])
+
+    expect(f.service['admissions'].canEnter('pending')).toBe(true)
+    expect(f.service['admissions'].protectsTranscript('pending')).toBe(false)
+    expect(f.store.get('pending')).toMatchObject({ isOpen: true, queuedCount: 1 })
+    expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    f.ownership.owners.add('pending')
+    f.terminal.capture.mockResolvedValue(emptyComposer)
+    await f.service.refreshDiscovery()
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('pending', 'Retain through failed Clear', false)
+  })
+
+  it('keeps original startup intent when suspension is refused during a deferred queue wake', async () => {
+    const f = await fixture()
+    await f.store.enqueuePrompt('pending', prompt('Keep original startup intent'))
+    await f.service.start()
+    const entered = gate(undefined)
+    const release = gate(undefined)
+    const read = f.store.readAfterWrites.bind(f.store)
+    vi.spyOn(f.store, 'readAfterWrites').mockImplementationOnce(async (...args) => {
+      entered.finish(undefined)
+      await release.pending
+      return read(...args)
+    })
+    const suspension = expect(f.service.suspendSession('pending')).rejects.toMatchObject({ statusCode: 409 })
+    await entered.pending
+    expect(f.service['suspendingSessions'].has('pending')).toBe(true)
+    await f.drainNow()
+    release.finish(undefined)
+    await suspension
+    expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
+    expect(f.store.get('pending')?.suspended).not.toBe(true)
+    expect(f.terminal.send).not.toHaveBeenCalled()
+  })
+
+  it('does not turn dropped uncertain startup demand into permission to create a missing owner', async () => {
+    const f = await fixture()
+    await f.store.enqueuePrompt('pending', prompt('Held behind uncertain recovery'))
+    await f.service.start()
+    await f.store.update('pending', (session) => {
+      session.failedPrompt = { content: 'An uncertain attempt', failedAt: timestamp, uncertain: true }
+    })
+    await f.drainNow()
+    expect(f.service['startupTerminalQueues'].has('pending')).toBe(false)
+    f.ownership.aggregateError = undefined
+    await f.service.refreshDiscovery()
+    await f.drainNow()
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    expect(f.store.get('pending')).toMatchObject({
+      isOpen: false, queuedCount: 1,
+      failedPrompt: { content: 'An uncertain attempt', uncertain: true },
+    })
+    expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
+  })
+
+  it.each(['stop', 'delete'] as const)(
+    'retains lifecycle safety for %s during deferred recovery with native queue demand',
+    async (operation) => {
+      const f = await fixture()
+      await f.store.enqueuePrompt('pending', prompt('Do not cross teardown'))
+      await f.service.start()
+      f.ownership.aggregateError = undefined
+      const probe = f.holdProbe()
+      const refreshing = f.service.refreshDiscovery()
+      await probe.entered
+      const changing = operation === 'stop'
+        ? f.service.stop()
+        : f.service.deleteSession('pending')
+      probe.fail(new Error('Ownership unreadable'))
+      await Promise.all([refreshing, changing])
+      expect(f.terminal.create).not.toHaveBeenCalled()
+      expect(f.terminal.send).not.toHaveBeenCalled()
+      expect(f.client.resumeSession).not.toHaveBeenCalled()
+      if (operation === 'delete') {
+        await f.service.refreshDiscovery()
+        expect(f.store.get('pending')).toBeUndefined()
+        expect(f.service['startupTerminalQueues'].has('pending')).toBe(false)
+      } else {
+        const stored = (await f.persisted()).sessions.pending
+        expect(stored.managedOpen).toBe(true)
+        expect(stored.queuedPrompts).toEqual([prompt('Do not cross teardown')])
+      }
+    },
+  )
+
+  it('restores accepted recovery ownership before deferred startup queue cleanup can drop its intent', async () => {
+    const f = await fixture()
+    const accepted = 'Already delivered before restart'
+    const token = `resend:${randomUUID()}`
+    const failed = { content: accepted, failedAt: timestamp, uncertain: true }
+    await f.store.enqueuePrompt('pending', prompt('FIFO behind accepted recovery'))
+    await f.store.update('pending', (session) => { session.failedPrompt = failed })
+    await f.store.claimFailedPrompt('pending', failed, accepted, token)
+    await f.store.acceptRecoveryResend('pending', token)
+    const entered = gate(undefined)
+    const acknowledgement = gate(undefined)
+    const clear = f.store.clearFailedPrompt.bind(f.store)
+    vi.spyOn(f.store, 'clearFailedPrompt').mockImplementationOnce(async (...args) => {
+      entered.finish(undefined)
+      await acknowledgement.pending
+      return clear(...args)
+    })
+    f.terminal.capture.mockResolvedValue(emptyComposer)
+    await f.service.start()
+    await entered.pending
+    expect(f.service.getSession('pending')?.failedPrompt).toBeUndefined()
+    expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
+    await f.drainNow()
+    expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
+    expect(f.store.recoveryResend('pending')?.accepted).toBe(true)
+    expect(f.terminal.send).not.toHaveBeenCalled()
+
+    acknowledgement.finish(undefined)
+    await vi.waitFor(() => { expect(f.store.get('pending')?.failedPrompt).toBeUndefined() })
+    expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
+    expect(f.terminal.send).not.toHaveBeenCalled()
+    f.ownership.aggregateError = undefined
+    f.ownership.owners.add('pending')
+    await f.service.refreshDiscovery()
+    await f.drainNow()
+    expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('pending', 'FIFO behind accepted recovery', false)
+    expect(f.terminal.create).not.toHaveBeenCalled()
+  })
+})
+
+describe('Deferred terminal ownership recovery', () => {
+  it.each([false, true])('retries an indeterminate per-session probe after aggregate discovery recovers (queued: %s)', async (queued) => {
+    const f = await fixture()
+    if (queued) await f.store.enqueuePrompt('pending', prompt('Retain the queue'))
     await f.service.start()
     const retained = f.store.get('pending')!
     f.ownership.aggregateError = undefined
@@ -207,12 +447,20 @@ describe('Deferred terminal ownership recovery', () => {
     await expect(f.service.listCommands('pending')).rejects.toThrow(/discovery/)
     expect(f.client.resumeSession).not.toHaveBeenCalled()
     await f.service.refreshDiscovery()
-    expect(f.terminal.create).toHaveBeenCalledExactlyOnceWith(
-      'pending', f.directory, 'pending', false, retained.runtime,
-    )
+    if (queued) {
+      expect(f.terminal.create).not.toHaveBeenCalled()
+      expect(f.store.get('pending')?.isOpen).toBe(false)
+      expect(f.store.shouldRecoverTerminalSession('pending')).toBe(true)
+      f.ownership.owners.add('pending')
+      await f.service.refreshDiscovery()
+    } else {
+      expect(f.terminal.create).toHaveBeenCalledExactlyOnceWith(
+        'pending', f.directory, 'pending', false, retained.runtime,
+      )
+    }
     await expect(f.service.activateSession('pending')).resolves.toMatchObject({ isOpen: true })
     await f.service.refreshDiscovery()
-    expect(f.terminal.create).toHaveBeenCalledOnce()
+    expect(f.terminal.create).toHaveBeenCalledTimes(queued ? 0 : 1)
     expect(f.client.resumeSession).not.toHaveBeenCalled()
   })
 
@@ -240,7 +488,11 @@ describe('Deferred terminal ownership recovery', () => {
     )
     fixtures.find((entry) => entry.service === f.service)!.service = restarted
     await restarted.start()
-    expect(f.terminal.create).toHaveBeenCalledOnce()
+    expect(f.terminal.create).not.toHaveBeenCalled()
+    expect(restartedStore.shouldRecoverTerminalSession('pending')).toBe(true)
+    await expect(restarted.activateSession('pending')).rejects.toMatchObject({ statusCode: 409 })
+    f.ownership.owners.add('pending')
+    await restarted.refreshDiscovery()
     await expect(restarted.activateSession('pending')).resolves.toMatchObject({ isOpen: true })
   })
 

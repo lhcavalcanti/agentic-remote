@@ -98,12 +98,72 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-describe('Durable terminal queue claims', () => {
+describe('Durable queue claims', () => {
   async function ready() {
     const setup = await fixture()
     await setup.store.clearFailedPrompt('session')
     return setup
   }
+
+  it('keeps reserved SDK work in FIFO until its complete turn record is durable', async () => {
+    const { store, directory, contents } = await ready()
+    const { reservation } = await store.reserveQueuedPrompt('session', () => true)
+    expect(reservation?.prompt).toEqual(prompt('first'))
+    expect(store.get('session')).not.toHaveProperty('queuedPromptReservation')
+    const before = store.get('session')
+    const gate = holdWrite()
+    const admission = store.beginPrompt('session', 'first', 'new-assistant', () => true, reservation)
+    const refused = expect(admission).rejects.toThrow('Admission write refused')
+    await gate.started
+    expect(store.get('session')).toEqual(before)
+    gate.fail(new Error('Admission write refused'))
+    await refused
+    expect(store.get('session')).toEqual(before)
+    const reloaded = new SessionStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.get('session')?.queuedPrompts).toEqual([prompt('first'), prompt('second')])
+    expect(reloaded.get('session')?.messages).toEqual(before?.messages)
+    const retry = await store.reserveQueuedPrompt('session', () => true)
+    vi.mocked(writeFile).mockClear()
+    const admitted = await store.beginPrompt('session', 'first', 'new-assistant', () => true, retry.reservation)
+    expect(writeFile).toHaveBeenCalledOnce()
+    expect(admitted).toMatchObject({ status: 'running', queuedCount: 1, queuedPrompts: [prompt('second')] })
+    expect(admitted.messages.slice(-2)).toEqual([
+      expect.objectContaining({ role: 'user', content: 'first' }),
+      expect.objectContaining({ id: 'new-assistant', role: 'assistant', streaming: true }),
+    ])
+    const persisted = JSON.parse(await contents()).sessions.session
+    expect(persisted.queuedPromptReservation).toBeUndefined()
+    expect(persisted.messages).toEqual(admitted.messages)
+    expect(persisted.queuedPrompts).toEqual([prompt('second')])
+  })
+
+  it.each(['edit', 'remove', 'reorder'] as const)('refuses a reserved SDK turn after a queue %s', async (change) => {
+    const { store } = await ready()
+    const { reservation } = await store.reserveQueuedPrompt('session', () => true)
+    await store.update('session', (session) => {
+      if (change === 'edit') session.queuedPrompts![0].content = 'Edited by another reader'
+      if (change === 'remove') session.queuedPrompts!.shift()
+      if (change === 'reorder') session.queuedPrompts!.reverse()
+      session.queuedCount = session.queuedPrompts!.length
+    })
+    const before = store.get('session')
+    await expect(store.beginPrompt('session', 'first', 'new-assistant', () => true, reservation))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(store.get('session')).toEqual(before)
+  })
+
+  it('lets only the current SDK reservation admit the matching FIFO head', async () => {
+    const { store } = await ready()
+    const old = await store.reserveQueuedPrompt('session', () => true)
+    const current = await store.reserveQueuedPrompt('session', () => true)
+    await expect(store.beginPrompt('session', 'first', 'old-assistant', () => true, old.reservation))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(store.get('session')?.queuedCount).toBe(2)
+    await store.beginPrompt('session', 'first', 'current-assistant', () => true, current.reservation)
+    expect(store.get('session')?.messages.some((message) => message.id === 'old-assistant')).toBe(false)
+    expect(store.get('session')?.queuedPrompts).toEqual([prompt('second')])
+  })
 
   it('keeps an unstamped legacy recovery visible', async () => {
     const { store, directory, contents } = await fixture()
@@ -358,12 +418,13 @@ describe('SessionStore durability', () => {
     expect(reloaded.get('replacement')?.title).toBe('Final committed title')
   })
 
-  it('checkpoints volatile text on close and refuses later live changes', async () => {
+  it('checkpoints volatile text on close and ignores later live changes', async () => {
     const { store, directory } = await fixture()
     store.setMessageContent('session', 'assistant', 'Stream received before closing')
     await store.close()
-    expect(() => store.setMessageContent('session', 'assistant', 'Too late'))
-      .toThrow('Session store is closed')
+    const closed = store.get('session')
+    store.setMessageContent('session', 'assistant', 'Too late')
+    expect(store.get('session')).toEqual(closed)
     const reloaded = new SessionStore(directory)
     await reloaded.initialize()
     expect(reloaded.get('session')?.messages[0].content)

@@ -118,6 +118,7 @@ export interface TerminalSessionController {
     enqueue: boolean,
     options?: TerminalSendOptions,
   ): Promise<boolean>
+  sendWhenIdle?(sessionId: string, content: string): Promise<boolean>
   cancel(sessionId: string): Promise<boolean>
   capture?(sessionId: string): Promise<string | undefined>
   canHandleStartupPrompt?(
@@ -1043,6 +1044,20 @@ export class TmuxTerminalSessionController
     enqueue: boolean,
     options: TerminalSendOptions = {},
   ): Promise<boolean> {
+    return this.sendInternal(sessionId, content, enqueue, false, options)
+  }
+
+  async sendWhenIdle(sessionId: string, content: string): Promise<boolean> {
+    return this.sendInternal(sessionId, content, false, true)
+  }
+
+  private async sendInternal(
+    sessionId: string,
+    content: string,
+    enqueue: boolean,
+    idleOnly: boolean,
+    options: TerminalSendOptions = {},
+  ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
       const readyOwner = this.inputReadySessions.get(sessionId)
       const automaticOwner = this.automaticStartupSessions.get(sessionId)
@@ -1169,10 +1184,14 @@ export class TmuxTerminalSessionController
           { statusCode: 409 },
         )
       }
+      if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
+        throw Object.assign(new Error('The terminal started working before queued delivery; nothing was sent'), { statusCode: 409 })
+      }
       const allowWorking =
-        enqueue ||
-        (options.allowDuringAgentExecution === true &&
-          /^\/\S/u.test(content.trimStart()))
+        !idleOnly &&
+        (enqueue ||
+          (options.allowDuringAgentExecution === true &&
+            /^\/\S/u.test(content.trimStart())))
       if (!terminalInputReady(paneBeforePaste, allowWorking)) {
         throw Object.assign(
           new Error(
@@ -1194,9 +1213,10 @@ export class TmuxTerminalSessionController
         '--',
         content,
       ])
+      // The paste can reach the pane even if its acknowledgement is lost.
+      // Preflight and buffer preparation above have not changed native input.
+      let pasteAcknowledged = false
       try {
-        // A paste can reach the server before its acknowledgement is lost.
-        // From this attempt onward, failure is not permission to resend.
         await execFileAsync('tmux', [
           'paste-buffer',
           '-p',
@@ -1206,14 +1226,21 @@ export class TmuxTerminalSessionController
           '-t',
           owner.target,
         ])
+        pasteAcknowledged = true
         return await this.finishSend(
           owner.target,
           content,
           confirmation,
           paneBeforePaste,
           enqueue,
+          idleOnly,
         )
       } catch (error) {
+        if (!pasteAcknowledged && error && typeof error === 'object' &&
+            'syscall' in error && typeof error.syscall === 'string' &&
+            /^spawn(?: |$)/.test(error.syscall)) {
+          throw error
+        }
         if (
           error &&
           typeof error === 'object' &&
@@ -1237,6 +1264,7 @@ export class TmuxTerminalSessionController
     confirmation: string,
     paneBeforePaste: string,
     enqueue: boolean,
+    idleOnly = false,
   ): Promise<boolean> {
       if (
         !(await waitForComposerPaste(
@@ -1302,6 +1330,12 @@ export class TmuxTerminalSessionController
         }
       }
       try {
+        if (idleOnly) {
+          const current = await capturePane(target)
+          if (isTerminalAgentWorking(current) || isTerminalOverlay(current)) {
+            throw new Error('The terminal changed before queued submission')
+          }
+        }
         await execFileAsync(
           'tmux',
           enqueue
@@ -1653,6 +1687,15 @@ export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   )
 }
 
+function desktopInstallPromptIdentity(pane: string): string | undefined {
+  if (!isTerminalDesktopInstallPrompt(pane)) return undefined
+  const lines = pane.split('\n')
+  const cleaned = lines.map(cleanDialogLine)
+  const prompt = cleaned.findLastIndex((line) => /^Install it now\?$/i.test(line))
+  const frame = activeBottomFrame(lines, prompt)
+  return frame ? cleaned.slice(frame.start, frame.end + 1).join('\n') : undefined
+}
+
 function hasComposerAfter(lines: string[], index: number): boolean {
   return lines.slice(index + 1).some((line) => COMPOSER_TOP.test(line))
 }
@@ -1791,7 +1834,19 @@ async function clearAutomaticStartupPrompts(
       // Agentic Remote already supplies the remote supervision UI. Opening a
       // browser to install a separate desktop app cannot help this headless
       // terminal and keeps the first real prompt from reaching the composer.
+      const identity = desktopInstallPromptIdentity(pane)
       await validateOwner()
+      const current = await capture()
+      if (
+        identity === undefined ||
+        hasTerminalCommandPermissionQuestion(current) ||
+        parseTerminalPermission(current) ||
+        parseTerminalUserInput(current) ||
+        parseTerminalFormPrompt(current) ||
+        desktopInstallPromptIdentity(current) !== identity
+      ) {
+        return
+      }
       await execFileAsync('tmux', ['send-keys', '-t', target, 'n'])
       await waitUntilClosed(isTerminalDesktopInstallPrompt)
     } else {
@@ -1960,6 +2015,7 @@ function hasLiveTerminalComposer(pane: string): boolean {
     (line) =>
       isTerminalChrome(line) ||
       isTerminalContextFooter(line) ||
+      /^\s*Changes\s+\+\d+\s+-\d+\s*$/u.test(line) ||
       /^\s*\/\s*commands(?:\s|$)/u.test(line) ||
       /\besc\s+interrupt\b/i.test(line) ||
       (/\/update\b/u.test(line) && /\b\d+\.\d+\.\d+[\w.-]*\s+available\b/i.test(line)),
@@ -2029,7 +2085,7 @@ export function isTerminalOverlay(pane: string): boolean {
 // The CLI only offers to interrupt while the agent is working, so this marks
 // the frames whose new lines belong to a turn rather than to a command.
 export function isTerminalAgentWorking(pane: string): boolean {
-  return /esc\s+interrupt/i.test(pane.trimEnd().split('\n').slice(-6).join(' '))
+  return /esc\s+interrupt/i.test(terminalControlLines(pane).slice(-6).join(' '))
 }
 
 /**

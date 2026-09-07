@@ -1979,10 +1979,14 @@ describe('AgentService deletion', () => {
         expect(store.get('terminal-owner')).toBeDefined()
         unavailable = false
         await service.refreshDiscovery()
-        expect(terminal.create).toHaveBeenCalledOnce()
+        expect(terminal.create).not.toHaveBeenCalled()
+        expect(store.get('terminal-owner')).toMatchObject({ isOpen: false, queuedCount: 1 })
+        expect(store.shouldRecoverTerminalSession('terminal-owner')).toBe(true)
+        live = true
+        await service.refreshDiscovery()
         expect(store.get('terminal-owner')).toMatchObject({ isOpen: true, queuedCount: 1 })
         await service.refreshDiscovery()
-        expect(terminal.create).toHaveBeenCalledOnce()
+        expect(terminal.create).not.toHaveBeenCalled()
         expect(client.resumedSessionIds).toEqual([])
       } finally {
         await service.stop()
@@ -2206,7 +2210,7 @@ describe('AgentService deletion', () => {
       // The state directory disappearing mid-prompt is what happens when a
       // write outlives its data directory; runPrompt persists from its own
       // completion and failure paths, and it is dispatched fire-and-forget.
-      vi.spyOn(store, 'update').mockRejectedValue(
+      vi.spyOn(store, 'updateIf').mockRejectedValue(
         new Error('state directory is gone'),
       )
       client.session.resolvePrompt()
@@ -2405,7 +2409,8 @@ describe('AgentService deletion', () => {
       wasFreeform: false,
     })
     expect(updated.pendingUserInput).toBeUndefined()
-    expect(updated.status).toBe('running')
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(updated.status).toBe('idle')
     await service.stop()
   })
 
@@ -2547,7 +2552,8 @@ describe('AgentService deletion', () => {
       content: values,
     })
     expect(updated.pendingUserInput).toBeUndefined()
-    expect(updated.status).toBe('running')
+    expect(service['activePrompts'].has(created.id)).toBe(false)
+    expect(updated.status).toBe('idle')
     await service.stop()
   })
 
@@ -4527,14 +4533,14 @@ describe('AgentService deletion', () => {
     // the prompt a second time.
     await expect(
       service.sendMessage(created.id, 'the one that failed', true, failedAt),
-    ).rejects.toThrow(/already been sent/)
+    ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been used') })
   })
 
   it.each([
     [true, false],
     [true, true],
     [false, false],
-  ] as const)('settles a recovered terminal resend according to uncertainty (%s, acknowledgement failure=%s)', async (uncertain, failAcknowledgement) => {
+  ] as const)('keeps a fresh recovery decision after an unresolved terminal resend (%s, acknowledgement failure=%s)', async (uncertain, failAcknowledgement) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-uncertain-recovery-'))
     directories.push(directory)
     const client = new FakeCopilotClient()
@@ -4566,21 +4572,23 @@ describe('AgentService deletion', () => {
       : undefined
     try {
       await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
-        .rejects.toBe(failure)
-      if (uncertain) {
-        if (!failAcknowledgement) {
-          expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
-        }
-        await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
-          .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been sent') })
-        expect(terminal.send).toHaveBeenCalledOnce()
-        acknowledgement?.mockRestore()
-        await vi.waitFor(() => expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined())
-      } else {
-        expect(service.store.get(client.session.sessionId)?.failedPrompt?.failedAt).toBe(failedAt)
-        await service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt)
-        expect(terminal.send).toHaveBeenCalledTimes(2)
-      }
+        .rejects.toMatchObject({ cause: failure, statusCode: 409, submission: { accepted: false } })
+      const recovery = service.store.get(client.session.sessionId)!.failedPrompt!
+      expect(recovery).toMatchObject({ content: 'Recovered prompt', uncertain: true })
+      expect(recovery.failedAt).not.toBe(failedAt)
+      await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, failedAt))
+        .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been used') })
+      expect(terminal.send).toHaveBeenCalledOnce()
+      if (acknowledgement) expect(acknowledgement).not.toHaveBeenCalled()
+      acknowledgement?.mockRestore()
+      await expect(service.sendMessage(client.session.sessionId, 'Recovered prompt', false, recovery.failedAt))
+        .rejects.toMatchObject({ statusCode: 409, submission: { accepted: false } })
+      expect(terminal.send).toHaveBeenCalledOnce()
+      const decision = service.store.get(client.session.sessionId)!.failedPrompt!.failedAt
+      expect(decision).not.toBe(recovery.failedAt)
+      await service.sendMessage(client.session.sessionId, 'Recovered prompt', false, decision)
+      expect(terminal.send).toHaveBeenCalledTimes(2)
+      expect(service.store.get(client.session.sessionId)?.failedPrompt).toBeUndefined()
     } finally {
       acknowledgement?.mockRestore()
       await service.stop()
@@ -4995,9 +5003,15 @@ describe('AgentService deletion', () => {
     ])
     let eventVersion: string | undefined = 'events-v0'
     let events: SessionEvent[] = []
+    const composer = '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580\n / commands'
+    let pane = composer
     const terminal = {
       has: vi.fn(async () => true),
-      send: vi.fn(async () => true),
+      send: vi.fn(async (_id: string, content: string) => {
+        if (content === '/usage') pane = ` \u25cf Usage ready\n${composer}`
+        return true
+      }),
+      capture: vi.fn(async () => pane),
       cancel: vi.fn(async () => true),
     }
     const service = new AgentService(
@@ -5724,7 +5738,7 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
-  it('keeps persisted terminal prompts ahead of a startup send', async () => {
+  async function startupFifoFixture(startup = true) {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-startup-fifo-'),
     )
@@ -5740,12 +5754,13 @@ describe('AgentService deletion', () => {
       ' ←/→ to choose · Enter to select · Y / N',
       ' ╰───────────────────────────────────────────────╯',
     ].join('\n')
-    let currentPane = startupPane
+    let currentPane = startup ? startupPane : '╻▄▄▄▄\n┃\n╹▀▀▀▀'
     const terminal = {
       has: vi.fn(async () => true),
       send: vi.fn(async () => true),
       cancel: vi.fn(async () => true),
       capture: vi.fn(async () => currentPane),
+      inputReady: vi.fn(async () => true),
       canHandleStartupPrompt: vi.fn(async () => true),
       resolveStartupPrompt: vi.fn(async () => {
         currentPane = '╻▄▄▄▄\n┃\n╹▀▀▀▀'
@@ -5769,32 +5784,140 @@ describe('AgentService deletion', () => {
       terminal,
     )
     await service.start()
-    await service.store.enqueuePrompt(client.session.sessionId, {
+    const sessionId = client.session.sessionId
+    const olderPrompt = {
       id: randomUUID(),
       content: 'Older queued prompt',
       createdAt: new Date().toISOString(),
-    })
-    await service.store.update(client.session.sessionId, (session) => {
+    }
+    await service.store.update(sessionId, (session) => {
       session.status = 'running'
     })
+    return {
+      service,
+      terminal,
+      sessionId,
+      olderPrompt,
+      enqueueOlder: () => service.store.enqueuePrompt(sessionId, olderPrompt),
+      persisted: async () => JSON.parse(
+        await readFile(path.join(directory, 'state', 'state.json'), 'utf8'),
+      ).sessions[sessionId],
+    }
+  }
 
-    await service.sendMessage(
-      client.session.sessionId,
-      'New startup prompt',
-      true,
-    )
+  it.each([
+    { enqueue: true, arrival: 'before', startup: true },
+    { enqueue: false, arrival: 'before', startup: true },
+    { enqueue: false, arrival: 'owner-detection', startup: true },
+    { enqueue: false, arrival: 'startup-resolution', startup: true },
+    { enqueue: false, arrival: 'input-readiness', startup: true },
+    { enqueue: false, arrival: 'before', startup: false },
+    { enqueue: false, arrival: 'owner-detection', startup: false },
+    { enqueue: false, arrival: 'empty', startup: true },
+    { enqueue: false, arrival: 'empty', startup: false },
+    { enqueue: true, arrival: 'startup-resolution', startup: true },
+  ])('keeps persisted terminal prompts ahead of a startup send (enqueue=$enqueue, arrival=$arrival, startup=$startup)', async ({ enqueue, arrival, startup }) => {
+    const context = await startupFifoFixture(startup)
+    const { service, terminal, sessionId, enqueueOlder, persisted } = context
+    try {
+      if (arrival === 'before') {
+        await enqueueOlder()
+      } else if (arrival === 'owner-detection') {
+        terminal.has.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return true
+        })
+      } else if (arrival === 'startup-resolution') {
+        const resolve = terminal.resolveStartupPrompt.getMockImplementation()!
+        terminal.resolveStartupPrompt.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return resolve()
+        })
+      } else if (arrival === 'input-readiness') {
+        terminal.inputReady.mockImplementationOnce(async () => {
+          await enqueueOlder()
+          return true
+        })
+      }
+      const send = service.sendMessage(sessionId, 'New startup prompt', enqueue)
+      if (arrival !== 'empty' && !enqueue) {
+        await expect(send).rejects.toMatchObject({
+          statusCode: 409,
+          message: expect.stringContaining('queue'),
+        })
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect((await persisted()).queuedPrompts).toEqual([context.olderPrompt])
+      } else {
+        await send
+        expect(terminal.send).toHaveBeenCalledExactlyOnceWith(
+          sessionId,
+          arrival === 'empty' ? 'New startup prompt' : 'Older queued prompt',
+          false,
+        )
+        expect(((await persisted()).queuedPrompts ?? []).map((prompt: { content: string }) => prompt.content))
+          .toEqual(arrival === 'empty' ? [] : ['New startup prompt'])
+      }
+      expect(terminal.resolveStartupPrompt).toHaveBeenCalledTimes(startup ? 1 : 0)
+    } finally {
+      await service.stop()
+    }
+  })
 
-    expect(terminal.send).toHaveBeenCalledWith(
-      client.session.sessionId,
-      'Older queued prompt',
-      false,
-    )
-    expect(
-      service.store
-        .get(client.session.sessionId)
-        ?.queuedPrompts?.map((prompt) => prompt.content),
-    ).toEqual(['New startup prompt'])
-    await service.stop()
+  it.each([
+    { startup: true, enqueue: false, recovery: 'acknowledged' },
+    { startup: false, enqueue: false, recovery: 'acknowledged' },
+    { startup: true, enqueue: true, recovery: 'acknowledged' },
+    { startup: false, enqueue: true, recovery: 'acknowledged' },
+    { startup: true, enqueue: false, recovery: 'unacknowledged' },
+    { startup: true, enqueue: false, recovery: 'replaced-during-detection' },
+  ])('preserves an earlier native recovery ahead of remaining FIFO (startup=$startup, enqueue=$enqueue, recovery=$recovery)', async ({ startup, enqueue, recovery }) => {
+    const { service, terminal, sessionId, olderPrompt, enqueueOlder, persisted } = await startupFifoFixture(startup)
+    const token = '2026-09-04T00:00:00.000Z'
+    const submitted = 'Earlier failed prompt'
+    try {
+      await enqueueOlder()
+      await service.store.update(sessionId, (session) => {
+        session.failedPrompt = { content: submitted, failedAt: token, uncertain: true }
+      })
+      if (recovery === 'replaced-during-detection') {
+        terminal.has.mockImplementationOnce(async () => {
+          await service.store.update(sessionId, (session) => {
+            session.failedPrompt = {
+              content: 'A newer failure', failedAt: 'newer-failure', uncertain: true,
+            }
+          })
+          return true
+        })
+      }
+      const send = service.sendMessage(
+        sessionId, submitted, enqueue, recovery === 'unacknowledged' ? undefined : token,
+      )
+      if (recovery !== 'acknowledged') {
+        await expect(send).rejects.toMatchObject({ statusCode: 409 })
+        expect(terminal.send).not.toHaveBeenCalled()
+        expect((await persisted()).queuedPrompts).toEqual([olderPrompt])
+        expect((await persisted()).failedPrompt.failedAt)
+          .toBe(recovery === 'unacknowledged' ? token : 'newer-failure')
+      } else {
+        await send
+        expect((await persisted()).failedPrompt).toBeUndefined()
+        if (!enqueue) {
+          expect(terminal.send).toHaveBeenCalledExactlyOnceWith(sessionId, submitted, false)
+          expect((await persisted()).queuedPrompts).toEqual([olderPrompt])
+        } else {
+          const queued = (await persisted()).queuedPrompts.map((prompt: { content: string }) => prompt.content)
+          if (startup) {
+            expect(terminal.send).toHaveBeenCalledExactlyOnceWith(sessionId, olderPrompt.content, false)
+            expect(queued).toEqual([submitted])
+          } else {
+            expect(terminal.send).not.toHaveBeenCalled()
+            expect(queued).toEqual([olderPrompt.content, submitted])
+          }
+        }
+      }
+    } finally {
+      await service.stop()
+    }
   })
 
   it('resolves owned startup before queueing a terminal command', async () => {
@@ -6506,7 +6629,6 @@ describe('AgentService deletion', () => {
     directories.push(directory)
     const client = new FakeCopilotClient()
     client.models = [configurableModel()]
-    let service: AgentService
     const terminal = {
       ownsStartupPrompt: vi.fn(() => true),
       has: vi.fn(async () => false),
@@ -6514,15 +6636,12 @@ describe('AgentService deletion', () => {
         if (content === '/plan') {
           return false
         }
-        ;(
-          service as unknown as { deliveredSends: Set<string> }
-        ).deliveredSends.add(client.session.sessionId)
-        throw new Error('state write failed')
+        return true
       }),
       cancel: vi.fn(async () => true),
       capture: vi.fn(async () => undefined),
     }
-    service = new AgentService(
+    const service = new AgentService(
       new SessionStore(path.join(directory, 'state')),
       client,
       async () => [
@@ -6542,6 +6661,8 @@ describe('AgentService deletion', () => {
     await service.store.update(client.session.sessionId, (session) => {
       session.status = 'idle'
     })
+    vi.spyOn(service.store, 'markTerminalPromptDispatched')
+      .mockRejectedValueOnce(new Error('state write failed'))
 
     await expect(
       service.executeCommand(client.session.sessionId, '/plan'),

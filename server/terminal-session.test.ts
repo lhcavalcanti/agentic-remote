@@ -3142,6 +3142,51 @@ describe('forms whose focused tab is marked', () => {
     })).toBe(false)
   })
 
+  it('matches a question the CLI wrapped through a long token', () => {
+    // The CLI wraps inside its own box. A URL has nowhere to break, so the
+    // line ends mid-token and the next one continues it with no space: the
+    // question cannot be rebuilt by joining the rows with spaces.
+    const question =
+      "Run the command below, then report what happened:\n\n" +
+      "curl -i --max-time 5 'http://10.0.0.181:54342/?key=5ef1638a24d8fa391e8cdc43c019d06d447e459c62bd935337e6115d208441b5'"
+    const rule = '\u2500'.repeat(80)
+    const pad = (line: string) => line.padEnd(80, ' ')
+    const pane = [
+      rule,
+      pad(' Copilot needs information.'),
+      pad(' Run the command below, then report what happened:'),
+      '',
+      // Filled to the edge of the box: the CLI had to break the URL here.
+      pad(" curl -i --max-time 5 'http://10.0.0.181:54342/?key=5ef1638a24d8fa391e8cdc43c01"),
+      pad(" 9d06d447e459c62bd935337e6115d208441b5'"),
+      '',
+      '  Device showing the browser error   Mac curl result',
+      '',
+      ' Device showing the browser error:',
+      ' \u276F Mac only',
+      '   Phone only',
+      '',
+      ' \u2191/\u2193 select \u00B7 enter accept \u00B7 tab next \u00B7 esc cancel',
+      rule,
+    ].join('\n')
+    const wrapped = {
+      question,
+      fields: ['Device showing the browser error', 'Mac curl result'],
+    }
+
+    expect(terminalFormShowsFields(pane, wrapped)).toBe(true)
+    expect(parseTerminalFormActiveField(pane, wrapped)).toBe(0)
+    // A break at the edge of a token cannot say whether the question had a
+    // space there, so both readings of the URL are accepted. A question that
+    // differs in its own words is still refused.
+    expect(
+      terminalFormShowsFields(pane, {
+        ...wrapped,
+        question: question.replace('report what happened', 'report the output'),
+      }),
+    ).toBe(false)
+  })
+
   it('keeps a title that is written in brackets of its own', () => {
     const pane = [
       ' Copilot needs information.',

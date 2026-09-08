@@ -1632,6 +1632,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     Promise<BackgroundTaskSnapshot>
   >()
   private readonly backgroundTaskResyncNeeded = new Set<string>()
+  // Bumped whenever the runtime a session's tasks describe is replaced. A read
+  // already in flight then answers for a runtime that is gone, and installing
+  // it would put a finished agent back and hold the queue closed again.
+  private readonly backgroundTaskGenerations = new Map<string, number>()
   private readonly permissions = new Map<string, PendingSdkPermission>()
   private readonly userInputs = new Map<string, PendingSdkUserInput>()
   private readonly acceptedSdkReplies = new Map<string, AcceptedSdkReply>()
@@ -2976,6 +2980,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.sessions.delete(id)
       }
       const previousTasks = this.backgroundTaskTracker.get(id)
+      // The runtime these tasks described is gone. A read already in flight
+      // still answers for it, so its generation is retired before the state
+      // is cleared and its answer is dropped rather than reinstated.
+      this.backgroundTaskGenerations.set(
+        id, (this.backgroundTaskGenerations.get(id) ?? 0) + 1,
+      )
       this.backgroundTaskSyncs.delete(id)
       this.backgroundTaskResyncNeeded.delete(id)
       this.backgroundTaskTracker.remove(id)
@@ -2992,7 +3002,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       session.updatedAt = new Date().toISOString()
     })
     this.publish(restarted)
-    if (restarted.queuedPrompts?.length) {
+    // Only an SDK session drains through this path. A tmux session keeps its
+    // own runtime, and waking it here would start a second owner beside it.
+    if (restarted.queuedPrompts?.length && !this.externalSessionIds.has(id)) {
       this.wakeSdkQueue(id)
     }
     return restarted
@@ -6778,16 +6790,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return existing
     }
     const previous = this.backgroundTaskTracker.get(sessionId)
+    const generation = this.backgroundTaskGenerations.get(sessionId) ?? 0
     let sync: Promise<BackgroundTaskSnapshot>
     sync = (async () => {
       let snapshot: BackgroundTaskSnapshot
+      // Reads are coalesced, so a whole run of an agent can begin and end
+      // inside one sync. Whether anything was seen running is carried across
+      // the loop: judging it by the state this sync opened on missed a turn
+      // that started and finished within it, and the prompt queued behind
+      // that agent was never woken.
+      let sawRunning = hasRunningBackgroundAgent(previous)
       do {
         this.backgroundTaskResyncNeeded.delete(sessionId)
-        snapshot = await this.readBackgroundTasks(sessionId, sdkSession)
+        snapshot = await this.readBackgroundTasks(sessionId, sdkSession, generation)
+        sawRunning = sawRunning || hasRunningBackgroundAgent(snapshot)
       } while (this.backgroundTaskResyncNeeded.has(sessionId))
       if (
         !this.externalSessionIds.has(sessionId) &&
-        hasRunningBackgroundAgent(previous) &&
+        (this.backgroundTaskGenerations.get(sessionId) ?? 0) === generation &&
+        sawRunning &&
         !hasRunningBackgroundAgent(snapshot)
       ) {
         this.wakeSdkQueue(sessionId)
@@ -6806,10 +6827,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async readBackgroundTasks(
     sessionId: string,
     sdkSession = this.sessions.get(sessionId),
+    generation = this.backgroundTaskGenerations.get(sessionId) ?? 0,
   ): Promise<BackgroundTaskSnapshot> {
+    const install = (tasks: BackgroundTask[], supported: boolean) =>
+      (this.backgroundTaskGenerations.get(sessionId) ?? 0) === generation
+        ? this.replaceBackgroundTasks(sessionId, tasks, supported)
+        : this.backgroundTaskTracker.get(sessionId)
     const tasks = sdkSession?.rpc.tasks
     if (!tasks?.list) {
-      return this.replaceBackgroundTasks(sessionId, [], false)
+      return install([], false)
     }
 
     try {
@@ -6825,7 +6851,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       listed = await tasks.list()
     } catch (error) {
       if (isUnsupportedBackgroundTaskError(error)) {
-        return this.replaceBackgroundTasks(sessionId, [], false)
+        return install([], false)
       }
       throw error
     }
@@ -6865,7 +6891,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         )
       }),
     )
-    return this.replaceBackgroundTasks(sessionId, normalized, true)
+    return install(normalized, true)
   }
 
   private replaceBackgroundTasks(

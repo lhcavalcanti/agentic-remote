@@ -1520,6 +1520,132 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('drops a task read that a restart has already overtaken', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-stale-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    // Only the first read is held: it is the one already in flight when the
+    // runtime is replaced, and it still answers for the agent running in it.
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const listed = client.session.rpc.tasks!.list!
+    let call = 0
+    client.session.rpc.tasks!.list = async () => {
+      call += 1
+      if (call > 1) return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+      await held
+      return { tasks: [{
+        type: 'agent', id: 'task-stale', description: 'Overtaken review',
+        status: 'running', startedAt: '2026-09-08T14:00:00.000Z',
+        executionMode: 'background',
+      }] } as Awaited<ReturnType<typeof listed>>
+    }
+    const reading = service['syncBackgroundTasks'](created.id)
+    // The restart completes first, on its own read, and only then does the
+    // overtaken answer arrive -- which is the order that reinstated it.
+    await service.restartSession(created.id)
+    release()
+    await reading
+
+    // The restarted runtime has no agent, so the retired answer must not put
+    // one back and hold the queue closed again.
+    expect(service['backgroundTaskTracker'].get(created.id).tasks).toEqual([])
+    await service.stop()
+  })
+
+  it('wakes a queue for an agent that began and finished inside one sync', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-coalesced-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    // Reads are coalesced. This sync opens with nothing running, sees an agent
+    // running, and closes with nothing running again, so the whole run happens
+    // inside it. Judging the release by the state it opened on missed that.
+    const listed = client.session.rpc.tasks!.list!
+    let call = 0
+    client.session.rpc.tasks!.list = async () => {
+      call += 1
+      if (call === 1) {
+        service['backgroundTaskResyncNeeded'].add(created.id)
+        return { tasks: [{
+          type: 'agent', id: 'task-coalesced', description: 'Brief review',
+          status: 'running', startedAt: '2026-09-08T14:00:00.000Z',
+          executionMode: 'background',
+        }] } as Awaited<ReturnType<typeof listed>>
+      }
+      return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+    }
+    const wake = vi.spyOn(
+      service as unknown as { wakeSdkQueue: (id: string) => void },
+      'wakeSdkQueue',
+    )
+
+    await service['syncBackgroundTasks'](created.id)
+
+    expect(call).toBeGreaterThan(1)
+    expect(wake).toHaveBeenCalledWith(created.id)
+    await service.stop()
+  })
+
+  it('does not drain a restarted tmux queue through the SDK', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tmux-restart-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      undefined,
+      {
+        restart: vi.fn(async () => true),
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        cancel: vi.fn(async () => true),
+      },
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // Owned by tmux, which keeps its own runtime across a restart.
+    service['externalSessionIds'].add(created.id)
+    await service.store.update(created.id, (session) => {
+      session.queuedPrompts = [{
+        id: 'queued-tmux', content: 'Belongs to the terminal',
+        createdAt: new Date().toISOString(),
+      }]
+      session.queuedCount = 1
+    })
+    const wake = vi.spyOn(
+      service as unknown as { wakeSdkQueue: (id: string) => void },
+      'wakeSdkQueue',
+    )
+
+    await service.restartSession(created.id)
+
+    // Draining it here would start a second owner beside the pane's own.
+    expect(wake).not.toHaveBeenCalled()
+    expect(client.session.sentPrompts).toEqual([])
+    await service.stop()
+  })
+
   it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
     directories.push(directory)

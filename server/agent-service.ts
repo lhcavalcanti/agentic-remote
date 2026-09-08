@@ -2974,18 +2974,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error('External terminal is no longer available')
       }
     } else {
+      // Retired before anything is torn down. A read that settles while the
+      // old runtime is being disconnected still answers for it, and releasing
+      // the queue on that answer sends the prompt into the runtime being
+      // replaced.
+      this.backgroundTaskGenerations.set(
+        id, (this.backgroundTaskGenerations.get(id) ?? 0) + 1,
+      )
       const active = this.sessions.get(id)
       if (active) {
         await active.disconnect()
         this.sessions.delete(id)
       }
       const previousTasks = this.backgroundTaskTracker.get(id)
-      // The runtime these tasks described is gone. A read already in flight
-      // still answers for it, so its generation is retired before the state
-      // is cleared and its answer is dropped rather than reinstated.
-      this.backgroundTaskGenerations.set(
-        id, (this.backgroundTaskGenerations.get(id) ?? 0) + 1,
-      )
       this.backgroundTaskSyncs.delete(id)
       this.backgroundTaskResyncNeeded.delete(id)
       this.backgroundTaskTracker.remove(id)
@@ -6800,14 +6801,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // that started and finished within it, and the prompt queued behind
       // that agent was never woken.
       let sawRunning = hasRunningBackgroundAgent(previous)
+      // Everything this sync does belongs to the runtime it opened on. Once
+      // that runtime is replaced it stops reading, stops answering, and stops
+      // taking the resync request the sync that replaced it is waiting on.
+      const owns = () =>
+        (this.backgroundTaskGenerations.get(sessionId) ?? 0) === generation
       do {
-        this.backgroundTaskResyncNeeded.delete(sessionId)
+        if (owns()) {
+          this.backgroundTaskResyncNeeded.delete(sessionId)
+        }
         snapshot = await this.readBackgroundTasks(sessionId, sdkSession, generation)
         sawRunning = sawRunning || hasRunningBackgroundAgent(snapshot)
-      } while (this.backgroundTaskResyncNeeded.has(sessionId))
+      } while (owns() && this.backgroundTaskResyncNeeded.has(sessionId))
       if (
         !this.externalSessionIds.has(sessionId) &&
-        (this.backgroundTaskGenerations.get(sessionId) ?? 0) === generation &&
+        owns() &&
         sawRunning &&
         !hasRunningBackgroundAgent(snapshot)
       ) {
@@ -6817,8 +6825,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })().finally(() => {
       if (this.backgroundTaskSyncs.get(sessionId) === sync) {
         this.backgroundTaskSyncs.delete(sessionId)
+        this.backgroundTaskResyncNeeded.delete(sessionId)
       }
-      this.backgroundTaskResyncNeeded.delete(sessionId)
     })
     this.backgroundTaskSyncs.set(sessionId, sync)
     return sync

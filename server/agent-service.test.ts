@@ -1646,6 +1646,97 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('does not release the queue from a read settling during the disconnect', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-disconnect-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    // Something was running when this read began, so its answer would look
+    // like a release if it were still allowed to speak.
+    service['backgroundTaskTracker'].replace(created.id, [{
+      id: 'task-disconnecting', type: 'agent',
+      description: 'Review in the old runtime', status: 'running',
+      startedAt: '2026-09-08T14:00:00.000Z', executionMode: 'background',
+      canCancel: false,
+    }], true)
+
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const listed = client.session.rpc.tasks!.list!
+    let call = 0
+    client.session.rpc.tasks!.list = async () => {
+      call += 1
+      if (call > 1) return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+      await held
+      return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+    }
+    const reading = service['syncBackgroundTasks'](created.id)
+    const wake = vi.spyOn(
+      service as unknown as { wakeSdkQueue: (id: string) => void },
+      'wakeSdkQueue',
+    )
+
+    // The read settles part-way through the teardown, while the old runtime
+    // is being disconnected and before anything has replaced it.
+    const disconnect = client.session.disconnect.bind(client.session)
+    client.session.disconnect = async () => {
+      release()
+      await reading
+      await disconnect()
+    }
+    await service.restartSession(created.id)
+    await reading
+
+    // Its answer describes the runtime that was replaced, so it cannot send a
+    // prompt into the one being built.
+    expect(wake).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('leaves the resync request of the sync that replaced it alone', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-resync-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const listed = client.session.rpc.tasks!.list!
+    let call = 0
+    client.session.rpc.tasks!.list = async () => {
+      call += 1
+      if (call > 1) return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+      await held
+      return { tasks: [] } as Awaited<ReturnType<typeof listed>>
+    }
+    const stale = service['syncBackgroundTasks'](created.id)
+
+    await service.restartSession(created.id)
+    // The runtime that replaced it has work of its own to re-read.
+    service['backgroundTaskResyncNeeded'].add(created.id)
+    release()
+    await stale
+
+    // A retired sync settling must not take that request away, or the agent
+    // it finished with stays recorded as running.
+    expect(service['backgroundTaskResyncNeeded'].has(created.id)).toBe(true)
+    await service.stop()
+  })
+
   it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
     directories.push(directory)

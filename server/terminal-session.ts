@@ -2216,11 +2216,12 @@ export function parseTerminalFormPrompt(pane: string): boolean {
  * wrap can run through a token on: a shorter row broke where the text allowed
  * it, so its boundary is the space the question has there.
  */
-function terminalFilledRows(raw: string[]): boolean[] {
-  // The dialog's own rules give the width of the box it is drawing in. A
-  // capture without them is not a padded terminal read, so nothing in it can
-  // be shown to have been filled to an edge, and every boundary stays a
-  // space.
+/**
+ * The width of the box the dialog is drawing in, taken from its own rules,
+ * and where the text on each row ends. A capture without rules is not a
+ * padded terminal read, and reports a width of zero.
+ */
+function terminalBoxWrap(raw: string[]): { width: number; ends: number[] } {
   const width = Math.max(
     0,
     ...raw
@@ -2228,20 +2229,17 @@ function terminalFilledRows(raw: string[]): boolean[] {
       .filter((line) => /^[─━]{8,}$/u.test(line))
       .map((line) => line.length),
   )
-  if (width === 0) {
-    return raw.map(() => false)
+  return {
+    width,
+    ends: raw.map((line) => line.replace(/[\s│┃╮╯]+$/u, '').length),
   }
-  const ends = raw.map((line) => line.replace(/[\s│┃╮╯]+$/u, '').length)
-  // A row that stops one column short still had no room for another
-  // character, so the edge is met rather than exactly reached.
-  return ends.map((end) => end >= width - 1)
 }
 
 function terminalFormQuestionEnd(
   lines: string[],
   header: number,
   question: string,
-  filled: boolean[],
+  wrap: { width: number; ends: number[] },
 ): number {
   const expected = question.replace(/\s+/gu, ' ').trim()
   if (!expected) {
@@ -2255,17 +2253,22 @@ function terminalFormQuestionEnd(
       continue
     }
     // Form reads use tmux -J for real soft wraps, but the CLI also wraps
-    // inside its own box, where the rows are padded and so never joined. Such
-    // a row breaks on a space when the text has one and straight through a
-    // long token -- a URL -- when it does not. Only a row filled to the edge
-    // can have broken a token, so a shorter one still means a space and two
-    // identifiers are never run together.
+    // inside its own box, where the rows are padded and so never joined.
     let start = consumed
     if (consumed > 0) {
       if (expected[consumed] === ' ') {
+        // The question has a space here, so that is what the row break is.
         start = consumed + 1
-      } else if (!filled[previous]) {
-        return -1
+      } else {
+        // The row break falls inside a token. The CLI only breaks one when
+        // what follows could not fit on the row it is leaving, so the rest of
+        // that token has to be too long for the gap left behind. A shorter
+        // continuation would have fitted, which means the break was really a
+        // space and these are two identifiers rather than one.
+        const rest = line.split(' ')[0].length
+        if (wrap.width <= 0 || rest <= wrap.width - wrap.ends[previous]) {
+          return -1
+        }
       }
     }
     if (!expected.startsWith(line, start)) {
@@ -2302,7 +2305,7 @@ function tabNames(tab: string, field: string): boolean {
 function terminalFormTabsIndex(
   lines: string[],
   form: TerminalFormIdentity,
-  filled: boolean[],
+  wrap: { width: number; ends: number[] },
 ): number {
   if (form.fields.length === 0) {
     return -1
@@ -2315,7 +2318,7 @@ function terminalFormTabsIndex(
   }
   // The CLI prints the request's own question between the header and the tabs.
   // Two requests can share a schema, so the question is what separates them.
-  const questionAt = terminalFormQuestionEnd(lines, header, form.question, filled)
+  const questionAt = terminalFormQuestionEnd(lines, header, form.question, wrap)
   if (questionAt < 0) {
     return -1
   }
@@ -2379,7 +2382,7 @@ export function terminalFormShowsFields(
 ): boolean {
   const raw = terminalControlLines(pane)
   return terminalFormTabsIndex(
-    raw.map(cleanDialogLine), form, terminalFilledRows(raw),
+    raw.map(cleanDialogLine), form, terminalBoxWrap(raw),
   ) >= 0
 }
 
@@ -2400,7 +2403,7 @@ export function parseTerminalFormActiveField(
   }
   const raw = terminalControlLines(pane)
   const lines = raw.map(cleanDialogLine)
-  const tabs = terminalFormTabsIndex(lines, form, terminalFilledRows(raw))
+  const tabs = terminalFormTabsIndex(lines, form, terminalBoxWrap(raw))
   if (tabs < 0) {
     return undefined
   }

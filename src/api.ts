@@ -249,11 +249,9 @@ export async function searchWorkspace(
 export async function getSession(
   computerId: string,
   sessionId: string,
-  signal?: AbortSignal,
 ): Promise<ManagedSession> {
   const response = await request<{ session: ManagedSession }>(
     sessionPath(computerId, sessionId),
-    signal ? { signal, cache: 'no-store' } : undefined,
   )
   return response.session
 }

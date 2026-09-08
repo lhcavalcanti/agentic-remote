@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agentic Remote - top-left logo mock</title>
+    <style>
+      :root { color-scheme: dark; --accent: #b8f36b; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #e8e7e4; background: #111210; }
+      * { box-sizing: border-box; }
+      body { max-width: 1120px; margin: 0 auto; padding: 40px 24px; }
+      h1 { margin: 0 0 12px; font-size: 28px; }
+      p { color: #b8baaf; line-height: 1.6; margin: 0 0 24px; }
+      .controls { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; }
+      button { min-height: 40px; padding: 8px 18px; border: 1px solid #3c4037; border-radius: 9px; background: #1e201c; color: inherit; font: inherit; cursor: pointer; }
+      button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+      button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+      .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+      article { border: 1px solid #2d3029; border-radius: 16px; overflow: hidden; background: #171815; }
+      h2 { font-size: 14px; margin: 0; padding: 18px; letter-spacing: .04em; border-bottom: 1px solid #2d3029; }
+      .tab { display: flex; align-items: center; gap: 9px; padding: 14px 18px; color: #b8baaf; background: #1e201c; border-bottom: 1px solid #2d3029; font-size: 12px; }
+      .tab img { width: 18px; height: 18px; }
+      .brand { display: flex; align-items: center; gap: 11px; height: 88px; padding: 0 18px; }
+      .brand strong { display: block; font-size: 14px; }
+      .brand small { display: block; margin-top: 3px; color: #999c91; font-size: 11px; }
+      .mark { width: 36px; height: 36px; flex: 0 0 auto; }
+      .legacy { display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: #11130e; }
+      .legacy svg { width: 19px; height: 19px; }
+      .navigation { margin: 0 18px 22px; padding: 14px; border-radius: 10px; background: #242620; color: #b8baaf; font-size: 13px; }
+      .detail { padding: 0 18px 22px; font-size: 13px; margin: 0; }
+      .detail strong { color: var(--accent); }
+      footer { margin-top: 24px; color: #999c91; font-size: 12px; line-height: 1.6; }
+      @media (max-width: 680px) { body { padding: 24px 16px; } .comparison { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <h1>One app, one recognizable logo</h1>
+    <p>The tab icon was already fixed. The sidebar's top-left mark should use the
+      same artwork, at its existing size, and follow the same per-tab accent.</p>
+    <div class="controls" aria-label="Mock accent">
+      <button data-color="#b8f36b" aria-pressed="true" type="button">Agentic</button>
+      <button data-color="#6eb7ff" aria-pressed="false" type="button">Ocean</button>
+      <button data-color="#ad92ff" aria-pressed="false" type="button">Violet</button>
+    </div>
+    <div class="comparison">
+      <article>
+        <h2>Before - different artwork</h2>
+        <div class="tab"><img data-icon alt=""> Agentic Remote</div>
+        <div class="brand">
+          <span class="mark legacy" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 8V4H8"/>
+              <rect width="16" height="12" x="4" y="8" rx="2"/>
+              <path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>
+            </svg>
+          </span>
+          <div><strong>Agentic Remote</strong><small>Multi-computer agent hub</small></div>
+        </div>
+        <div class="navigation">Sessions and Knowledge</div>
+        <p class="detail">The generic outline glyph does not match the tab icon.</p>
+      </article>
+      <article>
+        <h2>After - shared app artwork</h2>
+        <div class="tab"><img data-icon alt=""> Agentic Remote</div>
+        <div class="brand">
+          <img class="mark" data-icon alt="">
+          <div><strong>Agentic Remote</strong><small>Multi-computer agent hub</small></div>
+        </div>
+        <div class="navigation">Sessions and Knowledge</div>
+        <p class="detail"><strong>Same SVG, same accent.</strong> No independent logo
+          drawing or extra colored tile to drift out of sync.</p>
+      </article>
+    </div>
+    <footer>This is a visual mock, not a live session. The after images use the
+      application's shared icon URL helper. Serve this page through Vite at
+      <code>/docs/mockups/brand-logo.html</code>.</footer>
+    <script type="module">
+      import { accentIconUrl } from '/src/accent-icon.ts'
+      const buttons = [...document.querySelectorAll('[data-color]')]
+      function showAccent(color) {
+        document.documentElement.style.setProperty('--accent', color)
+        for (const image of document.querySelectorAll('[data-icon]')) {
+          image.src = accentIconUrl(color)
+        }
+        for (const button of buttons) {
+          button.setAttribute('aria-pressed', String(button.dataset.color === color))
+        }
+      }
+      for (const button of buttons) {
+        button.addEventListener('click', () => showAccent(button.dataset.color))
+      }
+      showAccent('#b8f36b')
+    </script>
+  </body>
+</html>

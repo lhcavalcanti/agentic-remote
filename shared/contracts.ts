@@ -359,6 +359,12 @@ export type ServerEvent =
 export type HubEvent =
   | { type: 'session.upserted'; session: ManagedSession }
   | {
+      type: 'session.knowledge.updated'
+      computerId: string
+      sessionId: string
+      binding: SessionKnowledgeBinding
+    }
+  | {
       type: 'session.removed'
       computerId: string
       sessionId: string
@@ -530,4 +536,22 @@ export interface AddKnowledgeRootInput {
   computerId: string
   path: string
   name?: string
+}
+
+export interface SessionKnowledgeBinding {
+  /** The session's owning computer, which may differ from the root's. */
+  computerId: string
+  sessionId: string
+  rootId: string | null
+  /** Zero means never linked; an explicit unlink retains a newer revision. */
+  revision: number
+  /** Retained metadata, including when the shared root has been removed. */
+  root?: KnowledgeRoot
+  /** Whether the shared catalog still contains this root, not its online status. */
+  available: boolean
+}
+
+export interface UpdateSessionKnowledgeRootInput {
+  rootId: string | null
+  expectedRevision: number
 }

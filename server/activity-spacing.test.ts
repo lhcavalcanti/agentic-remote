@@ -7,7 +7,7 @@ async function stylesheet(): Promise<string> {
 
 function declaration(css: string, selector: string, property: string): string {
   const block = new RegExp(
-    `${selector.replace(/[.+*]/g, (character) => `\\${character}`)}\\s*\\{([^}]*)\\}`,
+    `${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`,
   ).exec(css)
   expect(block, `missing rule ${selector}`).not.toBeNull()
   // Not anchored on ';' alone: the first declaration in a block follows '{'
@@ -91,7 +91,8 @@ describe('background-active session styling', () => {
 
     expect(
       declaration(css, '.session-item--background-running .status-dot', 'background'),
-    ).toBe('#6ea8fe')
+    ).toBe('var(--task)')
+    expect(declaration(css, ':root', '--task')).toBe('#6ea8fe')
     // Would leave an idle session grey.
     expect(css).not.toContain(
       '.session-item--background-running .status-dot.status-dot--running',
@@ -107,7 +108,8 @@ describe('background-active session styling', () => {
         '.session-item--background-running .status-dot.status-dot--waiting',
         'background',
       ),
-    ).toBe('#f2c96d')
+    ).toBe('var(--warning)')
+    expect(declaration(css, ':root', '--warning')).toBe('#f2c96d')
     expect(
       declaration(
         css,
@@ -115,5 +117,12 @@ describe('background-active session styling', () => {
         'background',
       ),
     ).toBe('var(--danger)')
+  })
+
+  it('keeps semantic status colors distinct in the light appearance', async () => {
+    const css = await stylesheet()
+    expect(declaration(css, ":root[data-appearance='light']", '--task')).toBe('#315ea7')
+    expect(declaration(css, ":root[data-appearance='light']", '--warning')).toBe('#876309')
+    expect(declaration(css, ":root[data-appearance='light']", '--danger')).toBe('#ad4034')
   })
 })

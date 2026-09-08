@@ -60,6 +60,20 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - The Sessions drawer MUST show all configured computers.
 - Selecting, creating, or opening a session MUST NOT hide other computers.
+- Sessions MUST offer metadata search and All, Needs you, and Working filters.
+  Filtering MUST keep every configured computer visible and MUST NOT change
+  the selected session, its draft, or its Knowledge position. Reordering MUST
+  be disabled while filtered so hidden sessions are not reordered implicitly.
+- Session ordering MUST be explicit. Custom order remains the backward-
+  compatible default; Recent activity, Attention first, and Name views MAY
+  reorder the displayed sessions within each computer without rewriting the
+  saved custom order. Keyboard next/previous navigation MUST follow the
+  displayed order. A failed preference save MUST surface an error.
+- Needs you MUST include pending questions, permissions, waiting sessions, and
+  errors, including queued delivery that requires confirmation. Pending actions
+  MUST take precedence over passive runtime status.
+  Working MUST include running background tasks, but MUST NOT represent a
+  disconnected computer's last-known activity as live work.
 - The New session provider selector MUST show the selected computer's available
   and unavailable providers before creation.
 - Computer-group headers MUST NOT show provider tags; provider identity belongs
@@ -126,6 +140,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 ### 3.3 Rename, restart, clear, and delete
 
+- Secondary session actions MAY live in a labeled disclosure rather than
+  crowding the conversation header. They MUST remain keyboard- and
+  touch-accessible, retain their confirmations and disabled states, and close
+  independently of the Knowledge panel. Knowledge and the current-folder
+  entry point MUST remain directly reachable.
 - Rename MUST update the web state and owning tmux/Copilot session when
   supported.
 - Restart MUST preserve session ID, title, working folder, transcript, queue,
@@ -321,6 +340,9 @@ Questions and permissions are the highest-priority UI state.
 
 - Text input and action buttons MUST use separate visual panels.
 - On phone, the text panel MUST remain wide enough for useful composition.
+- Queue/edit context and delivery warnings MUST scroll independently when a
+  short viewport cannot show them above the editor. Input, save/send actions,
+  and command suggestions MUST remain reachable without clipping.
 - The bottom action panel MUST expose Files and Microphone on the leading side.
 - While an agent is running, Queue, Send, and Stop MUST remain available.
 - A dedicated newline button MUST NOT be shown.
@@ -547,6 +569,12 @@ clear replacement IDs without losing, duplicating, or reordering content.
   root MUST be rejected.
 - Hidden files/directories MUST be omitted by default.
 - Markdown MUST support rendered and raw views.
+- Markdown readers MUST label those views Preview and Source. Their outline
+  MUST remain keyboard-accessible without pushing document content away.
+  Repeated headings, colliding slugs, and reference headings MUST navigate to
+  their own rendered positions in both Knowledge and session-file outlines.
+  Copying a code fence MUST require an explicit action, retain its exact text,
+  and report clipboard failure rather than claiming success.
 - Relative Markdown document links MUST open through the owning workspace or
   Knowledge root without navigating away from the app. Section links MUST stay
   inside the displayed document, with unique anchors for repeated headings.
@@ -559,13 +587,26 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Search MUST bound file count, result count, individual text size, and total
   text bytes, and SHOULD skip generated dependency/build directories.
 - Insert path and Ask agent about file MUST update the draft without auto-send.
+  File references MUST belong to the current online owning computer and session.
+  A history preview MUST NOT replace the hidden unsent text or collapsed pastes
+  when a reference is appended. A cached session-file preview MUST be reopened
+  when the session or its working folder changes.
 
 ### 8.2 Phone reading mode
 
+- Sessions, Knowledge file navigation, and the reader MUST fill the available
+  phone viewport, rather than leaving an unused strip beside a narrow drawer.
+  File navigation MUST have its own full-height phone surface, not share the
+  visible height with the session list.
+- Layout MUST honor the visual viewport and safe areas when the keyboard opens.
+  Phone text inputs and selects MUST use at least 16px text without disabling
+  browser zoom.
 - Selecting a file on phone MUST hide the tree and search controls.
 - The preview MUST use the full workspace panel with readable 16px-or-larger
   text.
 - Back to files MUST restore folder navigation.
+  Switching from files to Sessions and back MUST preserve the file tree's
+  scroll position; a CSS-hidden surface MUST NOT overwrite it with zero.
 - PDF page controls MUST remain reachable without overlapping the home
   indicator.
 
@@ -580,6 +621,20 @@ clear replacement IDs without losing, duplicating, or reordering content.
   user MAY add that folder directly or browse to another readable folder.
 - A knowledge root is a computer plus an absolute folder and MUST be browsable
   with no session in existence.
+- A session MAY explicitly link one root from the shared Knowledge catalog.
+  The association MUST belong to its owning computer and stable session ID,
+  survive hub/client restarts, and remain separate from the session's cwd.
+  Several sessions MAY link the same root while keeping separate reading
+  positions. Linking MUST NOT copy files, mount a remote folder, activate an
+  agent, or send a prompt.
+- Root associations MUST use separate hub metadata. Opening Knowledge MUST NOT
+  silently promote browser-local reading positions into hub associations.
+  An unassigned session with no remembered position MUST offer an explicit
+  working-folder suggestion or root choice, not another session's document.
+- Root updates MUST compare the persisted revision. A rejected update MUST
+  retain the pending choice for review/retry instead of silently overwriting
+  another client's change. An explicit unlink MUST remain distinguishable
+  from a session that has never had an association.
 - Choosing a root MUST allow any folder on the owning computer that the user can
   read, not only the home directory. Session working directories remain
   confined; a root is read-only.
@@ -610,14 +665,33 @@ clear replacement IDs without losing, duplicating, or reordering content.
   document — and switching sessions MUST show that session's position.
 - Clearing a conversation replaces a session rather than deleting it, so the
   removal event MUST name the replacement and every client MUST carry that
-  session's reading position across rather than discard it.
+  session's reading position across rather than discard it. The hub root
+  association MUST follow the same replacement lineage, including
+  reconciliation after missed events, without overwriting an explicit
+  association on the recipient.
 - File navigation MUST stay in the same place in every mode, so choosing a
   file does not depend on how much room the reader is taking.
 - Reopening the panel MUST resume the tree where it was left rather than
   scrolling back to the top.
+- Returning from a file-to-draft handoff to the same session's unchanged
+  document MUST preserve its scroll, section anchor, and rendered/raw view.
 - Folders MUST expand in place as a tree rather than replacing the listing, so
   a parent stays visible while a child is open. Children are loaded on first
   expansion and reused afterwards.
+- File listings SHOULD put folders before files and sort names naturally.
+  Root selection MUST identify the owning computer and keep full paths
+  available. A compact selector MAY open a scoped chooser instead of keeping
+  every root permanently expanded.
+- Removing a shared root MUST require an explicit impact confirmation and
+  MUST NOT delete files. Referencing sessions MUST retain a named unavailable
+  association rather than silently switch to another root. Deleting a session
+  removes its association, not a root shared with other sessions.
+- Refreshing a folder MUST preserve the open document. Failed refreshes MUST
+  remain visible beside their branch, with existing loaded entries retained
+  and a reachable retry action.
+  A superseded load MUST reject stale contents and release only its own loading
+  state, without clearing a newer request's state across file, session, root,
+  or pairing changes.
 - Expanded folders MUST be remembered per root, and reopening a remembered
   document MUST open the folders above it.
 - A folder that cannot be read MUST report the failure on its own branch and
@@ -626,6 +700,12 @@ clear replacement IDs without losing, duplicating, or reordering content.
   depth, and support ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, and End.
 - Knowledge stores root metadata on the hub; file content MUST remain on the
   owning computer.
+- Ask agent about file MUST append a root-qualified file reference to the
+  selected session's existing draft without sending it. It MUST be disabled
+  with an explanation when there is no session, the session belongs to
+  another computer, or the owning computer is offline. This action MUST reveal
+  the composer (docked reading on desktop, conversation on phone), retaining
+  the document for reopening.
 
 
 ## 9. Runtime configuration
@@ -834,6 +914,8 @@ Every material release SHOULD preserve:
 | Concern | Primary location |
 | --- | --- |
 | UI, composer, workspace, Knowledge | `src/App.tsx`, `src/index.css` |
+| Session search, filters, and state labels | `src/SessionNavigation.tsx`, `src/session-presentation.ts` |
+| Session-actions disclosure | `src/SessionActions.tsx` |
 | Browser API client | `src/api.ts` |
 | Shared contracts | `shared/contracts.ts` |
 | Session lifecycle and transcript recovery | `server/agent-service.ts` |

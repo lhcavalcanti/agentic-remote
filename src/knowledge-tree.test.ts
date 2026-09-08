@@ -6,6 +6,7 @@ import {
   knowledgeCrumbs,
   knowledgePathChain,
   knowledgeTreeRows,
+  orderedWorkspaceEntries,
   type KnowledgeFolders,
 } from './knowledge-tree'
 
@@ -41,6 +42,17 @@ const folders: KnowledgeFolders = {
 }
 
 describe('knowledge tree', () => {
+  it('groups folders first and orders numbered filenames naturally without changing listings', () => {
+    const entries = [
+      { name: 'note10.md', path: 'note10.md', kind: 'markdown' as const },
+      { name: 'notes', path: 'notes', kind: 'directory' as const },
+      { name: 'Note2.md', path: 'Note2.md', kind: 'markdown' as const },
+      { name: 'archive', path: 'archive', kind: 'directory' as const },
+    ]
+    expect(orderedWorkspaceEntries(entries).map((entry) => entry.name))
+      .toEqual(['archive', 'notes', 'Note2.md', 'note10.md'])
+    expect(entries[0].name).toBe('note10.md')
+  })
   it('derives ancestors and the chain that must be open', () => {
     expect(knowledgeAncestors('.')).toEqual([])
     expect(knowledgeAncestors('guides')).toEqual([])
@@ -133,6 +145,19 @@ describe('knowledge tree', () => {
     expect(
       collapseKnowledgeFolder(['guides', 'guides/deep', 'other'], 'guides'),
     ).toEqual(['other'])
+  })
+
+  it('retains loaded entries and exposes a failed refresh on its branch', () => {
+    const failed = { ...folders, guides: { ...folders.guides, error: 'Could not refresh' } }
+    const rows = knowledgeTreeRows(failed, ['guides'])
+    expect(rows[1]).toMatchObject({
+      type: 'status', variant: 'error', path: 'guides', message: 'Could not refresh',
+    })
+    expect(rows.some((row) => row.type === 'entry' && row.path === 'guides/setup.md')).toBe(true)
+    const refreshing = { ...folders, guides: { ...folders.guides, loading: true } }
+    expect(knowledgeTreeRows(refreshing, ['guides'])[1]).toMatchObject({
+      type: 'status', variant: 'loading', message: 'Refreshing folder...',
+    })
   })
 
   it('refuses to follow a folder that contains itself', () => {

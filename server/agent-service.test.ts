@@ -1399,6 +1399,127 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('waits for the final task resync before waking an SDK queue', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'task-old',
+      description: 'Old review',
+      status: 'running',
+      startedAt: '2026-09-08T14:00:00.000Z',
+      executionMode: 'background',
+    })
+    await service.listBackgroundTasks(created.id)
+    await service.sendMessage(created.id, 'Continue after every review', true)
+
+    let releaseFirst!: () => void
+    const firstRead = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let reads = 0
+    const replacementAgent = {
+      type: 'agent' as const,
+      id: 'task-new',
+      description: 'New review',
+      status: 'running' as const,
+      startedAt: '2026-09-08T14:01:00.000Z',
+      executionMode: 'background' as const,
+    }
+    client.session.rpc.tasks.list = async () => {
+      reads += 1
+      if (reads === 1) {
+        await firstRead
+        return { tasks: [] }
+      }
+      return { tasks: [replacementAgent] }
+    }
+
+    const completionSync = service['syncBackgroundTasks'](
+      created.id,
+      client.session,
+    )
+    await vi.waitFor(() => expect(reads).toBe(1))
+    void service['syncBackgroundTasks'](created.id, client.session)
+    releaseFirst()
+    await completionSync
+
+    expect(client.session.sentPrompts).toEqual([])
+    expect(service.store.get(created.id)?.queuedCount).toBe(1)
+    expect(
+      service['backgroundTaskTracker'].get(created.id).tasks,
+    ).toEqual([
+      expect.objectContaining({ id: 'task-new', status: 'running' }),
+    ])
+
+    Object.assign(replacementAgent, {
+      status: 'completed',
+      completedAt: '2026-09-08T14:02:00.000Z',
+    })
+    await service['syncBackgroundTasks'](created.id, client.session)
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toEqual([
+        'Continue after every review',
+      ]),
+    )
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
+  it('clears stale SDK task state before draining a queue after restart', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'task-restart',
+      description: 'Review before restart',
+      status: 'running',
+      startedAt: '2026-09-08T14:00:00.000Z',
+      executionMode: 'background',
+    })
+    await service.listBackgroundTasks(created.id)
+    await service.sendMessage(created.id, 'Continue after restart', true)
+    await vi.waitFor(() => {
+      expect(service.store.get(created.id)?.status).toBe('idle')
+      expect(service['drainingSessions'].has(created.id)).toBe(false)
+    })
+    client.session.backgroundTasks.length = 0
+
+    await service.restartSession(created.id)
+
+    await vi.waitFor(() =>
+      expect(client.session.sentPrompts).toEqual(['Continue after restart']),
+    )
+    expect(service.store.get(created.id)?.queuedCount).toBe(0)
+    expect(
+      service['backgroundTaskTracker'].get(created.id).tasks,
+    ).toEqual([])
+
+    client.session.resolvePrompt()
+    await service.stop()
+  })
+
   it('treats legacy and JSON-RPC unsupported task methods as unavailable', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-task-compat-'))
     directories.push(directory)

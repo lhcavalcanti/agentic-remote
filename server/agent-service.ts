@@ -2975,7 +2975,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await active.disconnect()
         this.sessions.delete(id)
       }
-      await this.attachSdkSession(id)
+      const previousTasks = this.backgroundTaskTracker.get(id)
+      this.backgroundTaskSyncs.delete(id)
+      this.backgroundTaskResyncNeeded.delete(id)
+      this.backgroundTaskTracker.remove(id)
+      this.replaceBackgroundTasks(id, [], previousTasks.supported)
+      const attached = await this.attachSdkSession(id)
+      await this.syncBackgroundTasks(id, attached).catch((error: unknown) =>
+        this.publishError(id, error),
+      )
     }
     const restarted = await this.store.update(id, (session) => {
       session.status = 'idle'
@@ -2984,6 +2992,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       session.updatedAt = new Date().toISOString()
     })
     this.publish(restarted)
+    if (restarted.queuedPrompts?.length) {
+      this.wakeSdkQueue(id)
+    }
     return restarted
   }
 
@@ -6766,6 +6777,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.backgroundTaskResyncNeeded.add(sessionId)
       return existing
     }
+    const previous = this.backgroundTaskTracker.get(sessionId)
     let sync: Promise<BackgroundTaskSnapshot>
     sync = (async () => {
       let snapshot: BackgroundTaskSnapshot
@@ -6773,6 +6785,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.backgroundTaskResyncNeeded.delete(sessionId)
         snapshot = await this.readBackgroundTasks(sessionId, sdkSession)
       } while (this.backgroundTaskResyncNeeded.has(sessionId))
+      if (
+        !this.externalSessionIds.has(sessionId) &&
+        hasRunningBackgroundAgent(previous) &&
+        !hasRunningBackgroundAgent(snapshot)
+      ) {
+        this.wakeSdkQueue(sessionId)
+      }
       return snapshot
     })().finally(() => {
       if (this.backgroundTaskSyncs.get(sessionId) === sync) {
@@ -6863,7 +6882,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           task.canCancel ? { ...task, canCancel: false } : task,
         )
       : tasks
-    const previous = this.backgroundTaskTracker.get(sessionId)
     const update = this.backgroundTaskTracker.replace(
       sessionId,
       owned,
@@ -6876,13 +6894,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         ...snapshot,
       })
-    }
-    if (
-      !this.externalSessionIds.has(sessionId) &&
-      hasRunningBackgroundAgent(previous) &&
-      !hasRunningBackgroundAgent(update.snapshot)
-    ) {
-      this.wakeSdkQueue(sessionId)
     }
     return update.snapshot
   }

@@ -10404,6 +10404,12 @@ describe('App', () => {
   })
 
   it('offers Queue while an SDK background agent runs', async () => {
+    const sdkSession = {
+      ...session,
+      executionMode: 'sdk' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([sdkSession])
+    vi.mocked(getSession).mockResolvedValue(sdkSession)
     vi.mocked(listComputers).mockResolvedValue([taskComputer])
     vi.mocked(listBackgroundTasks).mockResolvedValue({
       tasks: [
@@ -10455,6 +10461,45 @@ describe('App', () => {
         },
       ),
     )
+  })
+
+  it('does not offer the SDK background-agent Queue for tmux sessions', async () => {
+    const tmuxSession = {
+      ...session,
+      executionMode: 'tmux' as const,
+    }
+    vi.mocked(listSessions).mockResolvedValue([tmuxSession])
+    vi.mocked(getSession).mockResolvedValue(tmuxSession)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'task-tmux',
+          type: 'agent',
+          description: 'Inspect the repository',
+          status: 'running',
+          startedAt: '2026-09-08T14:00:00.000Z',
+          executionMode: 'background',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
+        '1 background task running',
+      ),
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Queue message' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Send message' }),
+    ).toBeInTheDocument()
   })
 
   it('keeps waiting and error status dots above blue task styling', async () => {

@@ -201,9 +201,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 140,
+  "communities": 131,
   "community_algorithm": "louvain-seed-42",
-  "edges": 8974,
+  "edges": 8978,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -275,8 +275,8 @@
     "server/active-sessions.ts": "872f54657ac39271fb18b7b44fc01db06c693c101641e4147a16797fe16941fc",
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "21dc12050ab5d7ff5595fc96cb0f4e31adce432caf3353da92ad5e3695e035e4",
-    "server/agent-service.test.ts": "4873e8ae7be1b9d90bc9c255823b5e20ae531588487c41c957fe613947dc3357",
-    "server/agent-service.ts": "652bd4a6a88545e93d23c4f5a5a4b42140eebe3c5f0047701c58eb29f685e688",
+    "server/agent-service.test.ts": "ef41aeea4b85174ed0e05313cb50fd223255e195758a217e74bd4f622afbf1c2",
+    "server/agent-service.ts": "18d013fc62320b0969fc0e1affbbfc6ebbc37e0b51316c0eb813f4b6d9f3fbf3",
     "server/api-origin.test.ts": "0da473136601f53aef34fe6ac7c4c6a86b5cee0db084d8a71c04ec270b3d3d26",
     "server/app-build.test.ts": "7dbb65aac542590218b59035b569b2fc751114a6933d38f5bee951c2c679396a",
     "server/app.ts": "00777d1854728e0a848a2d9f1e31caccd39449d52d9823e611eecb9ac974a04d",
@@ -394,8 +394,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "967c66b9ed9aa8487ea704ff671977227bd679ca20a8580cb5c187abfe2f7e3a",
-    "src/App.tsx": "56d57fb6083e3cfc0af2ce26a7c78c2baa95305d49d2e7c6c8bfeea57bf35fe3",
+    "src/App.test.tsx": "8f7a334b46bb3c8651e1423cf8eb3f9881864da702f861a7d9470cba778a1a42",
+    "src/App.tsx": "61276cc15df7e3ac43a7a7233aac393404922eb1e849dc31d8cb5b1fcc5b56b2",
     "src/DocumentViewControls.test.tsx": "3688110dc748a313bb0568e1ed693377e4effdbeecfa91864d5fd3abdf063b7b",
     "src/DocumentViewControls.tsx": "ce73b7ea6f5cb6b93b74bbe6d3a2ed3f490520ec19cf7649c997d191946bdefd",
     "src/KnowledgeRootChoices.test.tsx": "885ba0e9b94d09726a5e314359dc9a63d9eeea0c82731290f7b45681c196f310",
@@ -519,17 +519,18 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "1befb551db08a369b2e9aace5b7ae39eee18d2cf1e09d68bcb2c29737d85eed6",
-    "communities.json": "943cb84e2a7cfa4fa1a6defce4e60be6b8de3673fb8d0182ce6d1b23b7816a29",
-    "graph.html": "a1a0361e241c61bfe36a5a305db410a9537a059a8781315217c909b4959f389a",
-    "graph.json": "20e7c8333c4d29530e11e75886c9bf05fd369040e88f2df3a06c14bfe71a0dc0"
+    "GRAPH_REPORT.md": "1105d513e695b49919adc2ed54bec21ec565a9772758a342882a8265f3271517",
+    "communities.json": "e99efc5fd60ef60abb687f0301c10c0a29a9c51def8da6bfed9a8833f3dc00d8",
+    "graph.html": "4a0511a05a96d53655ec3c85be064eaf59a699f3bc485040a52a167f375fcd94",
+    "graph.json": "fad78e1960457bef6e82ef220e59bea3c292101b444bef5763140dfff52dcb1a"
   },
   "schema_version": 1,
-  "source_commit": "9a38c12dd243f52de4e7badbfb16b73be8368cf5",
-  "source_fingerprint": "87f9cdd500cb776cfd806113dd297b12454015b92d8c6046e58216b93b99022e",
+  "source_commit": "a86689af9b15db84b8e0e42e7f3055bc434c302c",
+  "source_fingerprint": "35110df5263f5a5fce4743d965efe8c92d781cc70166f74f6786ce477d8dbf0b",
   "working_tree_changes": [
-    "src/App.tsx",
-    "src/components/DialogFrame.tsx",
-    "src/features/prompts/PromptCards.tsx"
+    "server/agent-service.test.ts",
+    "server/agent-service.ts",
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

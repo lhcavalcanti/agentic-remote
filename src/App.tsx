@@ -7041,7 +7041,8 @@ function App() {
   const selectedHasRunningBackgroundAgent =
     hasRunningBackgroundAgent(selectedBackgroundTasks)
   const selectedQueueAvailable =
-    selected?.status === 'running' || selectedHasRunningBackgroundAgent
+    selected?.status === 'running' ||
+    (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
   const composer = selectedKey ? composerDrafts[selectedKey]?.text || '' : ''
   const missingAcceptanceOwners = Object.entries(composerDrafts).flatMap(
     ([key, draft]) => {

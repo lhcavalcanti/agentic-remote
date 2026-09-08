@@ -165,6 +165,25 @@ describe('paired-node redirect isolation', () => {
     expect(result.attemptId).toBeUndefined()
   })
 
+  it.each([false, true])('preserves paired-node delivery uncertainty=%s', async (uncertainDelivery) => {
+    const node = await listen((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        response.writeHead(409, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({
+          error: 'Synthetic node refusal',
+          uncertainDelivery,
+        }))
+      })
+    })
+    await expect(client(node).sendMessage('remote-session', { content: 'Direct request' }))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery,
+        message: 'Synthetic node refusal',
+      })
+  })
+
   it.each([307, 308])('does not replay a POST into a hub-local route after HTTP %i', async (status) => {
     const mutations: { url?: string; body: string }[] = []
     const target = await listen((request, response) => {

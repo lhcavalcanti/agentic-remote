@@ -677,12 +677,17 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     }
     if (!response.ok) {
       const payload = (await response.json().catch(() => null)) as
-        | { error?: string; submission?: unknown }
+        | {
+            error?: string
+            submission?: unknown
+            uncertainDelivery?: boolean
+          }
         | null
       throw new RemoteNodeRequestError(
         payload?.error || `${this.computer.name} request failed (${response.status})`,
         response.status,
         parseSubmissionReceipt(payload?.submission),
+        payload?.uncertainDelivery,
       )
     }
     if (markOnline) {

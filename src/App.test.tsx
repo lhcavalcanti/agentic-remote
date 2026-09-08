@@ -5243,10 +5243,16 @@ describe('App', () => {
     })
   })
 
-  it('restores a definitively rejected long paste without an uncertainty warning', async () => {
+  it.each([
+    [400, 'Prompt is too long'],
+    [409, 'Queue the message while the agent is working'],
+  ] as const)('restores a definitively rejected HTTP %i long paste without an uncertainty warning', async (statusCode, message) => {
     const pasted = Array.from({ length: 21 }, (_, index) => `line ${index}`).join('\n')
     vi.mocked(sendMessage).mockRejectedValueOnce(
-      Object.assign(new Error('Prompt is too long'), { statusCode: 400 }),
+      Object.assign(new Error(message), {
+        statusCode,
+        uncertainDelivery: false,
+      }),
     )
     render(<App />)
     const textarea = await screen.findByLabelText('Message')
@@ -5254,7 +5260,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
     await waitFor(() => expect(textarea).toHaveValue('[Paste #1 - 21 lines]'))
-    expect(screen.getAllByText('Prompt is too long').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(message).length).toBeGreaterThan(0)
     expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
   })
 

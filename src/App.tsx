@@ -13658,7 +13658,9 @@ function App() {
                         ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
                           ? 'Send this queued message now'
                           : 'Put this back in the queue'
-                        : 'Send immediately'
+                        : selected.status === 'running'
+                          ? 'Send into the current response'
+                          : 'Send immediately'
                     }
                     type="button"
                   >

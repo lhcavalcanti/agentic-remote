@@ -1519,6 +1519,13 @@ export class TmuxTerminalSessionController
       ...(runtime?.contextTier ? ['--context', runtime.contextTier] : []),
       ...(runtime?.mode ? ['--mode', runtime.mode] : []),
     ]
+    // Copilot draws its composer with half-block glyphs when the terminal
+    // advertises truecolor, and with plain rules when it does not. The frame
+    // is what says the composer is live, so a window that inherits no
+    // COLORTERM never looks ready and the session times out being created.
+    // The window is given the same terminal either way rather than left to
+    // whatever started the service.
+    const environment = ['-e', 'COLORTERM=truecolor']
     const args = selected
       ? [
           'new-window',
@@ -1532,6 +1539,7 @@ export class TmuxTerminalSessionController
           windowName,
           '-c',
           cwd,
+          ...environment,
           ...command,
         ]
       : [
@@ -1546,6 +1554,7 @@ export class TmuxTerminalSessionController
           windowName,
           '-c',
           cwd,
+          ...environment,
           ...command,
         ]
     const output = (await execFileAsync('tmux', args)).stdout.trim()

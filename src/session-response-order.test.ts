@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ManagedSession } from '../shared/contracts'
 import {
+  carrySnapshotTranscripts,
   currentSessionEventSequence,
   nextSessionEventSequence,
   projectSessionResponse,
@@ -73,5 +74,40 @@ describe('Session response causal ordering', () => {
     const incoming = rememberSessionResponse({ ...session }, currentSessionEventSequence())
     expect(sessionResponseStartedAt({ ...incoming })).toBeUndefined()
     expect(sessionResponseStartedAt(incoming)).toBeDefined()
+  })
+})
+
+describe('Snapshot transcripts', () => {
+  const held = [{ id: 'm1', role: 'assistant' as const, content: 'Held history', createdAt: session.updatedAt }]
+  const open = { ...session, messages: held }
+
+  it('keeps a transcript the browser already holds when a summary carries none', () => {
+    const [row] = carrySnapshotTranscripts([{ ...session, messages: [] }], [open])
+    expect(row.messages).toEqual(held)
+  })
+
+  it('leaves a row that carries its own transcript alone', () => {
+    const own = [{ id: 'm2', role: 'user' as const, content: 'Newer', createdAt: session.updatedAt }]
+    const [row] = carrySnapshotTranscripts([{ ...session, messages: own }], [open])
+    expect(row.messages).toEqual(own)
+  })
+
+  it('does not lend a transcript to a different session or computer', () => {
+    const other = { ...session, id: 'replacement' }
+    const elsewhere = { ...session, computerId: 'other-computer' }
+    expect(carrySnapshotTranscripts([other], [open])[0].messages).toEqual([])
+    expect(carrySnapshotTranscripts([elsewhere], [open])[0].messages).toEqual([])
+  })
+
+  it('leaves an emptied conversation empty once its own response has landed', () => {
+    // Clearing answers authoritatively, so the browser already holds nothing
+    // by the time a snapshot built from it arrives.
+    const cleared = { ...session, messages: [] }
+    expect(carrySnapshotTranscripts([{ ...session, messages: [] }], [cleared])[0].messages).toEqual([])
+  })
+
+  it('returns the rows unchanged when none of them is missing a transcript', () => {
+    const rows = [{ ...session, messages: held }]
+    expect(carrySnapshotTranscripts(rows, [open])).toBe(rows)
   })
 })

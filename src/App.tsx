@@ -162,7 +162,10 @@ import type {
   WorkspaceSearchResult,
 } from '../shared/contracts'
 import { hasRunningBackgroundAgent } from '../shared/background-tasks'
-import { submissionReceiptFromError } from '../shared/submission-error'
+import {
+  deliveryUncertaintyFromError,
+  submissionReceiptFromError,
+} from '../shared/submission-error'
 import {
   activateSession,
   addComputer,
@@ -11126,7 +11129,7 @@ function App() {
           restoreComposerSubmission(
             targetKey,
             submission,
-            Reflect.get(Object(caught), 'statusCode') !== 400,
+            deliveryUncertaintyFromError(caught) ?? true,
           )
         }
         if (selectedRef.current && sessionKey(selectedRef.current) === liveKey) {

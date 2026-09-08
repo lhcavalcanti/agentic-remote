@@ -22,6 +22,26 @@ export function submissionReceiptFromError(error: unknown): SubmissionReceipt | 
     : undefined
 }
 
+export function deliveryUncertaintyFromError(error: unknown): boolean | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const uncertain = Reflect.get(error, 'uncertainDelivery')
+  return typeof uncertain === 'boolean' ? uncertain : undefined
+}
+
+const definitiveHttpRefusals = new Set([
+  400, 401, 403, 404, 405, 409, 410, 413, 415, 422, 429,
+])
+
+export function httpDeliveryUncertain(
+  statusCode: number,
+  explicit: unknown,
+  submission?: SubmissionReceipt,
+): boolean {
+  if (typeof explicit === 'boolean') return explicit
+  if (submission?.accepted) return true
+  return !definitiveHttpRefusals.has(statusCode)
+}
+
 export class SubmissionError extends Error {
   readonly statusCode: number
   readonly submission?: SubmissionReceipt

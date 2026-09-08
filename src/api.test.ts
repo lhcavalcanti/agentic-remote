@@ -68,6 +68,31 @@ describe('API request headers', () => {
       .rejects.toMatchObject({ statusCode: 409, submission })
   })
 
+  it.each([
+    [409, false],
+    [409, true],
+    [500, false],
+    [500, true],
+  ] as const)('preserves explicit HTTP %i delivery uncertainty=%s', async (status, uncertainDelivery) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'Synthetic request failure',
+      uncertainDelivery,
+    }, { status })))
+    await expect(sendMessage('computer', 'session', { content: 'hello' }))
+      .rejects.toMatchObject({ statusCode: status, uncertainDelivery })
+  })
+
+  it.each([
+    [409, false],
+    [500, true],
+  ] as const)('infers legacy HTTP %i delivery uncertainty=%s', async (status, uncertainDelivery) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'Legacy request failure',
+    }, { status })))
+    await expect(sendMessage('computer', 'session', { content: 'hello' }))
+      .rejects.toMatchObject({ statusCode: status, uncertainDelivery })
+  })
+
   it('does not trust malformed receipt fields or expose an internal server message', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
       statusCode: 500, error: 'Internal Server Error', message: 'private exception details',
@@ -378,6 +403,15 @@ describe('Queued dispatch confirmations', () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Not admitted' }, { status })))
     await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
       .rejects.toMatchObject({ uncertainDelivery: false })
+  })
+
+  it('preserves an explicit uncertain HTTP 409 queued delivery', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'The request crossed the delivery boundary',
+      uncertainDelivery: true,
+    }, { status: 409 })))
+    await expect(dispatchQueuedPrompt('computer', 'session', 'queued', 'text'))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: true })
   })
 
   it('never retries a lost transport acknowledgment', async () => {

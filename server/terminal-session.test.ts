@@ -1603,6 +1603,15 @@ Permission request (1 remaining)
           .trim(),
       (line) => line.includes('--model fixture-boot'),
     )
+    // Copilot draws its composer with half-block glyphs only when the
+    // terminal advertises truecolor, and that frame is what says the composer
+    // is live. A window inheriting no COLORTERM showed plain rules instead and
+    // never looked ready. This holds the invariant the window must satisfy; on
+    // a host that exports COLORTERM itself the pane would inherit one anyway,
+    // so it is the hosts that do not which this protects.
+    expect(
+      (await readFile(`/proc/${initialPanePid}/environ`, 'utf8')).split('\0'),
+    ).toContain('COLORTERM=truecolor')
     expect(initialCommandLine).toContain('--model fixture-boot')
     expect(initialCommandLine).toContain('--effort medium')
     expect(initialCommandLine).toContain('--context default')

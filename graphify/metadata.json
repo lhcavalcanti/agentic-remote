@@ -194,9 +194,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 137,
+  "communities": 129,
   "community_algorithm": "louvain-seed-42",
-  "edges": 8932,
+  "edges": 8935,
   "generator_fingerprint": "18cdbc84020664826de189fcd467c214cfa0be680613056ef01fffba231b746e",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -350,8 +350,8 @@
     "server/session-store.ts": "372d9d6ce7362b5960e0025b3af12ad4758e5966605daaf275640db443f9bb7f",
     "server/terminal-queue-delivery.test.ts": "055a59b01262b5b6017d5cc038bf2a0d6d322da3803c7eea469c8f2f398327c4",
     "server/terminal-send-uncertainty.test.ts": "d385bc54129f4ca67f186e9614c3a76527a8a2fc78a63ac9717bdbee73253ee1",
-    "server/terminal-session.test.ts": "50f4967b355cfa8329d1664cbb98e68e1c5da612b59fc99aff79325c2d373a37",
-    "server/terminal-session.ts": "569ac9465a15335fe7b791ff8e105e92de8dce088daf7a9f2b262d131921fd71",
+    "server/terminal-session.test.ts": "7a98db0cd97db6d7455eb12372e847996cb5d25b77b2572ca198ef92e1cbf21f",
+    "server/terminal-session.ts": "66ee68b5809ecef977f7bf22162a1b2eae38e1beb0235f16a51bff264b4ecdcc",
     "server/terminal-startup-queue.test.ts": "f8fc4971e2ebf178c7c6b6f70d063fc387d8afee0d695a0c17cb3b0559e9f96a",
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
@@ -448,7 +448,7 @@
     "vite.config.ts": "d0444ec8511e7277ba15fc4d4ad3a8689e4c334229f347e4c5c0a6a95ff3ee47"
   },
   "mode": "local-ast-only",
-  "nodes": 3206,
+  "nodes": 3207,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -505,24 +505,13 @@
     "src/index.css"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "9a608d1f3bc7355aba3ccd44dc63b7d8d09a1d666ada352b82aa4d06279322ae",
-    "communities.json": "145f33f0e14404efc6382290aa6eb834539d7f64647fbfd1c294e3b1e576b75c",
-    "graph.html": "ea0536ff23a529b1cc436c52038d8b59c41ff9bdb06737b94dbab6e31665ee26",
-    "graph.json": "838a688ed17cbf39b053efaf7c9d1c99da8251aad64764d93d2048e421a35819"
+    "GRAPH_REPORT.md": "6d4d8df2dfa007d7056170ad60706ba2fefc296efaba966edcb9f5f173d18f57",
+    "communities.json": "0008698121763a3d66c2de7ef130c88a7aeab956e969266c787b3f6a8806774c",
+    "graph.html": "f0cad7795e5e4b2266fdf56ed0a5434726b2f72091ae085d8587c9557b96b147",
+    "graph.json": "bf01977f8d075b7bcc7ccc5ced8980a4d234c1f8013713414d58cb0377d08406"
   },
   "schema_version": 1,
-  "source_commit": "0118e8ab86677c6e6f64d97067cca2555ae5a16a",
-  "source_fingerprint": "6f02ea26076080a6e4bf4fa9e865a36f3c54eadd69a7e6139c2b455d5e7ae5bd",
-  "working_tree_changes": [
-    "server/agent-service-recovery.test.ts",
-    "server/claude-recovery-admission.test.ts",
-    "server/queued-dispatch.ts",
-    "server/recovery-resend-durability.test.ts",
-    "server/session-admission-lifecycle.test.ts",
-    "server/session-clear-transcript.test.ts",
-    "server/session-enqueue-clear.test.ts",
-    "server/session-resource-providers.test.ts",
-    "src/App.test.tsx",
-    "src/App.tsx"
-  ]
+  "source_commit": "195bd3ccc2fc2d8584704c502e0725680ffba4e4",
+  "source_fingerprint": "23a89f9c75637e88adce7719cf729a5449d7155c55d3ca712257a17517c05eb6",
+  "working_tree_changes": []
 }

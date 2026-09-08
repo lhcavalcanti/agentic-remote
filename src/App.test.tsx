@@ -13420,7 +13420,7 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('')
   })
 
-  it('keeps recovery response bindings usable when browser storage refuses writes', async () => {
+  it('refuses recovery dispatch when browser storage cannot persist its ownership', async () => {
     const token = '2026-09-06T00:00:00.000Z'
     const content = 'Keep this recovery bound in memory'
     let current: ManagedSession = {
@@ -13429,7 +13429,6 @@ describe('App', () => {
     }
     vi.mocked(listSessions).mockImplementation(async () => [current])
     vi.mocked(getSession).mockImplementation(async () => current)
-    vi.mocked(sendMessage).mockRejectedValueOnce(new Error('The response connection was lost'))
     render(<App />)
     await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
     const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
@@ -13437,16 +13436,14 @@ describe('App', () => {
     })
     try {
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
-      await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(content))
-      current = { ...current, revision: 42, failedPrompt: undefined }
-      vi.mocked(sendMessage).mockResolvedValueOnce(current)
-      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
-      await waitFor(() => expect(sendMessage).toHaveBeenLastCalledWith(
-        computer.id, session.id, expect.objectContaining({ content, acknowledgesFailure: token }),
-      ))
-      await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue(''))
+      await screen.findByText(/Message was not sent/)
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(screen.getByLabelText('Message')).toHaveValue(content)
+      expect(
+        JSON.parse(
+          localStorage.getItem('agentic-remote:composer-draft-failures') || '{}',
+        ),
+      ).toMatchObject({ 'computer-1:session-1': token })
     } finally {
       setItem.mockRestore()
     }

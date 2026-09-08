@@ -1980,7 +1980,7 @@ function isTerminalContextFooter(line: string): boolean {
   return (
     parts.length >= 2 &&
     parts.every(Boolean) &&
-    /^\d+(?:,\d{3})*(?:\.\d+)?[kKmMgG]?\s+context\s*\(\d+(?:\.\d+)?%\)$/u
+    /^\d+(?:,\d{3})*(?:\.\d+)?[kKmMgG]?\s+context(?:\s*\(\d+(?:\.\d+)?%\))?$/u
       .test(parts.at(-1) ?? '')
   )
 }

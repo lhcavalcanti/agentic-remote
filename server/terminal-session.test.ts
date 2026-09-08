@@ -334,6 +334,7 @@ describe('TmuxTerminalSessionController', () => {
     ['Fixture preview · 128k context (37%)', false, false],
     ['Fixture Model · Medium · 262,144 context (100%)', false, false],
     ['Fixture Model · High · 1.1M context (7.5%)', true, true],
+    ['ctrl+t show reasoning · GPT-5.6 Sol Fast (Internal only) · 1.1M context', false, false],
   ] as const)('admits a complete model/context footer: %s (working=%s, queue=%s)', async (footer, working, enqueue) => {
     const { controller, sessionId, output } = await deliveryFixture(working, undefined, undefined, footer)
     expect(await controller.capture(sessionId)).toContain(footer)

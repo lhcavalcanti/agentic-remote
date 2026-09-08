@@ -1809,6 +1809,33 @@ Permission request (1 remaining)
     expect(existsSync(`${response}.extra`)).toBe(false)
   })
 
+  it('removes a newly created window when owner enumeration fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-owner-failure-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-window-fake')
+    await writeFile(executable, '#!/usr/bin/env bash\nsleep 60\n')
+    await chmod(executable, 0o755)
+    const ps = path.join(directory, 'ps')
+    await writeFile(ps, '#!/usr/bin/env bash\nexit 19\n')
+    await chmod(ps, 0o755)
+    const tmuxSession = `owner-failure-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxSession, 'sleep', '60'])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    vi.stubEnv('PATH', `${directory}:${process.env.PATH}`)
+
+    await expect(
+      new TmuxTerminalSessionController().create(
+        randomUUID(), directory, 'Owner failure', true,
+      ),
+    ).rejects.toThrow('Unable to list processes')
+    const windows = (
+      await execFileAsync('tmux', ['list-windows', '-t', tmuxSession, '-F', '#{window_id}'])
+    ).stdout.trim().split('\n')
+    expect(windows).toHaveLength(1)
+  })
+
   it('returns a recovered session that is already showing a structured form', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)

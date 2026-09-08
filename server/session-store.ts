@@ -566,7 +566,10 @@ export class SessionStore {
             managedOpen: true,
             isOpen: true,
           }
-        } else if (!session.backend && knownSdk.has(session.id)) {
+        } else if (
+          !session.backend &&
+          (knownSdk.has(session.id) || session.managedOpen === true)
+        ) {
           state.sessions[session.id] = {
             ...session,
             revision: (session.revision ?? 0) + 1,
@@ -580,17 +583,15 @@ export class SessionStore {
 
   terminalRecoverySessions(): SessionDetail[] {
     return Object.values(this.state.sessions)
-      .filter(
-        (session) =>
-          !this.isRetiredSession(session.id) &&
-          session.backend === 'terminal' &&
-          session.managedOpen === true &&
-          // A suspended session is meant to have nothing running for it.
-          // Starting one back up at boot is the opposite of what was asked.
-          session.suspended !== true,
-      )
+      .filter((session) => this.shouldRecoverTerminalSession(session.id))
       .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
       .map(cloneSession)
+  }
+
+  shouldRecoverTerminalSession(id: string): boolean {
+    const session = this.state.sessions[id]
+    return this.isManagedOpen(id) && session?.backend === 'terminal' &&
+      session.suspended !== true
   }
 
   isManagedOpen(sessionId: string): boolean {

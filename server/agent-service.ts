@@ -107,6 +107,15 @@ interface ActivePrompt {
   assistantMessageId: string
 }
 
+class TerminalDiscoveryError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = 'TerminalDiscoveryError'
+  }
+}
+
+type TerminalRecoveryResult = 'created' | 'existing' | 'skipped' | 'deferred'
+
 interface DeliveryBoundary {
   accepted: boolean
 }
@@ -1556,6 +1565,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingTerminalQueueClaims = new Map<string, { retryAt: number; retryDelay: number }>()
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
+  private startupRecoveryPending = false
+  // A settled owner must not be boot-recovered again while a peer is deferred.
+  private terminalRecoveryStates?: Map<string, 'pending' | 'settled'>
   private startTask?: Promise<void>
   private stopTask?: Promise<void>
   private readonly admissions = new SessionAdmissions(() => this.stopped)
@@ -1809,6 +1821,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private async startAdmitted(): Promise<void> {
     await this.store.initialize()
     if (this.stopped) return
+    this.startupRecoveryPending = true
+    this.terminalRecoveryStates = undefined
     this.startupTerminalQueues.clear()
     this.nativeStartupDiscoveryReady = false
     // Capture persisted intent before discovery can mark other live terminals
@@ -1822,42 +1836,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       console.warn('Unable to load runtime models:', error)
     })
     if (this.stopped) return
-    try {
-      await this.discoverSessions()
-      const recoveredTerminalSessions = await this.recoverTerminalSessions()
-      if (recoveredTerminalSessions > 0) await this.discoverSessions()
-      await this.reconcileUntrackedTerminalDispatches()
-    } catch (error) {
-      if (this.stopped) return
-      if (!this.startupTerminalQueues.size) throw error
-      this.nativeStartupDiscoveryReady = false
-      this.publishError('', error)
-    }
-    if (this.stopped) return
     for (const session of this.store.list()) {
       const resend = this.store.recoveryResend(session.id)
       if (resend?.accepted) this.restoreRecoveryAcknowledgement(
         session.id, resend.failedAt, resend.content, this.store.backend(session.id) === 'terminal',
       )
     }
-
-    await this.refreshTranscripts()
-    await Promise.all(
-      this.store
-        .list()
-        .filter(
-          (session) =>
-            session.isOpen &&
-            session.queuedPrompts?.length &&
-            // A suspended session has nothing to run the queue in. The runtime
-            // guard refuses it anyway, but only after taking the head off and
-            // putting it back with an error nobody asked for.
-            !session.suspended &&
-            this.store.backend(session.id) !== 'terminal' &&
-            !this.externalSessionIds.has(session.id),
-        )
-        .map((session) => this.drainSdkQueue(session.id)),
-    )
+    try {
+      if (await this.discoverSessions()) await this.finishStartupRecovery()
+    } catch (error) {
+      if (this.stopped) return
+      if (!(error instanceof TerminalDiscoveryError)) throw error
+      this.nativeStartupDiscoveryReady = false
+      console.warn('Terminal discovery deferred during startup:', error)
+      this.publishError('', error)
+    }
+    if (this.stopped) return
     await Promise.all([...this.startupTerminalQueues].map((id) => this.drainTerminalQueue(id)))
     if (this.stopped) return
     this.discoveryTimer = setInterval(() => {
@@ -1868,6 +1862,67 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       void this.refreshTranscripts()
     }, 750)
     this.transcriptTimer.unref()
+  }
+
+  private async finishStartupRecovery(): Promise<void> {
+    if (
+      (!this.startupRecoveryPending && !this.terminalRecoveryStates?.size) ||
+      this.stopped || this.lifecycleLocks.size || this.sessionCreations.size
+    ) return
+    this.terminalRecoveryStates ??= new Map(
+      (this.terminalController.create ? this.store.terminalRecoverySessions() : [])
+        .map(({ id }) => [id, 'pending']),
+    )
+    const recovered = await this.recoverTerminalSessions()
+    if (recovered > 0 && !(await this.discoverSessions())) return
+    if (this.stopped) return
+    if (this.startupRecoveryPending) {
+      // Terminal recovery reconciles each confirmed owner before admitting it.
+      // Do not revisit those owners, or touch an indeterminate one's state.
+      await this.reconcileUntrackedTerminalDispatches(
+        this.store.list()
+          .filter((session) => !this.terminalRecoveryStates!.has(session.id))
+          .map((session) => session.id),
+      )
+    }
+    await this.refreshTranscripts()
+    if (this.startupRecoveryPending) {
+      await Promise.all(
+        this.store.list()
+          .filter((session) =>
+            session.isOpen &&
+            session.queuedPrompts?.length &&
+            !session.suspended &&
+            this.store.backend(session.id) !== 'terminal' &&
+            !this.isTerminalRecoveryPending(session.id) &&
+            !this.externalSessionIds.has(session.id),
+          )
+          .map((session) => this.drainSdkQueue(session.id)),
+      )
+    }
+    this.startupRecoveryPending = false
+    if (![...this.terminalRecoveryStates.values()].includes('pending')) {
+      this.terminalRecoveryStates = undefined
+    }
+  }
+
+  private isTerminalRecoveryPending(sessionId: string): boolean {
+    const backend = this.store.backend(sessionId)
+    if (this.startupRecoveryPending && backend === undefined) {
+      return true
+    }
+    return backend === 'terminal' &&
+      ((this.startupRecoveryPending && !this.terminalRecoveryStates) ||
+        this.terminalRecoveryStates?.get(sessionId) === 'pending')
+  }
+
+  private assertTerminalRecoverySettled(sessionId: string): void {
+    if (this.isTerminalRecoveryPending(sessionId)) {
+      throw Object.assign(
+        new Error('Terminal discovery has not settled. Wait for ownership to be confirmed before sending work.'),
+        { statusCode: 409 },
+      )
+    }
   }
 
   stop(): Promise<void> {
@@ -2136,7 +2191,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async openSession(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
-    if (this.externalSessionIds.has(id)) {
+    if (
+      this.externalSessionIds.has(id) ||
+      this.isTerminalRecoveryPending(id)
+    ) {
       return this.publicSession(stored)
     }
     if (this.hydratedSessions.has(id)) {
@@ -2168,6 +2226,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async activateSession(id: string): Promise<SessionDetail> {
+    this.assertTerminalQueueSettled(id)
     await this.openSession(id)
     const opened = await this.store.setOpen(id, true, true)
     this.publish(opened)
@@ -4070,18 +4129,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return delivered
   }
 
-  private async reconcileUntrackedTerminalDispatches(): Promise<void> {
+  private async reconcileUntrackedTerminalDispatches(
+    sessionIds: string[],
+  ): Promise<void> {
     await Promise.all(
-      this.store.list().map(async (session) => {
-        const dispatchedAt = this.store.queueDispatchAt(session.id)
+      sessionIds.map(async (sessionId) => {
+        const dispatchedAt = this.store.queueDispatchAt(sessionId)
         if (
           !dispatchedAt ||
-          (await this.sessionEventVersion(session.id))
+          (await this.sessionEventVersion(sessionId))
         ) {
           return
         }
         const reconciled = await this.store.clearUntrackedTerminalDispatch(
-          session.id,
+          sessionId,
           dispatchedAt,
         )
         this.publish(reconciled)
@@ -4180,6 +4241,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async commandCatalog(sessionId: string) {
+    this.assertTerminalRecoverySettled(sessionId)
     if (await this.terminalController.has(sessionId)) {
       const stored = this.store.get(sessionId)
       if (!stored) {
@@ -5454,6 +5516,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async attachSdkSession(sessionId: string): Promise<CopilotSessionLike> {
+    this.assertTerminalQueueSettled(sessionId)
     const stored = this.store.get(sessionId)
     if (!stored) {
       throw new Error('Session not found')
@@ -5504,68 +5567,102 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   private async recoverTerminalSessions(): Promise<number> {
-    if (!this.terminalController.create) {
-      return 0
+    const states = this.terminalRecoveryStates
+    if (!states || this.stopped) return 0
+    const recovered = await Promise.all(
+      [...states]
+        .filter(([, state]) => state === 'pending')
+        .map(([id]) => {
+          if (!this.admissions.canEnter(id)) return 0
+          return this.admissions.run(id, () => this.serializeLifecycle(id, async () => {
+            const result = await this.recoverTerminalSession(id)
+            if (result === 'deferred' || this.stopped) return 0
+            if (result === 'created' || result === 'existing') {
+              await this.reconcileUntrackedTerminalDispatches([id])
+            }
+            states.set(id, 'settled')
+            return result === 'created' ? 1 : 0
+          }), true)
+        }),
+    )
+    return recovered.reduce<number>((total, count) => total + count, 0)
+  }
+
+  private async recoverTerminalSession(id: string): Promise<TerminalRecoveryResult> {
+    const create = this.terminalController.create?.bind(this.terminalController)
+    if (this.stopped) return 'deferred'
+    if (!create || !this.store.shouldRecoverTerminalSession(id)) return 'skipped'
+    await this.store.readAfterWrites(id)
+    if (this.stopped) return 'deferred'
+    if (!this.store.shouldRecoverTerminalSession(id)) return 'skipped'
+    let exists: boolean
+    try {
+      exists = await this.terminalController.has(id)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.publishError(
+        id,
+        new Error(`Terminal ownership probe deferred: ${message}`, { cause: error }),
+      )
+      return 'deferred'
     }
-    let recovered = 0
-    for (const session of this.store.terminalRecoverySessions()) {
-      let launching = false
+    if (this.stopped) return 'deferred'
+    if (!this.store.shouldRecoverTerminalSession(id)) return 'skipped'
+    if (exists) {
+      this.externalSessionIds.add(id)
+      return 'existing'
+    }
+    // Configuration and eligibility may have changed while ownership was read.
+    const session = await this.store.readAfterWrites(id)
+    if (this.stopped) return 'deferred'
+    if (!this.store.shouldRecoverTerminalSession(id)) return 'skipped'
+    // The startup pump needs a positive owner, even if recovery cleanup has
+    // already removed its startup marker. A FIFO alone cannot launch one.
+    if (this.startupTerminalQueues.has(id) || session.queuedPrompts?.length) {
+      if (session.isOpen) this.publish(await this.store.setOpen(id, false))
+      return 'deferred'
+    }
+    this.launchingTerminalSessionIds.add(id)
+    this.discoveryGeneration += 1
+    try {
       try {
-        if (await this.terminalController.has(session.id)) {
-          this.externalSessionIds.add(session.id)
-          continue
-        }
-        if (this.startupTerminalQueues.has(session.id)) continue
-        this.launchingTerminalSessionIds.add(session.id)
-        this.discoveryGeneration += 1
-        launching = true
-        await this.terminalController.create(
-          session.id,
+        await create(
+          id,
           session.cwd,
           session.title,
           session.runtime?.allowAllPermissions ?? true,
           session.runtime,
         )
-        this.externalSessionIds.add(session.id)
-        recovered += 1
-        const restored = await this.store.update(session.id, (stored) => {
-          stored.status = 'idle'
-          stored.activity = undefined
-        })
-        this.publish(restored)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (!launching && this.startupTerminalQueues.has(session.id)) {
-          this.publishError(session.id, new Error(`Native queue startup observation failed: ${message}`))
-          continue
-        }
-        if (this.store.get(session.id)) {
-          try {
-            await this.store.setOpen(session.id, false, true)
-            const failed = await this.store.update(session.id, (stored) => {
+        try {
+          if (this.store.get(id)) {
+            await this.store.setOpen(id, false, true)
+            const failed = await this.store.update(id, (stored) => {
               stored.status = 'error'
               stored.activity = 'Boot recovery failed'
             })
             this.publish(failed)
-          } catch (storeError) {
-            console.warn(
-              `Unable to persist terminal recovery failure for ${session.id}:`,
-              storeError,
-            )
           }
+        } finally {
+          this.publishError(
+            id,
+            new Error(`Unable to recover terminal session: ${message}`),
+          )
         }
-        this.publishError(
-          session.id,
-          new Error(`Unable to recover terminal session: ${message}`),
-        )
-      } finally {
-        if (launching) {
-          this.launchingTerminalSessionIds.delete(session.id)
-          this.discoveryGeneration += 1
-        }
+        return 'skipped'
       }
+      this.externalSessionIds.add(id)
+      const restored = await this.store.update(id, (stored) => {
+        stored.status = 'idle'
+        stored.activity = undefined
+      })
+      this.publish(restored)
+      return 'created'
+    } finally {
+      this.launchingTerminalSessionIds.delete(id)
+      this.discoveryGeneration += 1
     }
-    return recovered
   }
 
   private async hydrateSession(sessionId: string): Promise<SessionDetail> {
@@ -5585,8 +5682,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return hydrated
   }
 
-  private async discoverSessions(): Promise<void> {
-    if (this.stopped) return
+  private async discoverTerminalSessions(): Promise<DiscoveredSession[]> {
+    try {
+      return await this.activeSessionFinder()
+    } catch (error) {
+      throw new TerminalDiscoveryError(error)
+    }
+  }
+
+  private async discoverSessions(): Promise<boolean> {
+    if (this.stopped) return false
     this.nativeStartupDiscoveryReady = false
     let sessions: SessionMetadata[]
     let activeSessions: DiscoveredSession[]
@@ -5597,15 +5702,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       while (this.sessionCreations.size) {
         await Promise.all([...this.sessionCreations])
       }
-      if (this.stopped || this.lifecycleLocks.size) return
+      if (this.stopped || this.lifecycleLocks.size) return false
       generation = this.discoveryGeneration
-      const discovery = await Promise.all([
+      const discovery = await Promise.allSettled([
         this.client.listSessions(),
-        this.activeSessionFinder(),
+        this.discoverTerminalSessions(),
       ])
-      sessions = discovery[0]
-      activeSessions = discovery[1]
-      if (this.stopped) return
+      // Terminal uncertainty may be deferred, but an independent SDK listing
+      // failure must still fail startup even when both probes reject.
+      if (discovery[0].status === 'rejected') {
+        throw discovery[0].reason
+      }
+      if (discovery[1].status === 'rejected') {
+        throw discovery[1].reason
+      }
+      sessions = discovery[0].value
+      activeSessions = discovery[1].value
+      if (this.stopped) return false
       if (generation === this.discoveryGeneration) {
         break
       }
@@ -5615,7 +5728,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       generation === this.discoveryGeneration &&
       this.sessionCreations.size === 0 &&
       this.lifecycleLocks.size === 0
-    if (!isCurrent()) return
+    if (!isCurrent()) return false
     const storedBeforeDiscovery = this.store.list()
     const excluded = (id: string) =>
       this.deletedSessionIds.has(id) || this.store.isRetiredSession(id)
@@ -5629,7 +5742,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ],
     )
     await this.clearUpdateNoticeForExited(previouslyExternal, isCurrent)
-    if (!isCurrent()) return
+    if (!isCurrent()) return false
     const indexedSessions = sessions.flatMap((session) => {
       if (excluded(session.sessionId)) {
         return []
@@ -5667,13 +5780,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ],
       isCurrent,
     )
-    if (!isCurrent()) return
+    if (!isCurrent()) return false
     await this.store.syncBackends(
       activeSessions.map((session) => session.id),
       indexedSessions.map((session) => session.id),
       isCurrent,
     )
-    if (!isCurrent()) return
+    if (!isCurrent()) return false
     const renameTerminal = this.terminalController.rename?.bind(
       this.terminalController,
     )
@@ -5689,12 +5802,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }),
       )
     }
-    if (!isCurrent()) return
+    if (!isCurrent()) return false
     await this.store.syncOpen([
       ...this.externalSessionIds,
       ...[...this.sessions.keys()].filter((id) => !excluded(id)),
+      ...storedBeforeDiscovery
+        .filter((session) =>
+          this.terminalController.create &&
+          session.isOpen &&
+          this.isTerminalRecoveryPending(session.id) &&
+          this.store.shouldRecoverTerminalSession(session.id),
+        )
+        .map((session) => session.id),
     ], isCurrent)
     this.nativeStartupDiscoveryReady = isCurrent()
+    return this.nativeStartupDiscoveryReady
   }
 
   refreshDiscovery(): Promise<void> {
@@ -5702,6 +5824,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return this.discoveryInFlight
     }
     const refresh = this.discoverSessions()
+      .then(async (ready) => {
+        if (ready) await this.finishStartupRecovery()
+      })
       .catch((error: unknown) => {
         this.publishError('', error)
       })
@@ -5738,6 +5863,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ])
     await Promise.all(
       [...sessionIds].map(async (sessionId) => {
+        if (this.isTerminalRecoveryPending(sessionId)) return
         const pendingDispatchAt = this.pendingTerminalPromptDispatches.get(sessionId)
         if (pendingDispatchAt) {
           const current = this.store.get(sessionId)
@@ -5905,7 +6031,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<void> {
     for (const sessionId of previouslyExternal) {
       if (!isCurrent()) return
-      if (this.externalSessionIds.has(sessionId)) {
+      if (this.externalSessionIds.has(sessionId) || this.isTerminalRecoveryPending(sessionId)) {
         continue
       }
       this.terminalUpdateChecks.delete(sessionId)
@@ -5913,7 +6039,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         continue
       }
       const updated = await this.store.updateIf(sessionId, (session) => {
-        if (!isCurrent()) return false
+        if (!isCurrent() || this.isTerminalRecoveryPending(sessionId)) return false
         if (session.runtime?.updateAvailable === undefined) {
           return false
         }
@@ -6845,6 +6971,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private async drainTerminalQueue(sessionId: string, withinAdmission = false): Promise<void> {
     if (this.stopped || this.deletingSessions.has(sessionId)) return
+    if (this.isTerminalRecoveryPending(sessionId)) {
+      // An in-flight suspension may still refuse without changing its owner.
+      if (!this.suspendingSessions.has(sessionId)) this.retryTerminalQueueClaim(sessionId, true)
+      return
+    }
     if (!this.admissions.canEnter(sessionId)) {
       this.terminalDrainRequested.add(sessionId)
       return
@@ -7033,6 +7164,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.stopped) {
       throw new Error('The session service is stopping')
     }
+    this.assertTerminalRecoverySettled(sessionId)
     if (this.store.terminalQueueDispatch(sessionId) ||
         this.pendingTerminalPromptDispatches.has(sessionId)) {
       throw Object.assign(

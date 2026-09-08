@@ -82,6 +82,12 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - A late or ambiguous lock MAY be accepted only when `/proc/<pid>/fd` proves
   that the process has the corresponding `session.db` open.
 - Historical sessions MAY be opened from the new-session flow.
+- An open new-session dialog MUST preserve user choices across computer status
+  updates. If its computer becomes unavailable, it MUST select an available
+  computer when one returns and require a new compatible historical selection.
+- Automatic computer fallback MUST NOT submit the prior computer's folder.
+  Creation waits for a folder owned by the replacement computer. An explicitly
+  selected computer's saved default remains usable while its listing loads.
 - Copilot sessions MUST expose tracked background tasks when the owning
   runtime advertises task support. The UI MUST show queued, running,
   completed, failed, and cancelled task states, including task progress and
@@ -489,6 +495,14 @@ switches, failed sends, and clear replacement IDs.
   confined; a root is read-only.
 - A root MUST be validated on its owning computer, and every path browsed under
   it MUST stay inside it.
+- Validation and pending Knowledge responses MUST belong to the same pairing
+  lifetime that requested them. Re-pairing the same computer ID MUST NOT revive
+  old responses or make a stale validation create a root.
+- Root creation MUST recheck registration after persistence. A re-pairing
+  announced by another tab MUST allow fresh requests without reviving older
+  responses or removing the new pairing's roots.
+- Initial and reconnect computer snapshots MUST preserve newer computer events.
+  An older partial session refresh MUST NOT undo a newer computer removal.
 - The reader MUST reopen the root, folder, and document last being read, so
   returning does not mean choosing them again. Changing folder MUST remain an
   explicit action.

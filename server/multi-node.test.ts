@@ -1395,6 +1395,79 @@ describe('multi-node hub', () => {
       await hub.app.close()
     }
   })
+
+  it('does not reuse Knowledge validation from an earlier pairing of the same node', async () => {
+    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-knowledge-lifetime-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    await remote.app.listen({ host: '127.0.0.1', port: 0 })
+    const address = remote.app.server.address() as AddressInfo
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-knowledge-lifetime-hub'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(session('local-session', 'Local')),
+    })
+    let releaseValidation!: () => void
+    const validationGate = new Promise<void>((resolve) => { releaseValidation = resolve })
+    let markValidating!: () => void
+    const validating = new Promise<void>((resolve) => { markValidating = resolve })
+    const listing = remoteService.listKnowledge.bind(remoteService)
+    vi.spyOn(remoteService, 'listKnowledge').mockImplementationOnce(async (root, folder) => {
+      markValidating()
+      await validationGate
+      return listing(root, folder)
+    })
+    try {
+      const pairing = {
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        token: remote.identity.token,
+        name: 'Original pairing',
+      }
+      const registered = await hub.app.inject({
+        method: 'POST', url: '/api/computers', payload: pairing,
+      })
+      expect(registered.statusCode).toBe(201)
+      const computerId = registered.json().computer.id as string
+      const oldCreation = hub.app.inject({
+        method: 'POST', url: '/api/knowledge/roots',
+        payload: { computerId, path: '/home/tester/docs', name: 'Old validation' },
+      }).then((response) => response)
+      await validating
+      expect((await hub.app.inject({
+        method: 'DELETE', url: `/api/computers/${computerId}`,
+      })).statusCode).toBe(204)
+      const repaired = await hub.app.inject({
+        method: 'POST', url: '/api/computers',
+        payload: { ...pairing, name: 'Current pairing' },
+      })
+      expect(repaired.statusCode).toBe(201)
+      expect(repaired.json().computer.id).toBe(computerId)
+      const fresh = await hub.app.inject({
+        method: 'POST', url: '/api/knowledge/roots',
+        payload: { computerId, path: '/home/tester/docs', name: 'Fresh validation' },
+      })
+      expect(fresh.statusCode).toBe(201)
+      releaseValidation()
+      const stale = await oldCreation
+      expect(stale.statusCode).toBe(409)
+      expect(stale.json().error).toContain('pairing changed')
+      const roots = (await hub.app.inject({
+        method: 'GET', url: '/api/knowledge/roots',
+      })).json().roots
+      expect(roots).toEqual([fresh.json().root])
+      expect(roots[0].computerName).toBe('Current pairing')
+    } finally {
+      releaseValidation()
+      await hub.app.close()
+      await remote.app.close()
+    }
+  })
+
   it('explains that a legacy node cannot host knowledge roots', async () => {
     const service = new FakeSessionService(session('local-session', 'Local'))
     service.knowledgeError = Object.assign(new Error('Not Found'), {

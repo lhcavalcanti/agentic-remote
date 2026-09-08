@@ -5,6 +5,7 @@ import { readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { findActiveCopilotProcesses } from './active-sessions.js'
+import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
 import type {
   ConfigureRuntimeInput,
   PendingPermission,
@@ -1376,8 +1377,7 @@ export class TmuxTerminalSessionController
         ])
       ).stdout
     } catch (error) {
-      // No server at all means no pane, which is the ordinary way a
-      // suspension finishes. Anything else is a look that failed.
+      // A stopped server means no pane; a missing socket alone does not.
       return noTmuxServer(error)
     }
     if (!listed.trim()) {
@@ -1576,10 +1576,10 @@ export class TmuxTerminalSessionController
       )
       throw new Error('tmux did not return the created pane')
     }
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      const owner = await this.owner(sessionId, expectedTarget)
-      if (owner) {
-        try {
+    try {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const owner = await this.owner(sessionId, expectedTarget)
+        if (owner) {
           const startup = await waitForTerminalStartup(
             owner.target,
             true,
@@ -1609,21 +1609,18 @@ export class TmuxTerminalSessionController
             })
           }
           return { sessionName, windowId }
-        } catch (error) {
-          this.inputReadySessions.delete(sessionId)
-          this.automaticStartupSessions.delete(sessionId)
-          await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
-            () => undefined,
-          )
-          throw error
         }
+        await new Promise((resolve) => setTimeout(resolve, 100))
       }
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      throw new Error('Copilot did not start in the new tmux window')
+    } catch (error) {
+      this.inputReadySessions.delete(sessionId)
+      this.automaticStartupSessions.delete(sessionId)
+      await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
+        () => undefined,
+      )
+      throw error
     }
-    await execFileAsync('tmux', ['kill-window', '-t', windowId]).catch(
-      () => undefined,
-    )
-    throw new Error('Copilot did not start in the new tmux window')
   }
 
   sending(sessionId: string): boolean {
@@ -2775,15 +2772,7 @@ async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
           : []
       })
   } catch (error) {
-    if (
-      (error as NodeJS.ErrnoException).code === 'ENOENT' ||
-      String((error as { stderr?: string }).stderr).includes(
-        'no server running',
-      ) ||
-      String((error as { stderr?: string }).stderr).includes(
-        'error connecting to',
-      )
-    ) {
+    if (tmuxNotInstalled(error) || (await noTmuxServer(error))) {
       return []
     }
     throw error
@@ -3255,25 +3244,6 @@ async function waitForComposerPaste(
 
 /** Whether a tmux command failed because there is no server left to ask. */
 
-function noTmuxServer(error: unknown): boolean {
-  const failure = error as { stderr?: unknown }
-  // Only tmux's own "there is nothing to ask" diagnostics. Treating every
-  // exit status of 1 as absence also swallowed a socket that could not be
-  // reached or read, and stopping then reported success without having killed
-  // anything, while the process it was meant to end carried on.
-  return (
-    typeof failure.stderr === 'string' &&
-    // tmux uses "error connecting to" for a socket it cannot reach at all and
-    // for one it is not allowed to open, and only the first means there is
-    // nothing there. Reading both as absence let `stop` report success
-    // without killing anything.
-    (/no server running/i.test(failure.stderr) ||
-      /error connecting to .*\(no such file or directory\)/i.test(
-        failure.stderr,
-      ))
-  )
-}
-
 async function tmuxTargetForPid(
   pid: number,
 ): Promise<{ target: string; rootPid: number } | undefined> {
@@ -3293,7 +3263,7 @@ async function tmuxTargetForPid(
       ])
     ).stdout
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (tmuxNotInstalled(error)) {
       return undefined
     }
     // Killing the last pane in the last session ends tmux itself, and the
@@ -3301,7 +3271,7 @@ async function tmuxTargetForPid(
     // ordinary way a suspension finishes, so it reads as absence: raising here
     // reported failure for work that had already succeeded, leaving the
     // session never recorded as suspended.
-    if (noTmuxServer(error)) {
+    if (await noTmuxServer(error)) {
       return undefined
     }
     throw error

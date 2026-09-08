@@ -209,6 +209,39 @@ replacement commits, then retires it. Persisted replacement lineage prevents
 stale provider listings from rediscovering the original after restart. Cleanup
 failure after an accepted clear is reported without undoing the committed clear.
 
+An indeterminate terminal discovery at cold start is reported without replacing
+the last stored session view or preventing the HTTP runtime from starting.
+Recovery and terminal admission wait for a successful discovery rather than
+treating an unreadable or differently namespaced tmux server as absent. The
+session read route returns the last committed view during that wait; opening a
+read-only view must not close the retained identity or cancel boot recovery.
+Explicit activation waits for ownership confirmation.
+
+Even after aggregate discovery succeeds, an individual ownership probe can
+remain unreadable. That session keeps its retained view, queued work, and
+persisted managed-open/backend eligibility, including across a service restart.
+Its ownership recovery stays pending on the existing discovery poll; an
+unreadable probe is never evidence of absence. Other sessions confirm or recover
+independently and remain usable. Successfully handled identities are not
+recovered or startup-reconciled again while a different session is deferred.
+Transcript refresh and runtime admission wait only for the affected identity.
+
+Deferred recovery joins `SessionAdmissions` with transcript protection as well
+as per-session lifecycle ownership, so Clear and stop cannot cross a late
+ownership probe. It re-reads eligibility and configuration before creating a
+missing owner. A queued candidate instead waits for a positively identified
+owner: proven absence may close its live view without cancelling managed-open
+intent, while an indeterminate probe preserves the retained view. The native
+queue pump honors that per-session recovery gate. Accepted recovery claims are
+restored before any startup queue cleanup, and a suspension attempt that still
+can refuse does not discard the original queued startup intent.
+
+Destructive operations retain their strict absence checks. A genuine launch failure still
+closes that recovery candidate and reports `Boot recovery failed`; persistence
+errors while recording either success or failure propagate rather than being
+classified as probe failures. State validation and SDK startup errors are
+likewise not swallowed by the discovery-only exception.
+
 Providers await mutations before publishing or acting on their results.
 `readAfterWrites()` queues a read behind admitted changes before runtime,
 dispatch, or lifecycle decisions; a read-only batch does not write or
@@ -255,6 +288,9 @@ state before committing or dispatching work.
 writes, and checkpoints remaining streamed text. Provider teardown and
 owned-query cancellation precede that final storage boundary; late completion
 callbacks cannot publish updates or write into a closed store.
+Private batch scheduling remains enabled for admitted removal/replacement
+boundaries. Late live deltas cannot recreate the state directory. This close
+protocol requires no stored-state migration or history rewrite.
 
 Claude recovery submissions honor the `acknowledgesFailure` value forwarded by
 the provider router. `claimRecoveryPrompt()` compares it with the candidate's
